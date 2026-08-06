@@ -16,11 +16,14 @@ public sealed class ChatViewModel : INotifyPropertyChanged
 
     private bool _isProcessing;
 
+
     public ObservableCollection<ChatMessage> Messages { get; } = new();
+
 
     public bool IsProcessing
     {
         get => _isProcessing;
+
         private set
         {
             if (_isProcessing == value)
@@ -32,10 +35,13 @@ public sealed class ChatViewModel : INotifyPropertyChanged
         }
     }
 
-    public ChatViewModel(AgentCore agent)
+
+    public ChatViewModel(
+        AgentCore agent)
     {
         _agent = agent;
     }
+
 
     public async Task SendMessageAsync(
         string userInput,
@@ -44,15 +50,21 @@ public sealed class ChatViewModel : INotifyPropertyChanged
         if (IsProcessing)
             return;
 
+
         if (string.IsNullOrWhiteSpace(userInput))
             return;
 
-        userInput = userInput.Trim();
+
+        userInput =
+            userInput.Trim();
+
 
         IsProcessing = true;
 
+
         try
         {
+            // USER MESSAGE
             Messages.Add(
                 new ChatMessage(
                     "user",
@@ -60,23 +72,57 @@ public sealed class ChatViewModel : INotifyPropertyChanged
                 )
             );
 
-            var response =
-                await _agent.ProcessAsync(
-                    userInput,
-                    cancellationToken
-                );
 
-            Messages.Add(
+            // Create empty assistant message.
+            var assistantMessage =
                 new ChatMessage(
                     "assistant",
-                    response
-                )
+                    ""
+                );
+
+
+            Messages.Add(
+                assistantMessage
             );
+
+
+            // STREAM RESPONSE
+            await foreach (
+                var chunk
+                in _agent.ProcessStreamAsync(
+                    userInput,
+                    cancellationToken))
+            {
+
+                if (chunk.Type ==
+                    AgentStreamChunkType.Text)
+                {
+                    assistantMessage.Content +=
+                        chunk.Content;
+                }
+
+
+                if (chunk.Type ==
+                    AgentStreamChunkType.Completed)
+                {
+                    break;
+                }
+
+
+                // Notify UI refresh.
+                OnPropertyChanged(
+                    nameof(Messages)
+                );
+            }
         }
+
+
         catch (OperationCanceledException)
         {
-            // Request was cancelled.
+            // User cancelled.
         }
+
+
         catch (Exception ex)
         {
             Messages.Add(
@@ -89,13 +135,18 @@ public sealed class ChatViewModel : INotifyPropertyChanged
                 }
             );
         }
+
+
         finally
         {
             IsProcessing = false;
         }
     }
 
+
+
     public event PropertyChangedEventHandler? PropertyChanged;
+
 
     private void OnPropertyChanged(
         [CallerMemberName] string? propertyName = null)

@@ -1,6 +1,5 @@
 using System;
 using System.Windows;
-using SegaAgent.UI.Environment;
 
 namespace SegaAgent.UI.Companion;
 
@@ -13,36 +12,18 @@ public sealed class CompanionBehavior
     // CONFIGURATION
     // =========================================================
 
-    // Visible blob radius.
-    //
-    // Your blob is approximately 66px, but can deform slightly.
-    //
     private const double BlobRadius = 70.0;
 
-
-    // Sega starts escaping when the mouse reaches
-    // 50px outside the blob.
-    //
     private const double SafetyDistance = 50.0;
 
-
-    // Therefore the mouse can approach to approximately:
-    //
-    // 70 + 50 = 120px from the center.
-    //
     private const double EscapeDistance =
-        BlobRadius +
-        SafetyDistance;
+        BlobRadius + SafetyDistance;
 
 
-    // How far Sega moves when escaping.
-    //
     private const double EscapeDistanceMove = 180.0;
 
-
-    // Minimum movement so Sega doesn't make tiny movements.
-    //
     private const double MinimumEscapeMove = 120.0;
+
 
 
     // =========================================================
@@ -56,15 +37,21 @@ public sealed class CompanionBehavior
     }
 
 
+
     // =========================================================
     // UPDATE
     // =========================================================
 
     public void Update(
-        PcWorldState world)
+        CompanionPosition companion,
+        Point mouse)
     {
-        UpdateMouseEscape(world);
+        UpdateMouseEscape(
+            companion,
+            mouse
+        );
     }
+
 
 
     // =========================================================
@@ -72,16 +59,28 @@ public sealed class CompanionBehavior
     // =========================================================
 
     private void UpdateMouseEscape(
-        PcWorldState world)
+        CompanionPosition companion,
+        Point mouse)
     {
+
+        Point center =
+            new Point(
+                companion.CenterX,
+                companion.CenterY
+            );
+
+
+        Vector mouseVector =
+            mouse - center;
+
+
         double distance =
-            world.MouseDistance;
+            mouseVector.Length;
+
 
 
         // -----------------------------------------------------
-        // Mouse is far enough away.
-        //
-        // Do absolutely nothing.
+        // Mouse is safe.
         // -----------------------------------------------------
 
         if (distance >= EscapeDistance)
@@ -90,32 +89,14 @@ public sealed class CompanionBehavior
         }
 
 
-        // -----------------------------------------------------
-        // Mouse is close enough to trigger escape.
-        //
-        // Mouse direction from Sega's center tells us
-        // which direction Sega must move AWAY.
-        //
-        // Mouse left  -> Sega right
-        // Mouse right -> Sega left
-        // Mouse top   -> Sega bottom
-        // Mouse bottom-> Sega top
-        // -----------------------------------------------------
-
-        Vector awayDirection =
-            -world.MouseDirectionFromCompanion;
-
 
         // -----------------------------------------------------
-        // Safety fallback.
-        //
-        // If the mouse somehow sits exactly at the center,
-        // use a default direction.
+        // Mouse is exactly inside center.
         // -----------------------------------------------------
 
-        if (awayDirection.Length < 0.01)
+        if (distance < 0.01)
         {
-            awayDirection =
+            mouseVector =
                 new Vector(
                     1,
                     0
@@ -123,15 +104,19 @@ public sealed class CompanionBehavior
         }
         else
         {
-            awayDirection.Normalize();
+            mouseVector.Normalize();
         }
 
 
+
         // -----------------------------------------------------
-        // Determine how close the mouse is.
-        //
-        // The closer it gets, the stronger the escape.
+        // Move away from mouse.
         // -----------------------------------------------------
+
+        Vector awayDirection =
+            -mouseVector;
+
+
 
         double penetration =
             EscapeDistance -
@@ -146,20 +131,16 @@ public sealed class CompanionBehavior
             );
 
 
-        // -----------------------------------------------------
-        // Base escape movement.
-        //
-        // Even at the edge of the safety zone, Sega should
-        // move enough to establish visible separation.
-        // -----------------------------------------------------
 
         double moveDistance =
             MinimumEscapeMove +
             (
                 EscapeDistanceMove -
                 MinimumEscapeMove
-            ) *
+            )
+            *
             strength;
+
 
 
         Vector movement =
@@ -167,9 +148,6 @@ public sealed class CompanionBehavior
             moveDistance;
 
 
-        // -----------------------------------------------------
-        // Ask controller to escape.
-        // -----------------------------------------------------
 
         _controller.EscapeFromMouse(
             movement.X,

@@ -144,4 +144,55 @@ public sealed class CompanionController
             _window.SetState(state);
         });
     }
+
+    // =========================================================
+    // ESCAPE FROM MOUSE
+    // =========================================================
+
+    public void EscapeFromMouse(
+        double x,
+        double y)
+    {
+        Vector direction =
+            new Vector(
+                x,
+                y);
+
+        if (direction.Length < 0.01)
+            return;
+
+
+        if (!_dispatcher.CheckAccess())
+        {
+            _dispatcher.Invoke(() =>
+            {
+                EscapeFromMouse(
+                    x,
+                    y);
+            });
+
+            return;
+        }
+
+
+        direction.Normalize();
+
+
+        const double escapeDistance = 230.0;
+
+
+        Point current =
+            _window.CompanionCenter;
+
+
+        Point target =
+            current +
+            direction *
+            escapeDistance;
+
+
+        MoveTo(
+            target,
+            TimeSpan.FromMilliseconds(500));
+    }
 }
