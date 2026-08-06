@@ -1,0 +1,82 @@
+<!--
+ filename: SegaAgent.csproj
+-->
+
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+
+  <!-- ===================================================== -->
+  <!-- PIPER RUNTIME -->
+  <!-- ===================================================== -->
+
+  <ItemGroup>
+
+    <!--
+      Copy the complete Piper directory.
+
+      Piper depends on more than piper.exe.
+      This includes:
+        - ONNX Runtime
+        - phonemization DLLs
+        - espeak-ng
+        - espeak-ng-data
+        - model files
+        - configuration
+    -->
+
+    <Content Include="Piper\**\*">
+
+      <CopyToOutputDirectory>
+        PreserveNewest
+      </CopyToOutputDirectory>
+
+    </Content>
+
+  </ItemGroup>
+
+
+  <!-- ===================================================== -->
+  <!-- SEGA PROMPTS -->
+  <!-- ===================================================== -->
+
+  <ItemGroup>
+
+    <Content Include="Prompt\sega_personality.yaml">
+
+      <CopyToOutputDirectory>
+        PreserveNewest
+      </CopyToOutputDirectory>
+
+    </Content>
+
+
+    <Content Include="Prompt\responder.yaml">
+
+      <CopyToOutputDirectory>
+        PreserveNewest
+      </CopyToOutputDirectory>
+
+    </Content>
+
+  </ItemGroup>
+
+
+  <!-- ===================================================== -->
+  <!-- AUDIO -->
+  <!-- ===================================================== -->
+
+  <ItemGroup>
+
+    <PackageReference
+      Include="NAudio"
+      Version="2.3.0" />
+
+  </ItemGroup>
+
+</Project>

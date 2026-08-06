@@ -1,0 +1,68 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <UseWPF>true</UseWPF>
+
+    <ApplicationIcon>Assets\SegaAi.ico</ApplicationIcon>
+  </PropertyGroup>
+
+
+  <!-- ===================================================== -->
+  <!-- WPF RESOURCES -->
+  <!-- ===================================================== -->
+
+  <ItemGroup>
+
+    <Resource Include="Assets\SegaAi.ico" />
+
+    <Resource Include="Assets\SegaAi.png" />
+
+  </ItemGroup>
+
+
+  <!-- ===================================================== -->
+  <!-- CORE PROJECT -->
+  <!-- ===================================================== -->
+
+  <ItemGroup>
+
+    <ProjectReference
+      Include="..\SegaAgent\SegaAgent.csproj" />
+
+  </ItemGroup>
+
+
+  <!-- ===================================================== -->
+  <!-- UI -->
+  <!-- ===================================================== -->
+
+  <ItemGroup>
+
+    <PackageReference
+      Include="MaterialDesignThemes"
+      Version="5.3.2" />
+
+  </ItemGroup>
+
+
+  <!-- ===================================================== -->
+  <!-- DEPENDENCY INJECTION / HOST -->
+  <!-- ===================================================== -->
+
+  <ItemGroup>
+
+    <PackageReference
+      Include="Microsoft.Extensions.DependencyInjection"
+      Version="10.0.10" />
+
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
+
+  </ItemGroup>
+
+</Project>
