@@ -15,15 +15,15 @@ public sealed class AttentionManager
 
     private static readonly TimeSpan
         MinimumUserInactivity =
-            TimeSpan.FromMinutes(10);
+            TimeSpan.FromMinutes(1);
 
     private static readonly TimeSpan
         AutonomousCooldown =
-            TimeSpan.FromMinutes(10);
+            TimeSpan.FromMinutes(1);
 
     private static readonly TimeSpan
         PerceptionEventCooldown =
-            TimeSpan.FromMinutes(5);
+            TimeSpan.FromMinutes(1);
 
 
     private readonly AgentActivityTracker _activity;

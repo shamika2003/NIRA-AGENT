@@ -39,7 +39,7 @@ public sealed record PerceptionAgentRequest(
 
 
 // =========================================================
-// PROACTIVE / COMPANION
+// PROACTIVE
 // =========================================================
 
 public sealed record ProactiveAgentRequest(

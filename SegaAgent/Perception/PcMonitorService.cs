@@ -2,6 +2,7 @@
  * filename: PcMonitorService.cs
  */
 
+using System.Diagnostics;
 using Microsoft.Extensions.Hosting;
 using SegaAgent.Agent;
 using SegaAgent.PC.Awareness;
@@ -26,11 +27,8 @@ public sealed class PcMonitorService : BackgroundService
         AgentCore agent)
     {
         _pcAwareness = pcAwareness;
-
         _analyzer = analyzer;
-
         _attention = attention;
-
         _agent = agent;
     }
 
@@ -38,6 +36,10 @@ public sealed class PcMonitorService : BackgroundService
     protected override async Task ExecuteAsync(
         CancellationToken stoppingToken)
     {
+        Debug.WriteLine(
+            "[PcMonitor] SERVICE STARTED");
+
+
         PcState? previousState = null;
 
 
@@ -47,6 +49,12 @@ public sealed class PcMonitorService : BackgroundService
             {
                 var currentState =
                     _pcAwareness.Read();
+
+
+                Debug.WriteLine(
+                    $"[PcMonitor] " +
+                    $"App='{currentState.ActiveApplication}' | " +
+                    $"Idle={currentState.UserIdleTime.TotalSeconds:F0}s");
 
 
                 // =================================================
@@ -61,18 +69,44 @@ public sealed class PcMonitorService : BackgroundService
 
                 if (perception != null)
                 {
-                    if (_attention.TryAcceptPerception(
-                            perception))
+                    Debug.WriteLine(
+                        $"[PcMonitor] EVENT DETECTED: " +
+                        $"{perception.Type}");
+
+
+                    var accepted =
+                        _attention.TryAcceptPerception(
+                            perception);
+
+
+                    Debug.WriteLine(
+                        $"[PcMonitor] " +
+                        $"Attention accepted = {accepted}");
+
+
+                    if (accepted)
                     {
+                        Debug.WriteLine(
+                            "[PcMonitor] " +
+                            "STARTING PERCEPTION AGENT");
+
+
                         await foreach (
                             var chunk
                             in _agent.ProcessPerceptionAsync(
                                 perception,
                                 stoppingToken))
                         {
-                            // AgentCore publishes autonomous
-                            // output to the UI.
+                            Debug.WriteLine(
+                                $"[PcMonitor] " +
+                                $"Agent chunk: " +
+                                $"{chunk.Type}");
                         }
+
+
+                        Debug.WriteLine(
+                            "[PcMonitor] " +
+                            "PERCEPTION AGENT FINISHED");
                     }
                 }
 
@@ -86,6 +120,12 @@ public sealed class PcMonitorService : BackgroundService
                         out var pending) &&
                     pending != null)
                 {
+                    Debug.WriteLine(
+                        $"[PcMonitor] " +
+                        $"PROCESSING PENDING EVENT: " +
+                        $"{pending.Type}");
+
+
                     await foreach (
                         var chunk
                         in _agent.ProcessPerceptionAsync(
@@ -106,8 +146,31 @@ public sealed class PcMonitorService : BackgroundService
             }
             catch (OperationCanceledException)
             {
+                Debug.WriteLine(
+                    "[PcMonitor] SERVICE CANCELED");
+
                 break;
             }
+            catch (Exception ex)
+            {
+                // IMPORTANT:
+                //
+                // Do not allow one unexpected monitoring
+                // exception to silently kill the monitoring
+                // loop.
+
+                Debug.WriteLine(
+                    $"[PcMonitor] ERROR: {ex}");
+
+
+                await Task.Delay(
+                    TimeSpan.FromSeconds(5),
+                    stoppingToken);
+            }
         }
+
+
+        Debug.WriteLine(
+            "[PcMonitor] SERVICE STOPPED");
     }
 }

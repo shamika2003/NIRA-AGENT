@@ -35,7 +35,7 @@ public sealed class CompanionTimerService : BackgroundService
     {
         using var timer =
             new PeriodicTimer(
-                TimeSpan.FromMinutes(10));
+                TimeSpan.FromMinutes(1));
 
 
         while (

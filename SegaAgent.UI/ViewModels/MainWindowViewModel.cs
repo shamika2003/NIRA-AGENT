@@ -11,9 +11,12 @@ using SegaAgent.Voice;
 
 namespace SegaAgent.UI.ViewModels;
 
-public sealed class MainWindowViewModel : INotifyPropertyChanged
+public sealed class MainWindowViewModel
+    : INotifyPropertyChanged, IDisposable
 {
     private readonly AgentCore _agent;
+
+    private readonly AgentResponseDispatcher _dispatcher;
 
     private readonly VoiceQueue _voiceQueue;
 
@@ -21,22 +24,27 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     private readonly AsyncRelayCommand _sendCommand;
 
+    private readonly CancellationTokenSource _shutdown =
+        new();
+
+    private readonly Task _backgroundResponseTask;
+
     private string _messageInput = string.Empty;
 
     private bool _isProcessing;
 
 
-    // ==========================================
+    // =========================================================
     // MESSAGES
-    // ==========================================
+    // =========================================================
 
     public ObservableCollection<ChatMessageViewModel> Messages { get; }
         = new();
 
 
-    // ==========================================
+    // =========================================================
     // MESSAGE INPUT
-    // ==========================================
+    // =========================================================
 
     public string MessageInput
     {
@@ -45,24 +53,25 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         set
         {
             if (_messageInput == value)
+            {
                 return;
+            }
 
             _messageInput = value;
 
             OnPropertyChanged();
 
             OnPropertyChanged(
-                nameof(CanSend)
-            );
+                nameof(CanSend));
 
             _sendCommand.RaiseCanExecuteChanged();
         }
     }
 
 
-    // ==========================================
+    // =========================================================
     // PROCESSING
-    // ==========================================
+    // =========================================================
 
     public bool IsProcessing
     {
@@ -71,49 +80,52 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         private set
         {
             if (_isProcessing == value)
+            {
                 return;
+            }
 
             _isProcessing = value;
 
             OnPropertyChanged();
 
             OnPropertyChanged(
-                nameof(CanSend)
-            );
+                nameof(CanSend));
 
             _sendCommand.RaiseCanExecuteChanged();
         }
     }
 
 
-    // ==========================================
+    // =========================================================
     // CAN SEND
-    // ==========================================
+    // =========================================================
 
     public bool CanSend =>
         !IsProcessing &&
         !string.IsNullOrWhiteSpace(
-            MessageInput
-        );
+            MessageInput);
 
 
-    // ==========================================
+    // =========================================================
     // COMMAND
-    // ==========================================
+    // =========================================================
 
     public ICommand SendCommand =>
         _sendCommand;
 
 
-    // ==========================================
+    // =========================================================
     // CONSTRUCTOR
-    // ==========================================
+    // =========================================================
 
     public MainWindowViewModel(
         AgentCore agent,
+        AgentResponseDispatcher dispatcher,
         VoiceQueue voiceQueue)
     {
         _agent = agent;
+
+        _dispatcher = dispatcher;
 
         _voiceQueue = voiceQueue;
 
@@ -123,153 +135,67 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         _sendCommand =
             new AsyncRelayCommand(
                 SendMessageAsync,
-                () => CanSend
-            );
+                () => CanSend);
+
+        // -----------------------------------------------------
+        // Start listening for accepted background agent output.
+        // -----------------------------------------------------
+
+        _backgroundResponseTask =
+            ProcessBackgroundResponsesAsync();
     }
 
 
-    // ==========================================
-    // SEND MESSAGE
-    // ==========================================
+    // =========================================================
+    // USER MESSAGE
+    // =========================================================
 
     private async Task SendMessageAsync()
     {
         var input =
             MessageInput.Trim();
 
-
         if (string.IsNullOrWhiteSpace(input))
+        {
             return;
-
-
-        // ==========================================
-        // CLEAR INPUT
-        // ==========================================
+        }
 
         MessageInput =
             string.Empty;
 
-
-        // ==========================================
-        // START PROCESSING
-        // ==========================================
-
         IsProcessing =
             true;
-
-
-        // ==========================================
-        // USER MESSAGE
-        // ==========================================
 
         var userMessage =
             new ChatMessageViewModel(
                 "user",
-                input
-            );
-
+                input);
 
         Messages.Add(
-            userMessage
-        );
-
-
-        // ==========================================
-        // ASSISTANT PLACEHOLDER
-        //
-        // IMPORTANT:
-        //
-        // Start with empty content.
-        //
-        // We no longer use "Thinking..."
-        // as the actual message content because
-        // streamed text will be inserted here.
-        // ==========================================
+            userMessage);
 
         var assistantMessage =
             new ChatMessageViewModel(
                 "assistant",
-                string.Empty
-            );
-
+                string.Empty);
 
         Messages.Add(
-            assistantMessage
-        );
-
+            assistantMessage);
 
         try
         {
-            // ==========================================
-            // STREAMING AGENT
-            // ==========================================
-
             await foreach (
-     var chunk
-     in _agent.ProcessStreamAsync(
-         input))
+                var chunk
+                in _agent.ProcessStreamAsync(
+                    input,
+                    _shutdown.Token))
             {
-                // ==========================================
-                // TEXT
-                // ==========================================
-
-                if (chunk.Type ==
-                    AgentStreamChunkType.Text)
-                {
-                    assistantMessage.Content +=
-                        chunk.Content;
-
-
-                    // ==========================================
-                    // TTS SENTENCE CHUNKING
-                    // ==========================================
-
-                    var speechParts =
-                        _speechChunker.Add(
-                            chunk.Content
-                        );
-
-
-                    foreach (var speechPart in speechParts)
-                    {
-                        _voiceQueue.Enqueue(
-                            speechPart
-                        );
-                    }
-                }
-
-
-                // ==========================================
-                // COMPLETED
-                // ==========================================
-
-                if (chunk.Type ==
-                    AgentStreamChunkType.Completed)
-                {
-                    // Nothing required here.
-                }
+                HandleChunk(
+                    assistantMessage,
+                    chunk);
             }
 
-
-            // ==========================================
-            // FLUSH REMAINING SPEECH
-            // ==========================================
-
-            var remainingSpeech =
-                _speechChunker.Complete();
-
-            if (!string.IsNullOrWhiteSpace(
-                    remainingSpeech))
-            {
-                _voiceQueue.Enqueue(
-                    remainingSpeech
-                );
-            }
-
-
-            // ==========================================
-            // EMPTY RESPONSE SAFETY
-            // ==========================================
+            FlushSpeech();
 
             if (string.IsNullOrWhiteSpace(
                     assistantMessage.Content))
@@ -290,19 +216,161 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
         finally
         {
-            // ==========================================
-            // FINISHED
-            // ==========================================
-
             IsProcessing =
                 false;
         }
     }
 
 
-    // ==========================================
+    // =========================================================
+    // BACKGROUND RESPONSES
+    //
+    // This is the UI-side consumer.
+    //
+    // IMPORTANT:
+    //
+    // These are NOT treated as a different AI response.
+    //
+    // AgentCore already performed the exact same:
+    //
+    // Planner → Action → Responder
+    //
+    // pipeline.
+    //
+    // We only deliver the resulting stream into the UI.
+    // =========================================================
+
+    private async Task ProcessBackgroundResponsesAsync()
+    {
+        try
+        {
+            await foreach (
+                var response
+                in _dispatcher.ReadAllAsync(
+                    _shutdown.Token))
+            {
+                await System.Windows.Application.Current
+                    .Dispatcher
+                    .InvokeAsync(
+                        () =>
+                        {
+                            HandleBackgroundResponse(
+                                response);
+                        });
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal shutdown.
+        }
+    }
+
+
+    // =========================================================
+    // BACKGROUND RESPONSE
+    // =========================================================
+
+    private ChatMessageViewModel? _backgroundMessage;
+
+    private AgentRequestSource? _backgroundSource;
+
+
+    private void HandleBackgroundResponse(
+        AgentResponse response)
+    {
+        // -----------------------------------------------------
+        // New background response.
+        // -----------------------------------------------------
+
+        if (_backgroundMessage == null ||
+            _backgroundSource != response.Source)
+        {
+            _backgroundSource =
+                response.Source;
+
+            _backgroundMessage =
+                new ChatMessageViewModel(
+                    "assistant",
+                    string.Empty);
+
+            Messages.Add(
+                _backgroundMessage);
+        }
+
+
+        HandleChunk(
+            _backgroundMessage,
+            response.Chunk);
+
+
+        // -----------------------------------------------------
+        // Response finished.
+        // -----------------------------------------------------
+
+        if (response.Chunk.Type ==
+            AgentStreamChunkType.Completed)
+        {
+            FlushSpeech();
+
+            _backgroundMessage =
+                null;
+
+            _backgroundSource =
+                null;
+        }
+    }
+
+
+    // =========================================================
+    // HANDLE CHUNK
+    // =========================================================
+
+    private void HandleChunk(
+        ChatMessageViewModel message,
+        AgentStreamChunk chunk)
+    {
+        if (chunk.Type ==
+            AgentStreamChunkType.Text)
+        {
+            message.Content +=
+                chunk.Content;
+
+            var speechParts =
+                _speechChunker.Add(
+                    chunk.Content);
+
+            foreach (
+                var speechPart
+                in speechParts)
+            {
+                _voiceQueue.Enqueue(
+                    speechPart);
+            }
+        }
+    }
+
+
+    // =========================================================
+    // FLUSH SPEECH
+    // =========================================================
+
+    private void FlushSpeech()
+    {
+        var remaining =
+            _speechChunker.Complete();
+
+        if (!string.IsNullOrWhiteSpace(
+                remaining))
+        {
+            _voiceQueue.Enqueue(
+                remaining);
+        }
+    }
+
+
+    // =========================================================
     // PROPERTY CHANGED
-    // ==========================================
+    // =========================================================
 
     public event PropertyChangedEventHandler?
         PropertyChanged;
@@ -315,8 +383,28 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         PropertyChanged?.Invoke(
             this,
             new PropertyChangedEventArgs(
-                propertyName
-            )
-        );
+                propertyName));
+    }
+
+
+    // =========================================================
+    // DISPOSE
+    // =========================================================
+
+    public void Dispose()
+    {
+        _shutdown.Cancel();
+
+        try
+        {
+            _backgroundResponseTask
+                .GetAwaiter()
+                .GetResult();
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        _shutdown.Dispose();
     }
 }

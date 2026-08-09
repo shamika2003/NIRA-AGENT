@@ -12,6 +12,7 @@ using SegaAgent.AI.Planner;
 using SegaAgent.AI.Responder;
 using SegaAgent.Agent;
 using SegaAgent.Conversation;
+using SegaAgent.Perception;
 using SegaAgent.UI.Companion;
 using SegaAgent.UI.ViewModels;
 using SegaAgent.Voice;
@@ -95,18 +96,47 @@ public partial class App : WpfApplication
             //
             // This MUST be singleton.
             //
-            // AgentCore, perception and proactive systems need
-            // to share the same activity state.
+            // AgentCore, perception and proactive systems all
+            // need to share the exact same activity state.
             // =================================================
 
             builder.Services.AddSingleton<AgentActivityTracker>();
 
 
-            // =================================================
+            // =========================================================
             // AGENT CORE
-            // =================================================
+            // =========================================================
 
             builder.Services.AddSingleton<AgentCore>();
+
+            builder.Services.AddSingleton<AgentResponseDispatcher>();
+
+
+            // =================================================
+            // PERCEPTION SYSTEM
+            //
+            // AttentionManager:
+            // Controls whether Sega is allowed to interrupt
+            // the user.
+            //
+            // PerceptionAnalyzer:
+            // Converts PC state changes into meaningful
+            // perception events.
+            //
+            // PcMonitorService:
+            // Continuously monitors the PC.
+            //
+            // CompanionTimerService:
+            // Performs scheduled proactive companion checks.
+            // =================================================
+
+            builder.Services.AddSingleton<AttentionManager>();
+
+            builder.Services.AddSingleton<PerceptionAnalyzer>();
+
+            builder.Services.AddHostedService<PcMonitorService>();
+
+            builder.Services.AddHostedService<CompanionTimerService>();
 
 
             // =================================================
@@ -136,6 +166,17 @@ public partial class App : WpfApplication
                 builder.Build();
 
 
+            // =================================================
+            // START HOST
+            //
+            // This starts:
+            //
+            // - PcMonitorService
+            // - CompanionTimerService
+            //
+            // in addition to the rest of the application.
+            // =================================================
+
             await _host.StartAsync();
 
 
@@ -162,7 +203,7 @@ public partial class App : WpfApplication
 
 
             // =================================================
-            // COMPANION
+            // COMPANION WINDOW
             // =================================================
 
             var voiceQueue =
