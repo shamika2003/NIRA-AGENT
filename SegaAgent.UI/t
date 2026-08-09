@@ -1,82 +1,290 @@
-<!--
- filename: SegaAgent.csproj
--->
 
-<Project Sdk="Microsoft.NET.Sdk">
+using Microsoft.Extensions.Hosting;
+using SegaAgent.Agent;
+using SegaAgent.PC.Awareness;
 
-  <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-  </PropertyGroup>
+namespace SegaAgent.Perception;
 
+public sealed class CompanionTimerService : BackgroundService
+{
+private readonly PcAwarenessService \_pcAwareness;
 
-  <!-- ===================================================== -->
-  <!-- PIPER RUNTIME -->
-  <!-- ===================================================== -->
-
-  <ItemGroup>
-
-    <!--
-      Copy the complete Piper directory.
-
-      Piper depends on more than piper.exe.
-      This includes:
-        - ONNX Runtime
-        - phonemization DLLs
-        - espeak-ng
-        - espeak-ng-data
-        - model files
-        - configuration
-    -->
-
-    <Content Include="Piper\**\*">
-
-      <CopyToOutputDirectory>
-        PreserveNewest
-      </CopyToOutputDirectory>
-
-    </Content>
-
-  </ItemGroup>
+```
+private readonly AgentCore _agent;
 
 
-  <!-- ===================================================== -->
-  <!-- SEGA PROMPTS -->
-  <!-- ===================================================== -->
+public CompanionTimerService(
+    PcAwarenessService pcAwareness,
+    AgentCore agent)
+{
+    _pcAwareness = pcAwareness;
 
-  <ItemGroup>
-
-    <Content Include="Prompt\sega_personality.yaml">
-
-      <CopyToOutputDirectory>
-        PreserveNewest
-      </CopyToOutputDirectory>
-
-    </Content>
+    _agent = agent;
+}
 
 
-    <Content Include="Prompt\responder.yaml">
+protected override async Task ExecuteAsync(
+    CancellationToken stoppingToken)
+{
 
-      <CopyToOutputDirectory>
-        PreserveNewest
-      </CopyToOutputDirectory>
+    while (!stoppingToken.IsCancellationRequested)
+    {
 
-    </Content>
+        await Task.Delay(
+            TimeSpan.FromMinutes(5),
+            stoppingToken);
 
-  </ItemGroup>
+
+        var currentState =
+            _pcAwareness.Read();
 
 
-  <!-- ===================================================== -->
-  <!-- AUDIO -->
-  <!-- ===================================================== -->
+        var perception =
+            new PerceptionEvent
+            {
+                Type =
+                    "CompanionCheck",
 
-  <ItemGroup>
 
-    <PackageReference
-      Include="NAudio"
-      Version="2.3.0" />
+                Description =
+                    "Periodic companion check. Talk naturally with the user.",
 
-  </ItemGroup>
 
-</Project>
+                CurrentState =
+                    currentState
+            };
+
+
+        await foreach(
+            var chunk
+            in _agent.ProcessPerceptionAsync(
+                perception,
+                stoppingToken))
+        {
+            // nothing here
+            // AgentCore publishes final response
+        }
+
+    }
+
+}
+```
+
+}
+
+
+
+/\*
+
+- filename: PcMonitorService.cs
+  \*/
+
+using Microsoft.Extensions.Hosting;
+using SegaAgent.Agent;
+using SegaAgent.PC.Awareness;
+
+namespace SegaAgent.Perception;
+
+public sealed class PcMonitorService : BackgroundService
+{
+private readonly PcAwarenessService \_pcAwareness;
+
+```
+private readonly PerceptionAnalyzer _analyzer;
+
+private readonly AgentCore _agent;
+
+
+public event Action<AgentStreamChunk>? OnAgentOutput;
+
+
+
+public PcMonitorService(
+    PcAwarenessService pcAwareness,
+    PerceptionAnalyzer analyzer,
+    AgentCore agent)
+{
+    _pcAwareness = pcAwareness;
+
+    _analyzer = analyzer;
+
+    _agent = agent;
+}
+
+
+
+protected override async Task ExecuteAsync(
+    CancellationToken stoppingToken)
+{
+
+    PcState? previousState = null;
+
+
+
+    while (!stoppingToken.IsCancellationRequested)
+    {
+
+        PcState currentState =
+            _pcAwareness.Read();
+
+
+
+        PerceptionEvent? perception =
+            _analyzer.Analyze(
+                previousState,
+                currentState);
+
+
+
+        if (perception != null)
+        {
+
+            await foreach(
+                var chunk
+                in _agent.ProcessPerceptionAsync(
+                    perception,
+                    stoppingToken))
+            {
+
+                OnAgentOutput?.Invoke(
+                    chunk
+                );
+
+            }
+
+        }
+
+
+
+        previousState =
+            currentState;
+
+
+
+        await Task.Delay(
+            TimeSpan.FromSeconds(5),
+            stoppingToken);
+
+    }
+
+}
+```
+
+}
+
+
+
+/\*
+
+- filename: PerceptionAnalyzer.cs
+  \*/
+
+using SegaAgent.PC.Awareness;
+
+namespace SegaAgent.Perception;
+
+public sealed class PerceptionAnalyzer
+{
+
+```
+public PerceptionEvent? Analyze(
+    PcState? previous,
+    PcState current)
+{
+
+    if(previous == null)
+    {
+        return null;
+    }
+
+
+
+    // =================================================
+    // APPLICATION CHANGE
+    // =================================================
+
+
+    if(previous.ActiveApplication
+        != current.ActiveApplication)
+    {
+
+        return new PerceptionEvent
+        {
+            Type =
+                "ApplicationChanged",
+
+
+            Description =
+                $"User changed application from " +
+                $"{previous.ActiveApplication} " +
+                $"to {current.ActiveApplication}",
+
+
+            CurrentState =
+                current
+        };
+
+    }
+
+
+
+
+    // =================================================
+    // LONG IDLE
+    // =================================================
+
+
+    if(current.UserIdleTime.TotalMinutes > 30)
+    {
+
+        return new PerceptionEvent
+        {
+            Type =
+                "UserIdle",
+
+
+            Description =
+                "User has been inactive for more than 30 minutes.",
+
+
+            CurrentState =
+                current
+        };
+
+    }
+
+
+
+    return null;
+}
+```
+
+}
+
+
+
+/\*
+
+- filename: PerceptionEvent.cs
+  \*/
+
+using SegaAgent.PC.Awareness;
+
+namespace SegaAgent.Perception;
+
+public sealed class PerceptionEvent
+{
+
+```
+public string Type { get; init; } =
+    string.Empty;
+
+
+public string Description { get; init; } =
+    string.Empty;
+
+
+public PcState CurrentState { get; init; } = null!;
+```
+
+}

@@ -9,11 +9,16 @@ using SegaAgent.AI.Planner;
 using SegaAgent.AI.Responder;
 using SegaAgent.Conversation;
 using SegaAgent.PC.Awareness;
+using SegaAgent.Perception;
 
 namespace SegaAgent.Agent;
 
-public class AgentCore
+public sealed class AgentCore
 {
+    // =========================================================
+    // DEPENDENCIES
+    // =========================================================
+
     private readonly AgentPlanner _planner;
 
     private readonly AgentResponder _responder;
@@ -21,6 +26,49 @@ public class AgentCore
     private readonly ConversationManager _conversation;
 
     private readonly PcAwarenessService _pcAwareness;
+
+    private readonly AgentActivityTracker _activity;
+
+
+    // =========================================================
+    // AGENT PROCESSING LOCK
+    //
+    // Only one AI request should actively run at a time.
+    //
+    // User requests have priority.
+    //
+    // Autonomous requests use TryWait() and therefore do not
+    // sit in a queue waiting behind a user conversation.
+    // =========================================================
+
+    private readonly SemaphoreSlim _processingLock =
+        new(1, 1);
+
+
+    // =========================================================
+    // AUTONOMOUS CANCELLATION
+    //
+    // If Sega is making a proactive/perception response and
+    // the user suddenly talks to Sega, the autonomous request
+    // should stop.
+    // =========================================================
+
+    private readonly object _autonomousLock =
+        new();
+
+    private CancellationTokenSource? _autonomousCancellation;
+
+
+    // =========================================================
+    // AUTONOMOUS OUTPUT
+    //
+    // Perception / proactive services can run in the background
+    // without knowing anything about the WPF UI.
+    //
+    // MainWindowViewModel can subscribe to this event.
+    // =========================================================
+
+    public event Action<AgentStreamChunk>? AutonomousOutput;
 
 
     // =========================================================
@@ -31,7 +79,8 @@ public class AgentCore
         AgentPlanner planner,
         AgentResponder responder,
         ConversationManager conversation,
-        PcAwarenessService pcAwareness)
+        PcAwarenessService pcAwareness,
+        AgentActivityTracker activity)
     {
         _planner = planner;
 
@@ -40,19 +89,354 @@ public class AgentCore
         _conversation = conversation;
 
         _pcAwareness = pcAwareness;
+
+        _activity = activity;
+    }
+
+
+    // =========================================================
+    // NORMAL NON-STREAMING PROCESS
+    //
+    // Kept for compatibility with older callers.
+    //
+    // New UI code should use ProcessStreamAsync().
+    // =========================================================
+
+    public async Task<string> ProcessAsync(
+        string userInput,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(userInput))
+        {
+            return string.Empty;
+        }
+
+
+        // =====================================================
+        // USER ACTIVITY
+        // =====================================================
+
+        _activity.RecordUserInteraction();
+
+
+        // =====================================================
+        // USER ALWAYS HAS PRIORITY
+        //
+        // If Sega is currently making an autonomous response,
+        // stop it.
+        // =====================================================
+
+        CancelAutonomousProcessing();
+
+
+        await _processingLock.WaitAsync(
+            cancellationToken);
+
+
+        _activity.BeginProcessing();
+
+
+        try
+        {
+            return await ProcessUserNonStreamingAsync(
+                userInput,
+                cancellationToken);
+        }
+        finally
+        {
+            _activity.EndProcessing();
+
+            _processingLock.Release();
+        }
+    }
+
+
+    // =========================================================
+    // USER STREAMING PROCESS
+    //
+    // Main UI pipeline.
+    //
+    // User
+    //   ↓
+    // Build request
+    //   ↓
+    // PC context
+    //   ↓
+    // Conversation context
+    //   ↓
+    // Planner
+    //   ↓
+    // Responder
+    //   ↓
+    // Streaming output
+    // =========================================================
+
+    public async IAsyncEnumerable<AgentStreamChunk>
+        ProcessStreamAsync(
+            string userInput,
+            [EnumeratorCancellation]
+            CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(userInput))
+        {
+            yield break;
+        }
+
+
+        // =====================================================
+        // USER ACTIVITY
+        //
+        // This must happen immediately.
+        //
+        // Even if the planner takes several seconds, the
+        // perception system now knows the user just interacted
+        // with Sega.
+        // =====================================================
+
+        _activity.RecordUserInteraction();
+
+
+        // =====================================================
+        // USER HAS PRIORITY
+        //
+        // Cancel autonomous perception/proactive processing.
+        // =====================================================
+
+        CancelAutonomousProcessing();
+
+
+        // =====================================================
+        // WAIT FOR ANY EXISTING AGENT REQUEST
+        // =====================================================
+
+        await _processingLock.WaitAsync(
+            cancellationToken);
+
+
+        _activity.BeginProcessing();
+
+
+        try
+        {
+            await foreach (
+                var chunk
+                in ProcessRequestAsync(
+                    new UserAgentRequest(
+                        userInput),
+                    cancellationToken))
+            {
+                yield return chunk;
+            }
+        }
+        finally
+        {
+            _activity.EndProcessing();
+
+            _processingLock.Release();
+        }
+    }
+
+
+    // =========================================================
+    // PERCEPTION PROCESS
+    // =========================================================
+
+    public async IAsyncEnumerable<AgentStreamChunk>
+        ProcessPerceptionAsync(
+            PerceptionEvent perception,
+            [EnumeratorCancellation]
+        CancellationToken cancellationToken = default)
+    {
+        if (perception == null)
+            yield break;
+
+
+        // Autonomous perception must never wait behind
+        // an active user request.
+        if (!_processingLock.Wait(0))
+            yield break;
+
+
+        _activity.BeginProcessing();
+
+
+        CancellationTokenSource?
+            autonomousCancellation = null;
+
+
+        try
+        {
+            autonomousCancellation =
+                CreateAutonomousCancellationSource(
+                    cancellationToken);
+        }
+        catch
+        {
+            _activity.EndProcessing();
+
+            _processingLock.Release();
+
+            throw;
+        }
+
+
+        // ---------------------------------------------------------
+        // IMPORTANT:
+        //
+        // No catch block surrounds yield.
+        // The async stream itself is allowed to propagate
+        // OperationCanceledException.
+        // ---------------------------------------------------------
+
+        try
+        {
+            await foreach (
+                var chunk
+                in ProcessRequestAsync(
+                    new PerceptionAgentRequest(
+                        perception),
+                    autonomousCancellation.Token))
+            {
+                PublishAutonomousOutput(chunk);
+
+                yield return chunk;
+            }
+        }
+        finally
+        {
+            ClearAutonomousCancellation(
+                autonomousCancellation);
+
+            autonomousCancellation.Dispose();
+
+            _activity.RecordAutonomousActivity();
+
+            _activity.EndProcessing();
+
+            _processingLock.Release();
+        }
     }
 
     // =========================================================
-    // STREAMING PROCESS
+    // PROACTIVE PROCESS
     // =========================================================
 
-    public async IAsyncEnumerable<AgentStreamChunk> ProcessStreamAsync(
-        string userInput,
-        [EnumeratorCancellation]
+    public async IAsyncEnumerable<AgentStreamChunk>
+        ProcessProactiveAsync(
+            PerceptionEvent perception,
+            [EnumeratorCancellation]
         CancellationToken cancellationToken = default)
     {
+        if (perception == null)
+            yield break;
+
+
+        // Autonomous requests never wait behind another
+        // active agent request.
+        if (!_processingLock.Wait(0))
+            yield break;
+
+
+        _activity.BeginProcessing();
+
+
+        CancellationTokenSource?
+            autonomousCancellation = null;
+
+
+        try
+        {
+            autonomousCancellation =
+                CreateAutonomousCancellationSource(
+                    cancellationToken);
+        }
+        catch
+        {
+            _activity.EndProcessing();
+
+            _processingLock.Release();
+
+            throw;
+        }
+
+
+        try
+        {
+            await foreach (
+                var chunk
+                in ProcessRequestAsync(
+                    new ProactiveAgentRequest(
+                        perception),
+                    autonomousCancellation.Token))
+            {
+                PublishAutonomousOutput(chunk);
+
+                yield return chunk;
+            }
+        }
+        finally
+        {
+            ClearAutonomousCancellation(
+                autonomousCancellation);
+
+            autonomousCancellation.Dispose();
+
+            _activity.RecordAutonomousActivity();
+
+            _activity.EndProcessing();
+
+            _processingLock.Release();
+        }
+    }
+
+    // =========================================================
+    // INTERNAL REQUEST PIPELINE
+    //
+    // ALL request types eventually reach this method.
+    //
+    // User
+    // Perception
+    // Proactive
+    //
+    // all use the same:
+    //
+    // Context
+    //   ↓
+    // Planner
+    //   ↓
+    // Action layer
+    //   ↓
+    // Responder
+    //   ↓
+    // Conversation storage
+    // =========================================================
+
+    private async IAsyncEnumerable<AgentStreamChunk>
+        ProcessRequestAsync(
+            AgentRequest request,
+            [EnumeratorCancellation]
+            CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+
         // =====================================================
-        // 1. READ CURRENT PC STATE
+        // 1. BUILD REQUEST INPUT
+        // =====================================================
+
+        var input =
+            BuildInputContext(
+                request);
+
+
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            yield break;
+        }
+
+
+        // =====================================================
+        // 2. READ CURRENT PC STATE
         // =====================================================
 
         var pcState =
@@ -61,12 +445,20 @@ public class AgentCore
 
         var pcContext =
             PcContextFormatter.Format(
-                pcState
-            );
+                pcState);
+
+
+        cancellationToken.ThrowIfCancellationRequested();
 
 
         // =====================================================
-        // 2. BUILD CONTEXT
+        // 3. BUILD CONVERSATION CONTEXT
+        //
+        // IMPORTANT:
+        //
+        // This happens BEFORE adding the current user message.
+        //
+        // This preserves the previous behavior of AgentCore.
         // =====================================================
 
         var conversationContext =
@@ -74,56 +466,61 @@ public class AgentCore
 
 
         // =====================================================
-        // 3. STORE USER MESSAGE
+        // 4. STORE USER MESSAGE ONLY FOR USER REQUESTS
+        //
+        // Perception and proactive events are NOT fake user
+        // messages.
         // =====================================================
 
-        _conversation.AddUserMessage(
-            userInput
-        );
+        if (request is UserAgentRequest userRequest)
+        {
+            _conversation.AddUserMessage(
+                userRequest.UserInput);
+        }
 
 
         // =====================================================
-        // 4. PLAN
+        // 5. PLAN
         // =====================================================
 
-        var stopwatchPlanner = Stopwatch.StartNew();
+        var stopwatchPlanner =
+            Stopwatch.StartNew();
+
 
         var plannerResult =
             await _planner.PlanAsync(
-                userInput,
+                input,
                 pcContext,
-                cancellationToken
-            );
+                cancellationToken);
+
 
         stopwatchPlanner.Stop();
 
 
         Debug.WriteLine(
-    $"Planner Time: {stopwatchPlanner.ElapsedMilliseconds} ms"
-);
+            $"Planner Time: " +
+            $"{stopwatchPlanner.ElapsedMilliseconds} ms");
+
 
         cancellationToken.ThrowIfCancellationRequested();
 
 
         // =====================================================
-        // 5. ACTION / TOOL LAYER
+        // 6. ACTION / TOOL LAYER
         // =====================================================
 
-        var actionResult = "";
-
-
-        if (plannerResult.RequiresTools)
-        {
-            actionResult =
-                "The requested action could not be executed yet because the required tool is not implemented.";
-        }
+        var actionResult =
+            BuildActionResult(
+                plannerResult);
 
 
         // =====================================================
-        // 6. STREAM FINAL RESPONSE
+        // 7. STREAM RESPONSE
         // =====================================================
 
-        var stopwatchresponderStart = Stopwatch.StartNew();
+        var stopwatchResponder =
+            Stopwatch.StartNew();
+
 
         var assistantText =
             new StringBuilder();
@@ -132,7 +529,7 @@ public class AgentCore
         await foreach (
             var chunk
             in _responder.StreamResponseAsync(
-                userInput,
+                input,
                 plannerResult,
                 conversationContext,
                 pcContext,
@@ -142,9 +539,14 @@ public class AgentCore
             cancellationToken.ThrowIfCancellationRequested();
 
 
+            if (string.IsNullOrEmpty(chunk))
+            {
+                continue;
+            }
+
+
             assistantText.Append(
-                chunk
-            );
+                chunk);
 
 
             yield return new AgentStreamChunk
@@ -157,17 +559,20 @@ public class AgentCore
             };
         }
 
-        stopwatchresponderStart.Stop();
+
+        stopwatchResponder.Stop();
 
 
         Debug.WriteLine(
-    $"Responder Time: {stopwatchresponderStart.ElapsedMilliseconds} ms"
-);
+            $"Responder Time: " +
+            $"{stopwatchResponder.ElapsedMilliseconds} ms");
 
+
+        cancellationToken.ThrowIfCancellationRequested();
 
 
         // =====================================================
-        // 7. STORE COMPLETE RESPONSE
+        // 8. STORE COMPLETE ASSISTANT RESPONSE
         // =====================================================
 
         var completeResponse =
@@ -178,13 +583,12 @@ public class AgentCore
                 completeResponse))
         {
             _conversation.AddAssistantMessage(
-                completeResponse
-            );
+                completeResponse);
         }
 
 
         // =====================================================
-        // 8. SIGNAL COMPLETION
+        // 9. COMPLETION
         // =====================================================
 
         yield return new AgentStreamChunk
@@ -195,6 +599,308 @@ public class AgentCore
             Content =
                 completeResponse
         };
+    }
+
+
+    // =========================================================
+    // NON-STREAMING USER PROCESS
+    //
+    // Used only by the backwards-compatible ProcessAsync().
+    // =========================================================
+
+    private async Task<string>
+        ProcessUserNonStreamingAsync(
+            string userInput,
+            CancellationToken cancellationToken)
+    {
+        var request =
+            new UserAgentRequest(
+                userInput);
+
+
+        var input =
+            BuildInputContext(
+                request);
+
+
+        var pcState =
+            _pcAwareness.Read();
+
+
+        var pcContext =
+            PcContextFormatter.Format(
+                pcState);
+
+
+        var conversationContext =
+            BuildConversationContext();
+
+
+        _conversation.AddUserMessage(
+            userInput);
+
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+
+        var plannerResult =
+            await _planner.PlanAsync(
+                input,
+                pcContext,
+                cancellationToken);
+
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+
+        var actionResult =
+            BuildActionResult(
+                plannerResult);
+
+
+        var assistantText =
+            new StringBuilder();
+
+
+        await foreach (
+            var chunk
+            in _responder.StreamResponseAsync(
+                input,
+                plannerResult,
+                conversationContext,
+                pcContext,
+                actionResult,
+                cancellationToken))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            assistantText.Append(
+                chunk);
+        }
+
+
+        var response =
+            assistantText.ToString();
+
+
+        if (!string.IsNullOrWhiteSpace(
+                response))
+        {
+            _conversation.AddAssistantMessage(
+                response);
+        }
+
+
+        return response;
+    }
+
+
+    // =========================================================
+    // INPUT CONTEXT
+    //
+    // THIS IS THE CENTRAL REQUEST TRANSLATOR.
+    //
+    // Instead of:
+    //
+    // userInput = ""
+    // perception = null
+    //
+    // we explicitly know what kind of request we received.
+    // =========================================================
+
+    private static string BuildInputContext(
+        AgentRequest request)
+    {
+        return request switch
+        {
+            UserAgentRequest user =>
+                BuildUserInput(
+                    user.UserInput),
+
+
+            PerceptionAgentRequest perception =>
+                BuildPerceptionInput(
+                    perception.Perception),
+
+
+            ProactiveAgentRequest proactive =>
+                BuildProactiveInput(
+                    proactive.Perception),
+
+
+            _ =>
+                throw new ArgumentOutOfRangeException(
+                    nameof(request),
+                    request,
+                    "Unknown agent request type.")
+        };
+    }
+
+
+    // =========================================================
+    // USER INPUT
+    // =========================================================
+
+    private static string BuildUserInput(
+        string userInput)
+    {
+        return userInput.Trim();
+    }
+
+
+    // =========================================================
+    // PERCEPTION INPUT
+    // =========================================================
+
+    private static string BuildPerceptionInput(
+        PerceptionEvent perception)
+    {
+        return $"""
+            [SEGA PERCEPTION EVENT]
+
+            Event type:
+            {perception.Type}
+
+            Description:
+            {perception.Description}
+
+            This event was detected from the user's PC
+            environment.
+
+            Treat this as environmental context, not as a
+            direct user message.
+
+            Decide whether the event is actually worth
+            mentioning to the user.
+
+            If it is not useful or natural to mention,
+            respond briefly and naturally.
+            """;
+    }
+
+
+    // =========================================================
+    // PROACTIVE INPUT
+    // =========================================================
+
+    private static string BuildProactiveInput(
+        PerceptionEvent perception)
+    {
+        return $"""
+            [SEGA PROACTIVE COMPANION CHECK]
+
+            Reason:
+            {perception.Description}
+
+            This is an autonomous companion interaction.
+
+            The user has not interacted with Sega recently.
+
+            Speak naturally and conversationally.
+
+            Do not mention:
+            - internal timers
+            - perception systems
+            - activity trackers
+            - autonomous pipelines
+            - policies
+            - internal agent architecture
+
+            Do not force a conversation.
+
+            If there is nothing meaningful to say, keep the
+            response short and natural.
+            """;
+    }
+
+
+    // =========================================================
+    // ACTION RESULT
+    // =========================================================
+
+    private static string BuildActionResult(
+        PlannerResult plannerResult)
+    {
+        if (!plannerResult.RequiresTools)
+        {
+            return string.Empty;
+        }
+
+
+        return
+            "The requested action could not be executed yet " +
+            "because the required tool is not implemented.";
+    }
+
+
+    // =========================================================
+    // AUTONOMOUS CANCELLATION
+    // =========================================================
+
+    private CancellationTokenSource
+        CreateAutonomousCancellationSource(
+            CancellationToken externalToken)
+    {
+        var linked =
+            CancellationTokenSource.CreateLinkedTokenSource(
+                externalToken);
+
+
+        lock (_autonomousLock)
+        {
+            _autonomousCancellation =
+                linked;
+        }
+
+
+        return linked;
+    }
+
+
+    private void ClearAutonomousCancellation(
+        CancellationTokenSource? source)
+    {
+        lock (_autonomousLock)
+        {
+            if (ReferenceEquals(
+                    _autonomousCancellation,
+                    source))
+            {
+                _autonomousCancellation = null;
+            }
+        }
+    }
+
+
+    private void CancelAutonomousProcessing()
+    {
+        lock (_autonomousLock)
+        {
+            _autonomousCancellation?.Cancel();
+        }
+    }
+
+
+    // =========================================================
+    // AUTONOMOUS OUTPUT
+    // =========================================================
+
+    private void PublishAutonomousOutput(
+        AgentStreamChunk chunk)
+    {
+        try
+        {
+            AutonomousOutput?.Invoke(
+                chunk);
+        }
+        catch (Exception ex)
+        {
+            // UI subscribers should never be allowed to break
+            // the AgentCore processing pipeline.
+
+            Debug.WriteLine(
+                $"Autonomous output subscriber error: {ex}");
+        }
     }
 
 
@@ -215,20 +921,31 @@ public class AgentCore
 
 
         var lines =
-            new List<string>();
+            new List<string>(
+                messages.Count);
 
 
         foreach (var message in messages)
         {
             lines.Add(
-                $"{message.Role}: {message.Content}"
-            );
+                $"{message.Role}: {message.Content}");
         }
 
 
         return string.Join(
             Environment.NewLine,
-            lines
-        );
+            lines);
+    }
+
+
+    // =========================================================
+    // DISPOSE
+    // =========================================================
+
+    public void Dispose()
+    {
+        CancelAutonomousProcessing();
+
+        _processingLock.Dispose();
     }
 }

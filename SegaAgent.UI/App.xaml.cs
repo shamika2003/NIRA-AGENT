@@ -24,7 +24,6 @@ using WpfMessageBoxImage = System.Windows.MessageBoxImage;
 using WpfStartupEventArgs = System.Windows.StartupEventArgs;
 using WpfExitEventArgs = System.Windows.ExitEventArgs;
 
-
 namespace SegaAgent.UI;
 
 public partial class App : WpfApplication
@@ -54,6 +53,10 @@ public partial class App : WpfApplication
             builder.Services.AddSingleton<HttpClient>();
 
 
+            // =================================================
+            // OLLAMA
+            // =================================================
+
             builder.Services.AddSingleton<OllamaClient>(
                 sp =>
                     ActivatorUtilities.CreateInstance<OllamaClient>(
@@ -62,25 +65,67 @@ public partial class App : WpfApplication
             );
 
 
+            // =================================================
+            // AI
+            // =================================================
+
             builder.Services.AddSingleton<AgentPlanner>();
 
             builder.Services.AddSingleton<AgentResponder>();
 
+
+            // =================================================
+            // PC AWARENESS
+            // =================================================
+
             builder.Services.AddSingleton<PcAwarenessService>();
+
+
+            // =================================================
+            // CONVERSATION
+            // =================================================
+
+            builder.Services.AddSingleton<ConversationManager>();
+
+
+            // =================================================
+            // AGENT ACTIVITY
+            //
+            // IMPORTANT:
+            //
+            // This MUST be singleton.
+            //
+            // AgentCore, perception and proactive systems need
+            // to share the same activity state.
+            // =================================================
+
+            builder.Services.AddSingleton<AgentActivityTracker>();
+
+
+            // =================================================
+            // AGENT CORE
+            // =================================================
+
+            builder.Services.AddSingleton<AgentCore>();
+
+
+            // =================================================
+            // VOICE
+            // =================================================
 
             builder.Services.AddSingleton<
                 IVoiceService,
                 PiperVoiceService
             >();
 
-
             builder.Services.AddSingleton<VoiceQueue>();
 
+
+            // =================================================
+            // UI
+            // =================================================
+
             builder.Services.AddSingleton<MainWindowViewModel>();
-
-            builder.Services.AddSingleton<ConversationManager>();
-
-            builder.Services.AddSingleton<AgentCore>();
 
 
             // =================================================
@@ -120,11 +165,16 @@ public partial class App : WpfApplication
             // COMPANION
             // =================================================
 
-            var voiceQueue = _host.Services
-                .GetRequiredService<VoiceQueue>();
+            var voiceQueue =
+                _host.Services
+                    .GetRequiredService<VoiceQueue>();
+
 
             var companion =
-                new CompanionWindow(voiceQueue);
+                new CompanionWindow(
+                    voiceQueue
+                );
+
 
             companion.Show();
         }
