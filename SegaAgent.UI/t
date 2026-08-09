@@ -1,290 +1,125 @@
 
-using Microsoft.Extensions.Hosting;
-using SegaAgent.Agent;
-using SegaAgent.PC.Awareness;
-
-namespace SegaAgent.Perception;
-
-public sealed class CompanionTimerService : BackgroundService
-{
-private readonly PcAwarenessService \_pcAwareness;
-
-```
-private readonly AgentCore _agent;
-
-
-public CompanionTimerService(
-    PcAwarenessService pcAwareness,
-    AgentCore agent)
-{
-    _pcAwareness = pcAwareness;
-
-    _agent = agent;
-}
-
-
-protected override async Task ExecuteAsync(
-    CancellationToken stoppingToken)
-{
-
-    while (!stoppingToken.IsCancellationRequested)
-    {
-
-        await Task.Delay(
-            TimeSpan.FromMinutes(1),
-            stoppingToken);
-
-
-        var currentState =
-            _pcAwareness.Read();
-
-
-        var perception =
-            new PerceptionEvent
-            {
-                Type =
-                    "CompanionCheck",
-
-
-                Description =
-                    "Periodic companion check. Talk naturally with the user.",
-
-
-                CurrentState =
-                    currentState
-            };
-
-
-        await foreach(
-            var chunk
-            in _agent.ProcessPerceptionAsync(
-                perception,
-                stoppingToken))
-        {
-            // nothing here
-            // AgentCore publishes final response
-        }
-
-    }
-
-}
-```
-
-}
-
-
-
-/\*
-
-- filename: PcMonitorService.cs
-  \*/
-
-using Microsoft.Extensions.Hosting;
-using SegaAgent.Agent;
-using SegaAgent.PC.Awareness;
-
-namespace SegaAgent.Perception;
-
-public sealed class PcMonitorService : BackgroundService
-{
-private readonly PcAwarenessService \_pcAwareness;
-
-```
-private readonly PerceptionAnalyzer _analyzer;
-
-private readonly AgentCore _agent;
-
-
-public event Action<AgentStreamChunk>? OnAgentOutput;
-
-
-
-public PcMonitorService(
-    PcAwarenessService pcAwareness,
-    PerceptionAnalyzer analyzer,
-    AgentCore agent)
-{
-    _pcAwareness = pcAwareness;
-
-    _analyzer = analyzer;
-
-    _agent = agent;
-}
-
-
-
-protected override async Task ExecuteAsync(
-    CancellationToken stoppingToken)
-{
-
-    PcState? previousState = null;
-
-
-
-    while (!stoppingToken.IsCancellationRequested)
-    {
-
-        PcState currentState =
-            _pcAwareness.Read();
-
-
-
-        PerceptionEvent? perception =
-            _analyzer.Analyze(
-                previousState,
-                currentState);
-
-
-
-        if (perception != null)
-        {
-
-            await foreach(
-                var chunk
-                in _agent.ProcessPerceptionAsync(
-                    perception,
-                    stoppingToken))
-            {
-
-                OnAgentOutput?.Invoke(
-                    chunk
-                );
-
-            }
-
-        }
-
-
-
-        previousState =
-            currentState;
-
-
-
-        await Task.Delay(
-            TimeSpan.FromSeconds(5),
-            stoppingToken);
-
-    }
-
-}
-```
-
-}
-
-
-
-/\*
-
-- filename: PerceptionAnalyzer.cs
-  \*/
-
-using SegaAgent.PC.Awareness;
-
-namespace SegaAgent.Perception;
-
-public sealed class PerceptionAnalyzer
-{
-
-```
-public PerceptionEvent? Analyze(
-    PcState? previous,
-    PcState current)
-{
-
-    if(previous == null)
-    {
-        return null;
-    }
-
-
-
-    // =================================================
-    // APPLICATION CHANGE
-    // =================================================
-
-
-    if(previous.ActiveApplication
-        != current.ActiveApplication)
-    {
-
-        return new PerceptionEvent
-        {
-            Type =
-                "ApplicationChanged",
-
-
-            Description =
-                $"User changed application from " +
-                $"{previous.ActiveApplication} " +
-                $"to {current.ActiveApplication}",
-
-
-            CurrentState =
-                current
-        };
-
-    }
-
-
-
-
-    // =================================================
-    // LONG IDLE
-    // =================================================
-
-
-    if(current.UserIdleTime.TotalMinutes > 30)
-    {
-
-        return new PerceptionEvent
-        {
-            Type =
-                "UserIdle",
-
-
-            Description =
-                "User has been inactive for more than 30 minutes.",
-
-
-            CurrentState =
-                current
-        };
-
-    }
-
-
-
-    return null;
-}
-```
-
-}
-
-
-
-/\*
-
-- filename: PerceptionEvent.cs
-  \*/
-
-using SegaAgent.PC.Awareness;
-
-namespace SegaAgent.Perception;
-
-public sealed class PerceptionEvent
-{
-
-```
-public string Type { get; init; } =
-    string.Empty;
-
-
-public string Description { get; init; } =
-    string.Empty;
-
-
-public PcState CurrentState { get; init; } = null!;
-```
-
-}
+[PcMonitor] App='SegaAI' | Idle=0s
+[Perception] App='SegaAI' | Idle=0s
+[Perception] wasIdle=False, isIdle=False
+[PcMonitor] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=0s
+[Perception] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=0s
+[Perception] APPLICATION CHANGED: 'SegaAI' -> 'App.xaml.cs - SEGA-AGENT - Visual Studio Code'
+[PcMonitor] EVENT DETECTED: ApplicationChanged
+[PcMonitor] Attention accepted = False
+[PcMonitor] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=4s
+[Perception] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=4s
+[Perception] wasIdle=False, isIdle=False
+[PcMonitor] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=9s
+[Perception] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=9s
+[Perception] wasIdle=False, isIdle=False
+[PcMonitor] App='Search' | Idle=0s
+[Perception] App='Search' | Idle=0s
+[Perception] APPLICATION CHANGED: 'App.xaml.cs - SEGA-AGENT - Visual Studio Code' -> 'Search'
+[PcMonitor] EVENT DETECTED: ApplicationChanged
+[PcMonitor] Attention accepted = False
+[PcMonitor] App='' | Idle=0s
+[Perception] App='' | Idle=0s
+[Perception] APPLICATION CHANGED: 'Search' -> ''
+[PcMonitor] EVENT DETECTED: ApplicationChanged
+[PcMonitor] Attention accepted = False
+[PcMonitor] App='' | Idle=3s
+[Perception] App='' | Idle=3s
+[Perception] wasIdle=False, isIdle=False
+[PcMonitor] App='ChatGPT' | Idle=1s
+[Perception] App='ChatGPT' | Idle=1s
+[Perception] APPLICATION CHANGED: '' -> 'ChatGPT'
+[PcMonitor] EVENT DETECTED: ApplicationChanged
+[PcMonitor] Attention accepted = False
+[PcMonitor] App='ChatGPT' | Idle=0s
+[Perception] App='ChatGPT' | Idle=0s
+[Perception] wasIdle=False, isIdle=False
+[PcMonitor] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=4s
+[Perception] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=4s
+[Perception] APPLICATION CHANGED: 'ChatGPT' -> 'App.xaml.cs - SEGA-AGENT - Visual Studio Code'
+[PcMonitor] EVENT DETECTED: ApplicationChanged
+[PcMonitor] Attention accepted = False
+[PcMonitor] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=9s
+[Perception] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=9s
+[Perception] wasIdle=False, isIdle=False
+[PcMonitor] PROCESSING PENDING EVENT: ApplicationChanged
+Planner Time: 2234 ms
+Responder Time: 2824 ms
+[PcMonitor] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=19s
+[Perception] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=19s
+[Perception] wasIdle=False, isIdle=False
+[PcMonitor] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=24s
+[Perception] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=24s
+[Perception] wasIdle=False, isIdle=False
+[PcMonitor] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=29s
+[Perception] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=29s
+[Perception] wasIdle=False, isIdle=False
+[PcMonitor] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=1s
+[Perception] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=1s
+[Perception] wasIdle=False, isIdle=False
+[PcMonitor] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=1s
+[Perception] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=1s
+[Perception] wasIdle=False, isIdle=False
+[PcMonitor] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=6s
+[Perception] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=6s
+[Perception] wasIdle=False, isIdle=False
+[PcMonitor] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=11s
+[Perception] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=11s
+[Perception] wasIdle=False, isIdle=False
+[PcMonitor] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=16s
+[Perception] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=16s
+[Perception] wasIdle=False, isIdle=False
+[PcMonitor] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=21s
+[Perception] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=21s
+[Perception] wasIdle=False, isIdle=False
+[PcMonitor] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=26s
+[Perception] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=26s
+[Perception] wasIdle=False, isIdle=False
+[PcMonitor] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=31s
+[Perception] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=31s
+[Perception] wasIdle=False, isIdle=False
+[PcMonitor] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=36s
+[Perception] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=36s
+[Perception] wasIdle=False, isIdle=False
+[PcMonitor] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=41s
+[Perception] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=41s
+[Perception] wasIdle=False, isIdle=False
+[PcMonitor] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=46s
+[Perception] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=46s
+[Perception] wasIdle=False, isIdle=False
+[PcMonitor] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=51s
+[Perception] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=51s
+[Perception] wasIdle=False, isIdle=False
+[PcMonitor] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=56s
+[Perception] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=56s
+[Perception] wasIdle=False, isIdle=False
+[PcMonitor] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=61s
+[Perception] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=61s
+[Perception] wasIdle=False, isIdle=True
+[Perception] USER IDLE EVENT TRIGGERED
+[PcMonitor] EVENT DETECTED: UserIdle
+[PcMonitor] Attention accepted = True
+[PcMonitor] STARTING PERCEPTION AGENT
+Planner Time: 2333 ms
+27
+[PcMonitor] Agent chunk: Text
+Responder Time: 3038 ms
+[PcMonitor] Agent chunk: Completed
+[PcMonitor] PERCEPTION AGENT FINISHED
+[PcMonitor] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=71s
+[Perception] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=71s
+[Perception] wasIdle=True, isIdle=True
+[PcMonitor] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=76s
+[Perception] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=76s
+[Perception] wasIdle=True, isIdle=True
+[PcMonitor] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=0s
+[Perception] App='App.xaml.cs - SEGA-AGENT - Visual Studio Code' | Idle=0s
+[Perception] wasIdle=True, isIdle=False
+[PcMonitor] App='COMMIT_EDITMSG - SEGA-AGENT - Visual Studio Code' | Idle=0s
+[Perception] App='COMMIT_EDITMSG - SEGA-AGENT - Visual Studio Code' | Idle=0s
+[Perception] APPLICATION CHANGED: 'App.xaml.cs - SEGA-AGENT - Visual Studio Code' -> 'COMMIT_EDITMSG - SEGA-AGENT - Visual Studio Code'
+[PcMonitor] EVENT DETECTED: ApplicationChanged
+[PcMonitor] Attention accepted = False
+[PcMonitor] App='COMMIT_EDITMSG - SEGA-AGENT - Visual Studio Code' | Idle=0s
+[Perception] App='COMMIT_EDITMSG - SEGA-AGENT - Visual Studio Code' | Idle=0s
+[Perception] wasIdle=False, isIdle=False
