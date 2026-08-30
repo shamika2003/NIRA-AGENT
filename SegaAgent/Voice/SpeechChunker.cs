@@ -2,11 +2,20 @@
  * filename: SpeechChunker.cs
  */
 
+using System.Text;
+
 namespace SegaAgent.Voice;
 
 public sealed class SpeechChunker
 {
-    private readonly System.Text.StringBuilder _buffer = new();
+    // =========================================================
+    // BUFFER
+    // =========================================================
+
+    private readonly StringBuilder
+        _buffer =
+            new();
+
 
     // =========================================================
     // ADD STREAMING TEXT
@@ -15,77 +24,96 @@ public sealed class SpeechChunker
     public IReadOnlyList<string> Add(
         string text)
     {
-        var sentences =
-            new List<string>();
+        List<string> speechParts =
+            new();
 
-        if (string.IsNullOrEmpty(text))
+
+        if (string.IsNullOrEmpty(
+                text))
         {
-            return sentences;
+            return speechParts;
         }
 
-        _buffer.Append(text);
+
+        _buffer.Append(
+            text);
+
 
         while (true)
         {
-            var boundary =
+            int boundary =
                 FindSentenceBoundary(
-                    _buffer
-                );
+                    _buffer);
 
-            if (boundary < 0)
+
+            if (boundary <
+                0)
             {
                 break;
             }
 
-            var length =
-                boundary + 1;
 
-            var sentence =
+            int length =
+                boundary +
+                1;
+
+
+            string rawPart =
                 _buffer
                     .ToString(
                         0,
-                        length
-                    )
-                    .Trim();
+                        length);
+
 
             _buffer.Remove(
                 0,
-                length
-            );
+                length);
+
+
+            string speechPart =
+                SpeechTextSanitizer
+                    .Sanitize(
+                        rawPart);
+
 
             if (!string.IsNullOrWhiteSpace(
-                    sentence))
+                    speechPart))
             {
-                sentences.Add(sentence);
+                speechParts.Add(
+                    speechPart);
             }
         }
 
-        return sentences;
+
+        return speechParts;
     }
 
 
     // =========================================================
     // COMPLETE
-    //
-    // Call this when Ollama finishes streaming.
-    //
-    // This returns whatever text remains in the buffer.
     // =========================================================
 
     public string? Complete()
     {
-        var remaining =
-            _buffer
-                .ToString()
-                .Trim();
+        string rawRemaining =
+            _buffer.ToString();
+
 
         _buffer.Clear();
+
+
+        string remaining =
+            SpeechTextSanitizer
+                .Sanitize(
+                    rawRemaining);
+
 
         if (string.IsNullOrWhiteSpace(
                 remaining))
         {
             return null;
         }
+
 
         return remaining;
     }
@@ -106,44 +134,202 @@ public sealed class SpeechChunker
     // =========================================================
 
     private static int FindSentenceBoundary(
-        System.Text.StringBuilder buffer)
+        StringBuilder buffer)
     {
         for (
-            var i = 0;
+            int i = 0;
             i < buffer.Length;
             i++)
         {
-            var character =
+            char character =
                 buffer[i];
 
-            if (character != '.' &&
-                character != '!' &&
-                character != '?' &&
+
+            if (
+                character != '.'
+                &&
+                character != '!'
+                &&
+                character != '?'
+                &&
                 character != '\n')
             {
                 continue;
             }
 
-            // ---------------------------------------------
-            // Avoid breaking decimal numbers.
-            //
-            // Example:
+
+            // =================================================
+            // DECIMAL NUMBER
             //
             // 3.14
-            // ---------------------------------------------
+            // =================================================
 
-            if (character == '.' &&
-                i > 0 &&
-                i + 1 < buffer.Length &&
-                char.IsDigit(buffer[i - 1]) &&
-                char.IsDigit(buffer[i + 1]))
+            if (
+                character ==
+                    '.'
+                &&
+                i >
+                    0
+                &&
+                i +
+                    1 <
+                    buffer.Length
+                &&
+                char.IsDigit(
+                    buffer[
+                        i -
+                        1])
+                &&
+                char.IsDigit(
+                    buffer[
+                        i +
+                        1]))
             {
                 continue;
             }
 
+
+            // =================================================
+            // COMMON ABBREVIATION / INITIAL
+            //
+            // Avoid splitting:
+            //
+            // e.g.
+            // i.e.
+            // U.S.
+            //
+            // when another period follows very closely.
+            // =================================================
+
+            if (
+                character ==
+                    '.'
+                &&
+                LooksLikeAbbreviation(
+                    buffer,
+                    i))
+            {
+                continue;
+            }
+
+
             return i;
         }
 
+
         return -1;
+    }
+
+
+    // =========================================================
+    // ABBREVIATION CHECK
+    // =========================================================
+
+    private static bool LooksLikeAbbreviation(
+        StringBuilder buffer,
+        int periodIndex)
+    {
+        if (periodIndex <=
+            0)
+        {
+            return false;
+        }
+
+
+        char previous =
+            buffer[
+                periodIndex -
+                1];
+
+
+        if (!char.IsLetter(
+                previous))
+        {
+            return false;
+        }
+
+
+        /*
+         * Single-letter initial:
+         *
+         * U.S.
+         *
+         * First period should not terminate speech.
+         */
+
+        if (
+            periodIndex +
+                2 <
+                buffer.Length
+            &&
+            char.IsLetter(
+                buffer[
+                    periodIndex +
+                    1])
+            &&
+            buffer[
+                periodIndex +
+                2] ==
+                '.')
+        {
+            return true;
+        }
+
+
+        /*
+         * Short abbreviation fragment:
+         *
+         * e.g.
+         * i.e.
+         */
+
+        int start =
+            periodIndex -
+            1;
+
+
+        while (
+            start >=
+                0
+            &&
+            (
+                char.IsLetter(
+                    buffer[start])
+                ||
+                buffer[start] ==
+                    '.'
+            ))
+        {
+            start--;
+        }
+
+
+        int length =
+            periodIndex -
+            start;
+
+
+        if (
+            length <=
+                4
+            &&
+            start +
+                1 <
+                periodIndex
+            &&
+            buffer
+                .ToString(
+                    start +
+                        1,
+                    length)
+                .Contains(
+                    '.',
+                    StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+
+        return false;
     }
 }

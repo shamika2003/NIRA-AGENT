@@ -2,7 +2,6 @@
  filename: SegaAgent.UI.csproj
 -->
 
-
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
@@ -44,7 +43,7 @@
 
 
   <!-- ===================================================== -->
-  <!-- UI -->
+  <!-- UI PACKAGES -->
   <!-- ===================================================== -->
 
   <ItemGroup>
@@ -57,7 +56,7 @@
 
 
   <!-- ===================================================== -->
-  <!-- DEPENDENCY INJECTION / HOST -->
+  <!-- HOST / DI -->
   <!-- ===================================================== -->
 
   <ItemGroup>
@@ -66,8 +65,126 @@
       Include="Microsoft.Extensions.DependencyInjection"
       Version="10.0.10" />
 
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
+    <PackageReference
+      Include="Microsoft.Extensions.Hosting"
+      Version="10.0.10" />
 
   </ItemGroup>
+
+
+  <!-- ===================================================== -->
+  <!-- SEGA RUNTIME FILE LISTS -->
+  <!-- ===================================================== -->
+
+  <ItemGroup>
+
+    <SegaPromptFiles
+      Include="..\SegaAgent\Prompt\*.yaml" />
+
+    <SegaPiperFiles
+      Include="..\SegaAgent\Piper\**\*" />
+
+    <SegaSemanticFiles
+      Include="..\SegaAgent\Semantic\Models\**\*" />
+
+  </ItemGroup>
+
+
+  <!-- ===================================================== -->
+  <!-- COPY RUNTIME FILES AFTER BUILD -->
+  <!--
+       SegaAgent.UI is the executable.
+
+       Runtime services resolve resources from:
+
+       AppContext.BaseDirectory
+
+       Therefore runtime resources are explicitly copied into
+       the executable output directory.
+
+       We do not depend on class-library content propagation.
+  -->
+  <!-- ===================================================== -->
+
+  <Target
+    Name="CopySegaRuntimeResources"
+    AfterTargets="Build">
+
+    <!-- =================================================== -->
+    <!-- PROMPTS -->
+    <!-- =================================================== -->
+
+    <Copy
+      SourceFiles="@(SegaPromptFiles)"
+      DestinationFiles="
+        @(SegaPromptFiles->
+          '$(OutDir)Prompt\%(Filename)%(Extension)')"
+      SkipUnchangedFiles="true" />
+
+
+    <!-- =================================================== -->
+    <!-- PIPER -->
+    <!-- =================================================== -->
+
+    <Copy
+      SourceFiles="@(SegaPiperFiles)"
+      DestinationFiles="
+        @(SegaPiperFiles->
+          '$(OutDir)Piper\%(RecursiveDir)%(Filename)%(Extension)')"
+      SkipUnchangedFiles="true" />
+
+
+    <!-- =================================================== -->
+    <!-- SEMANTIC MODELS -->
+    <!-- =================================================== -->
+
+    <Copy
+      SourceFiles="@(SegaSemanticFiles)"
+      DestinationFiles="
+        @(SegaSemanticFiles->
+          '$(OutDir)Semantic\Models\%(RecursiveDir)%(Filename)%(Extension)')"
+      SkipUnchangedFiles="true" />
+
+  </Target>
+
+
+  <!-- ===================================================== -->
+  <!-- COPY RUNTIME FILES WHEN PUBLISHING -->
+  <!-- ===================================================== -->
+
+  <Target
+    Name="CopySegaPublishedRuntimeResources"
+    AfterTargets="Publish">
+
+    <!-- PROMPTS -->
+
+    <Copy
+      SourceFiles="@(SegaPromptFiles)"
+      DestinationFiles="
+        @(SegaPromptFiles->
+          '$(PublishDir)Prompt\%(Filename)%(Extension)')"
+      SkipUnchangedFiles="true" />
+
+
+    <!-- PIPER -->
+
+    <Copy
+      SourceFiles="@(SegaPiperFiles)"
+      DestinationFiles="
+        @(SegaPiperFiles->
+          '$(PublishDir)Piper\%(RecursiveDir)%(Filename)%(Extension)')"
+      SkipUnchangedFiles="true" />
+
+
+    <!-- SEMANTIC -->
+
+    <Copy
+      SourceFiles="@(SegaSemanticFiles)"
+      DestinationFiles="
+        @(SegaSemanticFiles->
+          '$(PublishDir)Semantic\Models\%(RecursiveDir)%(Filename)%(Extension)')"
+      SkipUnchangedFiles="true" />
+
+  </Target>
 
 </Project>

@@ -3,93 +3,162 @@
  */
 
 using Microsoft.Extensions.Hosting;
+
 using SegaAgent.Agent;
+using SegaAgent.Character.History;
 using SegaAgent.PC.Awareness;
 
 namespace SegaAgent.Perception;
 
-public sealed class CompanionTimerService : BackgroundService
+public sealed class CompanionTimerService
+    : BackgroundService
 {
-    private readonly PcAwarenessService _pcAwareness;
+    private readonly PcWorldStateService
+        _worldState;
 
-    private readonly AttentionManager _attention;
 
-    private readonly AgentCore _agent;
+    private readonly AttentionManager
+        _attention;
+
+
+    private readonly AgentBackgroundProcessor
+        _backgroundProcessor;
+
+
+    private readonly SegaSocialHistoryService
+        _socialHistory;
 
 
     public CompanionTimerService(
-        PcAwarenessService pcAwareness,
+        PcWorldStateService worldState,
         AttentionManager attention,
-        AgentCore agent)
+        AgentBackgroundProcessor backgroundProcessor,
+        SegaSocialHistoryService socialHistory)
     {
-        _pcAwareness = pcAwareness;
+        _worldState =
+            worldState
+            ?? throw new ArgumentNullException(
+                nameof(worldState));
 
-        _attention = attention;
 
-        _agent = agent;
+        _attention =
+            attention
+            ?? throw new ArgumentNullException(
+                nameof(attention));
+
+
+        _backgroundProcessor =
+            backgroundProcessor
+            ?? throw new ArgumentNullException(
+                nameof(backgroundProcessor));
+
+
+        _socialHistory =
+            socialHistory
+            ?? throw new ArgumentNullException(
+                nameof(socialHistory));
     }
 
 
     protected override async Task ExecuteAsync(
         CancellationToken stoppingToken)
     {
-        using var timer =
-            new PeriodicTimer(
-                TimeSpan.FromMinutes(1));
+        using PeriodicTimer timer =
+            new(
+                TimeSpan.FromMinutes(
+                    1));
 
 
-        while (
-            await timer.WaitForNextTickAsync(
-                stoppingToken))
+        try
         {
-            try
+            while (
+                await timer.WaitForNextTickAsync(
+                    stoppingToken))
             {
-                // =================================================
-                // IMPORTANT
-                //
-                // This checks time since the USER LAST TALKED
-                // TO SEGA.
-                //
-                // It is NOT PcState.UserIdleTime.
-                // =================================================
-
-                if (!_attention.CanRunProactiveCheck())
+                if (!_attention
+                    .CanRunProactiveCheck())
+                {
                     continue;
+                }
 
 
-                var currentState =
-                    _pcAwareness.Read();
+                PcWorldState currentState =
+                    _worldState.Current;
 
 
-                var perception =
-                    new PerceptionEvent
+                PerceptionEvent perception =
+                    new()
                     {
                         Type =
                             "CompanionCheck",
 
+                        TopicKey =
+                            SegaSocialTopicKeys
+                                .CompanionCheck,
+
                         Description =
-                            "The user has not interacted with Sega recently. " +
-                            "Make a natural, friendly companion-style check-in " +
-                            "based on the current PC context. " +
-                            "Do not sound like a monitoring system.",
+                            "A natural opportunity for Sega to " +
+                            "interact proactively may exist. " +
+                            "Use the current relationship, mood, " +
+                            "recent social history and PC context. " +
+                            "Do not speak merely because this " +
+                            "check occurred.",
+
+                        Metadata =
+                            new Dictionary<
+                                string,
+                                string>(
+                                    StringComparer
+                                        .OrdinalIgnoreCase)
+                            {
+                                ["process"] =
+                                    currentState
+                                        .ForegroundWindow
+                                        .ProcessName,
+
+                                ["windowTitle"] =
+                                    currentState
+                                        .ForegroundWindow
+                                        .Title,
+
+                                ["idleSeconds"] =
+                                    currentState
+                                        .User
+                                        .IdleTime
+                                        .TotalSeconds
+                                        .ToString(
+                                            "F0")
+                            },
 
                         CurrentState =
                             currentState
                     };
 
 
-                await foreach (
-                    var chunk
-                    in _agent.ProcessProactiveAsync(
+                SegaSocialEvent socialEvent =
+                    _socialHistory.Record(
+                        SegaSocialEventSource.System,
+                        SegaSocialEventKind.ProactiveEvent,
+                        perception.Type,
+                        perception.TopicKey,
+                        perception.Description,
+                        perception.Metadata);
+
+
+                perception.SocialEventId =
+                    socialEvent.Id;
+
+
+                await _backgroundProcessor
+                    .ProcessProactiveAsync(
                         perception,
-                        stoppingToken))
-                {
-                }
+                        stoppingToken);
             }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
+        }
+        catch (OperationCanceledException)
+            when (stoppingToken
+                .IsCancellationRequested)
+        {
         }
     }
 }

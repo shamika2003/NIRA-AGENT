@@ -11,12 +11,18 @@ using SegaAgent.AI.Ollama;
 using SegaAgent.AI.Planner;
 using SegaAgent.AI.Responder;
 using SegaAgent.Agent;
+using SegaAgent.Agent.State;
+using SegaAgent.Character.Dynamics;
+using SegaAgent.Character.History;
+using SegaAgent.Character.Interaction;
+using SegaAgent.Character.State;
 using SegaAgent.Conversation;
+using SegaAgent.PC.Awareness;
 using SegaAgent.Perception;
+using SegaAgent.Semantic;
 using SegaAgent.UI.Companion;
 using SegaAgent.UI.ViewModels;
 using SegaAgent.Voice;
-using SegaAgent.PC.Awareness;
 
 using WpfApplication = System.Windows.Application;
 using WpfMessageBox = System.Windows.MessageBox;
@@ -32,14 +38,12 @@ public partial class App : WpfApplication
     private IHost? _host;
 
 
-    // =========================================================
-    // STARTUP
-    // =========================================================
-
     protected override async void OnStartup(
         WpfStartupEventArgs e)
     {
-        base.OnStartup(e);
+        base.OnStartup(
+            e);
+
 
         try
         {
@@ -48,95 +52,189 @@ public partial class App : WpfApplication
 
 
             // =================================================
-            // CORE SERVICES
+            // CORE
             // =================================================
 
-            builder.Services.AddSingleton<HttpClient>();
+            builder.Services.AddSingleton<
+                HttpClient>();
+
+
+            // =================================================
+            // SEGA MIND / BODY STATE
+            // =================================================
+
+            builder.Services.AddSingleton<
+                SegaStateService>();
+
+
+            // =================================================
+            // CHARACTER STATE
+            // =================================================
+
+            builder.Services.AddSingleton<
+                SegaCharacterStateStore>();
+
+
+            builder.Services.AddSingleton<
+                SegaCharacterStateService>();
+
+
+            builder.Services.AddSingleton<
+                SegaAttitudeService>();
+
+
+            builder.Services.AddSingleton<
+                SegaCharacterPersistenceService>();
+
+
+            builder.Services.AddHostedService(
+                sp =>
+                    sp.GetRequiredService<
+                        SegaCharacterPersistenceService>());
+
+
+            // =================================================
+            // CHARACTER DYNAMICS
+            // =================================================
+
+            builder.Services.AddSingleton<
+                SegaCharacterDynamicsService>();
+
+
+            builder.Services.AddHostedService(
+                sp =>
+                    sp.GetRequiredService<
+                        SegaCharacterDynamicsService>());
+
+
+            // =================================================
+            // SOCIAL HISTORY
+            // =================================================
+
+            builder.Services.AddSingleton<
+                SegaSocialHistoryService>();
+
+
+            // =================================================
+            // LOCAL SEMANTIC PERCEPTION
+            // =================================================
+
+            builder.Services.AddSingleton<
+                ISegaSemanticEncoder,
+                MiniLmSemanticEncoder>();
+
+
+            builder.Services.AddSingleton<
+                SegaSemanticMemoryService>();
+
+
+            // =================================================
+            // INTERACTION OBSERVATION
+            // =================================================
+
+            builder.Services.AddSingleton<
+                SegaInteractionContextBuilder>();
+
+
+            builder.Services.AddSingleton<
+                SegaInteractionObservationService>();
+
+
+            builder.Services.AddHostedService(
+                sp =>
+                    sp.GetRequiredService<
+                        SegaInteractionObservationService>());
 
 
             // =================================================
             // OLLAMA
             // =================================================
 
-            builder.Services.AddSingleton<OllamaClient>(
-                sp =>
-                    ActivatorUtilities.CreateInstance<OllamaClient>(
-                        sp
-                    )
-            );
+            builder.Services.AddSingleton<
+                OllamaClient>(
+                    sp =>
+                        ActivatorUtilities
+                            .CreateInstance<
+                                OllamaClient>(
+                                    sp));
 
 
             // =================================================
             // AI
             // =================================================
 
-            builder.Services.AddSingleton<AgentPlanner>();
+            builder.Services.AddSingleton<
+                AgentPlanner>();
 
-            builder.Services.AddSingleton<AgentResponder>();
+
+            builder.Services.AddSingleton<
+                AgentResponder>();
 
 
             // =================================================
-            // PC AWARENESS
+            // PC WORLD
             // =================================================
 
-            builder.Services.AddSingleton<PcAwarenessService>();
+            builder.Services.AddSingleton<
+                PcAwarenessService>();
+
+
+            builder.Services.AddSingleton<
+                PcWorldStateService>();
+
+
+            builder.Services.AddHostedService(
+                sp =>
+                    sp.GetRequiredService<
+                        PcWorldStateService>());
 
 
             // =================================================
             // CONVERSATION
             // =================================================
 
-            builder.Services.AddSingleton<ConversationManager>();
+            builder.Services.AddSingleton<
+                ConversationManager>();
 
 
             // =================================================
-            // AGENT ACTIVITY
-            //
-            // IMPORTANT:
-            //
-            // This MUST be singleton.
-            //
-            // AgentCore, perception and proactive systems all
-            // need to share the exact same activity state.
+            // AGENT
             // =================================================
 
-            builder.Services.AddSingleton<AgentActivityTracker>();
+            builder.Services.AddSingleton<
+                AgentActivityTracker>();
 
 
-            // =========================================================
-            // AGENT CORE
-            // =========================================================
+            builder.Services.AddSingleton<
+                AgentCore>();
 
-            builder.Services.AddSingleton<AgentCore>();
 
-            builder.Services.AddSingleton<AgentResponseDispatcher>();
+            builder.Services.AddSingleton<
+                AgentResponseDispatcher>();
+
+
+            builder.Services.AddSingleton<
+                AgentBackgroundProcessor>();
 
 
             // =================================================
-            // PERCEPTION SYSTEM
-            //
-            // AttentionManager:
-            // Controls whether Sega is allowed to interrupt
-            // the user.
-            //
-            // PerceptionAnalyzer:
-            // Converts PC state changes into meaningful
-            // perception events.
-            //
-            // PcMonitorService:
-            // Continuously monitors the PC.
-            //
-            // CompanionTimerService:
-            // Performs scheduled proactive companion checks.
+            // PERCEPTION / ATTENTION
             // =================================================
 
-            builder.Services.AddSingleton<AttentionManager>();
+            builder.Services.AddSingleton<
+                AttentionManager>();
 
-            builder.Services.AddSingleton<PerceptionAnalyzer>();
 
-            builder.Services.AddHostedService<PcMonitorService>();
+            builder.Services.AddSingleton<
+                PerceptionAnalyzer>();
 
-            builder.Services.AddHostedService<CompanionTimerService>();
+
+            builder.Services.AddHostedService<
+                PcMonitorService>();
+
+
+            builder.Services.AddHostedService<
+                CompanionTimerService>();
 
 
             // =================================================
@@ -145,54 +243,41 @@ public partial class App : WpfApplication
 
             builder.Services.AddSingleton<
                 IVoiceService,
-                PiperVoiceService
-            >();
+                PiperVoiceService>();
 
-            builder.Services.AddSingleton<VoiceQueue>();
+
+            builder.Services.AddSingleton<
+                VoiceQueue>();
 
 
             // =================================================
             // UI
             // =================================================
 
-            builder.Services.AddSingleton<MainWindowViewModel>();
+            builder.Services.AddSingleton<
+                MainWindowViewModel>();
 
 
             // =================================================
-            // BUILD HOST
+            // BUILD
             // =================================================
 
             _host =
                 builder.Build();
 
 
-            // =================================================
-            // START HOST
-            //
-            // This starts:
-            //
-            // - PcMonitorService
-            // - CompanionTimerService
-            //
-            // in addition to the rest of the application.
-            // =================================================
-
             await _host.StartAsync();
 
 
-            // =================================================
-            // MAIN WINDOW
-            // =================================================
-
-            var viewModel =
+            MainWindowViewModel viewModel =
                 _host.Services
-                    .GetRequiredService<MainWindowViewModel>();
+                    .GetRequiredService<
+                        MainWindowViewModel>();
 
 
-            var window =
-                new MainWindow(
-                    viewModel
-                );
+            MainWindow window =
+                new(
+                    viewModel);
 
 
             MainWindow =
@@ -202,19 +287,15 @@ public partial class App : WpfApplication
             window.Show();
 
 
-            // =================================================
-            // COMPANION WINDOW
-            // =================================================
-
-            var voiceQueue =
+            SegaStateService segaState =
                 _host.Services
-                    .GetRequiredService<VoiceQueue>();
+                    .GetRequiredService<
+                        SegaStateService>();
 
 
-            var companion =
-                new CompanionWindow(
-                    voiceQueue
-                );
+            CompanionWindow companion =
+                new(
+                    segaState);
 
 
             companion.Show();
@@ -225,32 +306,33 @@ public partial class App : WpfApplication
                 ex.ToString(),
                 "SegaAI Startup Error",
                 WpfMessageBoxButton.OK,
-                WpfMessageBoxImage.Error
-            );
+                WpfMessageBoxImage.Error);
 
 
-            Shutdown(1);
+            Shutdown(
+                1);
         }
     }
 
 
-    // =========================================================
-    // EXIT
-    // =========================================================
-
     protected override async void OnExit(
         WpfExitEventArgs e)
     {
-        if (_host != null)
+        if (_host !=
+            null)
         {
             await _host.StopAsync();
 
+
             _host.Dispose();
 
-            _host = null;
+
+            _host =
+                null;
         }
 
 
-        base.OnExit(e);
+        base.OnExit(
+            e);
     }
 }

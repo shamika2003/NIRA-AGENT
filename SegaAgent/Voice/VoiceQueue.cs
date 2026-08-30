@@ -4,20 +4,41 @@
 
 using System.Collections.Concurrent;
 
+using SegaAgent.Agent.State;
+
 namespace SegaAgent.Voice;
 
 public sealed class VoiceQueue : IDisposable
 {
     private readonly IVoiceService _voiceService;
 
-    private readonly ConcurrentQueue<string> _queue = new();
+    private readonly SegaStateService _state;
 
-    private readonly SemaphoreSlim _signal = new(0);
 
-    private readonly CancellationTokenSource _shutdown =
+    private readonly ConcurrentQueue<string>
+        _queue =
+            new();
+
+
+    private readonly SemaphoreSlim _signal =
+        new(0);
+
+
+    private readonly CancellationTokenSource
+        _shutdown =
+            new();
+
+
+    private readonly object _speechLock =
         new();
 
+
+    private CancellationTokenSource?
+        _currentSpeechCancellation;
+
+
     private readonly Task _worker;
+
 
     private bool _disposed;
 
@@ -26,9 +47,15 @@ public sealed class VoiceQueue : IDisposable
     // STATE
     // =========================================================
 
-    public bool IsSpeaking { get; private set; }
+    public bool IsSpeaking
+    {
+        get;
+        private set;
+    }
 
-    public event EventHandler<bool>? SpeakingChanged;
+
+    public event EventHandler<bool>?
+        SpeakingChanged;
 
 
     // =========================================================
@@ -36,14 +63,20 @@ public sealed class VoiceQueue : IDisposable
     // =========================================================
 
     public VoiceQueue(
-        IVoiceService voiceService)
+        IVoiceService voiceService,
+        SegaStateService state)
     {
-        _voiceService = voiceService;
+        _voiceService =
+            voiceService;
+
+
+        _state =
+            state;
+
 
         _worker =
             Task.Run(
-                ProcessQueueAsync
-            );
+                ProcessQueueAsync);
     }
 
 
@@ -59,12 +92,17 @@ public sealed class VoiceQueue : IDisposable
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(text))
+
+        if (string.IsNullOrWhiteSpace(
+                text))
         {
             return;
         }
 
-        _queue.Enqueue(text);
+
+        _queue.Enqueue(
+            text);
+
 
         _signal.Release();
     }
@@ -78,59 +116,174 @@ public sealed class VoiceQueue : IDisposable
     {
         try
         {
-            while (!_shutdown.IsCancellationRequested)
+            while (!_shutdown
+                .IsCancellationRequested)
             {
                 await _signal.WaitAsync(
-                    _shutdown.Token
-                );
+                    _shutdown.Token);
 
-                while (
-                    _queue.TryDequeue(
+
+                if (!_queue.TryDequeue(
                         out var text))
                 {
-                    if (_shutdown.IsCancellationRequested)
-                    {
-                        return;
-                    }
+                    continue;
+                }
 
-                    IsSpeaking = true;
 
-                    SpeakingChanged?.Invoke(
-                        this,
-                        true
-                    );
+                SetSpeaking(
+                    true);
 
-                    try
-                    {
-                        await _voiceService.SpeakAsync(
-                            text,
-                            _shutdown.Token
-                        );
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        return;
-                    }
-                    catch (Exception)
-                    {
-                        // Voice errors must not kill
-                        // the entire SegaAI agent.
-                    }
-                    finally
-                    {
-                        IsSpeaking = false;
 
-                        SpeakingChanged?.Invoke(
-                            this,
-                            false
-                        );
+                try
+                {
+                    while (true)
+                    {
+                        if (_shutdown
+                            .IsCancellationRequested)
+                        {
+                            return;
+                        }
+
+
+                        using var speechCancellation =
+                            CancellationTokenSource
+                                .CreateLinkedTokenSource(
+                                    _shutdown.Token);
+
+
+                        SetCurrentSpeechCancellation(
+                            speechCancellation);
+
+
+                        try
+                        {
+                            await _voiceService
+                                .SpeakAsync(
+                                    text,
+                                    speechCancellation.Token);
+                        }
+                        catch (OperationCanceledException)
+                            when (!_shutdown
+                                .IsCancellationRequested)
+                        {
+                            /*
+                             * Current speech was intentionally
+                             * interrupted.
+                             */
+                        }
+                        finally
+                        {
+                            ClearCurrentSpeechCancellation(
+                                speechCancellation);
+                        }
+
+
+                        if (!_queue.TryDequeue(
+                                out text))
+                        {
+                            break;
+                        }
                     }
+                }
+                finally
+                {
+                    SetSpeaking(
+                        false);
                 }
             }
         }
         catch (OperationCanceledException)
         {
-            // Normal shutdown.
+            // Normal application shutdown.
+        }
+        finally
+        {
+            SetSpeaking(
+                false);
+        }
+    }
+
+
+    // =========================================================
+    // SET SPEAKING
+    // =========================================================
+
+    private void SetSpeaking(
+        bool speaking)
+    {
+        if (IsSpeaking ==
+            speaking)
+        {
+            return;
+        }
+
+
+        IsSpeaking =
+            speaking;
+
+
+        _state.SetSpeaking(
+            speaking);
+
+
+        SpeakingChanged?.Invoke(
+            this,
+            speaking);
+    }
+
+
+    // =========================================================
+    // CURRENT SPEECH
+    // =========================================================
+
+    private void SetCurrentSpeechCancellation(
+        CancellationTokenSource source)
+    {
+        lock (_speechLock)
+        {
+            _currentSpeechCancellation =
+                source;
+        }
+    }
+
+
+    private void ClearCurrentSpeechCancellation(
+        CancellationTokenSource source)
+    {
+        lock (_speechLock)
+        {
+            if (ReferenceEquals(
+                    _currentSpeechCancellation,
+                    source))
+            {
+                _currentSpeechCancellation =
+                    null;
+            }
+        }
+    }
+
+
+    // =========================================================
+    // INTERRUPT
+    //
+    // Used when the user starts a new interaction.
+    // =========================================================
+
+    public void Interrupt()
+    {
+        Clear();
+
+
+        lock (_speechLock)
+        {
+            try
+            {
+                _currentSpeechCancellation?
+                    .Cancel();
+            }
+            catch
+            {
+            }
         }
     }
 
@@ -141,7 +294,8 @@ public sealed class VoiceQueue : IDisposable
 
     public void Clear()
     {
-        while (_queue.TryDequeue(out _))
+        while (_queue.TryDequeue(
+            out _))
         {
         }
     }
@@ -158,9 +312,31 @@ public sealed class VoiceQueue : IDisposable
             return;
         }
 
+
         _shutdown.Cancel();
 
-        _signal.Release();
+
+        lock (_speechLock)
+        {
+            try
+            {
+                _currentSpeechCancellation?
+                    .Cancel();
+            }
+            catch
+            {
+            }
+        }
+
+
+        try
+        {
+            _signal.Release();
+        }
+        catch
+        {
+        }
+
 
         try
         {
@@ -168,7 +344,6 @@ public sealed class VoiceQueue : IDisposable
         }
         catch (OperationCanceledException)
         {
-            // Normal shutdown.
         }
     }
 
@@ -184,9 +359,26 @@ public sealed class VoiceQueue : IDisposable
             return;
         }
 
-        _disposed = true;
+
+        _disposed =
+            true;
+
 
         _shutdown.Cancel();
+
+
+        lock (_speechLock)
+        {
+            try
+            {
+                _currentSpeechCancellation?
+                    .Cancel();
+            }
+            catch
+            {
+            }
+        }
+
 
         try
         {
@@ -194,8 +386,12 @@ public sealed class VoiceQueue : IDisposable
         }
         catch
         {
-            // Ignore shutdown race.
         }
+
+
+        _state.SetSpeaking(
+            false);
+
 
         _shutdown.Dispose();
 

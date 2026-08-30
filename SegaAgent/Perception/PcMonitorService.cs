@@ -3,33 +3,73 @@
  */
 
 using System.Diagnostics;
+
 using Microsoft.Extensions.Hosting;
+
 using SegaAgent.Agent;
+using SegaAgent.Character.History;
 using SegaAgent.PC.Awareness;
 
 namespace SegaAgent.Perception;
 
-public sealed class PcMonitorService : BackgroundService
+public sealed class PcMonitorService
+    : BackgroundService
 {
-    private readonly PcAwarenessService _pcAwareness;
+    private readonly PcWorldStateService
+        _worldState;
 
-    private readonly PerceptionAnalyzer _analyzer;
 
-    private readonly AttentionManager _attention;
+    private readonly PerceptionAnalyzer
+        _analyzer;
 
-    private readonly AgentCore _agent;
+
+    private readonly SegaSocialHistoryService
+        _socialHistory;
+
+
+    private readonly AttentionManager
+        _attention;
+
+
+    private readonly AgentBackgroundProcessor
+        _backgroundProcessor;
 
 
     public PcMonitorService(
-        PcAwarenessService pcAwareness,
+        PcWorldStateService worldState,
         PerceptionAnalyzer analyzer,
         AttentionManager attention,
-        AgentCore agent)
+        AgentBackgroundProcessor backgroundProcessor,
+        SegaSocialHistoryService socialHistory)
     {
-        _pcAwareness = pcAwareness;
-        _analyzer = analyzer;
-        _attention = attention;
-        _agent = agent;
+        _worldState =
+            worldState
+            ?? throw new ArgumentNullException(
+                nameof(worldState));
+
+
+        _analyzer =
+            analyzer
+            ?? throw new ArgumentNullException(
+                nameof(analyzer));
+
+
+        _attention =
+            attention
+            ?? throw new ArgumentNullException(
+                nameof(attention));
+
+
+        _backgroundProcessor =
+            backgroundProcessor
+            ?? throw new ArgumentNullException(
+                nameof(backgroundProcessor));
+
+
+        _socialHistory =
+            socialHistory
+            ?? throw new ArgumentNullException(
+                nameof(socialHistory));
     }
 
 
@@ -40,43 +80,74 @@ public sealed class PcMonitorService : BackgroundService
             "[PcMonitor] SERVICE STARTED");
 
 
-        PcState? previousState = null;
+        PcWorldState?
+            previousState =
+                null;
 
 
-        while (!stoppingToken.IsCancellationRequested)
+        using PeriodicTimer timer =
+            new(
+                TimeSpan.FromSeconds(
+                    1));
+
+
+        try
         {
-            try
+            while (!stoppingToken
+                .IsCancellationRequested)
             {
-                var currentState =
-                    _pcAwareness.Read();
+                PcWorldState currentState =
+                    _worldState.Current;
+
+
+                PcForegroundWindowState window =
+                    currentState.ForegroundWindow;
 
 
                 Debug.WriteLine(
                     $"[PcMonitor] " +
-                    $"App='{currentState.ActiveApplication}' | " +
-                    $"Idle={currentState.UserIdleTime.TotalSeconds:F0}s");
+                    $"WorldVersion={_worldState.Version} | " +
+                    $"Process='{window.ProcessName}' | " +
+                    $"PID={window.ProcessId} | " +
+                    $"Window='{window.Title}' | " +
+                    $"Fullscreen={window.IsFullscreen} | " +
+                    $"Idle=" +
+                    $"{currentState.User.IdleTime.TotalSeconds:F0}s");
 
 
-                // =================================================
-                // 1. CHECK FOR NEW EVENT
-                // =================================================
-
-                var perception =
+                PerceptionEvent? perception =
                     _analyzer.Analyze(
                         previousState,
                         currentState);
 
 
-                if (perception != null)
+                if (perception !=
+                    null)
                 {
                     Debug.WriteLine(
                         $"[PcMonitor] EVENT DETECTED: " +
                         $"{perception.Type}");
 
 
-                    var accepted =
-                        _attention.TryAcceptPerception(
-                            perception);
+                    SegaSocialEvent
+                        socialEvent =
+                            _socialHistory.Record(
+                                SegaSocialEventSource.Environment,
+                                SegaSocialEventKind.EnvironmentEvent,
+                                perception.Type,
+                                perception.TopicKey,
+                                perception.Description,
+                                perception.Metadata);
+
+
+                    perception.SocialEventId =
+                        socialEvent.Id;
+
+
+                    bool accepted =
+                        _attention
+                            .TryAcceptPerception(
+                                perception);
 
 
                     Debug.WriteLine(
@@ -86,53 +157,27 @@ public sealed class PcMonitorService : BackgroundService
 
                     if (accepted)
                     {
-                        Debug.WriteLine(
-                            "[PcMonitor] " +
-                            "STARTING PERCEPTION AGENT");
-
-
-                        await foreach (
-                            var chunk
-                            in _agent.ProcessPerceptionAsync(
+                        await _backgroundProcessor
+                            .ProcessPerceptionAsync(
                                 perception,
-                                stoppingToken))
-                        {
-                            Debug.WriteLine(
-                                $"[PcMonitor] " +
-                                $"Agent chunk: " +
-                                $"{chunk.Type}");
-                        }
-
-
-                        Debug.WriteLine(
-                            "[PcMonitor] " +
-                            "PERCEPTION AGENT FINISHED");
+                                stoppingToken);
                     }
                 }
 
 
-                // =================================================
-                // 2. CHECK DEFERRED EVENT
-                // =================================================
-
-                if (_attention.TryTakePending(
+                if (
+                    _attention.TryTakePending(
                         currentState,
-                        out var pending) &&
-                    pending != null)
+                        out PerceptionEvent?
+                            pending)
+                    &&
+                    pending !=
+                    null)
                 {
-                    Debug.WriteLine(
-                        $"[PcMonitor] " +
-                        $"PROCESSING PENDING EVENT: " +
-                        $"{pending.Type}");
-
-
-                    await foreach (
-                        var chunk
-                        in _agent.ProcessPerceptionAsync(
+                    await _backgroundProcessor
+                        .ProcessPerceptionAsync(
                             pending,
-                            stoppingToken))
-                    {
-                    }
+                            stoppingToken);
                 }
 
 
@@ -140,33 +185,14 @@ public sealed class PcMonitorService : BackgroundService
                     currentState;
 
 
-                await Task.Delay(
-                    TimeSpan.FromSeconds(5),
+                await timer.WaitForNextTickAsync(
                     stoppingToken);
             }
-            catch (OperationCanceledException)
-            {
-                Debug.WriteLine(
-                    "[PcMonitor] SERVICE CANCELED");
-
-                break;
-            }
-            catch (Exception ex)
-            {
-                // IMPORTANT:
-                //
-                // Do not allow one unexpected monitoring
-                // exception to silently kill the monitoring
-                // loop.
-
-                Debug.WriteLine(
-                    $"[PcMonitor] ERROR: {ex}");
-
-
-                await Task.Delay(
-                    TimeSpan.FromSeconds(5),
-                    stoppingToken);
-            }
+        }
+        catch (OperationCanceledException)
+            when (stoppingToken
+                .IsCancellationRequested)
+        {
         }
 
 

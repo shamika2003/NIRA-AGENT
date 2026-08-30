@@ -153,8 +153,7 @@ public sealed class CompanionIdleBehavior
          * The existing idle decision remains scheduled.
          */
 
-        if (_window.BlobState !=
-            CompanionState.Idle)
+        if (!_window.CanPerformIdleMovement)
         {
             return;
         }

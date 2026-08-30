@@ -1,30 +1,33 @@
 using System;
-using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
 
 namespace SegaAgent.UI.Companion;
 
-/// <summary>
-/// SEGAAI futuristic liquid-energy companion.
-///
-/// Design:
-/// - Completely transparent center.
-/// - Small organic circular energy membrane.
-/// - Thick multi-layer neon perimeter.
-/// - Continuous aura rings are born from the perimeter.
-/// - Aura rings expand outward and fade.
-/// - Cyan / electric blue / violet energy palette.
-/// - State changes control energy behavior.
-/// </summary>
 public sealed class LiquidBlobControl : FrameworkElement
 {
     // =========================================================
     // VISUAL
     // =========================================================
 
-    private readonly DrawingVisual _visual = new();
+    private readonly DrawingVisual _visual =
+        new();
+
+
+    // =========================================================
+    // PARTICLES
+    // =========================================================
+
+    private const int CoreParticleCount = 255;
+
+    private const int FragmentParticleCount = 48;
+
+
+    private readonly Particle[] _coreParticles;
+
+    private readonly Particle[] _fragmentParticles;
+
 
     // =========================================================
     // ANIMATION
@@ -32,11 +35,12 @@ public sealed class LiquidBlobControl : FrameworkElement
 
     private double _time;
 
-    private bool _isHovered;
+    private double _lastFrameTime;
 
     private bool _isRendering;
 
-    private double _lastFrameTime;
+    private bool _isHovered;
+
 
     // =========================================================
     // STATE
@@ -45,25 +49,11 @@ public sealed class LiquidBlobControl : FrameworkElement
     private CompanionState _state =
         CompanionState.Idle;
 
-    // =========================================================
-    // GEOMETRY
-    // =========================================================
 
-    // Previous size was ~58.
-    // This is approximately 75% of that size.
-    private const double BaseRadius = 44.0;
+    private ParticleSettings _currentSettings;
 
-    private const int PointCount = 96;
+    private ParticleSettings _targetSettings;
 
-    // =========================================================
-    // AURA
-    // =========================================================
-
-    private readonly List<AuraWave> _waves = new();
-
-    private double _waveSpawnAccumulator;
-
-    private const int MaximumAuraWaves = 28;
 
     // =========================================================
     // COLORS
@@ -71,34 +61,55 @@ public sealed class LiquidBlobControl : FrameworkElement
 
     private static readonly Color ElectricCyan =
         Color.FromRgb(
-            75,
-            235,
+            78,
+            236,
             255);
 
-    private static readonly Color NeonBlue =
+
+    private static readonly Color ElectricBlue =
         Color.FromRgb(
-            65,
-            125,
+            72,
+            132,
             255);
+
 
     private static readonly Color ElectricViolet =
         Color.FromRgb(
-            155,
-            90,
+            160,
+            94,
             255);
+
 
     private static readonly Color HotWhite =
         Color.FromRgb(
-            220,
-            250,
+            226,
+            252,
             255);
 
+
     // =========================================================
-    // RANDOM
+    // BRUSH RAMPS
     // =========================================================
 
-    private static readonly Random Random =
-        new();
+    private static readonly Brush[] CyanBrushes =
+        CreateBrushRamp(
+            ElectricCyan);
+
+
+    private static readonly Brush[] BlueBrushes =
+        CreateBrushRamp(
+            ElectricBlue);
+
+
+    private static readonly Brush[] VioletBrushes =
+        CreateBrushRamp(
+            ElectricViolet);
+
+
+    private static readonly Brush[] WhiteBrushes =
+        CreateBrushRamp(
+            HotWhite);
+
 
     // =========================================================
     // EVENTS
@@ -108,24 +119,37 @@ public sealed class LiquidBlobControl : FrameworkElement
 
     public event EventHandler? BlobLeft;
 
+
     // =========================================================
     // STATE PROPERTY
     // =========================================================
 
     public CompanionState State
     {
-        get => _state;
+        get =>
+            _state;
 
         set
         {
             if (_state == value)
+            {
                 return;
+            }
 
-            _state = value;
+
+            _state =
+                value;
+
+
+            _targetSettings =
+                GetSettings(
+                    value);
+
 
             InvalidateVisual();
         }
     }
+
 
     // =========================================================
     // CONSTRUCTOR
@@ -133,16 +157,47 @@ public sealed class LiquidBlobControl : FrameworkElement
 
     public LiquidBlobControl()
     {
-        AddVisualChild(_visual);
+        AddVisualChild(
+            _visual);
 
-        IsHitTestVisible = true;
 
-        MouseEnter += OnMouseEnter;
-        MouseLeave += OnMouseLeave;
+        IsHitTestVisible =
+            true;
 
-        Loaded += OnLoaded;
-        Unloaded += OnUnloaded;
+
+        _coreParticles =
+            CreateCoreParticles();
+
+
+        _fragmentParticles =
+            CreateFragmentParticles();
+
+
+        _currentSettings =
+            GetSettings(
+                CompanionState.Idle);
+
+
+        _targetSettings =
+            _currentSettings;
+
+
+        MouseEnter +=
+            OnMouseEnter;
+
+
+        MouseLeave +=
+            OnMouseLeave;
+
+
+        Loaded +=
+            OnLoaded;
+
+
+        Unloaded +=
+            OnUnloaded;
     }
+
 
     // =========================================================
     // VISUAL TREE
@@ -150,6 +205,7 @@ public sealed class LiquidBlobControl : FrameworkElement
 
     protected override int VisualChildrenCount =>
         1;
+
 
     protected override Visual GetVisualChild(
         int index)
@@ -160,47 +216,10 @@ public sealed class LiquidBlobControl : FrameworkElement
                 nameof(index));
         }
 
+
         return _visual;
     }
 
-    // =========================================================
-    // LOADED
-    // =========================================================
-
-    private void OnLoaded(
-        object sender,
-        RoutedEventArgs e)
-    {
-        if (_isRendering)
-            return;
-
-        _isRendering = true;
-
-        _lastFrameTime =
-            GetCurrentSeconds();
-
-        CompositionTarget.Rendering +=
-            OnRendering;
-
-        RenderBlob();
-    }
-
-    // =========================================================
-    // UNLOADED
-    // =========================================================
-
-    private void OnUnloaded(
-        object sender,
-        RoutedEventArgs e)
-    {
-        if (!_isRendering)
-            return;
-
-        _isRendering = false;
-
-        CompositionTarget.Rendering -=
-            OnRendering;
-    }
 
     // =========================================================
     // HIT TEST
@@ -214,8 +233,62 @@ public sealed class LiquidBlobControl : FrameworkElement
             hitTestParameters.HitPoint);
     }
 
+
     // =========================================================
-    // MOUSE ENTER
+    // LOADED
+    // =========================================================
+
+    private void OnLoaded(
+        object sender,
+        RoutedEventArgs e)
+    {
+        if (_isRendering)
+        {
+            return;
+        }
+
+
+        _isRendering =
+            true;
+
+
+        _lastFrameTime =
+            GetCurrentSeconds();
+
+
+        CompositionTarget.Rendering +=
+            OnRendering;
+
+
+        RenderEntity();
+    }
+
+
+    // =========================================================
+    // UNLOADED
+    // =========================================================
+
+    private void OnUnloaded(
+        object sender,
+        RoutedEventArgs e)
+    {
+        if (!_isRendering)
+        {
+            return;
+        }
+
+
+        _isRendering =
+            false;
+
+
+        CompositionTarget.Rendering -=
+            OnRendering;
+    }
+
+
+    // =========================================================
+    // MOUSE
     // =========================================================
 
     private void OnMouseEnter(
@@ -223,39 +296,43 @@ public sealed class LiquidBlobControl : FrameworkElement
         MouseEventArgs e)
     {
         if (_isHovered)
+        {
             return;
+        }
 
-        _isHovered = true;
+
+        _isHovered =
+            true;
+
 
         BlobHovered?.Invoke(
             this,
             EventArgs.Empty);
-
-        InvalidateVisual();
     }
 
-    // =========================================================
-    // MOUSE LEAVE
-    // =========================================================
 
     private void OnMouseLeave(
         object sender,
         MouseEventArgs e)
     {
         if (!_isHovered)
+        {
             return;
+        }
 
-        _isHovered = false;
+
+        _isHovered =
+            false;
+
 
         BlobLeft?.Invoke(
             this,
             EventArgs.Empty);
-
-        InvalidateVisual();
     }
 
+
     // =========================================================
-    // ANIMATION
+    // FRAME
     // =========================================================
 
     private void OnRendering(
@@ -265,15 +342,15 @@ public sealed class LiquidBlobControl : FrameworkElement
         double now =
             GetCurrentSeconds();
 
+
         double delta =
-            now - _lastFrameTime;
+            now -
+            _lastFrameTime;
 
-        _lastFrameTime = now;
 
-        /*
-         * Protect against huge jumps when
-         * the application is paused/minimized.
-         */
+        _lastFrameTime =
+            now;
+
 
         delta =
             Math.Clamp(
@@ -281,147 +358,49 @@ public sealed class LiquidBlobControl : FrameworkElement
                 0.001,
                 0.05);
 
-        _time += delta;
 
-        UpdateAura(delta);
+        _time +=
+            delta;
 
-        RenderBlob();
+
+        // =====================================================
+        // SMOOTH STATE MORPHING
+        // =====================================================
+
+        double transition =
+            1.0 -
+            Math.Exp(
+                -delta * 4.5);
+
+
+        _currentSettings =
+            ParticleSettings.Lerp(
+                _currentSettings,
+                _targetSettings,
+                transition);
+
+
+        RenderEntity();
     }
 
+
     // =========================================================
-    // CURRENT TIME
+    // TIME
     // =========================================================
 
     private static double GetCurrentSeconds()
     {
-        return System.Environment.TickCount64 / 1000.0;
+        return
+            System.Environment.TickCount64 /
+            1000.0;
     }
 
-    // =========================================================
-    // AURA UPDATE
-    // =========================================================
-
-    private void UpdateAura(
-        double delta)
-    {
-        AuraSettings settings =
-            GetAuraSettings();
-
-        // -----------------------------------------------------
-        // SPAWN
-        // -----------------------------------------------------
-
-        _waveSpawnAccumulator +=
-            delta *
-            settings.SpawnRate;
-
-        while (_waveSpawnAccumulator >= 1.0)
-        {
-            _waveSpawnAccumulator -= 1.0;
-
-            SpawnAuraWave();
-        }
-
-        // -----------------------------------------------------
-        // UPDATE WAVES
-        // -----------------------------------------------------
-
-        for (int i = _waves.Count - 1;
-             i >= 0;
-             i--)
-        {
-            AuraWave wave =
-                _waves[i];
-
-            wave.Progress +=
-                delta /
-                wave.Lifetime;
-
-            if (wave.Progress >= 1.0)
-            {
-                _waves.RemoveAt(i);
-            }
-        }
-
-        // -----------------------------------------------------
-        // SAFETY
-        // -----------------------------------------------------
-
-        if (_waves.Count > MaximumAuraWaves)
-        {
-            _waves.RemoveRange(
-                0,
-                _waves.Count -
-                MaximumAuraWaves);
-        }
-    }
 
     // =========================================================
-    // SPAWN AURA WAVE
+    // RENDER ENTITY
     // =========================================================
 
-    private void SpawnAuraWave()
-    {
-        AuraSettings settings =
-            GetAuraSettings();
-
-        AuraWave wave =
-            new()
-            {
-                Progress = 0.0,
-
-                Lifetime =
-                    settings.Lifetime *
-                    RandomRange(
-                        0.88,
-                        1.12),
-
-                Strength =
-                    settings.Strength *
-                    RandomRange(
-                        0.72,
-                        1.18),
-
-                RadiusOffset =
-                    RandomRange(
-                        -1.0,
-                        1.0),
-
-                OrganicOffset =
-                    RandomRange(
-                        0.0,
-                        Math.PI * 2.0),
-
-                ColorIndex =
-                    Random.Next(0, 3),
-
-                Rotation =
-                    RandomRange(
-                        -1.0,
-                        1.0)
-            };
-
-        _waves.Add(wave);
-    }
-
-    // =========================================================
-    // RANDOM
-    // =========================================================
-
-    private static double RandomRange(
-        double minimum,
-        double maximum)
-    {
-        return minimum +
-               Random.NextDouble() *
-               (maximum - minimum);
-    }
-
-    // =========================================================
-    // RENDER
-    // =========================================================
-
-    private void RenderBlob()
+    private void RenderEntity()
     {
         if (ActualWidth <= 0 ||
             ActualHeight <= 0)
@@ -429,992 +408,1106 @@ public sealed class LiquidBlobControl : FrameworkElement
             return;
         }
 
+
         using DrawingContext dc =
             _visual.RenderOpen();
+
 
         double centerX =
             ActualWidth * 0.5;
 
+
         double centerY =
             ActualHeight * 0.5;
 
-        AuraSettings settings =
-            GetAuraSettings();
+
+        ParticleSettings settings =
+            _currentSettings;
+
 
         // =====================================================
-        // ORGANIC PERIMETER
+        // OUTER FRAGMENTS
+        //
+        // Render first so they remain behind the main body.
         // =====================================================
 
-        Point[] borderPoints =
-            CreateOrganicCircle(
-                centerX,
-                centerY,
-                BaseRadius);
-
-        // =====================================================
-        // AURA
-        // =====================================================
-
-        DrawAura(
+        DrawParticleSet(
             dc,
             centerX,
             centerY,
-            settings);
+            _fragmentParticles,
+            settings,
+            true);
+
 
         // =====================================================
-        // MAIN ENERGY BORDER
+        // CORE ENTITY
         // =====================================================
 
-        DrawNeonBorder(
-            dc,
-            borderPoints,
-            settings);
-
-        // =====================================================
-        // MICRO ENERGY PARTICLES
-        // =====================================================
-
-        DrawEnergyParticles(
+        DrawParticleSet(
             dc,
             centerX,
             centerY,
-            settings);
+            _coreParticles,
+            settings,
+            false);
     }
 
-    // =========================================================
-    // ORGANIC CIRCLE
-    // =========================================================
-
-    private Point[] CreateOrganicCircle(
-        double centerX,
-        double centerY,
-        double radius)
-    {
-        Point[] points =
-            new Point[PointCount];
-
-        AuraSettings settings =
-            GetAuraSettings();
-
-        double breathing =
-            Math.Sin(
-                _time *
-                settings.BorderPulseSpeed)
-            *
-            settings.BorderPulseAmount;
-
-        if (_isHovered)
-        {
-            breathing += 1.5;
-        }
-
-        double finalRadius =
-            radius +
-            breathing;
-
-        for (int i = 0;
-             i < PointCount;
-             i++)
-        {
-            double angle =
-                Math.PI * 2.0 *
-                i /
-                PointCount;
-
-            // -------------------------------------------------
-            // Very subtle organic movement.
-            //
-            // The goal is:
-            //
-            //     organic circle
-            //
-            // NOT:
-            //
-            //     liquid blob
-            // -------------------------------------------------
-
-            double wave1 =
-                Math.Sin(
-                    angle * 3.0 +
-                    _time * 0.72)
-                * 1.25;
-
-            double wave2 =
-                Math.Sin(
-                    angle * 5.0 -
-                    _time * 0.46)
-                * 0.70;
-
-            double wave3 =
-                Math.Sin(
-                    angle * 7.0 +
-                    _time * 0.30)
-                * 0.35;
-
-            double organic =
-                wave1 +
-                wave2 +
-                wave3;
-
-            double r =
-                finalRadius +
-                organic;
-
-            points[i] =
-                new Point(
-                    centerX +
-                    Math.Cos(angle) * r,
-
-                    centerY +
-                    Math.Sin(angle) * r);
-        }
-
-        return points;
-    }
 
     // =========================================================
-    // AURA
+    // DRAW PARTICLES
     // =========================================================
 
-    private void DrawAura(
+    private void DrawParticleSet(
         DrawingContext dc,
         double centerX,
         double centerY,
-        AuraSettings settings)
+        Particle[] particles,
+        ParticleSettings settings,
+        bool fragments)
     {
-        foreach (AuraWave wave in _waves)
+        double breathing =
+            1.0 +
+            Math.Sin(
+                _time *
+                settings.BreathSpeed)
+            *
+            settings.BreathAmount;
+
+
+        double hoverExpansion =
+            _isHovered
+                ? 1.025
+                : 1.0;
+
+
+        double globalScale =
+            breathing *
+            hoverExpansion;
+
+
+        double rotationY =
+            _time *
+            settings.RotationYSpeed;
+
+
+        double rotationX =
+            _time *
+            settings.RotationXSpeed;
+
+
+        for (int i = 0;
+             i < particles.Length;
+             i++)
         {
-            double progress =
+            Particle particle =
+                particles[i];
+
+
+            double particleWave =
+                1.0 +
+                Math.Sin(
+                    _time *
+                    settings.WaveSpeed +
+                    particle.Phase)
+                *
+                settings.WaveAmount;
+
+
+            double fragmentExpansion =
+                1.0;
+
+
+            if (fragments)
+            {
+                double pulse =
+                    Math.Max(
+                        0.0,
+                        Math.Sin(
+                            _time *
+                            settings.FragmentPulseSpeed +
+                            particle.Phase));
+
+
+                fragmentExpansion =
+                    settings.FragmentScale +
+                    pulse *
+                    settings.FragmentPulseAmount;
+            }
+
+
+            double scale =
+                globalScale *
+                particleWave *
+                fragmentExpansion;
+
+
+            double x =
+                particle.X *
+                settings.RadiusX *
+                scale;
+
+
+            double y =
+                particle.Y *
+                settings.RadiusY *
+                scale;
+
+
+            double z =
+                particle.Z *
+                settings.RadiusZ *
+                scale;
+
+
+            // =================================================
+            // PARTICLE SWIRL
+            // =================================================
+
+            double swirl =
+                settings.SwirlStrength *
+                particle.Y +
+                Math.Sin(
+                    particle.Phase +
+                    _time * 0.65)
+                *
+                settings.SwirlStrength *
+                0.14;
+
+
+            RotateY(
+                ref x,
+                ref z,
+                swirl);
+
+
+            // =================================================
+            // LOCAL PARTICLE DRIFT
+            // =================================================
+
+            double driftTime =
+                _time *
+                particle.DriftSpeed;
+
+
+            double turbulence =
+                settings.Turbulence;
+
+
+            x +=
+                Math.Sin(
+                    driftTime +
+                    particle.Phase)
+                *
+                turbulence;
+
+
+            y +=
+                Math.Cos(
+                    driftTime * 0.87 +
+                    particle.Phase * 1.7)
+                *
+                turbulence *
+                0.72;
+
+
+            z +=
+                Math.Sin(
+                    driftTime * 0.61 +
+                    particle.Phase * 2.3)
+                *
+                turbulence *
+                0.56;
+
+
+            // =================================================
+            // GLOBAL 3D ROTATION
+            // =================================================
+
+            RotateY(
+                ref x,
+                ref z,
+                rotationY);
+
+
+            RotateX(
+                ref y,
+                ref z,
+                rotationX);
+
+
+            // =================================================
+            // PERSPECTIVE
+            // =================================================
+
+            double normalizedDepth =
                 Math.Clamp(
-                    wave.Progress,
+                    (
+                        z /
+                        Math.Max(
+                            settings.RadiusZ,
+                            1.0)
+                        +
+                        1.0
+                    )
+                    *
+                    0.5,
                     0.0,
                     1.0);
 
-            // -------------------------------------------------
-            // EXPANSION
-            // -------------------------------------------------
 
-            double expansion =
-                EaseOutCubic(progress);
+            double perspective =
+                0.88 +
+                normalizedDepth *
+                0.24;
 
-            double radius =
-                BaseRadius +
-                wave.RadiusOffset +
-                expansion *
-                settings.AuraDistance;
 
-            // -------------------------------------------------
-            // ORGANIC RING
-            // -------------------------------------------------
-
-            Point[] ring =
-                CreateAuraRing(
-                    centerX,
-                    centerY,
-                    radius,
-                    wave);
-
-            StreamGeometry geometry =
-                CreateClosedCurve(ring);
-
-            // -------------------------------------------------
-            // FADE
-            // -------------------------------------------------
-
-            double fade =
-                1.0 -
-                SmoothStep(
-                    0.05,
-                    1.0,
-                    progress);
-
-            /*
-             * Small birth fade.
-             *
-             * The ring starts at the perimeter
-             * instead of suddenly appearing outside.
-             */
-
-            double birth =
-                SmoothStep(
-                    0.0,
-                    0.10,
-                    progress);
-
-            double alpha =
-                fade *
-                birth *
-                wave.Strength;
-
-            if (alpha <= 0.01)
-                continue;
-
-            // -------------------------------------------------
-            // COLOR
-            // -------------------------------------------------
-
-            Color color =
-                GetAuraColor(
-                    wave.ColorIndex,
-                    settings);
-
-            // -------------------------------------------------
-            // LARGE DIFFUSE GLOW
-            // -------------------------------------------------
-
-            DrawCurve(
-                dc,
-                geometry,
-                WithAlpha(
-                    color,
-                    alpha * 0.16),
-                7.0);
-
-            // -------------------------------------------------
-            // MEDIUM GLOW
-            // -------------------------------------------------
-
-            DrawCurve(
-                dc,
-                geometry,
-                WithAlpha(
-                    color,
-                    alpha * 0.30),
-                3.6);
-
-            // -------------------------------------------------
-            // SHARP ENERGY EDGE
-            // -------------------------------------------------
-
-            DrawCurve(
-                dc,
-                geometry,
-                WithAlpha(
-                    color,
-                    alpha * 0.72),
-                1.15);
-        }
-    }
-
-    // =========================================================
-    // AURA RING
-    // =========================================================
-
-    private Point[] CreateAuraRing(
-        double centerX,
-        double centerY,
-        double radius,
-        AuraWave wave)
-    {
-        Point[] points =
-            new Point[PointCount];
-
-        for (int i = 0;
-             i < PointCount;
-             i++)
-        {
-            double angle =
-                Math.PI * 2.0 *
-                i /
-                PointCount;
-
-            // -------------------------------------------------
-            // Large organic movement
-            // -------------------------------------------------
-
-            double organic1 =
-                Math.Sin(
-                    angle * 3.0 +
-                    _time * 0.42 +
-                    wave.OrganicOffset)
-                * 1.45;
-
-            double organic2 =
-                Math.Sin(
-                    angle * 5.0 -
-                    _time * 0.27 +
-                    wave.OrganicOffset * 1.6)
-                * 0.80;
-
-            double organic3 =
-                Math.Sin(
-                    angle * 8.0 +
-                    _time * 0.19 +
-                    wave.OrganicOffset * 0.5)
-                * 0.35;
-
-            double organic =
-                organic1 +
-                organic2 +
-                organic3;
-
-            double r =
-                radius +
-                organic;
-
-            points[i] =
-                new Point(
-                    centerX +
-                    Math.Cos(angle) * r,
-
-                    centerY +
-                    Math.Sin(angle) * r);
-        }
-
-        return points;
-    }
-
-    // =========================================================
-    // NEON BORDER
-    // =========================================================
-
-    private void DrawNeonBorder(
-        DrawingContext dc,
-        Point[] points,
-        AuraSettings settings)
-    {
-        StreamGeometry geometry =
-            CreateClosedCurve(points);
-
-        double intensity =
-            settings.BorderIntensity;
-
-        // =====================================================
-        // HUGE OUTER AURA
-        // =====================================================
-
-        DrawCurve(
-            dc,
-            geometry,
-            WithAlpha(
-                ElectricCyan,
-                0.12 * intensity),
-            8.0);
-
-        // =====================================================
-        // LARGE CYAN GLOW
-        // =====================================================
-
-        DrawCurve(
-            dc,
-            geometry,
-            WithAlpha(
-                ElectricCyan,
-                0.22 * intensity),
-            4.5);
-
-        // =====================================================
-        // BLUE / VIOLET SECONDARY GLOW
-        // =====================================================
-
-        DrawCurve(
-            dc,
-            geometry,
-            WithAlpha(
-                ElectricViolet,
-                0.16 * intensity),
-            2.5);
-
-        // =====================================================
-        // STRONG CYAN GLOW
-        // =====================================================
-
-        DrawCurve(
-            dc,
-            geometry,
-            WithAlpha(
-                ElectricCyan,
-                0.48 * intensity),
-            1.8);
-
-        // =====================================================
-        // ELECTRIC BLUE CORE
-        // =====================================================
-
-        DrawCurve(
-            dc,
-            geometry,
-            WithAlpha(
-                NeonBlue,
-                0.90 * intensity),
-            0.85);
-
-        // =====================================================
-        // HOT WHITE-CYAN EDGE
-        // =====================================================
-
-        DrawCurve(
-            dc,
-            geometry,
-            WithAlpha(
-                HotWhite,
-                0.92 * intensity),
-            0.50);
-
-        // =====================================================
-        // HOVER ENERGY
-        // =====================================================
-
-        if (_isHovered)
-        {
-            DrawCurve(
-                dc,
-                geometry,
-                WithAlpha(
-                    ElectricViolet,
-                    0.80),
-                1.4);
-        }
-    }
-
-    // =========================================================
-    // ENERGY PARTICLES
-    // =========================================================
-
-    private void DrawEnergyParticles(
-        DrawingContext dc,
-        double centerX,
-        double centerY,
-        AuraSettings settings)
-    {
-        /*
-         * Tiny moving points around the perimeter.
-         *
-         * These prevent the ring from feeling static.
-         */
-
-        int particleCount =
-            settings.ParticleCount;
-
-        double radius =
-            BaseRadius + 1.0;
-
-        for (int i = 0;
-             i < particleCount;
-             i++)
-        {
-            double seed =
-                i * 17.371;
-
-            double angle =
-                seed +
-                _time *
-                settings.ParticleSpeed *
-                (0.65 +
-                 (i % 3) * 0.16);
-
-            double wobble =
-                Math.Sin(
-                    _time * 1.7 +
-                    seed)
-                * 1.8;
-
-            double r =
-                radius +
-                wobble;
-
-            double x =
+            double screenX =
                 centerX +
-                Math.Cos(angle) * r;
+                x *
+                perspective;
 
-            double y =
+
+            double screenY =
                 centerY +
-                Math.Sin(angle) * r;
+                y *
+                perspective;
 
-            double pulse =
-                0.45 +
-                0.55 *
-                ((Math.Sin(
-                    _time * 3.0 +
-                    seed) + 1.0) * 0.5);
 
-            Color color =
-                i % 3 == 0
-                    ? ElectricViolet
-                    : ElectricCyan;
+            // =================================================
+            // DEPTH SIZE
+            // =================================================
 
             double size =
-                i % 4 == 0
-                    ? 1.35
-                    : 0.75;
+                particle.Size *
+                settings.PointScale *
+                (
+                    0.62 +
+                    normalizedDepth *
+                    0.78
+                );
 
-            SolidColorBrush brush =
-                new(
-                    WithAlpha(
-                        color,
-                        0.55 * pulse));
 
-            brush.Freeze();
+            if (fragments)
+            {
+                size *=
+                    0.78;
+            }
+
+
+            // =================================================
+            // BRIGHTNESS
+            // =================================================
+
+            double intensity =
+                (
+                    0.42 +
+                    normalizedDepth *
+                    0.72
+                )
+                *
+                settings.Brightness;
+
+
+            if (fragments)
+            {
+                intensity *=
+                    settings.FragmentVisibility;
+            }
+
+
+            int brightnessLevel =
+                ResolveBrightnessLevel(
+                    intensity);
+
+
+            int colorGroup =
+                ResolveColorGroup(
+                    settings.ColorMode,
+                    particle.ColorSeed);
+
+
+            Brush[] brushes =
+                GetBrushRamp(
+                    colorGroup);
+
+
+            // =================================================
+            // SOFT PARTICLE GLOW
+            //
+            // No lines.
+            // No border.
+            //
+            // The glow belongs to each individual particle.
+            // =================================================
+
+            if (brightnessLevel >= 2 ||
+                particle.GlowSeed)
+            {
+                int glowLevel =
+                    Math.Max(
+                        0,
+                        brightnessLevel - 2);
+
+
+                dc.DrawEllipse(
+                    brushes[glowLevel],
+                    null,
+                    new Point(
+                        screenX,
+                        screenY),
+                    size * 2.35,
+                    size * 2.35);
+            }
+
+
+            // =================================================
+            // PARTICLE CORE
+            // =================================================
 
             dc.DrawEllipse(
-                brush,
+                brushes[brightnessLevel],
                 null,
-                new Point(x, y),
+                new Point(
+                    screenX,
+                    screenY),
                 size,
                 size);
         }
     }
 
+
     // =========================================================
-    // CURVE DRAW
+    // CREATE CORE PARTICLES
     // =========================================================
 
-    private static void DrawCurve(
-        DrawingContext dc,
-        StreamGeometry geometry,
-        Color color,
-        double thickness)
+    private static Particle[] CreateCoreParticles()
     {
-        if (color.A == 0)
-            return;
-
-        SolidColorBrush brush =
-            new(color);
-
-        brush.Freeze();
-
-        Pen pen =
+        Random random =
             new(
-                brush,
-                thickness);
+                731927);
 
-        pen.LineJoin =
-            PenLineJoin.Round;
 
-        pen.StartLineCap =
-            PenLineCap.Round;
+        Particle[] particles =
+            new Particle[
+                CoreParticleCount];
 
-        pen.EndLineCap =
-            PenLineCap.Round;
-
-        dc.DrawGeometry(
-            null,
-            pen,
-            geometry);
-    }
-
-    // =========================================================
-    // CLOSED SMOOTH CURVE
-    // =========================================================
-
-    private static StreamGeometry CreateClosedCurve(
-        Point[] points)
-    {
-        StreamGeometry geometry =
-            new();
-
-        using StreamGeometryContext context =
-            geometry.Open();
-
-        Point first =
-            points[0];
-
-        context.BeginFigure(
-            first,
-            false,
-            true);
-
-        int count =
-            points.Length;
 
         for (int i = 0;
-             i < count;
+             i < particles.Length;
              i++)
         {
-            Point p0 =
-                points[
-                    (i - 1 + count) %
-                    count];
+            // =================================================
+            // RANDOM POINT INSIDE A SPHERE
+            // =================================================
 
-            Point p1 =
-                points[i];
+            double longitude =
+                random.NextDouble() *
+                Math.PI *
+                2.0;
 
-            Point p2 =
-                points[
-                    (i + 1) %
-                    count];
 
-            Point p3 =
-                points[
-                    (i + 2) %
-                    count];
+            double z =
+                random.NextDouble() *
+                2.0 -
+                1.0;
 
-            Point c1 =
-                new Point(
-                    p1.X +
-                    (p2.X - p0.X) / 6.0,
 
-                    p1.Y +
-                    (p2.Y - p0.Y) / 6.0);
+            double horizontal =
+                Math.Sqrt(
+                    Math.Max(
+                        0.0,
+                        1.0 -
+                        z * z));
 
-            Point c2 =
-                new Point(
-                    p2.X -
-                    (p3.X - p1.X) / 6.0,
 
-                    p2.Y -
-                    (p3.Y - p1.Y) / 6.0);
+            // Bias some particles toward the outside,
+            // while still keeping a populated center.
 
-            context.BezierTo(
-                c1,
-                c2,
-                p2,
-                true,
-                true);
+            double radius =
+                0.10 +
+                Math.Pow(
+                    random.NextDouble(),
+                    0.58)
+                *
+                0.90;
+
+
+            double x =
+                Math.Cos(
+                    longitude)
+                *
+                horizontal *
+                radius;
+
+
+            double y =
+                Math.Sin(
+                    longitude)
+                *
+                horizontal *
+                radius;
+
+
+            double finalZ =
+                z *
+                radius;
+
+
+            particles[i] =
+                new Particle(
+                    x,
+                    y,
+                    finalZ,
+
+                    random.NextDouble() *
+                    Math.PI *
+                    2.0,
+
+                    0.45 +
+                    random.NextDouble() *
+                    0.85,
+
+                    0.50 +
+                    random.NextDouble() *
+                    0.70,
+
+                    random.Next(
+                        0,
+                        1000),
+
+                    random.NextDouble() <
+                    0.16);
         }
 
-        geometry.Freeze();
 
-        return geometry;
+        return particles;
     }
 
+
     // =========================================================
-    // AURA COLOR
+    // CREATE FRAGMENT PARTICLES
     // =========================================================
 
-    private static Color GetAuraColor(
-        int colorIndex,
-        AuraSettings settings)
+    private static Particle[]
+        CreateFragmentParticles()
     {
-        /*
-         * State changes the color distribution.
-         *
-         * Still controlled:
-         *
-         * cyan
-         * blue
-         * violet
-         *
-         * Never rainbow.
-         */
+        Random random =
+            new(
+                183521);
 
-        return settings.ColorMode switch
+
+        Particle[] particles =
+            new Particle[
+                FragmentParticleCount];
+
+
+        for (int i = 0;
+             i < particles.Length;
+             i++)
         {
-            AuraColorMode.CyanDominant =>
-                colorIndex switch
+            double longitude =
+                random.NextDouble() *
+                Math.PI *
+                2.0;
+
+
+            double z =
+                random.NextDouble() *
+                2.0 -
+                1.0;
+
+
+            double horizontal =
+                Math.Sqrt(
+                    Math.Max(
+                        0.0,
+                        1.0 -
+                        z * z));
+
+
+            double radius =
+                1.03 +
+                random.NextDouble() *
+                0.38;
+
+
+            double x =
+                Math.Cos(
+                    longitude)
+                *
+                horizontal *
+                radius;
+
+
+            double y =
+                Math.Sin(
+                    longitude)
+                *
+                horizontal *
+                radius;
+
+
+            double finalZ =
+                z *
+                radius;
+
+
+            particles[i] =
+                new Particle(
+                    x,
+                    y,
+                    finalZ,
+
+                    random.NextDouble() *
+                    Math.PI *
+                    2.0,
+
+                    0.55 +
+                    random.NextDouble() *
+                    1.15,
+
+                    0.40 +
+                    random.NextDouble() *
+                    0.55,
+
+                    random.Next(
+                        0,
+                        1000),
+
+                    random.NextDouble() <
+                    0.10);
+        }
+
+
+        return particles;
+    }
+
+
+    // =========================================================
+    // ROTATE Y
+    // =========================================================
+
+    private static void RotateY(
+        ref double x,
+        ref double z,
+        double angle)
+    {
+        double cosine =
+            Math.Cos(
+                angle);
+
+
+        double sine =
+            Math.Sin(
+                angle);
+
+
+        double newX =
+            x *
+            cosine +
+            z *
+            sine;
+
+
+        double newZ =
+            -x *
+            sine +
+            z *
+            cosine;
+
+
+        x =
+            newX;
+
+
+        z =
+            newZ;
+    }
+
+
+    // =========================================================
+    // ROTATE X
+    // =========================================================
+
+    private static void RotateX(
+        ref double y,
+        ref double z,
+        double angle)
+    {
+        double cosine =
+            Math.Cos(
+                angle);
+
+
+        double sine =
+            Math.Sin(
+                angle);
+
+
+        double newY =
+            y *
+            cosine -
+            z *
+            sine;
+
+
+        double newZ =
+            y *
+            sine +
+            z *
+            cosine;
+
+
+        y =
+            newY;
+
+
+        z =
+            newZ;
+    }
+
+
+    // =========================================================
+    // BRIGHTNESS
+    // =========================================================
+
+    private static int ResolveBrightnessLevel(
+        double intensity)
+    {
+        if (intensity < 0.48)
+        {
+            return 0;
+        }
+
+
+        if (intensity < 0.76)
+        {
+            return 1;
+        }
+
+
+        if (intensity < 1.05)
+        {
+            return 2;
+        }
+
+
+        return 3;
+    }
+
+
+    // =========================================================
+    // COLOR GROUP
+    // =========================================================
+
+    private static int ResolveColorGroup(
+        ParticleColorMode mode,
+        int seed)
+    {
+        int value =
+            Math.Abs(seed) %
+            100;
+
+
+        return mode switch
+        {
+            // =================================================
+            // CYAN
+            // =================================================
+
+            ParticleColorMode.CyanDominant =>
+                value switch
                 {
-                    0 => ElectricCyan,
-                    1 => NeonBlue,
-                    _ => ElectricCyan
+                    < 58 => 0,
+                    < 82 => 1,
+                    < 94 => 2,
+                    _ => 3
                 },
 
-            AuraColorMode.VioletDominant =>
-                colorIndex switch
+
+            // =================================================
+            // BLUE
+            // =================================================
+
+            ParticleColorMode.BlueDominant =>
+                value switch
                 {
-                    0 => ElectricViolet,
-                    1 => ElectricCyan,
-                    _ => NeonBlue
+                    < 52 => 1,
+                    < 76 => 0,
+                    < 92 => 2,
+                    _ => 3
                 },
 
-            AuraColorMode.BlueDominant =>
-                colorIndex switch
+
+            // =================================================
+            // VIOLET
+            // =================================================
+
+            ParticleColorMode.VioletDominant =>
+                value switch
                 {
-                    0 => NeonBlue,
-                    1 => ElectricCyan,
-                    _ => ElectricViolet
+                    < 48 => 2,
+                    < 73 => 1,
+                    < 91 => 0,
+                    _ => 3
                 },
+
 
             _ =>
-                ElectricCyan
+                0
         };
     }
 
+
     // =========================================================
-    // ALPHA
+    // BRUSH GROUP
     // =========================================================
 
-    private static Color WithAlpha(
-        Color color,
-        double multiplier)
+    private static Brush[] GetBrushRamp(
+        int group)
     {
-        byte alpha =
-            (byte)Math.Clamp(
-                color.A * multiplier,
-                0,
-                255);
+        return group switch
+        {
+            0 =>
+                CyanBrushes,
 
-        return Color.FromArgb(
-            alpha,
-            color.R,
-            color.G,
-            color.B);
+            1 =>
+                BlueBrushes,
+
+            2 =>
+                VioletBrushes,
+
+            3 =>
+                WhiteBrushes,
+
+            _ =>
+                CyanBrushes
+        };
     }
 
+
     // =========================================================
-    // AURA SETTINGS
+    // CREATE BRUSH RAMP
     // =========================================================
 
-    private AuraSettings GetAuraSettings()
+    private static Brush[] CreateBrushRamp(
+        Color color)
     {
-        return _state switch
+        byte[] alpha =
+        {
+            30,
+            78,
+            155,
+            235
+        };
+
+
+        Brush[] brushes =
+            new Brush[
+                alpha.Length];
+
+
+        for (int i = 0;
+             i < alpha.Length;
+             i++)
+        {
+            SolidColorBrush brush =
+                new(
+                    Color.FromArgb(
+                        alpha[i],
+                        color.R,
+                        color.G,
+                        color.B));
+
+
+            brush.Freeze();
+
+
+            brushes[i] =
+                brush;
+        }
+
+
+        return brushes;
+    }
+
+
+    // =========================================================
+    // SETTINGS
+    // =========================================================
+
+    private static ParticleSettings GetSettings(
+        CompanionState state)
+    {
+        return state switch
         {
             // =================================================
             // IDLE
+            //
+            // Loose floating intelligent cloud.
+            // Slow breathing.
+            // Slow rotation.
             // =================================================
 
             CompanionState.Idle =>
-                new AuraSettings
-                {
-                    SpawnRate = 0.72,
+                new ParticleSettings(
+                    RadiusX: 38.0,
+                    RadiusY: 38.0,
+                    RadiusZ: 38.0,
 
-                    Lifetime = 3.0,
+                    RotationYSpeed: 0.22,
+                    RotationXSpeed: 0.07,
 
-                    AuraDistance = 28.0,
+                    Turbulence: 0.70,
 
-                    Strength = 0.72,
+                    BreathAmount: 0.035,
+                    BreathSpeed: 1.15,
 
-                    BorderIntensity = 0.95,
+                    WaveAmount: 0.012,
+                    WaveSpeed: 1.30,
 
-                    BorderPulseSpeed = 1.20,
+                    SwirlStrength: 0.10,
 
-                    BorderPulseAmount = 1.0,
+                    PointScale: 1.0,
 
-                    ParticleCount = 8,
+                    Brightness: 0.90,
 
-                    ParticleSpeed = 0.65,
+                    FragmentScale: 1.0,
+                    FragmentPulseAmount: 0.035,
+                    FragmentPulseSpeed: 0.75,
+                    FragmentVisibility: 0.58,
 
-                    ColorMode =
-                        AuraColorMode.CyanDominant
-                },
+                    ColorMode:
+                        ParticleColorMode.CyanDominant),
+
 
             // =================================================
             // LISTENING
+            //
+            // More coherent.
+            // Slightly taller.
+            // Cyan becomes stronger.
             // =================================================
 
             CompanionState.Listening =>
-                new AuraSettings
-                {
-                    SpawnRate = 1.35,
+                new ParticleSettings(
+                    RadiusX: 36.0,
+                    RadiusY: 43.0,
+                    RadiusZ: 37.0,
 
-                    Lifetime = 2.35,
+                    RotationYSpeed: 0.40,
+                    RotationXSpeed: 0.10,
 
-                    AuraDistance = 31.0,
+                    Turbulence: 0.82,
 
-                    Strength = 0.88,
+                    BreathAmount: 0.048,
+                    BreathSpeed: 2.0,
 
-                    BorderIntensity = 1.12,
+                    WaveAmount: 0.025,
+                    WaveSpeed: 2.25,
 
-                    BorderPulseSpeed = 2.15,
+                    SwirlStrength: 0.18,
 
-                    BorderPulseAmount = 1.8,
+                    PointScale: 1.04,
 
-                    ParticleCount = 11,
+                    Brightness: 1.05,
 
-                    ParticleSpeed = 0.95,
+                    FragmentScale: 1.02,
+                    FragmentPulseAmount: 0.06,
+                    FragmentPulseSpeed: 1.65,
+                    FragmentVisibility: 0.72,
 
-                    ColorMode =
-                        AuraColorMode.CyanDominant
-                },
+                    ColorMode:
+                        ParticleColorMode.CyanDominant),
+
 
             // =================================================
             // THINKING
+            //
+            // Faster internal rotation.
+            // More compression.
+            // Violet/blue intelligence pattern.
             // =================================================
 
             CompanionState.Thinking =>
-                new AuraSettings
-                {
-                    SpawnRate = 1.15,
+                new ParticleSettings(
+                    RadiusX: 35.0,
+                    RadiusY: 36.0,
+                    RadiusZ: 39.0,
 
-                    Lifetime = 2.65,
+                    RotationYSpeed: 1.10,
+                    RotationXSpeed: 0.32,
 
-                    AuraDistance = 36.0,
+                    Turbulence: 1.02,
 
-                    Strength = 0.92,
+                    BreathAmount: 0.025,
+                    BreathSpeed: 1.75,
 
-                    BorderIntensity = 1.16,
+                    WaveAmount: 0.018,
+                    WaveSpeed: 2.40,
 
-                    BorderPulseSpeed = 1.75,
+                    SwirlStrength: 0.72,
 
-                    BorderPulseAmount = 2.1,
+                    PointScale: 1.03,
 
-                    ParticleCount = 13,
+                    Brightness: 1.10,
 
-                    ParticleSpeed = 1.15,
+                    FragmentScale: 1.05,
+                    FragmentPulseAmount: 0.075,
+                    FragmentPulseSpeed: 1.8,
+                    FragmentVisibility: 0.76,
 
-                    ColorMode =
-                        AuraColorMode.VioletDominant
-                },
+                    ColorMode:
+                        ParticleColorMode.VioletDominant),
+
 
             // =================================================
             // SPEAKING
+            //
+            // Pulses physically travel through the particle
+            // structure instead of drawing sound rings.
             // =================================================
 
             CompanionState.Speaking =>
-                new AuraSettings
-                {
-                    SpawnRate = 2.55,
+                new ParticleSettings(
+                    RadiusX: 40.0,
+                    RadiusY: 40.0,
+                    RadiusZ: 40.0,
 
-                    Lifetime = 1.65,
+                    RotationYSpeed: 0.68,
+                    RotationXSpeed: 0.18,
 
-                    AuraDistance = 40.0,
+                    Turbulence: 1.20,
 
-                    Strength = 1.12,
+                    BreathAmount: 0.055,
+                    BreathSpeed: 3.7,
 
-                    BorderIntensity = 1.38,
+                    WaveAmount: 0.075,
+                    WaveSpeed: 5.5,
 
-                    BorderPulseSpeed = 4.0,
+                    SwirlStrength: 0.28,
 
-                    BorderPulseAmount = 2.8,
+                    PointScale: 1.10,
 
-                    ParticleCount = 18,
+                    Brightness: 1.25,
 
-                    ParticleSpeed = 1.8,
+                    FragmentScale: 1.05,
+                    FragmentPulseAmount: 0.17,
+                    FragmentPulseSpeed: 4.8,
+                    FragmentVisibility: 0.90,
 
-                    ColorMode =
-                        AuraColorMode.CyanDominant
-                },
+                    ColorMode:
+                        ParticleColorMode.CyanDominant),
+
 
             // =================================================
             // AVOIDING
+            //
+            // Compact fast escape configuration.
             // =================================================
 
             CompanionState.Avoiding =>
-                new AuraSettings
-                {
-                    SpawnRate = 3.0,
+                new ParticleSettings(
+                    RadiusX: 47.0,
+                    RadiusY: 29.0,
+                    RadiusZ: 34.0,
 
-                    Lifetime = 1.25,
+                    RotationYSpeed: 1.65,
+                    RotationXSpeed: 0.48,
 
-                    AuraDistance = 47.0,
+                    Turbulence: 2.65,
 
-                    Strength = 1.20,
+                    BreathAmount: 0.035,
+                    BreathSpeed: 5.0,
 
-                    BorderIntensity = 1.45,
+                    WaveAmount: 0.045,
+                    WaveSpeed: 5.8,
 
-                    BorderPulseSpeed = 5.0,
+                    SwirlStrength: 0.80,
 
-                    BorderPulseAmount = 3.4,
+                    PointScale: 1.04,
 
-                    ParticleCount = 22,
+                    Brightness: 1.28,
 
-                    ParticleSpeed = 2.3,
+                    FragmentScale: 1.16,
+                    FragmentPulseAmount: 0.18,
+                    FragmentPulseSpeed: 5.2,
+                    FragmentVisibility: 0.92,
 
-                    ColorMode =
-                        AuraColorMode.VioletDominant
-                },
+                    ColorMode:
+                        ParticleColorMode.VioletDominant),
+
 
             // =================================================
             // MOVING
+            //
+            // Streamlined particle structure.
             // =================================================
 
             CompanionState.Moving =>
-                new AuraSettings
-                {
-                    SpawnRate = 1.85,
+                new ParticleSettings(
+                    RadiusX: 45.0,
+                    RadiusY: 31.0,
+                    RadiusZ: 35.0,
 
-                    Lifetime = 1.9,
+                    RotationYSpeed: 1.0,
+                    RotationXSpeed: 0.25,
 
-                    AuraDistance = 33.0,
+                    Turbulence: 1.55,
 
-                    Strength = 1.0,
+                    BreathAmount: 0.026,
+                    BreathSpeed: 3.2,
 
-                    BorderIntensity = 1.25,
+                    WaveAmount: 0.030,
+                    WaveSpeed: 4.0,
 
-                    BorderPulseSpeed = 3.0,
+                    SwirlStrength: 0.48,
 
-                    BorderPulseAmount = 2.2,
+                    PointScale: 1.02,
 
-                    ParticleCount = 15,
+                    Brightness: 1.15,
 
-                    ParticleSpeed = 1.5,
+                    FragmentScale: 1.10,
+                    FragmentPulseAmount: 0.11,
+                    FragmentPulseSpeed: 3.5,
+                    FragmentVisibility: 0.82,
 
-                    ColorMode =
-                        AuraColorMode.BlueDominant
-                },
+                    ColorMode:
+                        ParticleColorMode.BlueDominant),
+
 
             // =================================================
             // DEFAULT
             // =================================================
 
             _ =>
-                new AuraSettings
-                {
-                    SpawnRate = 0.72,
-
-                    Lifetime = 3.0,
-
-                    AuraDistance = 25.0,
-
-                    Strength = 0.72,
-
-                    BorderIntensity = 0.95,
-
-                    BorderPulseSpeed = 1.20,
-
-                    BorderPulseAmount = 1.0,
-
-                    ParticleCount = 8,
-
-                    ParticleSpeed = 0.65,
-
-                    ColorMode =
-                        AuraColorMode.CyanDominant
-                }
+                GetSettings(
+                    CompanionState.Idle)
         };
     }
 
-    // =========================================================
-    // EASING
-    // =========================================================
-
-    private static double EaseOutCubic(
-        double value)
-    {
-        double inverse =
-            1.0 - value;
-
-        return 1.0 -
-               inverse *
-               inverse *
-               inverse;
-    }
 
     // =========================================================
-    // SMOOTH STEP
+    // PARTICLE
     // =========================================================
 
-    private static double SmoothStep(
-        double edge0,
-        double edge1,
-        double value)
-    {
-        double t =
-            Math.Clamp(
-                (value - edge0) /
-                (edge1 - edge0),
-                0.0,
-                1.0);
+    private readonly record struct Particle(
+        double X,
+        double Y,
+        double Z,
+        double Phase,
+        double DriftSpeed,
+        double Size,
+        int ColorSeed,
+        bool GlowSeed);
 
-        return t * t *
-               (3.0 - 2.0 * t);
-    }
-
-    // =========================================================
-    // AURA WAVE
-    // =========================================================
-
-    private sealed class AuraWave
-    {
-        public double Progress;
-
-        public double Lifetime;
-
-        public double Strength;
-
-        public double RadiusOffset;
-
-        public double OrganicOffset;
-
-        public int ColorIndex;
-
-        public double Rotation;
-    }
 
     // =========================================================
     // COLOR MODE
     // =========================================================
 
-    private enum AuraColorMode
+    private enum ParticleColorMode
     {
         CyanDominant,
 
@@ -1423,30 +1516,172 @@ public sealed class LiquidBlobControl : FrameworkElement
         VioletDominant
     }
 
+
     // =========================================================
-    // AURA SETTINGS
+    // PARTICLE SETTINGS
     // =========================================================
 
-    private sealed class AuraSettings
+    private readonly record struct ParticleSettings(
+        double RadiusX,
+        double RadiusY,
+        double RadiusZ,
+
+        double RotationYSpeed,
+        double RotationXSpeed,
+
+        double Turbulence,
+
+        double BreathAmount,
+        double BreathSpeed,
+
+        double WaveAmount,
+        double WaveSpeed,
+
+        double SwirlStrength,
+
+        double PointScale,
+
+        double Brightness,
+
+        double FragmentScale,
+        double FragmentPulseAmount,
+        double FragmentPulseSpeed,
+        double FragmentVisibility,
+
+        ParticleColorMode ColorMode)
     {
-        public double SpawnRate;
+        public static ParticleSettings Lerp(
+            ParticleSettings current,
+            ParticleSettings target,
+            double amount)
+        {
+            amount =
+                Math.Clamp(
+                    amount,
+                    0.0,
+                    1.0);
 
-        public double Lifetime;
 
-        public double AuraDistance;
+            return new ParticleSettings(
+                RadiusX:
+                    Mix(
+                        current.RadiusX,
+                        target.RadiusX,
+                        amount),
 
-        public double Strength;
+                RadiusY:
+                    Mix(
+                        current.RadiusY,
+                        target.RadiusY,
+                        amount),
 
-        public double BorderIntensity;
+                RadiusZ:
+                    Mix(
+                        current.RadiusZ,
+                        target.RadiusZ,
+                        amount),
 
-        public double BorderPulseSpeed;
+                RotationYSpeed:
+                    Mix(
+                        current.RotationYSpeed,
+                        target.RotationYSpeed,
+                        amount),
 
-        public double BorderPulseAmount;
+                RotationXSpeed:
+                    Mix(
+                        current.RotationXSpeed,
+                        target.RotationXSpeed,
+                        amount),
 
-        public int ParticleCount;
+                Turbulence:
+                    Mix(
+                        current.Turbulence,
+                        target.Turbulence,
+                        amount),
 
-        public double ParticleSpeed;
+                BreathAmount:
+                    Mix(
+                        current.BreathAmount,
+                        target.BreathAmount,
+                        amount),
 
-        public AuraColorMode ColorMode;
+                BreathSpeed:
+                    Mix(
+                        current.BreathSpeed,
+                        target.BreathSpeed,
+                        amount),
+
+                WaveAmount:
+                    Mix(
+                        current.WaveAmount,
+                        target.WaveAmount,
+                        amount),
+
+                WaveSpeed:
+                    Mix(
+                        current.WaveSpeed,
+                        target.WaveSpeed,
+                        amount),
+
+                SwirlStrength:
+                    Mix(
+                        current.SwirlStrength,
+                        target.SwirlStrength,
+                        amount),
+
+                PointScale:
+                    Mix(
+                        current.PointScale,
+                        target.PointScale,
+                        amount),
+
+                Brightness:
+                    Mix(
+                        current.Brightness,
+                        target.Brightness,
+                        amount),
+
+                FragmentScale:
+                    Mix(
+                        current.FragmentScale,
+                        target.FragmentScale,
+                        amount),
+
+                FragmentPulseAmount:
+                    Mix(
+                        current.FragmentPulseAmount,
+                        target.FragmentPulseAmount,
+                        amount),
+
+                FragmentPulseSpeed:
+                    Mix(
+                        current.FragmentPulseSpeed,
+                        target.FragmentPulseSpeed,
+                        amount),
+
+                FragmentVisibility:
+                    Mix(
+                        current.FragmentVisibility,
+                        target.FragmentVisibility,
+                        amount),
+
+                ColorMode:
+                    target.ColorMode);
+        }
+
+
+        private static double Mix(
+            double a,
+            double b,
+            double amount)
+        {
+            return
+                a +
+                (
+                    b - a
+                )
+                *
+                amount;
+        }
     }
 }

@@ -13,18 +13,25 @@ public sealed class AgentBackgroundProcessor
     private readonly AgentResponseDispatcher _dispatcher;
 
 
+    // =========================================================
+    // CONSTRUCTOR
+    // =========================================================
+
     public AgentBackgroundProcessor(
         AgentCore agent,
         AgentResponseDispatcher dispatcher)
     {
-        _agent = agent;
+        _agent =
+            agent;
 
-        _dispatcher = dispatcher;
+
+        _dispatcher =
+            dispatcher;
     }
 
 
     // =========================================================
-    // PROCESS ACCEPTED PERCEPTION
+    // PERCEPTION
     // =========================================================
 
     public async Task ProcessPerceptionAsync(
@@ -36,23 +43,40 @@ public sealed class AgentBackgroundProcessor
             return;
         }
 
-        await foreach (
-            var chunk
-            in _agent.ProcessPerceptionAsync(
-                perception,
-                cancellationToken))
+
+        try
         {
-            await _dispatcher.PublishAsync(
-                new AgentResponse(
-                    AgentRequestSource.Perception,
-                    chunk),
-                cancellationToken);
+            await foreach (
+                var chunk
+                in _agent.ProcessPerceptionAsync(
+                    perception,
+                    cancellationToken))
+            {
+                await _dispatcher.PublishAsync(
+                    new AgentResponse(
+                        AgentRequestSource.Perception,
+                        chunk),
+                    cancellationToken);
+            }
+        }
+        catch (OperationCanceledException)
+            when (!cancellationToken.IsCancellationRequested)
+        {
+            /*
+             * Sega's autonomous processing was interrupted
+             * because the user started talking.
+             *
+             * This is NOT application shutdown.
+             */
+
+            await PublishCancelledAsync(
+                AgentRequestSource.Perception);
         }
     }
 
 
     // =========================================================
-    // PROCESS ACCEPTED PROACTIVE EVENT
+    // PROACTIVE
     // =========================================================
 
     public async Task ProcessProactiveAsync(
@@ -64,17 +88,45 @@ public sealed class AgentBackgroundProcessor
             return;
         }
 
-        await foreach (
-            var chunk
-            in _agent.ProcessProactiveAsync(
-                perception,
-                cancellationToken))
+
+        try
         {
-            await _dispatcher.PublishAsync(
-                new AgentResponse(
-                    AgentRequestSource.Proactive,
-                    chunk),
-                cancellationToken);
+            await foreach (
+                var chunk
+                in _agent.ProcessProactiveAsync(
+                    perception,
+                    cancellationToken))
+            {
+                await _dispatcher.PublishAsync(
+                    new AgentResponse(
+                        AgentRequestSource.Proactive,
+                        chunk),
+                    cancellationToken);
+            }
         }
+        catch (OperationCanceledException)
+            when (!cancellationToken.IsCancellationRequested)
+        {
+            await PublishCancelledAsync(
+                AgentRequestSource.Proactive);
+        }
+    }
+
+
+    // =========================================================
+    // CANCELLED
+    // =========================================================
+
+    private async Task PublishCancelledAsync(
+        AgentRequestSource source)
+    {
+        await _dispatcher.PublishAsync(
+            new AgentResponse(
+                source,
+                new AgentStreamChunk
+                {
+                    Type =
+                        AgentStreamChunkType.Cancelled
+                }));
     }
 }

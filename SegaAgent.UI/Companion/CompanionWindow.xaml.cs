@@ -2,26 +2,40 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
-using SegaAgent.Voice;
+
+using SegaAgent.Agent.State;
 
 namespace SegaAgent.UI.Companion;
 
-public partial class CompanionWindow : Window
+public partial class CompanionWindow
+    : Window
 {
-    private readonly VoiceQueue _voiceQueue;
+    private readonly SegaStateService
+        _segaState;
 
-    private readonly DispatcherTimer _mouseTimer;
+
+    private SegaStateSnapshot
+        _stateSnapshot;
+
+
+    private readonly DispatcherTimer
+        _mouseTimer;
+
+
+    private readonly DispatcherTimer
+        _idleFadeTimer;
+
 
     // =========================================================
     // IDLE FADE
     // =========================================================
 
-    private readonly DispatcherTimer _idleFadeTimer;
-
     private DateTime _lastActivityTime =
         DateTime.UtcNow;
 
+
     private bool _isFaded;
+
 
     // =========================================================
     // DRAG
@@ -29,53 +43,88 @@ public partial class CompanionWindow : Window
 
     private Point _dragStart;
 
+
     private bool _dragging;
+
 
     private bool _userDragging;
 
+
+    // =========================================================
+    // MOUSE AVOIDANCE
+    // =========================================================
+
     private bool _avoidingMouse;
+
 
     private DateTime _lastAvoidTime =
         DateTime.MinValue;
 
 
     // =========================================================
+    // MOVEMENT VERSION
+    //
+    // Prevent an older animation from marking Sega as resting
+    // after a newer movement has already started.
+    // =========================================================
+
+    private long _movementVersion;
+
+
+    // =========================================================
     // IDLE BEHAVIOR
     // =========================================================
 
-    private CompanionIdleBehavior? _idleBehavior;
+    private CompanionIdleBehavior?
+        _idleBehavior;
 
 
     // =========================================================
     // CONFIGURATION
     // =========================================================
 
-    private const double ScreenMargin = 30.0;
+    private const double ScreenMargin =
+        30.0;
 
-    private const double MouseAvoidDistance = 170.0;
 
-    private const double MouseAvoidDistanceSquared =
-        MouseAvoidDistance * MouseAvoidDistance;
+    private const double MouseAvoidDistance =
+        170.0;
 
-    private const double AvoidDistance = 230.0;
 
-    private const int MouseCheckInterval = 50;
+    private const double
+        MouseAvoidDistanceSquared =
+            MouseAvoidDistance *
+            MouseAvoidDistance;
+
+
+    private const double AvoidDistance =
+        230.0;
+
+
+    private const int MouseCheckInterval =
+        50;
 
 
     // =========================================================
-    // IDLE FADE CONFIGURATION
+    // FADE
     // =========================================================
 
-    // Sega becomes quiet after one minute of inactivity.
-    private static readonly TimeSpan IdleFadeDelay =
-        TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan
+        IdleFadeDelay =
+            TimeSpan.FromMinutes(1);
 
-    // She remains visible, but becomes much less noticeable.
-    private const double FadedOpacity = 0.15;
 
-    private const double NormalOpacity = 1.0;
+    private const double FadedOpacity =
+        0.15;
 
-    private const int FadeDurationMilliseconds = 900;
+
+    private const double NormalOpacity =
+        1.0;
+
+
+    private const int
+        FadeDurationMilliseconds =
+            900;
 
 
     // =========================================================
@@ -83,19 +132,26 @@ public partial class CompanionWindow : Window
     // =========================================================
 
     public CompanionWindow(
-        VoiceQueue voiceQueue)
+        SegaStateService segaState)
     {
         InitializeComponent();
 
-        _voiceQueue = voiceQueue;
 
-        _voiceQueue.SpeakingChanged +=
-            VoiceQueue_SpeakingChanged;
+        _segaState =
+            segaState;
 
 
-        // -----------------------------------------------------
-        // Mouse monitoring
-        // -----------------------------------------------------
+        _stateSnapshot =
+            _segaState.Current;
+
+
+        _segaState.StateChanged +=
+            SegaState_StateChanged;
+
+
+        // =====================================================
+        // MOUSE
+        // =====================================================
 
         _mouseTimer =
             new DispatcherTimer
@@ -105,48 +161,55 @@ public partial class CompanionWindow : Window
                         MouseCheckInterval)
             };
 
+
         _mouseTimer.Tick +=
             MouseTimer_Tick;
 
 
-        // -----------------------------------------------------
-        // Idle fade monitoring
-        // -----------------------------------------------------
+        // =====================================================
+        // FADE
+        // =====================================================
 
         _idleFadeTimer =
             new DispatcherTimer
             {
                 Interval =
-                    TimeSpan.FromMilliseconds(500)
+                    TimeSpan.FromMilliseconds(
+                        500)
             };
+
 
         _idleFadeTimer.Tick +=
             IdleFadeTimer_Tick;
 
 
-        // -----------------------------------------------------
-        // Window events
-        // -----------------------------------------------------
+        // =====================================================
+        // WINDOW EVENTS
+        // =====================================================
 
         Loaded +=
             CompanionWindow_Loaded;
+
 
         Closed +=
             CompanionWindow_Closed;
 
 
-        // -----------------------------------------------------
-        // Blob mouse events
-        // -----------------------------------------------------
+        // =====================================================
+        // PARTICLE / BLOB INPUT
+        // =====================================================
 
         Blob.MouseLeftButtonDown +=
             Blob_MouseLeftButtonDown;
 
+
         Blob.MouseMove +=
             Blob_MouseMove;
 
+
         Blob.MouseLeftButtonUp +=
             Blob_MouseLeftButtonUp;
+
 
         Blob.MouseRightButtonUp +=
             Blob_MouseRightButtonUp;
@@ -163,44 +226,67 @@ public partial class CompanionWindow : Window
     {
         PositionAtBottomRight();
 
-        Blob.State =
-            CompanionState.Idle;
 
         Opacity =
             NormalOpacity;
 
+
         _lastActivityTime =
             DateTime.UtcNow;
 
-        _isFaded = false;
+
+        _isFaded =
+            false;
+
+
+        ApplySegaState(
+            _segaState.Current);
+
 
         _mouseTimer.Start();
+
 
         _idleFadeTimer.Start();
 
 
-        // -----------------------------------------------------
-        // Start natural idle behavior
-        // -----------------------------------------------------
+        var controller =
+            new CompanionController(
+                this);
 
-        CompanionController controller =
-            new(this);
 
         _idleBehavior =
             new CompanionIdleBehavior(
                 this,
                 controller);
 
+
         _idleBehavior.Start();
     }
 
 
     // =========================================================
-    // STATE
+    // CURRENT VISUAL STATE
+    //
+    // Temporary compatibility for the current renderer.
+    //
+    // Later the particle renderer will consume Mind + Body
+    // independently.
     // =========================================================
 
     public CompanionState BlobState =>
         Blob.State;
+
+
+    // =========================================================
+    // IDLE MOVEMENT
+    // =========================================================
+
+    public bool CanPerformIdleMovement =>
+        !_userDragging &&
+        _stateSnapshot.Mind ==
+            SegaMindState.Idle &&
+        _stateSnapshot.Body ==
+            SegaBodyState.Resting;
 
 
     // =========================================================
@@ -217,22 +303,96 @@ public partial class CompanionWindow : Window
     // =========================================================
 
     public Point CompanionCenter =>
-        new Point(
+        new(
             Left + Width / 2.0,
             Top + Height / 2.0);
 
 
     // =========================================================
-    // SET STATE
+    // SHARED STATE CHANGE
     // =========================================================
 
-    public void SetState(
-        CompanionState state)
+    private void SegaState_StateChanged(
+        SegaStateSnapshot snapshot)
     {
-        Blob.State = state;
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                ApplySegaState(
+                    snapshot);
+            });
 
-        // Any active state means Sega should be visible.
-        if (state != CompanionState.Idle)
+
+            return;
+        }
+
+
+        ApplySegaState(
+            snapshot);
+    }
+
+
+    // =========================================================
+    // APPLY SHARED STATE
+    // =========================================================
+
+    private void ApplySegaState(
+        SegaStateSnapshot snapshot)
+    {
+        _stateSnapshot =
+            snapshot;
+
+
+        /*
+         * This mapping exists only because the current
+         * LiquidBlobControl still accepts one CompanionState.
+         *
+         * Later the particle renderer will receive:
+         *
+         * Mind
+         * +
+         * Body
+         *
+         * independently.
+         */
+
+        CompanionState visualState =
+            snapshot.Body switch
+            {
+                SegaBodyState.Dragging =>
+                    CompanionState.Moving,
+
+                SegaBodyState.Avoiding =>
+                    CompanionState.Avoiding,
+
+                SegaBodyState.Moving =>
+                    CompanionState.Moving,
+
+                _ =>
+                    snapshot.Mind switch
+                    {
+                        SegaMindState.Listening =>
+                            CompanionState.Listening,
+
+                        SegaMindState.Thinking =>
+                            CompanionState.Thinking,
+
+                        SegaMindState.Speaking =>
+                            CompanionState.Speaking,
+
+                        _ =>
+                            CompanionState.Idle
+                    }
+            };
+
+
+        Blob.State =
+            visualState;
+
+
+        if (visualState !=
+            CompanionState.Idle)
         {
             RegisterActivity();
         }
@@ -263,39 +423,7 @@ public partial class CompanionWindow : Window
 
 
     // =========================================================
-    // VOICE STATE
-    // =========================================================
-
-    private void VoiceQueue_SpeakingChanged(
-        object? sender,
-        bool speaking)
-    {
-        Dispatcher.Invoke(() =>
-        {
-            if (_userDragging)
-                return;
-
-
-            if (speaking)
-            {
-                RegisterActivity();
-
-                Blob.State =
-                    CompanionState.Speaking;
-            }
-            else
-            {
-                RegisterActivity();
-
-                Blob.State =
-                    CompanionState.Idle;
-            }
-        });
-    }
-
-
-    // =========================================================
-    // IDLE FADE TIMER
+    // IDLE FADE
     // =========================================================
 
     private void IdleFadeTimer_Tick(
@@ -303,33 +431,36 @@ public partial class CompanionWindow : Window
         EventArgs e)
     {
         if (!IsVisible)
+        {
             return;
+        }
+
 
         if (_userDragging ||
             _dragging)
         {
             RestoreFromFade();
+
             return;
         }
 
-        // -----------------------------------------------------
-        // Any non-idle state keeps Sega fully visible.
-        // -----------------------------------------------------
 
-        if (Blob.State !=
-            CompanionState.Idle)
+        if (_stateSnapshot.Mind !=
+                SegaMindState.Idle
+            ||
+            _stateSnapshot.Body !=
+                SegaBodyState.Resting)
         {
             RestoreFromFade();
+
             return;
         }
 
-        // -----------------------------------------------------
-        // Wait until she has been idle long enough.
-        // -----------------------------------------------------
 
         TimeSpan idleTime =
             DateTime.UtcNow -
             _lastActivityTime;
+
 
         if (idleTime <
             IdleFadeDelay)
@@ -337,8 +468,12 @@ public partial class CompanionWindow : Window
             return;
         }
 
+
         if (_isFaded)
+        {
             return;
+        }
+
 
         FadeToQuiet();
     }
@@ -353,25 +488,32 @@ public partial class CompanionWindow : Window
         _lastActivityTime =
             DateTime.UtcNow;
 
+
         RestoreFromFade();
     }
 
 
     // =========================================================
-    // FADE TO QUIET
+    // FADE
     // =========================================================
 
     private void FadeToQuiet()
     {
         if (_isFaded)
+        {
             return;
+        }
 
-        _isFaded = true;
+
+        _isFaded =
+            true;
+
 
         DoubleAnimation animation =
             new()
             {
-                To = FadedOpacity,
+                To =
+                    FadedOpacity,
 
                 Duration =
                     TimeSpan.FromMilliseconds(
@@ -385,6 +527,7 @@ public partial class CompanionWindow : Window
                     }
             };
 
+
         BeginAnimation(
             OpacityProperty,
             animation);
@@ -392,7 +535,7 @@ public partial class CompanionWindow : Window
 
 
     // =========================================================
-    // RESTORE FROM FADE
+    // RESTORE
     // =========================================================
 
     private void RestoreFromFade()
@@ -403,12 +546,16 @@ public partial class CompanionWindow : Window
             return;
         }
 
-        _isFaded = false;
+
+        _isFaded =
+            false;
+
 
         DoubleAnimation animation =
             new()
             {
-                To = NormalOpacity,
+                To =
+                    NormalOpacity,
 
                 Duration =
                     TimeSpan.FromMilliseconds(
@@ -422,6 +569,7 @@ public partial class CompanionWindow : Window
                     }
             };
 
+
         BeginAnimation(
             OpacityProperty,
             animation);
@@ -429,7 +577,7 @@ public partial class CompanionWindow : Window
 
 
     // =========================================================
-    // GLOBAL MOUSE CHECK
+    // GLOBAL MOUSE
     // =========================================================
 
     private void MouseTimer_Tick(
@@ -439,30 +587,33 @@ public partial class CompanionWindow : Window
         if (_userDragging)
         {
             RestoreFromFade();
+
             return;
         }
 
+
         if (!IsVisible)
+        {
             return;
+        }
+
 
         Point mouse =
-            GetMousePosition();
+            MousePosition.Get();
 
 
-        Point blobCenter =
-            new Point(
-                Left + Width / 2.0,
-                Top + Height / 2.0);
+        Point center =
+            CompanionCenter;
 
 
         double dx =
             mouse.X -
-            blobCenter.X;
+            center.X;
 
 
         double dy =
             mouse.Y -
-            blobCenter.Y;
+            center.Y;
 
 
         double distanceSquared =
@@ -470,52 +621,30 @@ public partial class CompanionWindow : Window
             dy * dy;
 
 
-        // -----------------------------------------------------
-        // Mouse is close.
-        // Move away.
-        // -----------------------------------------------------
-
         if (distanceSquared <=
             MouseAvoidDistanceSquared)
         {
             RegisterActivity();
 
+
             TryAvoidMouse(
                 mouse,
-                blobCenter);
+                center);
+
 
             return;
         }
 
 
-        // -----------------------------------------------------
-        // Mouse moved away.
-        // Return to idle.
-        // -----------------------------------------------------
-
         if (_avoidingMouse)
         {
-            _avoidingMouse = false;
+            _avoidingMouse =
+                false;
 
-            RegisterActivity();
 
-            if (Blob.State ==
-                CompanionState.Avoiding)
-            {
-                Blob.State =
-                    CompanionState.Idle;
-            }
+            _segaState.SetAvoiding(
+                false);
         }
-    }
-
-
-    // =========================================================
-    // GET GLOBAL MOUSE POSITION
-    // =========================================================
-
-    private static Point GetMousePosition()
-    {
-        return MousePosition.Get();
     }
 
 
@@ -525,14 +654,14 @@ public partial class CompanionWindow : Window
 
     private void TryAvoidMouse(
         Point mouse,
-        Point blobCenter)
+        Point center)
     {
         DateTime now =
             DateTime.UtcNow;
 
 
-        // Prevent constant movement.
-        if ((now - _lastAvoidTime).TotalMilliseconds <
+        if ((now - _lastAvoidTime)
+            .TotalMilliseconds <
             350)
         {
             return;
@@ -543,25 +672,21 @@ public partial class CompanionWindow : Window
             now;
 
 
-        _avoidingMouse = true;
-
-        RegisterActivity();
-
-        Blob.State =
-            CompanionState.Avoiding;
+        _avoidingMouse =
+            true;
 
 
-        // -----------------------------------------------------
-        // Direction away from mouse
-        // -----------------------------------------------------
+        _segaState.SetAvoiding(
+            true);
+
 
         double dx =
-            blobCenter.X -
+            center.X -
             mouse.X;
 
 
         double dy =
-            blobCenter.Y -
+            center.Y -
             mouse.Y;
 
 
@@ -571,44 +696,48 @@ public partial class CompanionWindow : Window
                 dy * dy);
 
 
-        if (length < 0.001)
+        if (length <
+            0.001)
         {
-            dx = 1;
-            dy = 0;
+            dx = 1.0;
 
-            length = 1;
+            dy = 0.0;
+
+            length = 1.0;
         }
 
 
-        dx /= length;
-        dy /= length;
+        dx /=
+            length;
 
 
-        // -----------------------------------------------------
-        // Calculate target
-        // -----------------------------------------------------
+        dy /=
+            length;
+
 
         Point target =
-            new Point(
-                blobCenter.X +
+            new(
+                center.X +
                 dx * AvoidDistance,
 
-                blobCenter.Y +
+                center.Y +
                 dy * AvoidDistance);
 
 
         target =
-            KeepInsideWorkArea(target);
+            KeepInsideWorkArea(
+                target);
 
 
         MoveToAsync(
             target,
-            TimeSpan.FromMilliseconds(500));
+            TimeSpan.FromMilliseconds(
+                500));
     }
 
 
     // =========================================================
-    // KEEP INSIDE SCREEN
+    // KEEP INSIDE WORK AREA
     // =========================================================
 
     private Point KeepInsideWorkArea(
@@ -650,23 +779,16 @@ public partial class CompanionWindow : Window
             ScreenMargin;
 
 
-        double x =
+        return new Point(
             Math.Clamp(
                 center.X,
                 minX,
-                maxX);
+                maxX),
 
-
-        double y =
             Math.Clamp(
                 center.Y,
                 minY,
-                maxY);
-
-
-        return new Point(
-            x,
-            y);
+                maxY));
     }
 
 
@@ -679,14 +801,17 @@ public partial class CompanionWindow : Window
         TimeSpan duration)
     {
         if (_userDragging)
+        {
             return;
+        }
 
 
         RegisterActivity();
 
 
         target =
-            KeepInsideWorkArea(target);
+            KeepInsideWorkArea(
+                target);
 
 
         double targetLeft =
@@ -699,17 +824,23 @@ public partial class CompanionWindow : Window
             Height / 2.0;
 
 
-        Blob.State =
-            CompanionState.Moving;
+        long movementVersion =
+            ++_movementVersion;
+
+
+        _segaState.SetMoving(
+            true);
 
 
         DoubleAnimation leftAnimation =
             new()
             {
-                To = targetLeft,
+                To =
+                    targetLeft,
 
                 Duration =
-                    new Duration(duration),
+                    new Duration(
+                        duration),
 
                 EasingFunction =
                     new CubicEase
@@ -723,10 +854,12 @@ public partial class CompanionWindow : Window
         DoubleAnimation topAnimation =
             new()
             {
-                To = targetTop,
+                To =
+                    targetTop,
 
                 Duration =
-                    new Duration(duration),
+                    new Duration(
+                        duration),
 
                 EasingFunction =
                     new CubicEase
@@ -740,12 +873,15 @@ public partial class CompanionWindow : Window
         leftAnimation.Completed +=
             (_, _) =>
             {
-                if (!_avoidingMouse &&
-                    !_userDragging)
+                if (movementVersion !=
+                    _movementVersion)
                 {
-                    Blob.State =
-                        CompanionState.Idle;
+                    return;
                 }
+
+
+                _segaState.SetMoving(
+                    false);
             };
 
 
@@ -768,9 +904,12 @@ public partial class CompanionWindow : Window
         object sender,
         MouseButtonEventArgs e)
     {
-        e.Handled = true;
+        e.Handled =
+            true;
+
 
         RegisterActivity();
+
 
         OpenMainWindow();
     }
@@ -782,8 +921,11 @@ public partial class CompanionWindow : Window
 
     private void OpenMainWindow()
     {
-        if (Application.Current == null)
+        if (Application.Current ==
+            null)
+        {
             return;
+        }
 
 
         if (Application.Current.MainWindow
@@ -817,6 +959,7 @@ public partial class CompanionWindow : Window
 
         mainWindow.Activate();
 
+
         mainWindow.Focus();
 
 
@@ -844,32 +987,56 @@ public partial class CompanionWindow : Window
 
 
         _dragStart =
-            e.GetPosition(this);
+            e.GetPosition(
+                this);
 
 
-        _dragging = true;
+        _dragging =
+            true;
 
-        _userDragging = true;
+
+        _userDragging =
+            true;
 
 
-        Blob.BeginAnimation(
+        ++_movementVersion;
+
+
+        /*
+         * IMPORTANT:
+         *
+         * Cancel animations on the WINDOW.
+         *
+         * The old code attempted:
+         *
+         * Blob.BeginAnimation(LeftProperty, ...)
+         *
+         * even though Left/Top belong to the Window.
+         */
+
+        BeginAnimation(
             LeftProperty,
             null);
 
 
-        Blob.BeginAnimation(
+        BeginAnimation(
             TopProperty,
             null);
 
 
-        Blob.State =
-            CompanionState.Moving;
+        _segaState.SetMoving(
+            false);
+
+
+        _segaState.SetDragging(
+            true);
 
 
         Blob.CaptureMouse();
 
 
-        e.Handled = true;
+        e.Handled =
+            true;
     }
 
 
@@ -882,7 +1049,9 @@ public partial class CompanionWindow : Window
         MouseEventArgs e)
     {
         if (!_dragging)
+        {
             return;
+        }
 
 
         if (e.LeftButton !=
@@ -896,7 +1065,8 @@ public partial class CompanionWindow : Window
 
 
         Point position =
-            e.GetPosition(this);
+            e.GetPosition(
+                this);
 
 
         double deltaX =
@@ -909,9 +1079,12 @@ public partial class CompanionWindow : Window
             _dragStart.Y;
 
 
-        Left += deltaX;
+        Left +=
+            deltaX;
 
-        Top += deltaY;
+
+        Top +=
+            deltaY;
 
 
         KeepWindowInsideScreen();
@@ -927,12 +1100,17 @@ public partial class CompanionWindow : Window
         MouseButtonEventArgs e)
     {
         if (!_dragging)
+        {
             return;
+        }
 
 
-        _dragging = false;
+        _dragging =
+            false;
 
-        _userDragging = false;
+
+        _userDragging =
+            false;
 
 
         RegisterActivity();
@@ -944,11 +1122,12 @@ public partial class CompanionWindow : Window
         }
 
 
-        Blob.State =
-            CompanionState.Idle;
+        _segaState.SetDragging(
+            false);
 
 
-        e.Handled = true;
+        e.Handled =
+            true;
     }
 
 
@@ -1007,14 +1186,20 @@ public partial class CompanionWindow : Window
         object? sender,
         EventArgs e)
     {
-        _idleBehavior?.Stop();
+        _idleBehavior?
+            .Stop();
+
 
         _mouseTimer.Stop();
+
 
         _idleFadeTimer.Stop();
 
 
-        _voiceQueue.SpeakingChanged -=
-            VoiceQueue_SpeakingChanged;
+        _segaState.StateChanged -=
+            SegaState_StateChanged;
+
+
+        _segaState.ResetBody();
     }
 }

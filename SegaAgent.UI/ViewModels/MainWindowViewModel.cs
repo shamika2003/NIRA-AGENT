@@ -6,196 +6,239 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
+
 using SegaAgent.Agent;
 using SegaAgent.Voice;
 
 namespace SegaAgent.UI.ViewModels;
 
 public sealed class MainWindowViewModel
-    : INotifyPropertyChanged, IDisposable
+    : INotifyPropertyChanged,
+      IDisposable
 {
     private readonly AgentCore _agent;
 
-    private readonly AgentResponseDispatcher _dispatcher;
+    private readonly AgentResponseDispatcher
+        _dispatcher;
 
-    private readonly VoiceQueue _voiceQueue;
+    private readonly VoiceQueue
+        _voiceQueue;
 
-    private readonly SpeechChunker _speechChunker;
 
-    private readonly AsyncRelayCommand _sendCommand;
+    private readonly SpeechChunker
+        _userSpeechChunker =
+            new();
 
-    private readonly CancellationTokenSource _shutdown =
-        new();
 
-    private readonly Task _backgroundResponseTask;
+    private readonly SpeechChunker
+        _backgroundSpeechChunker =
+            new();
 
-    private string _messageInput = string.Empty;
+
+    private readonly AsyncRelayCommand
+        _sendCommand;
+
+
+    private readonly CancellationTokenSource
+        _shutdown =
+            new();
+
+
+    private readonly Task
+        _backgroundResponseTask;
+
+
+    private string _messageInput =
+        string.Empty;
+
 
     private bool _isProcessing;
 
 
-    // =========================================================
-    // MESSAGES
-    // =========================================================
-
-    public ObservableCollection<ChatMessageViewModel> Messages { get; }
-        = new();
+    private ChatMessageViewModel?
+        _backgroundMessage;
 
 
-    // =========================================================
-    // MESSAGE INPUT
-    // =========================================================
+    private AgentRequestSource?
+        _backgroundSource;
+
+
+    public ObservableCollection<
+        ChatMessageViewModel>
+        Messages
+    {
+        get;
+    } =
+        new();
+
 
     public string MessageInput
     {
-        get => _messageInput;
+        get =>
+            _messageInput;
 
         set
         {
-            if (_messageInput == value)
+            if (_messageInput ==
+                value)
             {
                 return;
             }
 
-            _messageInput = value;
+
+            _messageInput =
+                value;
+
 
             OnPropertyChanged();
+
 
             OnPropertyChanged(
                 nameof(CanSend));
 
-            _sendCommand.RaiseCanExecuteChanged();
+
+            _sendCommand
+                .RaiseCanExecuteChanged();
         }
     }
 
-
-    // =========================================================
-    // PROCESSING
-    // =========================================================
 
     public bool IsProcessing
     {
-        get => _isProcessing;
+        get =>
+            _isProcessing;
 
         private set
         {
-            if (_isProcessing == value)
+            if (_isProcessing ==
+                value)
             {
                 return;
             }
 
-            _isProcessing = value;
+
+            _isProcessing =
+                value;
+
 
             OnPropertyChanged();
+
 
             OnPropertyChanged(
                 nameof(CanSend));
 
-            _sendCommand.RaiseCanExecuteChanged();
+
+            _sendCommand
+                .RaiseCanExecuteChanged();
         }
     }
 
 
-    // =========================================================
-    // CAN SEND
-    // =========================================================
-
     public bool CanSend =>
-        !IsProcessing &&
+        !IsProcessing
+        &&
         !string.IsNullOrWhiteSpace(
             MessageInput);
 
 
-    // =========================================================
-    // COMMAND
-    // =========================================================
-
     public ICommand SendCommand =>
         _sendCommand;
 
-
-    // =========================================================
-    // CONSTRUCTOR
-    // =========================================================
 
     public MainWindowViewModel(
         AgentCore agent,
         AgentResponseDispatcher dispatcher,
         VoiceQueue voiceQueue)
     {
-        _agent = agent;
+        _agent =
+            agent;
 
-        _dispatcher = dispatcher;
 
-        _voiceQueue = voiceQueue;
+        _dispatcher =
+            dispatcher;
 
-        _speechChunker =
-            new SpeechChunker();
+
+        _voiceQueue =
+            voiceQueue;
+
 
         _sendCommand =
             new AsyncRelayCommand(
                 SendMessageAsync,
-                () => CanSend);
+                () =>
+                    CanSend);
 
-        // -----------------------------------------------------
-        // Start listening for accepted background agent output.
-        // -----------------------------------------------------
 
         _backgroundResponseTask =
             ProcessBackgroundResponsesAsync();
     }
 
 
-    // =========================================================
-    // USER MESSAGE
-    // =========================================================
-
     private async Task SendMessageAsync()
     {
-        var input =
+        string input =
             MessageInput.Trim();
 
-        if (string.IsNullOrWhiteSpace(input))
+
+        if (string.IsNullOrWhiteSpace(
+                input))
         {
             return;
         }
 
+
+        _voiceQueue.Interrupt();
+
+
+        _userSpeechChunker.Clear();
+
+
         MessageInput =
             string.Empty;
+
 
         IsProcessing =
             true;
 
-        var userMessage =
-            new ChatMessageViewModel(
+
+        ChatMessageViewModel userMessage =
+            new(
                 "user",
                 input);
+
 
         Messages.Add(
             userMessage);
 
-        var assistantMessage =
-            new ChatMessageViewModel(
+
+        ChatMessageViewModel assistantMessage =
+            new(
                 "assistant",
                 string.Empty);
+
 
         Messages.Add(
             assistantMessage);
 
+
         try
         {
             await foreach (
-                var chunk
+                AgentStreamChunk chunk
                 in _agent.ProcessStreamAsync(
                     input,
                     _shutdown.Token))
             {
                 HandleChunk(
                     assistantMessage,
-                    chunk);
+                    chunk,
+                    _userSpeechChunker);
             }
 
-            FlushSpeech();
+
+            FlushSpeech(
+                _userSpeechChunker);
+
 
             if (string.IsNullOrWhiteSpace(
                     assistantMessage.Content))
@@ -206,13 +249,20 @@ public sealed class MainWindowViewModel
         }
         catch (OperationCanceledException)
         {
+            _userSpeechChunker.Clear();
+
+
             assistantMessage.Content =
                 "Request cancelled.";
         }
         catch (Exception ex)
         {
+            _userSpeechChunker.Clear();
+
+
             assistantMessage.Content =
-                $"Sorry, something went wrong.\n\n{ex.Message}";
+                $"Sorry, something went wrong.\n\n" +
+                $"{ex.Message}";
         }
         finally
         {
@@ -222,76 +272,111 @@ public sealed class MainWindowViewModel
     }
 
 
-    // =========================================================
-    // BACKGROUND RESPONSES
-    //
-    // This is the UI-side consumer.
-    //
-    // IMPORTANT:
-    //
-    // These are NOT treated as a different AI response.
-    //
-    // AgentCore already performed the exact same:
-    //
-    // Planner → Action → Responder
-    //
-    // pipeline.
-    //
-    // We only deliver the resulting stream into the UI.
-    // =========================================================
-
-    private async Task ProcessBackgroundResponsesAsync()
+    private async Task
+        ProcessBackgroundResponsesAsync()
     {
         try
         {
             await foreach (
-                var response
+                AgentResponse response
                 in _dispatcher.ReadAllAsync(
                     _shutdown.Token))
             {
-                await System.Windows.Application.Current
+                await System.Windows
+                    .Application
+                    .Current
                     .Dispatcher
                     .InvokeAsync(
                         () =>
-                        {
                             HandleBackgroundResponse(
-                                response);
-                        });
+                                response));
             }
         }
         catch (OperationCanceledException)
         {
-            // Normal shutdown.
         }
     }
-
-
-    // =========================================================
-    // BACKGROUND RESPONSE
-    // =========================================================
-
-    private ChatMessageViewModel? _backgroundMessage;
-
-    private AgentRequestSource? _backgroundSource;
 
 
     private void HandleBackgroundResponse(
         AgentResponse response)
     {
-        // -----------------------------------------------------
-        // New background response.
-        // -----------------------------------------------------
-
-        if (_backgroundMessage == null ||
-            _backgroundSource != response.Source)
+        if (
+            response.Chunk.Type ==
+                AgentStreamChunkType.Cancelled)
         {
+            _backgroundSpeechChunker
+                .Clear();
+
+
+            if (_backgroundMessage !=
+                null)
+            {
+                Messages.Remove(
+                    _backgroundMessage);
+            }
+
+
+            ResetBackgroundResponse();
+
+            return;
+        }
+
+
+        if (
+            response.Chunk.Type ==
+                AgentStreamChunkType.Completed)
+        {
+            if (_backgroundMessage !=
+                null)
+            {
+                FlushSpeech(
+                    _backgroundSpeechChunker);
+            }
+            else
+            {
+                _backgroundSpeechChunker
+                    .Clear();
+            }
+
+
+            ResetBackgroundResponse();
+
+            return;
+        }
+
+
+        if (
+            response.Chunk.Type !=
+                AgentStreamChunkType.Text
+            ||
+            string.IsNullOrEmpty(
+                response.Chunk.Content))
+        {
+            return;
+        }
+
+
+        if (
+            _backgroundMessage ==
+                null
+            ||
+            _backgroundSource !=
+                response.Source)
+        {
+            _backgroundSpeechChunker
+                .Clear();
+
+
             _backgroundSource =
                 response.Source;
+
 
             _backgroundMessage =
                 new ChatMessageViewModel(
                     "assistant",
                     string.Empty);
+
 
             Messages.Add(
                 _backgroundMessage);
@@ -300,52 +385,54 @@ public sealed class MainWindowViewModel
 
         HandleChunk(
             _backgroundMessage,
-            response.Chunk);
-
-
-        // -----------------------------------------------------
-        // Response finished.
-        // -----------------------------------------------------
-
-        if (response.Chunk.Type ==
-            AgentStreamChunkType.Completed)
-        {
-            FlushSpeech();
-
-            _backgroundMessage =
-                null;
-
-            _backgroundSource =
-                null;
-        }
+            response.Chunk,
+            _backgroundSpeechChunker);
     }
 
 
-    // =========================================================
-    // HANDLE CHUNK
-    // =========================================================
+    private void ResetBackgroundResponse()
+    {
+        _backgroundMessage =
+            null;
+
+
+        _backgroundSource =
+            null;
+    }
+
 
     private void HandleChunk(
         ChatMessageViewModel message,
-        AgentStreamChunk chunk)
+        AgentStreamChunk chunk,
+        SpeechChunker speechChunker)
     {
-        if (chunk.Type ==
-            AgentStreamChunkType.Text)
+        if (
+            chunk.Type !=
+                AgentStreamChunkType.Text
+            ||
+            string.IsNullOrEmpty(
+                chunk.Content))
         {
-            message.Content +=
-                chunk.Content;
+            return;
+        }
 
-            var speechParts =
-                _speechChunker.Add(
+
+        message.Content +=
+            chunk.Content;
+
+
+        IReadOnlyList<string>
+            speechParts =
+                speechChunker.Add(
                     chunk.Content);
 
-            foreach (
-                var speechPart
-                in speechParts)
-            {
-                _voiceQueue.Enqueue(
-                    speechPart);
-            }
+
+        foreach (
+            string speechPart
+            in speechParts)
+        {
+            _voiceQueue.Enqueue(
+                speechPart);
         }
     }
 
@@ -354,10 +441,12 @@ public sealed class MainWindowViewModel
     // FLUSH SPEECH
     // =========================================================
 
-    private void FlushSpeech()
+    private void FlushSpeech(
+        SpeechChunker speechChunker)
     {
-        var remaining =
-            _speechChunker.Complete();
+        string? remaining =
+            speechChunker.Complete();
+
 
         if (!string.IsNullOrWhiteSpace(
                 remaining))
@@ -367,10 +456,6 @@ public sealed class MainWindowViewModel
         }
     }
 
-
-    // =========================================================
-    // PROPERTY CHANGED
-    // =========================================================
 
     public event PropertyChangedEventHandler?
         PropertyChanged;
@@ -387,13 +472,13 @@ public sealed class MainWindowViewModel
     }
 
 
-    // =========================================================
-    // DISPOSE
-    // =========================================================
-
     public void Dispose()
     {
         _shutdown.Cancel();
+
+
+        _voiceQueue.Interrupt();
+
 
         try
         {
@@ -404,6 +489,7 @@ public sealed class MainWindowViewModel
         catch (OperationCanceledException)
         {
         }
+
 
         _shutdown.Dispose();
     }
