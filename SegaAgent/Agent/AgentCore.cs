@@ -15,8 +15,10 @@ using SegaAgent.Character.History;
 using SegaAgent.Character.Interaction;
 using SegaAgent.Character.State;
 using SegaAgent.Conversation;
+using SegaAgent.Memory.LongTerm;
 using SegaAgent.PC.Awareness;
 using SegaAgent.Perception;
+using SegaAgent.Voice;
 
 namespace SegaAgent.Agent;
 
@@ -36,6 +38,9 @@ public sealed class AgentCore
     private readonly AgentActivityTracker
         _activity;
 
+    private readonly SegaVoiceExpressionService
+_voiceExpression;
+
     private readonly SegaStateService _state;
 
     private readonly SegaSocialHistoryService
@@ -49,6 +54,14 @@ public sealed class AgentCore
 
     private readonly SegaCharacterDynamicsService
         _characterDynamics;
+
+
+    private readonly SegaLongTermMemoryService
+        _longTermMemory;
+
+
+    private readonly SegaMemoryConsolidator
+        _memoryConsolidator;
 
 
     private readonly SemaphoreSlim
@@ -77,7 +90,10 @@ public sealed class AgentCore
         SegaSocialHistoryService socialHistory,
         SegaInteractionObservationService interactionObservation,
         SegaCharacterStateService characterState,
-        SegaCharacterDynamicsService characterDynamics)
+        SegaCharacterDynamicsService characterDynamics,
+        SegaLongTermMemoryService longTermMemory,
+        SegaMemoryConsolidator memoryConsolidator,
+        SegaVoiceExpressionService voiceExpression)
     {
         _planner =
             planner
@@ -90,6 +106,10 @@ public sealed class AgentCore
             ?? throw new ArgumentNullException(
                 nameof(responder));
 
+        _voiceExpression =
+            voiceExpression
+            ?? throw new ArgumentNullException(
+                nameof(voiceExpression));
 
         _conversation =
             conversation
@@ -137,6 +157,18 @@ public sealed class AgentCore
             characterDynamics
             ?? throw new ArgumentNullException(
                 nameof(characterDynamics));
+
+
+        _longTermMemory =
+            longTermMemory
+            ?? throw new ArgumentNullException(
+                nameof(longTermMemory));
+
+
+        _memoryConsolidator =
+            memoryConsolidator
+            ?? throw new ArgumentNullException(
+                nameof(memoryConsolidator));
     }
 
 
@@ -538,6 +570,29 @@ public sealed class AgentCore
                     20);
 
 
+        // =====================================================
+        // LONG-TERM MEMORY RECALL
+        //
+        // Recall happens before both planner and responder so
+        // references such as "the project we discussed" can
+        // influence planning as well as Sega's visible reply.
+        //
+        // Retrieval uses local MiniLM + SQLite only.
+        // No additional cloud/LLM call is made here.
+        // =====================================================
+
+        IReadOnlyList<SegaMemoryRecall>
+            recalledMemories =
+                await RecallLongTermMemoryAsync(
+                    input,
+                    cancellationToken);
+
+
+        string memoryContext =
+            SegaMemoryContextFormatter.Format(
+                recalledMemories);
+
+
         cancellationToken
             .ThrowIfCancellationRequested();
 
@@ -550,6 +605,7 @@ public sealed class AgentCore
             await _planner.PlanAsync(
                 input,
                 pcContext,
+                memoryContext,
                 cancellationToken);
 
 
@@ -582,6 +638,11 @@ public sealed class AgentCore
             false;
 
 
+        SegaVoiceExpression
+            currentVoiceExpression =
+                SegaVoiceExpression.Neutral;
+
+
         await foreach (
             AgentResponderChunk responderChunk
             in _responder.StreamResponseAsync(
@@ -589,6 +650,7 @@ public sealed class AgentCore
                 plannerResult,
                 conversationContext,
                 pcContext,
+                memoryContext,
                 character,
                 interaction,
                 recentHistory,
@@ -612,6 +674,24 @@ public sealed class AgentCore
                     true;
 
 
+                IReadOnlyList<SegaMemoryCandidate>
+                    groundedMemoryCandidates =
+                        GroundMemoryCandidates(
+                            request,
+                            currentSocialEvent
+                            ?? interaction?.Event,
+                            responderChunk.MemoryCandidates);
+
+
+                LogGroundedMemoryCandidates(
+                    groundedMemoryCandidates);
+
+
+                await ConsolidateMemoryCandidatesAsync(
+                    groundedMemoryCandidates,
+                    cancellationToken);
+
+
                 if (interaction !=
                     null)
                 {
@@ -619,6 +699,18 @@ public sealed class AgentCore
                         interaction,
                         responderChunk.Appraisal);
                 }
+
+
+                /*
+                 * Resolve vocal expression AFTER dynamics.
+                 *
+                 * Therefore the meaning of the current interaction can
+                 * affect how Sega speaks this very response.
+                 */
+                currentVoiceExpression =
+                    _voiceExpression.Resolve(
+                        responderChunk.VocalIntent,
+                        interaction);
 
 
                 continue;
@@ -646,7 +738,10 @@ public sealed class AgentCore
                     AgentStreamChunkType.Text,
 
                 Content =
-                    responderChunk.Content
+                    responderChunk.Content,
+
+                VoiceExpression =
+                    currentVoiceExpression
             };
         }
 
@@ -733,6 +828,336 @@ public sealed class AgentCore
         return _interactionObservation
             .GetForEvent(
                 eventId.Value);
+    }
+
+
+    // =========================================================
+    // RECALL LONG-TERM MEMORY
+    //
+    // Memory retrieval is useful context, but a temporary memory
+    // database/encoder problem must not destroy an otherwise valid
+    // Sega response. Cancellation still propagates normally.
+    // =========================================================
+
+    private async Task<IReadOnlyList<SegaMemoryRecall>>
+        RecallLongTermMemoryAsync(
+            string query,
+            CancellationToken cancellationToken)
+    {
+        try
+        {
+            IReadOnlyList<SegaMemoryRecall> recalls =
+                await _longTermMemory.RecallAsync(
+                    query,
+                    maximumResults: 6,
+                    cancellationToken);
+
+
+            if (recalls.Count ==
+                0)
+            {
+                Debug.WriteLine(
+                    "[MemoryRecall] COUNT=0 | No relevant durable memory.");
+
+
+                return recalls;
+            }
+
+
+            Debug.WriteLine(
+                $"[MemoryRecall] COUNT={recalls.Count} | Injecting into cognition.");
+
+
+            foreach (
+                SegaMemoryRecall recall
+                in recalls)
+            {
+                Debug.WriteLine(
+                    $"[MemoryRecall] HIT | " +
+                    $"Kind={recall.Memory.Kind} | " +
+                    $"Similarity={recall.Similarity:F3} | " +
+                    $"Score={recall.Score:F3} | " +
+                    $"Canonical='{recall.Memory.CanonicalKey ?? "-"}' | " +
+                    $"Content='{TrimMemoryLog(recall.Memory.Content)}'");
+            }
+
+
+            return recalls;
+        }
+        catch (OperationCanceledException)
+            when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(
+                $"[MemoryRecall] ERROR | {ex}");
+
+
+            return Array.Empty<
+                SegaMemoryRecall>();
+        }
+    }
+
+
+    // =========================================================
+    // GROUND MEMORY CANDIDATES
+    //
+    // The model proposes content/weights only.
+    //
+    // Application-owned provenance is attached here so a model
+    // can never invent event IDs, timestamps or source evidence.
+    //
+    // Grounded candidates are handed to SegaMemoryConsolidator.
+    // The responder still has no direct durable-write authority.
+    // =========================================================
+
+    private static IReadOnlyList<SegaMemoryCandidate>
+        GroundMemoryCandidates(
+            AgentRequest request,
+            SegaSocialEvent? sourceEvent,
+            IReadOnlyList<SegaMemoryCandidate> candidates)
+    {
+        if (
+            candidates ==
+                null
+            ||
+            candidates.Count ==
+                0)
+        {
+            return Array.Empty<
+                SegaMemoryCandidate>();
+        }
+
+
+        SegaMemoryCandidate[] grounded =
+            new SegaMemoryCandidate[
+                candidates.Count];
+
+
+        for (
+            int index = 0;
+            index < candidates.Count;
+            index++)
+        {
+            SegaMemoryCandidate candidate =
+                candidates[index]
+                    .Normalize();
+
+
+            SegaMemoryProvenance provenance =
+                new SegaMemoryProvenance
+                {
+                    SourceType =
+                        ResolveMemorySourceType(
+                            request,
+                            candidate.Kind),
+
+                    SourceEventId =
+                        sourceEvent?.Id,
+
+                    SourceEventSequence =
+                        sourceEvent?.Sequence,
+
+                    SourceTimestamp =
+                        sourceEvent?.Timestamp,
+
+                    SourceExcerpt =
+                        BuildMemorySourceExcerpt(
+                            sourceEvent?.Content)
+                }
+                .Normalize();
+
+
+            grounded[index] =
+                candidate with
+                {
+                    Provenance =
+                        provenance
+                };
+        }
+
+
+        return grounded;
+    }
+
+
+    // =========================================================
+    // MEMORY SOURCE TYPE
+    // =========================================================
+
+    private static SegaMemorySourceType ResolveMemorySourceType(
+        AgentRequest request,
+        SegaMemoryKind kind)
+    {
+        if (kind ==
+            SegaMemoryKind.SegaLearnedPreference)
+        {
+            return SegaMemorySourceType.SegaInference;
+        }
+
+
+        if (
+            kind ==
+                SegaMemoryKind.SharedExperience
+            ||
+            kind ==
+                SegaMemoryKind.ImportantEvent)
+        {
+            return SegaMemorySourceType.SharedExperience;
+        }
+
+
+        if (request is
+            UserAgentRequest)
+        {
+            return SegaMemorySourceType.UserExplicit;
+        }
+
+
+        return SegaMemorySourceType.SystemDerived;
+    }
+
+
+    // =========================================================
+    // MEMORY SOURCE EXCERPT
+    // =========================================================
+
+    private static string? BuildMemorySourceExcerpt(
+        string? content)
+    {
+        if (string.IsNullOrWhiteSpace(
+                content))
+        {
+            return null;
+        }
+
+
+        string clean =
+            string.Join(
+                ' ',
+                content.Split(
+                    (char[]?)null,
+                    StringSplitOptions
+                        .RemoveEmptyEntries));
+
+
+        const int maximumLength =
+            500;
+
+
+        return clean.Length <=
+                maximumLength
+            ? clean
+            : clean[
+                ..maximumLength]
+                + "...";
+    }
+
+
+    // =========================================================
+    // MEMORY CANDIDATE DIAGNOSTIC
+    // =========================================================
+
+    private static void LogGroundedMemoryCandidates(
+        IReadOnlyList<SegaMemoryCandidate> candidates)
+    {
+        if (candidates.Count ==
+            0)
+        {
+            Debug.WriteLine(
+                "[MemoryCandidate] COUNT=0 | " +
+                "Nothing proposed for durable memory.");
+
+
+            return;
+        }
+
+
+        Debug.WriteLine(
+            $"[MemoryCandidate] COUNT={candidates.Count} | " +
+            "GROUNDED | Sending to consolidator.");
+
+
+        foreach (
+            SegaMemoryCandidate candidate
+            in candidates)
+        {
+            Debug.WriteLine(
+                $"[MemoryCandidate] GROUNDED | " +
+                $"Kind={candidate.Kind} | " +
+                $"Source={candidate.Provenance.SourceType} | " +
+                $"Event=#{candidate.Provenance.SourceEventSequence?.ToString() ?? "-"} | " +
+                $"Canonical='{candidate.CanonicalKey ?? "-"}' | " +
+                $"Content='{TrimMemoryLog(candidate.Content)}'");
+        }
+    }
+
+
+    // =========================================================
+    // CONSOLIDATE MEMORY CANDIDATES
+    //
+    // Memory failure must not destroy Sega's visible response.
+    // Cancellation still propagates normally.
+    // =========================================================
+
+    private async Task ConsolidateMemoryCandidatesAsync(
+        IReadOnlyList<SegaMemoryCandidate> candidates,
+        CancellationToken cancellationToken)
+    {
+        if (candidates.Count ==
+            0)
+        {
+            return;
+        }
+
+
+        try
+        {
+            IReadOnlyList<SegaMemoryConsolidationResult> results =
+                await _memoryConsolidator.ConsolidateAsync(
+                    candidates,
+                    cancellationToken);
+
+
+            long activeCount =
+                await _memoryConsolidator.CountActiveAsync(
+                    cancellationToken);
+
+
+            Debug.WriteLine(
+                $"[MemoryConsolidator] BATCH COMPLETE | " +
+                $"Candidates={candidates.Count} | " +
+                $"Results={results.Count} | " +
+                $"Active={activeCount}");
+        }
+        catch (OperationCanceledException)
+            when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(
+                $"[MemoryConsolidator] ERROR | {ex}");
+        }
+    }
+
+
+    private static string TrimMemoryLog(
+        string value)
+    {
+        const int maximumLength =
+            140;
+
+
+        return value.Length <=
+                maximumLength
+            ? value
+            : value[
+                ..maximumLength]
+                + "...";
     }
 
 

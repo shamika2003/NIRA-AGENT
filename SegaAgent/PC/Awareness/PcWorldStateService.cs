@@ -15,18 +15,10 @@ public sealed class PcWorldStateService
     // CONFIGURATION
     // =========================================================
 
-    /*
-     * Windows sensing is cheap and local.
-     *
-     * This does NOT call the AI.
-     *
-     * 500 ms gives Sega reasonably fresh environmental
-     * awareness without aggressive polling.
-     */
-
     private static readonly TimeSpan
         RefreshInterval =
-            TimeSpan.FromMilliseconds(500);
+            TimeSpan.FromMilliseconds(
+                500);
 
 
     // =========================================================
@@ -37,14 +29,20 @@ public sealed class PcWorldStateService
         _awareness;
 
 
+    private readonly SegaPresenceService
+        _segaPresence;
+
+
     // =========================================================
     // CURRENT SNAPSHOT
     // =========================================================
 
-    private PcWorldState _current;
+    private PcWorldState
+        _current;
 
 
-    private long _version;
+    private long
+        _version;
 
 
     // =========================================================
@@ -60,7 +58,8 @@ public sealed class PcWorldStateService
     // =========================================================
 
     public PcWorldStateService(
-        PcAwarenessService awareness)
+        PcAwarenessService awareness,
+        SegaPresenceService segaPresence)
     {
         _awareness =
             awareness
@@ -68,16 +67,15 @@ public sealed class PcWorldStateService
                 nameof(awareness));
 
 
-        /*
-         * Capture an initial state immediately.
-         *
-         * This means consumers always have a valid snapshot,
-         * even before the background refresh loop performs its
-         * first iteration.
-         */
+        _segaPresence =
+            segaPresence
+            ?? throw new ArgumentNullException(
+                nameof(segaPresence));
+
 
         _current =
-            _awareness.Read();
+            BuildSnapshot(
+                _awareness.Read());
 
 
         _version =
@@ -96,9 +94,6 @@ public sealed class PcWorldStateService
 
     // =========================================================
     // VERSION
-    //
-    // Useful later for tools and perception that need to know
-    // whether the world changed since a previous observation.
     // =========================================================
 
     public long Version =>
@@ -132,10 +127,10 @@ public sealed class PcWorldStateService
             }
         }
         catch (OperationCanceledException)
-            when (stoppingToken
-                .IsCancellationRequested)
+            when (
+                stoppingToken
+                    .IsCancellationRequested)
         {
-            // Normal application shutdown.
         }
 
 
@@ -152,8 +147,13 @@ public sealed class PcWorldStateService
     {
         try
         {
-            PcWorldState snapshot =
+            PcWorldState sensed =
                 _awareness.Read();
+
+
+            PcWorldState snapshot =
+                BuildSnapshot(
+                    sensed);
 
 
             Interlocked.Exchange(
@@ -170,16 +170,225 @@ public sealed class PcWorldStateService
         }
         catch (Exception ex)
         {
-            /*
-             * A temporary Windows sensing failure should not
-             * destroy Sega's world-state service.
-             *
-             * The previous valid snapshot remains available.
-             */
-
             Debug.WriteLine(
                 $"[PcWorld] REFRESH ERROR: {ex}");
         }
+    }
+
+
+    // =========================================================
+    // BUILD WORLD SNAPSHOT
+    //
+    // PcAwarenessService owns raw Windows sensing.
+    // SegaPresenceService owns raw physical body facts.
+    // PcWorldStateService combines those observations and
+    // derives physical relationships between them.
+    // =========================================================
+
+    private PcWorldState BuildSnapshot(
+        PcWorldState sensed)
+    {
+        SegaPresenceSnapshot presence =
+            _segaPresence.Current;
+
+
+        PcSegaPresenceState sega =
+            BuildSegaState(
+                sensed,
+                presence);
+
+
+        return new PcWorldState
+        {
+            Timestamp =
+                sensed.Timestamp,
+
+            User =
+                sensed.User,
+
+            Mouse =
+                sensed.Mouse,
+
+            ForegroundWindow =
+                sensed.ForegroundWindow,
+
+            Display =
+                sensed.Display,
+
+            Sega =
+                sega
+        };
+    }
+
+
+    // =========================================================
+    // BUILD SEGA STATE
+    // =========================================================
+
+    private PcSegaPresenceState BuildSegaState(
+        PcWorldState world,
+        SegaPresenceSnapshot presence)
+    {
+        if (
+            !presence.IsAvailable
+            ||
+            presence.WindowHandle ==
+                IntPtr.Zero)
+        {
+            return new PcSegaPresenceState();
+        }
+
+
+        PcDisplayState segaDisplay =
+            _awareness
+                .ReadDisplayForWindow(
+                    presence.WindowHandle);
+
+
+        PcRectangle bodyBounds =
+            presence.BodyBounds;
+
+
+        // =====================================================
+        // CURSOR RELATIONSHIP
+        // =====================================================
+
+        double mouseDx =
+            world.Mouse.X -
+            bodyBounds.CenterX;
+
+
+        double mouseDy =
+            world.Mouse.Y -
+            bodyBounds.CenterY;
+
+
+        double mouseDistance =
+            Math.Sqrt(
+                mouseDx *
+                    mouseDx
+                +
+                mouseDy *
+                    mouseDy);
+
+
+        bool mouseOverBody =
+            presence.IsVisible
+            &&
+            bodyBounds.Contains(
+                world.Mouse.X,
+                world.Mouse.Y);
+
+
+        // =====================================================
+        // MONITOR RELATIONSHIP
+        // =====================================================
+
+        bool sharesMonitor =
+            !segaDisplay
+                .MonitorBounds
+                .IsEmpty
+            &&
+            !world
+                .Display
+                .MonitorBounds
+                .IsEmpty
+            &&
+            segaDisplay.MonitorBounds ==
+                world.Display.MonitorBounds;
+
+
+        // =====================================================
+        // FOREGROUND RELATIONSHIP
+        // =====================================================
+
+        PcForegroundWindowState foreground =
+            world.ForegroundWindow;
+
+
+        bool validExternalForeground =
+            foreground.IsValid
+            &&
+            !foreground.IsMinimized
+            &&
+            foreground.Handle !=
+                presence.WindowHandle;
+
+
+        long intersectionArea =
+            validExternalForeground
+                ? bodyBounds.IntersectionArea(
+                    foreground.Bounds)
+                : 0;
+
+
+        double overlapRatio =
+            bodyBounds.Area >
+                0
+                ? Math.Clamp(
+                    (double)intersectionArea /
+                        bodyBounds.Area,
+                    0.0,
+                    1.0)
+                : 0.0;
+
+
+        bool overlapsForeground =
+            presence.IsVisible
+            &&
+            overlapRatio >
+                0.0;
+
+
+        bool overlapsFullscreen =
+            overlapsForeground
+            &&
+            foreground.IsFullscreen
+            &&
+            sharesMonitor;
+
+
+        return new PcSegaPresenceState
+        {
+            IsAvailable =
+                true,
+
+            WindowHandle =
+                presence.WindowHandle,
+
+            WindowBounds =
+                presence.WindowBounds,
+
+            BodyBounds =
+                bodyBounds,
+
+            IsVisible =
+                presence.IsVisible,
+
+            IsFaded =
+                presence.IsFaded,
+
+            Display =
+                segaDisplay,
+
+            IsMouseOverBody =
+                mouseOverBody,
+
+            MouseDistanceFromBodyCenter =
+                mouseDistance,
+
+            SharesMonitorWithForeground =
+                sharesMonitor,
+
+            OverlapsForegroundWindow =
+                overlapsForeground,
+
+            ForegroundOverlapRatio =
+                overlapRatio,
+
+            OverlapsFullscreenContent =
+                overlapsFullscreen
+        };
     }
 
 
@@ -213,11 +422,6 @@ public sealed class PcWorldStateService
             }
             catch (Exception ex)
             {
-                /*
-                 * A future subscriber must never be allowed
-                 * to terminate the world-state service.
-                 */
-
                 Debug.WriteLine(
                     $"[PcWorld] " +
                     $"SNAPSHOT SUBSCRIBER ERROR: {ex}");

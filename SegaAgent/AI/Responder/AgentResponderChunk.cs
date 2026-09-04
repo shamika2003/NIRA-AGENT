@@ -3,6 +3,8 @@
  */
 
 using SegaAgent.Character.Appraisal;
+using SegaAgent.Memory.LongTerm;
+using SegaAgent.Voice;
 
 namespace SegaAgent.AI.Responder;
 
@@ -37,4 +39,21 @@ public sealed record AgentResponderChunk
         get;
         init;
     }
+
+
+    public IReadOnlyList<SegaMemoryCandidate>
+        MemoryCandidates
+    {
+        get;
+        init;
+    } =
+        Array.Empty<SegaMemoryCandidate>();
+
+
+    public SegaVocalIntent VocalIntent
+    {
+        get;
+        init;
+    } =
+        SegaVocalIntent.Default;
 }

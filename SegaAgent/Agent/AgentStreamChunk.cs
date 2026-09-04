@@ -2,8 +2,9 @@
  * filename: AgentStreamChunk.cs
  */
 
-namespace SegaAgent.Agent;
+using SegaAgent.Voice;
 
+namespace SegaAgent.Agent;
 
 public enum AgentStreamChunkType
 {
@@ -28,5 +29,14 @@ public sealed class AgentStreamChunk
     {
         get;
         init;
-    } = string.Empty;
+    } =
+        string.Empty;
+
+
+    public SegaVoiceExpression VoiceExpression
+    {
+        get;
+        init;
+    } =
+        SegaVoiceExpression.Neutral;
 }

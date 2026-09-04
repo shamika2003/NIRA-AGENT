@@ -23,6 +23,15 @@ public enum SegaMindState
 
 // =========================================================
 // BODY STATE
+//
+// Avoiding has been removed.
+//
+// Sega no longer runs away from the mouse.
+//
+// Moving remains because future tools / presentation logic may
+// intentionally reposition Sega.
+//
+// Dragging remains for direct user movement.
 // =========================================================
 
 public enum SegaBodyState
@@ -30,8 +39,6 @@ public enum SegaBodyState
     Resting,
 
     Moving,
-
-    Avoiding,
 
     Dragging
 }
@@ -53,30 +60,37 @@ public readonly record struct SegaStateSnapshot(
 
 public sealed class SegaStateService
 {
-    private readonly object _sync =
-        new();
+    private readonly object
+        _sync =
+            new();
 
 
     // =====================================================
-    // INTERNAL MIND FLAGS
+    // MIND FLAGS
     // =====================================================
 
-    private bool _listening;
+    private bool
+        _listening;
 
-    private bool _thinking;
 
-    private bool _speaking;
+    private bool
+        _thinking;
+
+
+    private bool
+        _speaking;
 
 
     // =====================================================
-    // INTERNAL BODY FLAGS
+    // BODY FLAGS
     // =====================================================
 
-    private bool _moving;
+    private bool
+        _moving;
 
-    private bool _avoiding;
 
-    private bool _dragging;
+    private bool
+        _dragging;
 
 
     // =====================================================
@@ -88,7 +102,7 @@ public sealed class SegaStateService
 
 
     // =====================================================
-    // CURRENT STATE
+    // CURRENT
     // =====================================================
 
     public SegaStateSnapshot Current
@@ -164,21 +178,6 @@ public sealed class SegaStateService
 
 
     // =====================================================
-    // AVOIDING
-    // =====================================================
-
-    public void SetAvoiding(
-        bool avoiding)
-    {
-        Update(() =>
-        {
-            _avoiding =
-                avoiding;
-        });
-    }
-
-
-    // =====================================================
     // DRAGGING
     // =====================================================
 
@@ -201,11 +200,12 @@ public sealed class SegaStateService
     {
         Update(() =>
         {
-            _moving = false;
+            _moving =
+                false;
 
-            _avoiding = false;
 
-            _dragging = false;
+            _dragging =
+                false;
         });
     }
 
@@ -236,7 +236,8 @@ public sealed class SegaStateService
         }
 
 
-        if (before == after)
+        if (before ==
+            after)
         {
             return;
         }
@@ -248,7 +249,7 @@ public sealed class SegaStateService
 
 
     // =====================================================
-    // BUILD SNAPSHOT
+    // SNAPSHOT
     // =====================================================
 
     private SegaStateSnapshot BuildSnapshot()
@@ -260,71 +261,58 @@ public sealed class SegaStateService
 
 
     // =====================================================
-    // RESOLVE MIND
+    // MIND
     // =====================================================
 
     private SegaMindState ResolveMindState()
     {
-        /*
-         * Priority matters.
-         *
-         * Sega may still be generating text while speech
-         * has already started.
-         *
-         * In that case:
-         *
-         * Speaking wins visually.
-         *
-         * When speaking finishes, if thinking is still true,
-         * the state automatically becomes Thinking again.
-         */
-
         if (_speaking)
         {
-            return SegaMindState.Speaking;
+            return
+                SegaMindState.Speaking;
         }
 
 
         if (_thinking)
         {
-            return SegaMindState.Thinking;
+            return
+                SegaMindState.Thinking;
         }
 
 
         if (_listening)
         {
-            return SegaMindState.Listening;
+            return
+                SegaMindState.Listening;
         }
 
 
-        return SegaMindState.Idle;
+        return
+            SegaMindState.Idle;
     }
 
 
     // =====================================================
-    // RESOLVE BODY
+    // BODY
     // =====================================================
 
     private SegaBodyState ResolveBodyState()
     {
         if (_dragging)
         {
-            return SegaBodyState.Dragging;
-        }
-
-
-        if (_avoiding)
-        {
-            return SegaBodyState.Avoiding;
+            return
+                SegaBodyState.Dragging;
         }
 
 
         if (_moving)
         {
-            return SegaBodyState.Moving;
+            return
+                SegaBodyState.Moving;
         }
 
 
-        return SegaBodyState.Resting;
+        return
+            SegaBodyState.Resting;
     }
 }

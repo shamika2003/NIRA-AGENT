@@ -17,12 +17,16 @@ using SegaAgent.Character.History;
 using SegaAgent.Character.Interaction;
 using SegaAgent.Character.State;
 using SegaAgent.Conversation;
+using SegaAgent.Memory.LongTerm;
 using SegaAgent.PC.Awareness;
 using SegaAgent.Perception;
 using SegaAgent.Semantic;
 using SegaAgent.UI.Companion;
 using SegaAgent.UI.ViewModels;
 using SegaAgent.Voice;
+using SegaAgent.Voice.Groq;
+using SegaAgent.Embodiment;
+using SegaAgent.Embodiment.Body;
 
 using WpfApplication = System.Windows.Application;
 using WpfMessageBox = System.Windows.MessageBox;
@@ -57,6 +61,13 @@ public partial class App : WpfApplication
 
             builder.Services.AddSingleton<
                 HttpClient>();
+
+            // =================================================
+            // SEGA VISUAL EMBODIMENT
+            // =================================================
+
+            builder.Services.AddSingleton<
+                SegaVisualIntentService>();
 
 
             // =================================================
@@ -129,6 +140,28 @@ public partial class App : WpfApplication
 
 
             // =================================================
+            // LONG-TERM MEMORY
+            // =================================================
+
+            builder.Services.AddSingleton<
+                SegaLongTermMemoryStore>();
+
+
+            builder.Services.AddSingleton<
+                SegaLongTermMemoryService>();
+
+
+            builder.Services.AddSingleton<
+                SegaMemoryConsolidator>();
+
+
+            builder.Services.AddHostedService(
+                sp =>
+                    sp.GetRequiredService<
+                        SegaLongTermMemoryService>());
+
+
+            // =================================================
             // INTERACTION OBSERVATION
             // =================================================
 
@@ -180,6 +213,10 @@ public partial class App : WpfApplication
 
 
             builder.Services.AddSingleton<
+                SegaPresenceService>();
+
+
+            builder.Services.AddSingleton<
                 PcWorldStateService>();
 
 
@@ -187,6 +224,32 @@ public partial class App : WpfApplication
                 sp =>
                     sp.GetRequiredService<
                         PcWorldStateService>());
+
+
+            // =================================================
+            // SEGA BODY CONTROL / PLACEMENT
+            // =================================================
+
+            builder.Services.AddSingleton<
+                SegaBodyPlacementStore>();
+
+
+            builder.Services.AddSingleton<
+                SegaBodyPlacementService>();
+
+
+            builder.Services.AddSingleton<
+                SegaBodyCommandService>();
+
+
+            builder.Services.AddSingleton<
+                SegaBodyControllerService>();
+
+
+            builder.Services.AddHostedService(
+                sp =>
+                    sp.GetRequiredService<
+                        SegaBodyControllerService>());
 
 
             // =================================================
@@ -236,14 +299,33 @@ public partial class App : WpfApplication
             builder.Services.AddHostedService<
                 CompanionTimerService>();
 
-
             // =================================================
-            // VOICE
+            // VOICE EXPRESSION
             // =================================================
 
             builder.Services.AddSingleton<
-                IVoiceService,
+                SegaVoiceExpressionService>();
+
+
+            builder.Services.AddSingleton<
+                VoiceAudioPlayer>();
+
+
+            // =================================================
+            // VOICE ENGINES
+            // =================================================
+
+            builder.Services.AddSingleton<
+                GroqOrpheusVoiceService>();
+
+
+            builder.Services.AddSingleton<
                 PiperVoiceService>();
+
+
+            builder.Services.AddSingleton<
+                IVoiceService,
+                AdaptiveVoiceService>();
 
 
             builder.Services.AddSingleton<
@@ -293,9 +375,37 @@ public partial class App : WpfApplication
                         SegaStateService>();
 
 
+            SegaVisualIntentService visualIntent =
+                _host.Services
+                    .GetRequiredService<
+                        SegaVisualIntentService>();
+
+
+            SegaPresenceService segaPresence =
+                _host.Services
+                    .GetRequiredService<
+                        SegaPresenceService>();
+
+
+            SegaBodyCommandService bodyCommands =
+                _host.Services
+                    .GetRequiredService<
+                        SegaBodyCommandService>();
+
+
+            SegaBodyPlacementService placement =
+                _host.Services
+                    .GetRequiredService<
+                        SegaBodyPlacementService>();
+
+
             CompanionWindow companion =
                 new(
-                    segaState);
+                    segaState,
+                    visualIntent,
+                    segaPresence,
+                    bodyCommands,
+                    placement);
 
 
             companion.Show();

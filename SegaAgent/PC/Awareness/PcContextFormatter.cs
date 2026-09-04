@@ -21,6 +21,10 @@ public static class PcContextFormatter
             state.Display;
 
 
+        PcSegaPresenceState sega =
+            state.Sega;
+
+
         return $"""
             CURRENT PC WORLD STATE
 
@@ -115,6 +119,61 @@ public static class PcContextFormatter
 
             Primary Monitor:
             {display.IsPrimary}
+
+            ==================================================
+            SEGA PHYSICAL PRESENCE
+            ==================================================
+
+            Available:
+            {sega.IsAvailable}
+
+            Visible:
+            {sega.IsVisible}
+
+            Faded:
+            {sega.IsFaded}
+
+            Body Left:
+            {sega.BodyBounds.Left}
+
+            Body Top:
+            {sega.BodyBounds.Top}
+
+            Body Width:
+            {sega.BodyBounds.Width}
+
+            Body Height:
+            {sega.BodyBounds.Height}
+
+            Sega Monitor Left:
+            {sega.Display.MonitorBounds.Left}
+
+            Sega Monitor Top:
+            {sega.Display.MonitorBounds.Top}
+
+            Sega Monitor Width:
+            {sega.Display.MonitorBounds.Width}
+
+            Sega Monitor Height:
+            {sega.Display.MonitorBounds.Height}
+
+            Mouse Over Sega:
+            {sega.IsMouseOverBody}
+
+            Mouse Distance From Sega:
+            {sega.MouseDistanceFromBodyCenter:F1} pixels
+
+            Same Monitor As Foreground:
+            {sega.SharesMonitorWithForeground}
+
+            Overlapping Foreground Window:
+            {sega.OverlapsForegroundWindow}
+
+            Foreground Overlap:
+            {sega.ForegroundOverlapRatio:P1}
+
+            Overlapping Fullscreen Content:
+            {sega.OverlapsFullscreenContent}
             """;
     }
 

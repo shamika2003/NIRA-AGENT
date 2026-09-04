@@ -8,14 +8,15 @@ namespace SegaAgent.PC.Awareness;
 // =============================================================
 // PC WORLD STATE
 //
-// This is Sega's current local snapshot of the Windows
-// environment.
+// Sega's authoritative local snapshot of the desktop world.
 //
 // It contains observations only.
 //
-// It does NOT make decisions.
-// It does NOT call the AI.
-// It does NOT perform actions.
+// It does NOT:
+//
+// make decisions
+// perform actions
+// call the AI
 // =============================================================
 
 public sealed class PcWorldState
@@ -39,7 +40,8 @@ public sealed class PcWorldState
     {
         get;
         init;
-    } = new();
+    } =
+        new();
 
 
     // =========================================================
@@ -50,29 +52,48 @@ public sealed class PcWorldState
     {
         get;
         init;
-    } = new();
+    } =
+        new();
 
 
     // =========================================================
     // FOREGROUND WINDOW
     // =========================================================
 
-    public PcForegroundWindowState ForegroundWindow
+    public PcForegroundWindowState
+        ForegroundWindow
     {
         get;
         init;
-    } = new();
+    } =
+        new();
 
 
     // =========================================================
-    // DISPLAY
+    // ACTIVE DISPLAY
     // =========================================================
 
     public PcDisplayState Display
     {
         get;
         init;
-    } = new();
+    } =
+        new();
+
+
+    // =========================================================
+    // SEGA
+    //
+    // Sega is a first-class physical entity inside the same
+    // world model as the user, mouse, windows and monitors.
+    // =========================================================
+
+    public PcSegaPresenceState Sega
+    {
+        get;
+        init;
+    } =
+        new();
 }
 
 
@@ -119,12 +140,6 @@ public sealed class PcForegroundWindowState
 {
     // =========================================================
     // NATIVE WINDOW
-    //
-    // Keep the handle inside the world model because future
-    // Windows tools will need it.
-    //
-    // We do NOT expose it to the language model in the
-    // formatted context.
     // =========================================================
 
     public IntPtr Handle
@@ -149,7 +164,8 @@ public sealed class PcForegroundWindowState
     {
         get;
         init;
-    } = string.Empty;
+    } =
+        string.Empty;
 
 
     // =========================================================
@@ -160,14 +176,16 @@ public sealed class PcForegroundWindowState
     {
         get;
         init;
-    } = string.Empty;
+    } =
+        string.Empty;
 
 
     public string ClassName
     {
         get;
         init;
-    } = string.Empty;
+    } =
+        string.Empty;
 
 
     public PcRectangle Bounds
@@ -207,7 +225,8 @@ public sealed class PcForegroundWindowState
     // =========================================================
 
     public bool IsValid =>
-        Handle != IntPtr.Zero;
+        Handle !=
+        IntPtr.Zero;
 }
 
 
@@ -217,22 +236,12 @@ public sealed class PcForegroundWindowState
 
 public sealed class PcDisplayState
 {
-    // =========================================================
-    // PHYSICAL MONITOR AREA
-    // =========================================================
-
     public PcRectangle MonitorBounds
     {
         get;
         init;
     }
 
-
-    // =========================================================
-    // USABLE WORK AREA
-    //
-    // Normally excludes the Windows taskbar.
-    // =========================================================
 
     public PcRectangle WorkArea
     {
@@ -241,11 +250,151 @@ public sealed class PcDisplayState
     }
 
 
+    public bool IsPrimary
+    {
+        get;
+        init;
+    }
+}
+
+
+// =============================================================
+// SEGA PHYSICAL WORLD STATE
+//
+// This is not Sega's personality or emotional state.
+//
+// It answers physical questions such as:
+//
+// Where am I?
+// Am I visible?
+// Is the cursor over me?
+// Am I covering the foreground application?
+// Am I on the same monitor as the active application?
+// =============================================================
+
+public sealed class PcSegaPresenceState
+{
     // =========================================================
-    // PRIMARY
+    // AVAILABILITY
     // =========================================================
 
-    public bool IsPrimary
+    public bool IsAvailable
+    {
+        get;
+        init;
+    }
+
+
+    // =========================================================
+    // INTERNAL NATIVE HANDLE
+    // =========================================================
+
+    public IntPtr WindowHandle
+    {
+        get;
+        init;
+    }
+
+
+    // =========================================================
+    // GEOMETRY
+    // =========================================================
+
+    public PcRectangle WindowBounds
+    {
+        get;
+        init;
+    }
+
+
+    public PcRectangle BodyBounds
+    {
+        get;
+        init;
+    }
+
+
+    // =========================================================
+    // VISIBILITY
+    // =========================================================
+
+    public bool IsVisible
+    {
+        get;
+        init;
+    }
+
+
+    public bool IsFaded
+    {
+        get;
+        init;
+    }
+
+
+    // =========================================================
+    // SEGA'S DISPLAY
+    // =========================================================
+
+    public PcDisplayState Display
+    {
+        get;
+        init;
+    } =
+        new();
+
+
+    // =========================================================
+    // MOUSE RELATIONSHIP
+    // =========================================================
+
+    public bool IsMouseOverBody
+    {
+        get;
+        init;
+    }
+
+
+    public double MouseDistanceFromBodyCenter
+    {
+        get;
+        init;
+    }
+
+
+    // =========================================================
+    // FOREGROUND RELATIONSHIP
+    // =========================================================
+
+    public bool SharesMonitorWithForeground
+    {
+        get;
+        init;
+    }
+
+
+    public bool OverlapsForegroundWindow
+    {
+        get;
+        init;
+    }
+
+
+    // =========================================================
+    // PORTION OF SEGA'S BODY OVER FOREGROUND WINDOW
+    //
+    // 0.0 = none
+    // 1.0 = all of Sega's body bounds overlap it
+    // =========================================================
+
+    public double ForegroundOverlapRatio
+    {
+        get;
+        init;
+    }
+
+
+    public bool OverlapsFullscreenContent
     {
         get;
         init;
@@ -263,22 +412,152 @@ public readonly record struct PcRectangle(
     int Right,
     int Bottom)
 {
+    // =========================================================
+    // SIZE
+    // =========================================================
+
     public int Width =>
         Math.Max(
             0,
-            Right - Left);
+            Right -
+            Left);
 
 
     public int Height =>
         Math.Max(
             0,
-            Bottom - Top);
+            Bottom -
+            Top);
+
+
+    public long Area =>
+        (long)Width *
+        Height;
 
 
     public bool IsEmpty =>
-        Width <= 0 ||
-        Height <= 0;
+        Width <=
+            0
+        ||
+        Height <=
+            0;
 
+
+    // =========================================================
+    // CENTER
+    // =========================================================
+
+    public double CenterX =>
+        Left +
+        Width /
+        2.0;
+
+
+    public double CenterY =>
+        Top +
+        Height /
+        2.0;
+
+
+    // =========================================================
+    // CONTAINS POINT
+    // =========================================================
+
+    public bool Contains(
+        int x,
+        int y)
+    {
+        if (IsEmpty)
+        {
+            return false;
+        }
+
+
+        return
+            x >=
+                Left
+            &&
+            x <
+                Right
+            &&
+            y >=
+                Top
+            &&
+            y <
+                Bottom;
+    }
+
+
+    // =========================================================
+    // INTERSECTION
+    // =========================================================
+
+    public bool Intersects(
+        PcRectangle other)
+    {
+        if (IsEmpty ||
+            other.IsEmpty)
+        {
+            return false;
+        }
+
+
+        return
+            Left <
+                other.Right
+            &&
+            Right >
+                other.Left
+            &&
+            Top <
+                other.Bottom
+            &&
+            Bottom >
+                other.Top;
+    }
+
+
+    public PcRectangle Intersection(
+        PcRectangle other)
+    {
+        if (!Intersects(
+                other))
+        {
+            return default;
+        }
+
+
+        return new PcRectangle(
+            Math.Max(
+                Left,
+                other.Left),
+
+            Math.Max(
+                Top,
+                other.Top),
+
+            Math.Min(
+                Right,
+                other.Right),
+
+            Math.Min(
+                Bottom,
+                other.Bottom));
+    }
+
+
+    public long IntersectionArea(
+        PcRectangle other)
+    {
+        return Intersection(
+                other)
+            .Area;
+    }
+
+
+    // =========================================================
+    // STRING
+    // =========================================================
 
     public override string ToString()
     {

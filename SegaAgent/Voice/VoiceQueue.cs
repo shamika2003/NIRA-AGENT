@@ -2,56 +2,159 @@
  * filename: VoiceQueue.cs
  */
 
-using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Threading.Channels;
 
 using SegaAgent.Agent.State;
 
 namespace SegaAgent.Voice;
 
-public sealed class VoiceQueue : IDisposable
+public sealed class VoiceQueue
+    : IDisposable
 {
-    private readonly IVoiceService _voiceService;
+    // =========================================================
+    // SERVICES
+    // =========================================================
 
-    private readonly SegaStateService _state;
-
-
-    private readonly ConcurrentQueue<string>
-        _queue =
-            new();
+    private readonly IVoiceService
+        _voiceService;
 
 
-    private readonly SemaphoreSlim _signal =
-        new(0);
+    private readonly VoiceAudioPlayer
+        _audioPlayer;
 
+
+    private readonly SegaStateService
+        _state;
+
+
+    // =========================================================
+    // UTTERANCE CHANNEL
+    //
+    // Receives speech units from the streaming responder.
+    // =========================================================
+
+    private readonly Channel<
+        QueuedVoiceUtterance>
+        _utterances;
+
+
+    // =========================================================
+    // PREPARED AUDIO CHANNEL
+    //
+    // Only one completed future utterance is allowed to wait
+    // here.
+    // =========================================================
+
+    private readonly Channel<
+        PreparedVoiceItem>
+        _prepared;
+
+
+    // =========================================================
+    // PREFETCH PERMIT
+    //
+    // This is important.
+    //
+    // A bounded prepared channel alone is NOT sufficient to
+    // limit cloud synthesis to one item ahead.
+    //
+    // Without this permit:
+    //
+    // sequence 2 may sit prepared in the channel
+    // while sequence 3 is already being synthesized.
+    //
+    // That could waste Groq quota if the user interrupts.
+    //
+    // This permit means:
+    //
+    // current audio playing
+    //        +
+    // maximum ONE future audio being prepared/ready
+    // =========================================================
+
+    private readonly SemaphoreSlim
+        _prefetchPermit =
+            new(
+                1,
+                1);
+
+
+    // =========================================================
+    // SHUTDOWN
+    // =========================================================
 
     private readonly CancellationTokenSource
         _shutdown =
             new();
 
 
-    private readonly object _speechLock =
-        new();
+    // =========================================================
+    // GENERATION
+    //
+    // Every interruption increments this value.
+    //
+    // Audio produced for an older generation is never allowed
+    // to play afterward.
+    // =========================================================
+
+    private long
+        _generation;
+
+
+    // =========================================================
+    // ACTIVE WORK CANCELLATION
+    // =========================================================
+
+    private readonly object
+        _workLock =
+            new();
 
 
     private CancellationTokenSource?
-        _currentSpeechCancellation;
+        _currentSynthesisCancellation;
 
 
-    private readonly Task _worker;
-
-
-    private bool _disposed;
+    private CancellationTokenSource?
+        _currentPlaybackCancellation;
 
 
     // =========================================================
-    // STATE
+    // WORKERS
     // =========================================================
 
-    public bool IsSpeaking
-    {
-        get;
-        private set;
-    }
+    private readonly Task
+        _synthesisWorker;
+
+
+    private readonly Task
+        _playbackWorker;
+
+
+    // =========================================================
+    // SPEAKING STATE
+    // =========================================================
+
+    private int
+        _isSpeaking;
+
+
+    // =========================================================
+    // LIFETIME
+    // =========================================================
+
+    private bool
+        _disposed;
+
+
+    // =========================================================
+    // PUBLIC STATE
+    // =========================================================
+
+    public bool IsSpeaking =>
+        Volatile.Read(
+            ref _isSpeaking) ==
+        1;
 
 
     public event EventHandler<bool>?
@@ -64,19 +167,91 @@ public sealed class VoiceQueue : IDisposable
 
     public VoiceQueue(
         IVoiceService voiceService,
+        VoiceAudioPlayer audioPlayer,
         SegaStateService state)
     {
         _voiceService =
-            voiceService;
+            voiceService
+            ?? throw new ArgumentNullException(
+                nameof(voiceService));
+
+
+        _audioPlayer =
+            audioPlayer
+            ?? throw new ArgumentNullException(
+                nameof(audioPlayer));
 
 
         _state =
-            state;
+            state
+            ?? throw new ArgumentNullException(
+                nameof(state));
 
 
-        _worker =
+        // =====================================================
+        // INPUT
+        //
+        // Multiple writers:
+        //
+        // user response
+        // background response
+        //
+        // Multiple readers are allowed because Interrupt/Clear
+        // may drain the channel while the worker exists.
+        // =====================================================
+
+        _utterances =
+            Channel.CreateUnbounded<
+                QueuedVoiceUtterance>(
+                    new UnboundedChannelOptions
+                    {
+                        SingleReader =
+                            false,
+
+                        SingleWriter =
+                            false,
+
+                        AllowSynchronousContinuations =
+                            false
+                    });
+
+
+        // =====================================================
+        // PREPARED AUDIO
+        // =====================================================
+
+        _prepared =
+            Channel.CreateBounded<
+                PreparedVoiceItem>(
+                    new BoundedChannelOptions(
+                        1)
+                    {
+                        SingleReader =
+                            false,
+
+                        SingleWriter =
+                            true,
+
+                        FullMode =
+                            BoundedChannelFullMode.Wait,
+
+                        AllowSynchronousContinuations =
+                            false
+                    });
+
+
+        // =====================================================
+        // START PIPELINE
+        // =====================================================
+
+        _synthesisWorker =
             Task.Run(
-                ProcessQueueAsync);
+                SynthesisLoopAsync);
+
+
+        _playbackWorker =
+            Task.Run(
+                PlaybackLoopAsync);
     }
 
 
@@ -85,7 +260,7 @@ public sealed class VoiceQueue : IDisposable
     // =========================================================
 
     public void Enqueue(
-        string text)
+        VoiceUtterance utterance)
     {
         if (_disposed)
         {
@@ -93,96 +268,293 @@ public sealed class VoiceQueue : IDisposable
         }
 
 
-        if (string.IsNullOrWhiteSpace(
-                text))
+        ArgumentNullException.ThrowIfNull(
+            utterance);
+
+
+        if (!SpeechChunker
+            .ContainsSpeakableContent(
+                utterance.Text))
         {
             return;
         }
 
 
-        _queue.Enqueue(
-            text);
+        long generation =
+            Volatile.Read(
+                ref _generation);
 
 
-        _signal.Release();
+        QueuedVoiceUtterance queued =
+            new(
+                generation,
+                utterance);
+
+
+        if (!_utterances
+            .Writer
+            .TryWrite(
+                queued))
+        {
+            Debug.WriteLine(
+                "[VoiceQueue] " +
+                "Utterance rejected because the " +
+                "voice pipeline is stopping.");
+        }
     }
 
 
     // =========================================================
-    // WORKER
+    // SYNTHESIS LOOP
     // =========================================================
 
-    private async Task ProcessQueueAsync()
+    private async Task SynthesisLoopAsync()
     {
         try
         {
-            while (!_shutdown
-                .IsCancellationRequested)
+            await foreach (
+                QueuedVoiceUtterance queued
+                in _utterances
+                    .Reader
+                    .ReadAllAsync(
+                        _shutdown.Token))
             {
-                await _signal.WaitAsync(
-                    _shutdown.Token);
-
-
-                if (!_queue.TryDequeue(
-                        out var text))
+                if (IsStale(
+                        queued.Generation))
                 {
                     continue;
                 }
 
 
+                bool permitHeld =
+                    false;
+
+
+                PreparedVoiceAudio?
+                    preparedAudio =
+                        null;
+
+
+                try
+                {
+                    // =========================================
+                    // ONE-AHEAD LIMIT
+                    // =========================================
+
+                    await _prefetchPermit
+                        .WaitAsync(
+                            _shutdown.Token);
+
+
+                    permitHeld =
+                        true;
+
+
+                    if (IsStale(
+                            queued.Generation))
+                    {
+                        continue;
+                    }
+
+
+                    using CancellationTokenSource
+                        synthesisCancellation =
+                            CancellationTokenSource
+                                .CreateLinkedTokenSource(
+                                    _shutdown.Token);
+
+
+                    SetCurrentSynthesisCancellation(
+                        synthesisCancellation);
+
+
+                    try
+                    {
+                        Debug.WriteLine(
+                            $"[VoicePrefetch] START | " +
+                            $"Generation=" +
+                            $"{queued.Generation} | " +
+                            $"Response=" +
+                            $"{queued.Utterance.ResponseId} | " +
+                            $"Sequence=" +
+                            $"{queued.Utterance.Sequence}");
+
+
+                        preparedAudio =
+                            await _voiceService
+                                .PrepareAsync(
+                                    queued.Utterance,
+                                    synthesisCancellation.Token);
+
+
+                        synthesisCancellation
+                            .Token
+                            .ThrowIfCancellationRequested();
+
+
+                        // =====================================
+                        // INTERRUPTION RACE CHECK
+                        // =====================================
+
+                        if (IsStale(
+                                queued.Generation))
+                        {
+                            preparedAudio.Dispose();
+
+
+                            preparedAudio =
+                                null;
+
+
+                            continue;
+                        }
+
+
+                        PreparedVoiceItem item =
+                            new(
+                                queued.Generation,
+                                preparedAudio);
+
+
+                        await _prepared
+                            .Writer
+                            .WriteAsync(
+                                item,
+                                synthesisCancellation.Token);
+
+
+                        Debug.WriteLine(
+                            $"[VoicePrefetch] READY | " +
+                            $"Generation=" +
+                            $"{queued.Generation} | " +
+                            $"Response=" +
+                            $"{queued.Utterance.ResponseId} | " +
+                            $"Sequence=" +
+                            $"{queued.Utterance.Sequence} | " +
+                            $"Engine='" +
+                            $"{preparedAudio.Engine}'");
+
+
+                        // =====================================
+                        // OWNERSHIP TRANSFER
+                        //
+                        // Prepared channel now owns:
+                        //
+                        // - audio
+                        // - prefetch permit
+                        //
+                        // Playback/drain will release them.
+                        // =====================================
+
+                        preparedAudio =
+                            null;
+
+
+                        permitHeld =
+                            false;
+                    }
+                    finally
+                    {
+                        ClearCurrentSynthesisCancellation(
+                            synthesisCancellation);
+                    }
+                }
+                catch (OperationCanceledException)
+                    when (!_shutdown
+                        .IsCancellationRequested)
+                {
+                    /*
+                     * Normal Sega speech interruption.
+                     */
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine(
+                        $"[VoiceQueue] " +
+                        $"SYNTHESIS ERROR: {ex}");
+                }
+                finally
+                {
+                    preparedAudio?
+                        .Dispose();
+
+
+                    if (permitHeld)
+                    {
+                        ReleasePrefetchPermit();
+                    }
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            /*
+             * Normal application shutdown.
+             */
+        }
+        finally
+        {
+            _prepared
+                .Writer
+                .TryComplete();
+        }
+    }
+
+
+    // =========================================================
+    // PLAYBACK LOOP
+    // =========================================================
+
+    private async Task PlaybackLoopAsync()
+    {
+        try
+        {
+            while (
+                await _prepared
+                    .Reader
+                    .WaitToReadAsync(
+                        _shutdown.Token))
+            {
                 SetSpeaking(
                     true);
 
 
                 try
                 {
-                    while (true)
+                    while (
+                        _prepared
+                            .Reader
+                            .TryRead(
+                                out PreparedVoiceItem
+                                    item))
                     {
-                        if (_shutdown
-                            .IsCancellationRequested)
+                        // =====================================
+                        // ITEM LEFT THE PREFETCH SLOT.
+                        //
+                        // The synthesis worker may now prepare
+                        // exactly one next utterance while this
+                        // one is playing.
+                        // =====================================
+
+                        ReleasePrefetchPermit();
+
+
+                        if (IsStale(
+                                item.Generation))
                         {
-                            return;
+                            item.Audio.Dispose();
+
+
+                            continue;
                         }
 
 
-                        using var speechCancellation =
-                            CancellationTokenSource
-                                .CreateLinkedTokenSource(
-                                    _shutdown.Token);
-
-
-                        SetCurrentSpeechCancellation(
-                            speechCancellation);
-
-
-                        try
-                        {
-                            await _voiceService
-                                .SpeakAsync(
-                                    text,
-                                    speechCancellation.Token);
-                        }
-                        catch (OperationCanceledException)
-                            when (!_shutdown
-                                .IsCancellationRequested)
-                        {
-                            /*
-                             * Current speech was intentionally
-                             * interrupted.
-                             */
-                        }
-                        finally
-                        {
-                            ClearCurrentSpeechCancellation(
-                                speechCancellation);
-                        }
-
-
-                        if (!_queue.TryDequeue(
-                                out text))
-                        {
-                            break;
-                        }
+                        await PlayPreparedAsync(
+                            item);
                     }
                 }
                 finally
@@ -194,71 +566,106 @@ public sealed class VoiceQueue : IDisposable
         }
         catch (OperationCanceledException)
         {
-            // Normal application shutdown.
+            /*
+             * Normal shutdown.
+             */
         }
         finally
         {
             SetSpeaking(
                 false);
+
+
+            DrainPreparedAudio();
         }
     }
 
 
     // =========================================================
-    // SET SPEAKING
+    // PLAY PREPARED AUDIO
     // =========================================================
 
-    private void SetSpeaking(
-        bool speaking)
+    private async Task PlayPreparedAsync(
+        PreparedVoiceItem item)
     {
-        if (IsSpeaking ==
-            speaking)
+        using CancellationTokenSource
+            playbackCancellation =
+                CancellationTokenSource
+                    .CreateLinkedTokenSource(
+                        _shutdown.Token);
+
+
+        SetCurrentPlaybackCancellation(
+            playbackCancellation);
+
+
+        try
         {
-            return;
-        }
+            Debug.WriteLine(
+                $"[VoicePlayback] START | " +
+                $"Generation={item.Generation} | " +
+                $"Response=" +
+                $"{item.Audio.Utterance.ResponseId} | " +
+                $"Sequence=" +
+                $"{item.Audio.Utterance.Sequence} | " +
+                $"Engine='{item.Audio.Engine}'");
 
 
-        IsSpeaking =
-            speaking;
-
-
-        _state.SetSpeaking(
-            speaking);
-
-
-        SpeakingChanged?.Invoke(
-            this,
-            speaking);
-    }
-
-
-    // =========================================================
-    // CURRENT SPEECH
-    // =========================================================
-
-    private void SetCurrentSpeechCancellation(
-        CancellationTokenSource source)
-    {
-        lock (_speechLock)
-        {
-            _currentSpeechCancellation =
-                source;
-        }
-    }
-
-
-    private void ClearCurrentSpeechCancellation(
-        CancellationTokenSource source)
-    {
-        lock (_speechLock)
-        {
-            if (ReferenceEquals(
-                    _currentSpeechCancellation,
-                    source))
+            foreach (
+                string audioPath
+                in item.Audio.AudioPaths)
             {
-                _currentSpeechCancellation =
-                    null;
+                playbackCancellation
+                    .Token
+                    .ThrowIfCancellationRequested();
+
+
+                if (IsStale(
+                        item.Generation))
+                {
+                    return;
+                }
+
+
+                await _audioPlayer
+                    .PlayAsync(
+                        audioPath,
+                        playbackCancellation.Token);
             }
+
+
+            Debug.WriteLine(
+                $"[VoicePlayback] END | " +
+                $"Response=" +
+                $"{item.Audio.Utterance.ResponseId} | " +
+                $"Sequence=" +
+                $"{item.Audio.Utterance.Sequence}");
+        }
+        catch (OperationCanceledException)
+            when (!_shutdown
+                .IsCancellationRequested)
+        {
+            /*
+             * User interrupted Sega.
+             */
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(
+                $"[VoiceQueue] " +
+                $"PLAYBACK ERROR: {ex}");
+        }
+        finally
+        {
+            ClearCurrentPlaybackCancellation(
+                playbackCancellation);
+
+
+            item.Audio.Dispose();
         }
     }
 
@@ -266,19 +673,166 @@ public sealed class VoiceQueue : IDisposable
     // =========================================================
     // INTERRUPT
     //
-    // Used when the user starts a new interaction.
+    // Used when the user starts another interaction.
+    //
+    // This immediately invalidates:
+    //
+    // - currently playing speech
+    // - currently synthesizing speech
+    // - queued speech
+    // - prefetched audio
     // =========================================================
 
     public void Interrupt()
     {
-        Clear();
+        if (_disposed)
+        {
+            return;
+        }
 
 
-        lock (_speechLock)
+        long generation =
+            Interlocked.Increment(
+                ref _generation);
+
+
+        Debug.WriteLine(
+            $"[VoiceQueue] INTERRUPT | " +
+            $"Generation={generation}");
+
+
+        CancelCurrentWork();
+
+
+        DrainUtterances();
+
+
+        DrainPreparedAudio();
+
+
+        SetSpeaking(
+            false);
+    }
+
+
+    // =========================================================
+    // CLEAR FUTURE SPEECH
+    //
+    // Does not intentionally cancel the audio currently being
+    // played.
+    // =========================================================
+
+    public void Clear()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+
+        DrainUtterances();
+
+
+        DrainPreparedAudio();
+    }
+
+
+    // =========================================================
+    // GENERATION CHECK
+    // =========================================================
+
+    private bool IsStale(
+        long generation)
+    {
+        return generation !=
+            Volatile.Read(
+                ref _generation);
+    }
+
+
+    // =========================================================
+    // SYNTHESIS CANCELLATION
+    // =========================================================
+
+    private void SetCurrentSynthesisCancellation(
+        CancellationTokenSource source)
+    {
+        lock (_workLock)
+        {
+            _currentSynthesisCancellation =
+                source;
+        }
+    }
+
+
+    private void ClearCurrentSynthesisCancellation(
+        CancellationTokenSource source)
+    {
+        lock (_workLock)
+        {
+            if (ReferenceEquals(
+                    _currentSynthesisCancellation,
+                    source))
+            {
+                _currentSynthesisCancellation =
+                    null;
+            }
+        }
+    }
+
+
+    // =========================================================
+    // PLAYBACK CANCELLATION
+    // =========================================================
+
+    private void SetCurrentPlaybackCancellation(
+        CancellationTokenSource source)
+    {
+        lock (_workLock)
+        {
+            _currentPlaybackCancellation =
+                source;
+        }
+    }
+
+
+    private void ClearCurrentPlaybackCancellation(
+        CancellationTokenSource source)
+    {
+        lock (_workLock)
+        {
+            if (ReferenceEquals(
+                    _currentPlaybackCancellation,
+                    source))
+            {
+                _currentPlaybackCancellation =
+                    null;
+            }
+        }
+    }
+
+
+    // =========================================================
+    // CANCEL CURRENT WORK
+    // =========================================================
+
+    private void CancelCurrentWork()
+    {
+        lock (_workLock)
         {
             try
             {
-                _currentSpeechCancellation?
+                _currentSynthesisCancellation?
+                    .Cancel();
+            }
+            catch
+            {
+            }
+
+
+            try
+            {
+                _currentPlaybackCancellation?
                     .Cancel();
             }
             catch
@@ -289,15 +843,102 @@ public sealed class VoiceQueue : IDisposable
 
 
     // =========================================================
-    // CLEAR
+    // DRAIN UTTERANCES
     // =========================================================
 
-    public void Clear()
+    private void DrainUtterances()
     {
-        while (_queue.TryDequeue(
-            out _))
+        while (
+            _utterances
+                .Reader
+                .TryRead(
+                    out _))
         {
         }
+    }
+
+
+    // =========================================================
+    // DRAIN PREPARED AUDIO
+    // =========================================================
+
+    private void DrainPreparedAudio()
+    {
+        while (
+            _prepared
+                .Reader
+                .TryRead(
+                    out PreparedVoiceItem
+                        item))
+        {
+            /*
+             * The item owned one prefetch permit while it was
+             * waiting inside the prepared channel.
+             */
+
+            ReleasePrefetchPermit();
+
+
+            item.Audio.Dispose();
+        }
+    }
+
+
+    // =========================================================
+    // PREFETCH PERMIT RELEASE
+    // =========================================================
+
+    private void ReleasePrefetchPermit()
+    {
+        try
+        {
+            _prefetchPermit.Release();
+        }
+        catch (SemaphoreFullException)
+        {
+            /*
+             * Protect shutdown/interruption races.
+             *
+             * A duplicate release should never break the
+             * application.
+             */
+        }
+    }
+
+
+    // =========================================================
+    // SPEAKING STATE
+    // =========================================================
+
+    private void SetSpeaking(
+        bool speaking)
+    {
+        int desired =
+            speaking
+                ? 1
+                : 0;
+
+
+        int previous =
+            Interlocked.Exchange(
+                ref _isSpeaking,
+                desired);
+
+
+        if (previous ==
+            desired)
+        {
+            return;
+        }
+
+
+        _state.SetSpeaking(
+            speaking);
+
+
+        SpeakingChanged?.Invoke(
+            this,
+            speaking);
     }
 
 
@@ -313,38 +954,40 @@ public sealed class VoiceQueue : IDisposable
         }
 
 
+        Interlocked.Increment(
+            ref _generation);
+
+
+        CancelCurrentWork();
+
+
+        DrainUtterances();
+
+
+        DrainPreparedAudio();
+
+
+        _utterances
+            .Writer
+            .TryComplete();
+
+
         _shutdown.Cancel();
 
 
-        lock (_speechLock)
-        {
-            try
-            {
-                _currentSpeechCancellation?
-                    .Cancel();
-            }
-            catch
-            {
-            }
-        }
-
-
         try
         {
-            _signal.Release();
-        }
-        catch
-        {
-        }
-
-
-        try
-        {
-            await _worker;
+            await Task.WhenAll(
+                _synthesisWorker,
+                _playbackWorker);
         }
         catch (OperationCanceledException)
         {
         }
+
+
+        SetSpeaking(
+            false);
     }
 
 
@@ -364,37 +1007,73 @@ public sealed class VoiceQueue : IDisposable
             true;
 
 
+        Interlocked.Increment(
+            ref _generation);
+
+
+        CancelCurrentWork();
+
+
+        DrainUtterances();
+
+
+        DrainPreparedAudio();
+
+
+        _utterances
+            .Writer
+            .TryComplete();
+
+
         _shutdown.Cancel();
-
-
-        lock (_speechLock)
-        {
-            try
-            {
-                _currentSpeechCancellation?
-                    .Cancel();
-            }
-            catch
-            {
-            }
-        }
 
 
         try
         {
-            _signal.Release();
+            Task.WhenAll(
+                    _synthesisWorker,
+                    _playbackWorker)
+                .GetAwaiter()
+                .GetResult();
+        }
+        catch (OperationCanceledException)
+        {
         }
         catch
         {
         }
 
 
-        _state.SetSpeaking(
+        DrainPreparedAudio();
+
+
+        SetSpeaking(
             false);
 
 
-        _shutdown.Dispose();
+        _prefetchPermit.Dispose();
 
-        _signal.Dispose();
+
+        _shutdown.Dispose();
     }
+
+
+    // =========================================================
+    // QUEUED UTTERANCE
+    // =========================================================
+
+    private sealed record
+        QueuedVoiceUtterance(
+            long Generation,
+            VoiceUtterance Utterance);
+
+
+    // =========================================================
+    // PREPARED AUDIO ITEM
+    // =========================================================
+
+    private sealed record
+        PreparedVoiceItem(
+            long Generation,
+            PreparedVoiceAudio Audio);
 }

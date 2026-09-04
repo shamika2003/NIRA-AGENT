@@ -128,6 +128,13 @@ public sealed class PcAwarenessService
 
 
     [DllImport(
+        "user32.dll")]
+    private static extern IntPtr MonitorFromRect(
+        ref NativeRect rect,
+        uint flags);
+
+
+    [DllImport(
         "user32.dll",
         SetLastError = true)]
     private static extern bool GetMonitorInfo(
@@ -206,7 +213,7 @@ public sealed class PcAwarenessService
 
 
         PcDisplayState display =
-            ReadDisplayState(
+            ReadDisplayForWindow(
                 foregroundHandle);
 
 
@@ -587,15 +594,17 @@ public sealed class PcAwarenessService
 
 
     // =========================================================
-    // DISPLAY
+    // DISPLAY FOR WINDOW
+    //
+    // Resolves the physical monitor containing / nearest to a
+    // native Windows window.
     // =========================================================
 
-    private static PcDisplayState
-        ReadDisplayState(
-            IntPtr foregroundHandle)
+    public PcDisplayState ReadDisplayForWindow(
+        IntPtr windowHandle)
     {
         uint monitorMode =
-            foregroundHandle !=
+            windowHandle !=
             IntPtr.Zero
                 ? MonitorDefaultToNearest
                 : MonitorDefaultToPrimary;
@@ -603,10 +612,69 @@ public sealed class PcAwarenessService
 
         IntPtr monitor =
             MonitorFromWindow(
-                foregroundHandle,
+                windowHandle,
                 monitorMode);
 
 
+        return ReadDisplayFromMonitor(
+            monitor);
+    }
+
+
+    // =========================================================
+    // DISPLAY FOR RECTANGLE
+    //
+    // Used by Sega body placement before / after monitor layout
+    // changes. MONITOR_DEFAULTTONEAREST guarantees a surviving
+    // display is selected when a previously saved monitor is no
+    // longer connected.
+    // =========================================================
+
+    public PcDisplayState ReadDisplayForRectangle(
+        PcRectangle bounds)
+    {
+        if (bounds.IsEmpty)
+        {
+            return ReadDisplayForWindow(
+                IntPtr.Zero);
+        }
+
+
+        NativeRect native =
+            new()
+            {
+                Left =
+                    bounds.Left,
+
+                Top =
+                    bounds.Top,
+
+                Right =
+                    bounds.Right,
+
+                Bottom =
+                    bounds.Bottom
+            };
+
+
+        IntPtr monitor =
+            MonitorFromRect(
+                ref native,
+                MonitorDefaultToNearest);
+
+
+        return ReadDisplayFromMonitor(
+            monitor);
+    }
+
+
+    // =========================================================
+    // DISPLAY FROM MONITOR
+    // =========================================================
+
+    private static PcDisplayState ReadDisplayFromMonitor(
+        IntPtr monitor)
+    {
         if (monitor ==
             IntPtr.Zero)
         {

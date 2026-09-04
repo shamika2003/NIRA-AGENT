@@ -5,15 +5,19 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+
     <OutputType>WinExe</OutputType>
+
     <TargetFramework>net10.0-windows</TargetFramework>
 
     <Nullable>enable</Nullable>
+
     <ImplicitUsings>enable</ImplicitUsings>
 
     <UseWPF>true</UseWPF>
 
     <ApplicationIcon>Assets\SegaAi.ico</ApplicationIcon>
+
   </PropertyGroup>
 
 
@@ -23,9 +27,11 @@
 
   <ItemGroup>
 
-    <Resource Include="Assets\SegaAi.ico" />
+    <Resource
+      Include="Assets\SegaAi.ico" />
 
-    <Resource Include="Assets\SegaAi.png" />
+    <Resource
+      Include="Assets\SegaAi.png" />
 
   </ItemGroup>
 
@@ -110,6 +116,7 @@
     Name="CopySegaRuntimeResources"
     AfterTargets="Build">
 
+
     <!-- =================================================== -->
     <!-- PROMPTS -->
     <!-- =================================================== -->
@@ -156,7 +163,10 @@
     Name="CopySegaPublishedRuntimeResources"
     AfterTargets="Publish">
 
+
+    <!-- =================================================== -->
     <!-- PROMPTS -->
+    <!-- =================================================== -->
 
     <Copy
       SourceFiles="@(SegaPromptFiles)"
@@ -166,7 +176,9 @@
       SkipUnchangedFiles="true" />
 
 
+    <!-- =================================================== -->
     <!-- PIPER -->
+    <!-- =================================================== -->
 
     <Copy
       SourceFiles="@(SegaPiperFiles)"
@@ -176,7 +188,9 @@
       SkipUnchangedFiles="true" />
 
 
-    <!-- SEMANTIC -->
+    <!-- =================================================== -->
+    <!-- SEMANTIC MODELS -->
+    <!-- =================================================== -->
 
     <Copy
       SourceFiles="@(SegaSemanticFiles)"

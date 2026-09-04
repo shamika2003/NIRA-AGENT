@@ -1,108 +1,116 @@
+/*
+ * filename: CompanionWindow.xaml.cs
+ */
+
+using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
 
 using SegaAgent.Agent.State;
+using SegaAgent.Embodiment;
+using SegaAgent.Embodiment.Body;
+using SegaAgent.PC.Awareness;
 
 namespace SegaAgent.UI.Companion;
 
 public partial class CompanionWindow
     : Window
 {
+    // =========================================================
+    // SERVICES
+    // =========================================================
+
     private readonly SegaStateService
         _segaState;
 
 
+    private readonly SegaVisualIntentService
+        _visualIntent;
+
+
+    private readonly SegaPresenceService
+        _presence;
+
+
+    private readonly SegaBodyCommandService
+        _bodyCommands;
+
+
+    private readonly SegaBodyPlacementService
+        _placement;
+
+
+    // =========================================================
+    // STATE
+    // =========================================================
+
     private SegaStateSnapshot
         _stateSnapshot;
-
-
-    private readonly DispatcherTimer
-        _mouseTimer;
-
-
-    private readonly DispatcherTimer
-        _idleFadeTimer;
 
 
     // =========================================================
     // IDLE FADE
     // =========================================================
 
-    private DateTime _lastActivityTime =
-        DateTime.UtcNow;
+    private readonly DispatcherTimer
+        _idleFadeTimer;
 
 
-    private bool _isFaded;
+    private DateTime
+        _lastActivityTime =
+            DateTime.UtcNow;
 
 
-    // =========================================================
-    // DRAG
-    // =========================================================
-
-    private Point _dragStart;
-
-
-    private bool _dragging;
-
-
-    private bool _userDragging;
+    private bool
+        _isFaded;
 
 
     // =========================================================
-    // MOUSE AVOIDANCE
+    // USER DRAG
     // =========================================================
 
-    private bool _avoidingMouse;
-
-
-    private DateTime _lastAvoidTime =
-        DateTime.MinValue;
+    private bool
+        _dragging;
 
 
     // =========================================================
-    // MOVEMENT VERSION
+    // PROGRAMMATIC MOVEMENT
+    // =========================================================
+
+    private readonly object
+        _motionSync =
+            new();
+
+
+    private CancellationTokenSource?
+        _motionCancellation;
+
+
+    // =========================================================
+    // STARTUP
+    // =========================================================
+
+    private bool
+        _startupPlacementApplied;
+
+
+    private bool
+        _startupEntrancePlayed;
+
+
+    // =========================================================
+    // BODY GEOMETRY
     //
-    // Prevent an older animation from marking Sega as resting
-    // after a newer movement has already started.
+    // Keep this aligned with ParticleEntityControl's hit-test
+    // radius so world reasoning uses Sega's meaningful body.
     // =========================================================
 
-    private long _movementVersion;
-
-
-    // =========================================================
-    // IDLE BEHAVIOR
-    // =========================================================
-
-    private CompanionIdleBehavior?
-        _idleBehavior;
-
-
-    // =========================================================
-    // CONFIGURATION
-    // =========================================================
-
-    private const double ScreenMargin =
-        30.0;
-
-
-    private const double MouseAvoidDistance =
-        170.0;
-
-
-    private const double
-        MouseAvoidDistanceSquared =
-            MouseAvoidDistance *
-            MouseAvoidDistance;
-
-
-    private const double AvoidDistance =
-        230.0;
-
-
-    private const int MouseCheckInterval =
-        50;
+    private const double BodyRadiusFactor =
+        0.38;
 
 
     // =========================================================
@@ -111,20 +119,20 @@ public partial class CompanionWindow
 
     private static readonly TimeSpan
         IdleFadeDelay =
-            TimeSpan.FromMinutes(1);
+            TimeSpan.FromMinutes(
+                1);
 
 
     private const double FadedOpacity =
-        0.15;
+        0.22;
 
 
     private const double NormalOpacity =
         1.0;
 
 
-    private const int
-        FadeDurationMilliseconds =
-            900;
+    private const int FadeDurationMilliseconds =
+        900;
 
 
     // =========================================================
@@ -132,42 +140,71 @@ public partial class CompanionWindow
     // =========================================================
 
     public CompanionWindow(
-        SegaStateService segaState)
+        SegaStateService segaState,
+        SegaVisualIntentService visualIntent,
+        SegaPresenceService presence,
+        SegaBodyCommandService bodyCommands,
+        SegaBodyPlacementService placement)
     {
         InitializeComponent();
 
 
         _segaState =
-            segaState;
+            segaState
+            ?? throw new ArgumentNullException(
+                nameof(segaState));
+
+
+        _visualIntent =
+            visualIntent
+            ?? throw new ArgumentNullException(
+                nameof(visualIntent));
+
+
+        _presence =
+            presence
+            ?? throw new ArgumentNullException(
+                nameof(presence));
+
+
+        _bodyCommands =
+            bodyCommands
+            ?? throw new ArgumentNullException(
+                nameof(bodyCommands));
+
+
+        _placement =
+            placement
+            ?? throw new ArgumentNullException(
+                nameof(placement));
 
 
         _stateSnapshot =
             _segaState.Current;
 
 
+        // =====================================================
+        // STATE
+        // =====================================================
+
         _segaState.StateChanged +=
             SegaState_StateChanged;
 
 
-        // =====================================================
-        // MOUSE
-        // =====================================================
-
-        _mouseTimer =
-            new DispatcherTimer
-            {
-                Interval =
-                    TimeSpan.FromMilliseconds(
-                        MouseCheckInterval)
-            };
-
-
-        _mouseTimer.Tick +=
-            MouseTimer_Tick;
+        _visualIntent.IntentChanged +=
+            VisualIntent_IntentChanged;
 
 
         // =====================================================
-        // FADE
+        // BODY COMMANDS
+        // =====================================================
+
+        _bodyCommands.CommandIssued +=
+            BodyCommands_CommandIssued;
+
+
+        // =====================================================
+        // IDLE FADE
         // =====================================================
 
         _idleFadeTimer =
@@ -184,7 +221,7 @@ public partial class CompanionWindow
 
 
         // =====================================================
-        // WINDOW EVENTS
+        // WINDOW
         // =====================================================
 
         Loaded +=
@@ -195,24 +232,38 @@ public partial class CompanionWindow
             CompanionWindow_Closed;
 
 
+        LocationChanged +=
+            CompanionWindow_LocationChanged;
+
+
+        SizeChanged +=
+            CompanionWindow_SizeChanged;
+
+
+        IsVisibleChanged +=
+            CompanionWindow_IsVisibleChanged;
+
+
         // =====================================================
-        // PARTICLE / BLOB INPUT
+        // ENTITY INPUT
         // =====================================================
 
-        Blob.MouseLeftButtonDown +=
-            Blob_MouseLeftButtonDown;
+        Entity.MouseLeftButtonDown +=
+            Entity_MouseLeftButtonDown;
 
 
-        Blob.MouseMove +=
-            Blob_MouseMove;
+        Entity.MouseRightButtonUp +=
+            Entity_MouseRightButtonUp;
 
 
-        Blob.MouseLeftButtonUp +=
-            Blob_MouseLeftButtonUp;
+        // =====================================================
+        // STARTUP MATERIALIZATION
+        //
+        // Prepare before the first visible render so Sega never
+        // flashes as an already-formed orb.
+        // =====================================================
 
-
-        Blob.MouseRightButtonUp +=
-            Blob_MouseRightButtonUp;
+        Entity.PrepareStartupEntrance();
     }
 
 
@@ -224,7 +275,14 @@ public partial class CompanionWindow
         object sender,
         RoutedEventArgs e)
     {
-        PositionAtBottomRight();
+        if (!_startupPlacementApplied)
+        {
+            RestoreStartupPlacement();
+
+
+            _startupPlacementApplied =
+                true;
+        }
 
 
         Opacity =
@@ -243,73 +301,32 @@ public partial class CompanionWindow
             _segaState.Current);
 
 
-        _mouseTimer.Start();
+        ApplyVisualIntent(
+            _visualIntent.Current);
 
 
-        _idleFadeTimer.Start();
+        ReportPresence();
 
 
-        var controller =
-            new CompanionController(
-                this);
+        if (!_startupEntrancePlayed)
+        {
+            _startupEntrancePlayed =
+                true;
 
 
-        _idleBehavior =
-            new CompanionIdleBehavior(
-                this,
-                controller);
+            Entity.StartStartupEntrance();
+        }
 
 
-        _idleBehavior.Start();
+        if (!_idleFadeTimer.IsEnabled)
+        {
+            _idleFadeTimer.Start();
+        }
     }
 
 
     // =========================================================
-    // CURRENT VISUAL STATE
-    //
-    // Temporary compatibility for the current renderer.
-    //
-    // Later the particle renderer will consume Mind + Body
-    // independently.
-    // =========================================================
-
-    public CompanionState BlobState =>
-        Blob.State;
-
-
-    // =========================================================
-    // IDLE MOVEMENT
-    // =========================================================
-
-    public bool CanPerformIdleMovement =>
-        !_userDragging &&
-        _stateSnapshot.Mind ==
-            SegaMindState.Idle &&
-        _stateSnapshot.Body ==
-            SegaBodyState.Resting;
-
-
-    // =========================================================
-    // USER INTERACTION
-    // =========================================================
-
-    public bool IsUserInteracting =>
-        _userDragging ||
-        _dragging;
-
-
-    // =========================================================
-    // POSITION
-    // =========================================================
-
-    public Point CompanionCenter =>
-        new(
-            Left + Width / 2.0,
-            Top + Height / 2.0);
-
-
-    // =========================================================
-    // SHARED STATE CHANGE
+    // SEGA STATE
     // =========================================================
 
     private void SegaState_StateChanged(
@@ -334,7 +351,7 @@ public partial class CompanionWindow
 
 
     // =========================================================
-    // APPLY SHARED STATE
+    // APPLY STATE
     // =========================================================
 
     private void ApplySegaState(
@@ -344,55 +361,12 @@ public partial class CompanionWindow
             snapshot;
 
 
-        /*
-         * This mapping exists only because the current
-         * LiquidBlobControl still accepts one CompanionState.
-         *
-         * Later the particle renderer will receive:
-         *
-         * Mind
-         * +
-         * Body
-         *
-         * independently.
-         */
-
-        CompanionState visualState =
-            snapshot.Body switch
-            {
-                SegaBodyState.Dragging =>
-                    CompanionState.Moving,
-
-                SegaBodyState.Avoiding =>
-                    CompanionState.Avoiding,
-
-                SegaBodyState.Moving =>
-                    CompanionState.Moving,
-
-                _ =>
-                    snapshot.Mind switch
-                    {
-                        SegaMindState.Listening =>
-                            CompanionState.Listening,
-
-                        SegaMindState.Thinking =>
-                            CompanionState.Thinking,
-
-                        SegaMindState.Speaking =>
-                            CompanionState.Speaking,
-
-                        _ =>
-                            CompanionState.Idle
-                    }
-            };
-
-
-        Blob.State =
-            visualState;
-
-
-        if (visualState !=
-            CompanionState.Idle)
+        if (
+            snapshot.Mind !=
+                SegaMindState.Idle
+            ||
+            snapshot.Body !=
+                SegaBodyState.Resting)
         {
             RegisterActivity();
         }
@@ -400,25 +374,649 @@ public partial class CompanionWindow
 
 
     // =========================================================
-    // INITIAL POSITION
+    // VISUAL INTENT
     // =========================================================
 
-    private void PositionAtBottomRight()
+    private void VisualIntent_IntentChanged(
+        SegaVisualIntent intent)
     {
-        Rect workArea =
-            SystemParameters.WorkArea;
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                ApplyVisualIntent(
+                    intent);
+            });
 
 
-        Left =
-            workArea.Right -
-            Width -
-            40;
+            return;
+        }
 
 
-        Top =
-            workArea.Bottom -
-            Height -
-            40;
+        ApplyVisualIntent(
+            intent);
+    }
+
+
+    // =========================================================
+    // APPLY VISUAL INTENT
+    // =========================================================
+
+    private void ApplyVisualIntent(
+        SegaVisualIntent intent)
+    {
+        Entity.SetIntent(
+            intent);
+
+
+        if (
+            intent.Source !=
+            SegaVisualIntentSource.Automatic)
+        {
+            RegisterActivity();
+        }
+    }
+
+
+    // =========================================================
+    // STARTUP PLACEMENT
+    // =========================================================
+
+    private void RestoreStartupPlacement()
+    {
+        IntPtr handle =
+            new WindowInteropHelper(
+                this)
+                .Handle;
+
+
+        if (handle ==
+            IntPtr.Zero)
+        {
+            return;
+        }
+
+
+        Point topLeft =
+            PointToScreen(
+                new Point(
+                    0.0,
+                    0.0));
+
+
+        Point bottomRight =
+            PointToScreen(
+                new Point(
+                    ActualWidth,
+                    ActualHeight));
+
+
+        int width =
+            Math.Max(
+                1,
+                (int)Math.Ceiling(
+                    Math.Abs(
+                        bottomRight.X -
+                        topLeft.X)));
+
+
+        int height =
+            Math.Max(
+                1,
+                (int)Math.Ceiling(
+                    Math.Abs(
+                        bottomRight.Y -
+                        topLeft.Y)));
+
+
+        PcRectangle startup =
+            _placement
+                .ResolveStartupBounds(
+                    width,
+                    height);
+
+
+        SetWindowPosition(
+            handle,
+            startup.Left,
+            startup.Top);
+    }
+
+
+    // =========================================================
+    // PRESENCE REPORTING
+    // =========================================================
+
+    private void ReportPresence()
+    {
+        if (
+            !IsLoaded
+            ||
+            ActualWidth <=
+                0
+            ||
+            ActualHeight <=
+                0
+            ||
+            Entity.ActualWidth <=
+                0
+            ||
+            Entity.ActualHeight <=
+                0)
+        {
+            return;
+        }
+
+
+        IntPtr handle =
+            new WindowInteropHelper(
+                this)
+                .Handle;
+
+
+        if (handle ==
+            IntPtr.Zero)
+        {
+            return;
+        }
+
+
+        // =====================================================
+        // FULL COMPANION WINDOW
+        // =====================================================
+
+        Point windowTopLeft =
+            PointToScreen(
+                new Point(
+                    0.0,
+                    0.0));
+
+
+        Point windowBottomRight =
+            PointToScreen(
+                new Point(
+                    ActualWidth,
+                    ActualHeight));
+
+
+        PcRectangle windowBounds =
+            ToPcRectangle(
+                windowTopLeft,
+                windowBottomRight);
+
+
+        // =====================================================
+        // INTERACTIVE ORB BODY
+        // =====================================================
+
+        double centerX =
+            Entity.ActualWidth *
+            0.5;
+
+
+        double centerY =
+            Entity.ActualHeight *
+            0.5;
+
+
+        double radius =
+            Math.Min(
+                Entity.ActualWidth,
+                Entity.ActualHeight)
+            *
+            BodyRadiusFactor;
+
+
+        Point bodyTopLeft =
+            Entity.PointToScreen(
+                new Point(
+                    centerX -
+                        radius,
+                    centerY -
+                        radius));
+
+
+        Point bodyBottomRight =
+            Entity.PointToScreen(
+                new Point(
+                    centerX +
+                        radius,
+                    centerY +
+                        radius));
+
+
+        PcRectangle bodyBounds =
+            ToPcRectangle(
+                bodyTopLeft,
+                bodyBottomRight);
+
+
+        _presence.Report(
+            handle,
+            windowBounds,
+            bodyBounds,
+            IsVisible,
+            _isFaded);
+    }
+
+
+    // =========================================================
+    // WINDOW GEOMETRY EVENTS
+    // =========================================================
+
+    private void CompanionWindow_LocationChanged(
+        object? sender,
+        EventArgs e)
+    {
+        ReportPresence();
+    }
+
+
+    private void CompanionWindow_SizeChanged(
+        object sender,
+        SizeChangedEventArgs e)
+    {
+        ReportPresence();
+    }
+
+
+    private void CompanionWindow_IsVisibleChanged(
+        object sender,
+        DependencyPropertyChangedEventArgs e)
+    {
+        if (!IsLoaded)
+        {
+            return;
+        }
+
+
+        if (IsVisible)
+        {
+            ReportPresence();
+
+
+            return;
+        }
+
+
+        _presence.SetVisualState(
+            false,
+            _isFaded);
+    }
+
+
+    // =========================================================
+    // SCREEN RECTANGLE
+    // =========================================================
+
+    private static PcRectangle ToPcRectangle(
+        Point topLeft,
+        Point bottomRight)
+    {
+        return new PcRectangle(
+            (int)Math.Floor(
+                Math.Min(
+                    topLeft.X,
+                    bottomRight.X)),
+
+            (int)Math.Floor(
+                Math.Min(
+                    topLeft.Y,
+                    bottomRight.Y)),
+
+            (int)Math.Ceiling(
+                Math.Max(
+                    topLeft.X,
+                    bottomRight.X)),
+
+            (int)Math.Ceiling(
+                Math.Max(
+                    topLeft.Y,
+                    bottomRight.Y)));
+    }
+
+
+    // =========================================================
+    // BODY COMMAND
+    // =========================================================
+
+    private void BodyCommands_CommandIssued(
+        SegaBodyCommand command)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                ApplyBodyCommand(
+                    command);
+            });
+
+
+            return;
+        }
+
+
+        ApplyBodyCommand(
+            command);
+    }
+
+
+    // =========================================================
+    // APPLY BODY COMMAND
+    // =========================================================
+
+    private void ApplyBodyCommand(
+        SegaBodyCommand command)
+    {
+        switch (command.Type)
+        {
+            case SegaBodyCommandType.Hide:
+            {
+                CancelProgrammaticMovement();
+
+
+                if (IsVisible)
+                {
+                    Hide();
+                }
+
+
+                break;
+            }
+
+
+            case SegaBodyCommandType.Show:
+            {
+                if (!IsVisible)
+                {
+                    Show();
+
+
+                    Topmost =
+                        true;
+
+
+                    ReportPresence();
+                }
+
+
+                break;
+            }
+
+
+            case SegaBodyCommandType.MoveToScreenPosition:
+            {
+                if (_dragging)
+                {
+                    return;
+                }
+
+
+                StartProgrammaticMovement(
+                    command);
+
+
+                break;
+            }
+
+
+            default:
+                throw new ArgumentOutOfRangeException();
+        }
+    }
+
+
+    // =========================================================
+    // START PROGRAMMATIC MOVEMENT
+    // =========================================================
+
+    private void StartProgrammaticMovement(
+        SegaBodyCommand command)
+    {
+        CancellationTokenSource cancellation =
+            new();
+
+
+        lock (_motionSync)
+        {
+            _motionCancellation?
+                .Cancel();
+
+
+            _motionCancellation =
+                cancellation;
+        }
+
+
+        _ =
+            MoveWindowAsync(
+                command,
+                cancellation);
+    }
+
+
+    // =========================================================
+    // CANCEL PROGRAMMATIC MOVEMENT
+    // =========================================================
+
+    private void CancelProgrammaticMovement()
+    {
+        lock (_motionSync)
+        {
+            _motionCancellation?
+                .Cancel();
+        }
+    }
+
+
+    // =========================================================
+    // MOVE WINDOW
+    // =========================================================
+
+    private async Task MoveWindowAsync(
+        SegaBodyCommand command,
+        CancellationTokenSource cancellation)
+    {
+        IntPtr handle =
+            new WindowInteropHelper(
+                this)
+                .Handle;
+
+
+        if (handle ==
+            IntPtr.Zero)
+        {
+            ReleaseMotion(
+                cancellation);
+
+
+            return;
+        }
+
+
+        SegaPresenceSnapshot presence =
+            _presence.Current;
+
+
+        if (!presence.IsAvailable)
+        {
+            ReleaseMotion(
+                cancellation);
+
+
+            return;
+        }
+
+
+        int startLeft =
+            presence.WindowBounds.Left;
+
+
+        int startTop =
+            presence.WindowBounds.Top;
+
+
+        PcRectangle requestedTarget =
+            new(
+                command.ScreenLeft,
+                command.ScreenTop,
+                command.ScreenLeft +
+                    presence.WindowBounds.Width,
+                command.ScreenTop +
+                    presence.WindowBounds.Height);
+
+
+        PcRectangle safeTarget =
+            _placement
+                .ClampToAvailableDisplay(
+                    requestedTarget);
+
+
+        int targetLeft =
+            safeTarget.Left;
+
+
+        int targetTop =
+            safeTarget.Top;
+
+
+        double duration =
+            Math.Clamp(
+                command.Duration.TotalSeconds,
+                0.05,
+                2.0);
+
+
+        _segaState.SetMoving(
+            true);
+
+
+        Stopwatch stopwatch =
+            Stopwatch.StartNew();
+
+
+        try
+        {
+            while (true)
+            {
+                cancellation
+                    .Token
+                    .ThrowIfCancellationRequested();
+
+
+                double progress =
+                    Math.Clamp(
+                        stopwatch.Elapsed.TotalSeconds /
+                            duration,
+                        0.0,
+                        1.0);
+
+
+                double eased =
+                    progress *
+                    progress *
+                    (
+                        3.0 -
+                        2.0 *
+                        progress
+                    );
+
+
+                int currentLeft =
+                    (int)Math.Round(
+                        startLeft +
+                        (
+                            targetLeft -
+                            startLeft
+                        )
+                        *
+                        eased);
+
+
+                int currentTop =
+                    (int)Math.Round(
+                        startTop +
+                        (
+                            targetTop -
+                            startTop
+                        )
+                        *
+                        eased);
+
+
+                SetWindowPosition(
+                    handle,
+                    currentLeft,
+                    currentTop);
+
+
+                if (progress >=
+                    1.0)
+                {
+                    break;
+                }
+
+
+                await Task.Delay(
+                    16,
+                    cancellation.Token);
+            }
+
+
+            SetWindowPosition(
+                handle,
+                targetLeft,
+                targetTop);
+
+
+            ReportPresence();
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            if (ReleaseMotion(
+                    cancellation))
+            {
+                _segaState.SetMoving(
+                    false);
+            }
+        }
+    }
+
+
+    // =========================================================
+    // RELEASE MOTION
+    // =========================================================
+
+    private bool ReleaseMotion(
+        CancellationTokenSource cancellation)
+    {
+        bool ownsMovement =
+            false;
+
+
+        lock (_motionSync)
+        {
+            if (ReferenceEquals(
+                    _motionCancellation,
+                    cancellation))
+            {
+                _motionCancellation =
+                    null;
+
+
+                ownsMovement =
+                    true;
+            }
+        }
+
+
+        cancellation.Dispose();
+
+
+        return ownsMovement;
     }
 
 
@@ -436,22 +1034,24 @@ public partial class CompanionWindow
         }
 
 
-        if (_userDragging ||
-            _dragging)
+        if (_dragging)
         {
             RestoreFromFade();
+
 
             return;
         }
 
 
-        if (_stateSnapshot.Mind !=
+        if (
+            _stateSnapshot.Mind !=
                 SegaMindState.Idle
             ||
             _stateSnapshot.Body !=
                 SegaBodyState.Resting)
         {
             RestoreFromFade();
+
 
             return;
         }
@@ -469,18 +1069,12 @@ public partial class CompanionWindow
         }
 
 
-        if (_isFaded)
-        {
-            return;
-        }
-
-
         FadeToQuiet();
     }
 
 
     // =========================================================
-    // REGISTER ACTIVITY
+    // ACTIVITY
     // =========================================================
 
     private void RegisterActivity()
@@ -507,6 +1101,11 @@ public partial class CompanionWindow
 
         _isFaded =
             true;
+
+
+        _presence.SetVisualState(
+            IsVisible,
+            true);
 
 
         DoubleAnimation animation =
@@ -540,8 +1139,11 @@ public partial class CompanionWindow
 
     private void RestoreFromFade()
     {
-        if (!_isFaded &&
-            Opacity >= NormalOpacity)
+        if (
+            !_isFaded
+            &&
+            Opacity >=
+                NormalOpacity)
         {
             return;
         }
@@ -549,6 +1151,11 @@ public partial class CompanionWindow
 
         _isFaded =
             false;
+
+
+        _presence.SetVisualState(
+            IsVisible,
+            false);
 
 
         DoubleAnimation animation =
@@ -577,322 +1184,110 @@ public partial class CompanionWindow
 
 
     // =========================================================
-    // GLOBAL MOUSE
+    // LEFT CLICK / DRAG
     // =========================================================
 
-    private void MouseTimer_Tick(
-        object? sender,
-        EventArgs e)
+    private void Entity_MouseLeftButtonDown(
+        object sender,
+        MouseButtonEventArgs e)
     {
-        if (_userDragging)
-        {
-            RestoreFromFade();
-
-            return;
-        }
-
-
-        if (!IsVisible)
+        if (
+            e.ChangedButton !=
+            MouseButton.Left)
         {
             return;
         }
 
 
-        Point mouse =
-            MousePosition.Get();
-
-
-        Point center =
-            CompanionCenter;
-
-
-        double dx =
-            mouse.X -
-            center.X;
-
-
-        double dy =
-            mouse.Y -
-            center.Y;
-
-
-        double distanceSquared =
-            dx * dx +
-            dy * dy;
-
-
-        if (distanceSquared <=
-            MouseAvoidDistanceSquared)
-        {
-            RegisterActivity();
-
-
-            TryAvoidMouse(
-                mouse,
-                center);
-
-
-            return;
-        }
-
-
-        if (_avoidingMouse)
-        {
-            _avoidingMouse =
-                false;
-
-
-            _segaState.SetAvoiding(
-                false);
-        }
-    }
-
-
-    // =========================================================
-    // AVOID MOUSE
-    // =========================================================
-
-    private void TryAvoidMouse(
-        Point mouse,
-        Point center)
-    {
-        DateTime now =
-            DateTime.UtcNow;
-
-
-        if ((now - _lastAvoidTime)
-            .TotalMilliseconds <
-            350)
-        {
-            return;
-        }
-
-
-        _lastAvoidTime =
-            now;
-
-
-        _avoidingMouse =
-            true;
-
-
-        _segaState.SetAvoiding(
-            true);
-
-
-        double dx =
-            center.X -
-            mouse.X;
-
-
-        double dy =
-            center.Y -
-            mouse.Y;
-
-
-        double length =
-            Math.Sqrt(
-                dx * dx +
-                dy * dy);
-
-
-        if (length <
-            0.001)
-        {
-            dx = 1.0;
-
-            dy = 0.0;
-
-            length = 1.0;
-        }
-
-
-        dx /=
-            length;
-
-
-        dy /=
-            length;
-
-
-        Point target =
-            new(
-                center.X +
-                dx * AvoidDistance,
-
-                center.Y +
-                dy * AvoidDistance);
-
-
-        target =
-            KeepInsideWorkArea(
-                target);
-
-
-        MoveToAsync(
-            target,
-            TimeSpan.FromMilliseconds(
-                500));
-    }
-
-
-    // =========================================================
-    // KEEP INSIDE WORK AREA
-    // =========================================================
-
-    private Point KeepInsideWorkArea(
-        Point center)
-    {
-        Rect workArea =
-            SystemParameters.WorkArea;
-
-
-        double halfWidth =
-            Width / 2.0;
-
-
-        double halfHeight =
-            Height / 2.0;
-
-
-        double minX =
-            workArea.Left +
-            halfWidth +
-            ScreenMargin;
-
-
-        double maxX =
-            workArea.Right -
-            halfWidth -
-            ScreenMargin;
-
-
-        double minY =
-            workArea.Top +
-            halfHeight +
-            ScreenMargin;
-
-
-        double maxY =
-            workArea.Bottom -
-            halfHeight -
-            ScreenMargin;
-
-
-        return new Point(
-            Math.Clamp(
-                center.X,
-                minX,
-                maxX),
-
-            Math.Clamp(
-                center.Y,
-                minY,
-                maxY));
-    }
-
-
-    // =========================================================
-    // MOVE
-    // =========================================================
-
-    public void MoveToAsync(
-        Point target,
-        TimeSpan duration)
-    {
-        if (_userDragging)
-        {
-            return;
-        }
+        CancelProgrammaticMovement();
 
 
         RegisterActivity();
 
 
-        target =
-            KeepInsideWorkArea(
-                target);
+        _dragging =
+            true;
 
 
-        double targetLeft =
-            target.X -
-            Width / 2.0;
-
-
-        double targetTop =
-            target.Y -
-            Height / 2.0;
-
-
-        long movementVersion =
-            ++_movementVersion;
-
-
-        _segaState.SetMoving(
+        _segaState.SetDragging(
             true);
 
 
-        DoubleAnimation leftAnimation =
-            new()
-            {
-                To =
-                    targetLeft,
-
-                Duration =
-                    new Duration(
-                        duration),
-
-                EasingFunction =
-                    new CubicEase
-                    {
-                        EasingMode =
-                            EasingMode.EaseOut
-                    }
-            };
+        try
+        {
+            DragMove();
+        }
+        catch (InvalidOperationException)
+        {
+        }
+        finally
+        {
+            ClampAndRememberUserPlacement();
 
 
-        DoubleAnimation topAnimation =
-            new()
-            {
-                To =
-                    targetTop,
-
-                Duration =
-                    new Duration(
-                        duration),
-
-                EasingFunction =
-                    new CubicEase
-                    {
-                        EasingMode =
-                            EasingMode.EaseOut
-                    }
-            };
+            _dragging =
+                false;
 
 
-        leftAnimation.Completed +=
-            (_, _) =>
-            {
-                if (movementVersion !=
-                    _movementVersion)
-                {
-                    return;
-                }
+            _segaState.SetDragging(
+                false);
+        }
 
 
-                _segaState.SetMoving(
-                    false);
-            };
+        e.Handled =
+            true;
+    }
 
 
-        BeginAnimation(
-            LeftProperty,
-            leftAnimation);
+    // =========================================================
+    // CLAMP AND REMEMBER USER PLACEMENT
+    // =========================================================
+
+    private void ClampAndRememberUserPlacement()
+    {
+        ReportPresence();
 
 
-        BeginAnimation(
-            TopProperty,
-            topAnimation);
+        SegaPresenceSnapshot presence =
+            _presence.Current;
+
+
+        if (!presence.IsAvailable)
+        {
+            return;
+        }
+
+
+        PcRectangle safe =
+            _placement
+                .ClampToAvailableDisplay(
+                    presence.WindowBounds);
+
+
+        IntPtr handle =
+            new WindowInteropHelper(
+                this)
+                .Handle;
+
+
+        SetWindowPosition(
+            handle,
+            safe.Left,
+            safe.Top);
+
+
+        ReportPresence();
+
+
+        SegaPresenceSnapshot updated =
+            _presence.Current;
+
+
+        if (updated.IsAvailable)
+        {
+            _placement.SavePreferred(
+                updated.WindowBounds);
+        }
     }
 
 
@@ -900,18 +1295,18 @@ public partial class CompanionWindow
     // RIGHT CLICK
     // =========================================================
 
-    private void Blob_MouseRightButtonUp(
+    private void Entity_MouseRightButtonUp(
         object sender,
         MouseButtonEventArgs e)
     {
-        e.Handled =
-            true;
-
-
         RegisterActivity();
 
 
         OpenMainWindow();
+
+
+        e.Handled =
+            true;
     }
 
 
@@ -919,16 +1314,18 @@ public partial class CompanionWindow
     // OPEN MAIN WINDOW
     // =========================================================
 
-    private void OpenMainWindow()
+    private static void OpenMainWindow()
     {
-        if (Application.Current ==
+        if (
+            Application.Current ==
             null)
         {
             return;
         }
 
 
-        if (Application.Current.MainWindow
+        if (
+            Application.Current.MainWindow
             is not MainWindow mainWindow)
         {
             return;
@@ -941,7 +1338,8 @@ public partial class CompanionWindow
         }
 
 
-        if (mainWindow.WindowState ==
+        if (
+            mainWindow.WindowState ==
             WindowState.Minimized)
         {
             mainWindow.WindowState =
@@ -969,213 +1367,77 @@ public partial class CompanionWindow
 
 
     // =========================================================
-    // START DRAG
+    // NATIVE WINDOW POSITION
+    //
+    // Body commands operate in physical desktop pixels.
+    // SetWindowPos avoids WPF DPI conversion problems when Sega
+    // moves across monitors with different scale factors.
     // =========================================================
 
-    private void Blob_MouseLeftButtonDown(
-        object sender,
-        MouseButtonEventArgs e)
+    private static void SetWindowPosition(
+        IntPtr handle,
+        int left,
+        int top)
     {
-        if (e.ChangedButton !=
-            MouseButton.Left)
+        if (handle ==
+            IntPtr.Zero)
         {
             return;
         }
 
 
-        RegisterActivity();
+        bool success =
+            SetWindowPos(
+                handle,
+                IntPtr.Zero,
+                left,
+                top,
+                0,
+                0,
+                SwpNoSize |
+                SwpNoZOrder |
+                SwpNoActivate);
 
 
-        _dragStart =
-            e.GetPosition(
-                this);
-
-
-        _dragging =
-            true;
-
-
-        _userDragging =
-            true;
-
-
-        ++_movementVersion;
-
-
-        /*
-         * IMPORTANT:
-         *
-         * Cancel animations on the WINDOW.
-         *
-         * The old code attempted:
-         *
-         * Blob.BeginAnimation(LeftProperty, ...)
-         *
-         * even though Left/Top belong to the Window.
-         */
-
-        BeginAnimation(
-            LeftProperty,
-            null);
-
-
-        BeginAnimation(
-            TopProperty,
-            null);
-
-
-        _segaState.SetMoving(
-            false);
-
-
-        _segaState.SetDragging(
-            true);
-
-
-        Blob.CaptureMouse();
-
-
-        e.Handled =
-            true;
+        if (!success)
+        {
+            Debug.WriteLine(
+                $"[Companion] " +
+                $"SetWindowPos failed. " +
+                $"Error={Marshal.GetLastWin32Error()}");
+        }
     }
 
 
     // =========================================================
-    // DRAG
+    // WIN32
     // =========================================================
 
-    private void Blob_MouseMove(
-        object sender,
-        MouseEventArgs e)
-    {
-        if (!_dragging)
-        {
-            return;
-        }
+    private const uint SwpNoSize =
+        0x0001;
 
 
-        if (e.LeftButton !=
-            MouseButtonState.Pressed)
-        {
-            return;
-        }
+    private const uint SwpNoZOrder =
+        0x0004;
 
 
-        RegisterActivity();
+    private const uint SwpNoActivate =
+        0x0010;
 
 
-        Point position =
-            e.GetPosition(
-                this);
-
-
-        double deltaX =
-            position.X -
-            _dragStart.X;
-
-
-        double deltaY =
-            position.Y -
-            _dragStart.Y;
-
-
-        Left +=
-            deltaX;
-
-
-        Top +=
-            deltaY;
-
-
-        KeepWindowInsideScreen();
-    }
-
-
-    // =========================================================
-    // STOP DRAG
-    // =========================================================
-
-    private void Blob_MouseLeftButtonUp(
-        object sender,
-        MouseButtonEventArgs e)
-    {
-        if (!_dragging)
-        {
-            return;
-        }
-
-
-        _dragging =
-            false;
-
-
-        _userDragging =
-            false;
-
-
-        RegisterActivity();
-
-
-        if (Blob.IsMouseCaptured)
-        {
-            Blob.ReleaseMouseCapture();
-        }
-
-
-        _segaState.SetDragging(
-            false);
-
-
-        e.Handled =
-            true;
-    }
-
-
-    // =========================================================
-    // KEEP WINDOW ON SCREEN
-    // =========================================================
-
-    private void KeepWindowInsideScreen()
-    {
-        Rect workArea =
-            SystemParameters.WorkArea;
-
-
-        double minLeft =
-            workArea.Left +
-            ScreenMargin;
-
-
-        double maxLeft =
-            workArea.Right -
-            Width -
-            ScreenMargin;
-
-
-        double minTop =
-            workArea.Top +
-            ScreenMargin;
-
-
-        double maxTop =
-            workArea.Bottom -
-            Height -
-            ScreenMargin;
-
-
-        Left =
-            Math.Clamp(
-                Left,
-                minLeft,
-                maxLeft);
-
-
-        Top =
-            Math.Clamp(
-                Top,
-                minTop,
-                maxTop);
-    }
+    [DllImport(
+        "user32.dll",
+        SetLastError = true)]
+    [return: MarshalAs(
+        UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(
+        IntPtr hWnd,
+        IntPtr hWndInsertAfter,
+        int x,
+        int y,
+        int cx,
+        int cy,
+        uint flags);
 
 
     // =========================================================
@@ -1186,18 +1448,41 @@ public partial class CompanionWindow
         object? sender,
         EventArgs e)
     {
-        _idleBehavior?
-            .Stop();
-
-
-        _mouseTimer.Stop();
-
-
         _idleFadeTimer.Stop();
+
+
+        _idleFadeTimer.Tick -=
+            IdleFadeTimer_Tick;
 
 
         _segaState.StateChanged -=
             SegaState_StateChanged;
+
+
+        _visualIntent.IntentChanged -=
+            VisualIntent_IntentChanged;
+
+
+        _bodyCommands.CommandIssued -=
+            BodyCommands_CommandIssued;
+
+
+        LocationChanged -=
+            CompanionWindow_LocationChanged;
+
+
+        SizeChanged -=
+            CompanionWindow_SizeChanged;
+
+
+        IsVisibleChanged -=
+            CompanionWindow_IsVisibleChanged;
+
+
+        CancelProgrammaticMovement();
+
+
+        _presence.MarkUnavailable();
 
 
         _segaState.ResetBody();

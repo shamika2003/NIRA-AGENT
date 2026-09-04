@@ -3,19 +3,43 @@
  */
 
 using System.Diagnostics;
-using NAudio.Wave;
+using System.Globalization;
 
 namespace SegaAgent.Voice;
 
-public sealed class PiperVoiceService : IVoiceService, IDisposable
+public sealed class PiperVoiceService
+    : IVoiceService,
+      IDisposable
 {
-    private readonly string _piperExecutable;
-    private readonly string _modelPath;
+    // =========================================================
+    // PIPER
+    // =========================================================
 
-    private readonly SemaphoreSlim _speechLock =
-        new(1, 1);
+    private readonly string
+        _piperExecutable;
 
-    private bool _disposed;
+
+    private readonly string
+        _modelPath;
+
+
+    // =========================================================
+    // SYNTHESIS LOCK
+    // =========================================================
+
+    private readonly SemaphoreSlim
+        _speechLock =
+            new(
+                1,
+                1);
+
+
+    // =========================================================
+    // LIFETIME
+    // =========================================================
+
+    private bool
+        _disposed;
 
 
     // =========================================================
@@ -24,30 +48,27 @@ public sealed class PiperVoiceService : IVoiceService, IDisposable
 
     public PiperVoiceService()
     {
-        var baseDirectory =
+        string baseDirectory =
             AppContext.BaseDirectory;
 
 
-        var piperDirectory =
+        string piperDirectory =
             Path.Combine(
                 baseDirectory,
-                "Piper"
-            );
+                "Piper");
 
 
         _piperExecutable =
             Path.Combine(
                 piperDirectory,
-                "piper.exe"
-            );
+                "piper.exe");
 
 
         _modelPath =
             Path.Combine(
                 piperDirectory,
                 "Models",
-                "en_US-hfc_female-medium.onnx"
-            );
+                "en_US-hfc_female-medium.onnx");
 
 
         ValidateFiles();
@@ -55,16 +76,25 @@ public sealed class PiperVoiceService : IVoiceService, IDisposable
 
 
     // =========================================================
-    // SPEAK
+    // PREPARE
     // =========================================================
 
-    public async Task SpeakAsync(
-        string text,
-        CancellationToken cancellationToken = default)
+    public async Task<PreparedVoiceAudio>
+        PrepareAsync(
+            VoiceUtterance utterance,
+            CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(text))
+        ArgumentNullException.ThrowIfNull(
+            utterance);
+
+
+        if (!SpeechChunker
+            .ContainsSpeakableContent(
+                utterance.Text))
         {
-            return;
+            throw new ArgumentException(
+                "Piper received a non-speakable utterance.",
+                nameof(utterance));
         }
 
 
@@ -72,8 +102,15 @@ public sealed class PiperVoiceService : IVoiceService, IDisposable
 
 
         await _speechLock.WaitAsync(
-            cancellationToken
-        );
+            cancellationToken);
+
+
+        string? wavPath =
+            null;
+
+
+        bool ownershipTransferred =
+            false;
 
 
         try
@@ -81,68 +118,145 @@ public sealed class PiperVoiceService : IVoiceService, IDisposable
             ThrowIfDisposed();
 
 
-            cancellationToken.ThrowIfCancellationRequested();
+            cancellationToken
+                .ThrowIfCancellationRequested();
 
 
-            var wavPath =
+            SegaVoiceExpression expression =
+                utterance
+                    .Expression
+                    .Normalize();
+
+
+            // =================================================
+            // PIPER EXPRESSION
+            // =================================================
+
+            double lengthScale =
+                Math.Clamp(
+                    1.0 /
+                    expression.Pace,
+                    0.84,
+                    1.18);
+
+
+            double noiseScale =
+                Math.Clamp(
+                    0.62
+                    +
+                    expression.Arousal *
+                        0.08
+                    +
+                    expression.Playfulness *
+                        0.04
+                    -
+                    expression.Restraint *
+                        0.05,
+                    0.52,
+                    0.78);
+
+
+            double noiseW =
+                Math.Clamp(
+                    0.72
+                    +
+                    expression.Playfulness *
+                        0.08
+                    +
+                    expression.Arousal *
+                        0.05
+                    -
+                    expression.Restraint *
+                        0.06,
+                    0.60,
+                    0.90);
+
+
+            // =================================================
+            // OUTPUT
+            // =================================================
+
+            wavPath =
                 Path.Combine(
                     Path.GetTempPath(),
-                    $"segaai_tts_{Guid.NewGuid():N}.wav"
-                );
+                    $"segaai_piper_" +
+                    $"{Guid.NewGuid():N}.wav");
 
 
-            try
-            {
-                await GenerateSpeechAsync(
-                    text,
-                    wavPath,
-                    cancellationToken
-                );
+            await GenerateSpeechAsync(
+                utterance.Text,
+                wavPath,
+                lengthScale,
+                noiseScale,
+                noiseW,
+                cancellationToken);
 
 
-                await PlayAudioAsync(
-                    wavPath,
-                    cancellationToken
-                );
-            }
-            finally
-            {
-                DeleteTemporaryFile(
-                    wavPath
-                );
-            }
+            cancellationToken
+                .ThrowIfCancellationRequested();
+
+
+            Debug.WriteLine(
+                $"[Piper] Prepared | " +
+                $"Response={utterance.ResponseId} | " +
+                $"Sequence={utterance.Sequence}");
+
+
+            PreparedVoiceAudio prepared =
+                new(
+                    utterance,
+                    new[]
+                    {
+                        wavPath
+                    },
+                    "Piper");
+
+
+            ownershipTransferred =
+                true;
+
+
+            return prepared;
         }
         finally
         {
+            if (
+                !ownershipTransferred
+                &&
+                !string.IsNullOrWhiteSpace(
+                    wavPath))
+            {
+                DeleteTemporaryFile(
+                    wavPath);
+            }
+
+
             _speechLock.Release();
         }
     }
 
 
     // =========================================================
-    // GENERATE SPEECH
+    // GENERATE
     // =========================================================
 
     private async Task GenerateSpeechAsync(
         string text,
         string outputPath,
+        double lengthScale,
+        double noiseScale,
+        double noiseW,
         CancellationToken cancellationToken)
     {
-
-        var startInfo =
-            new ProcessStartInfo
+        ProcessStartInfo startInfo =
+            new()
             {
                 FileName =
                     _piperExecutable,
 
-                Arguments =
-                    $"--model \"{_modelPath}\" " +
-                    $"--output_file \"{outputPath}\"",
-
                 WorkingDirectory =
                     Path.GetDirectoryName(
-                        _piperExecutable
-                    )!,
+                        _piperExecutable)!,
 
                 UseShellExecute =
                     false,
@@ -161,92 +275,151 @@ public sealed class PiperVoiceService : IVoiceService, IDisposable
             };
 
 
-        using var process =
-            new Process
+        startInfo.ArgumentList.Add(
+            "--model");
+
+
+        startInfo.ArgumentList.Add(
+            _modelPath);
+
+
+        startInfo.ArgumentList.Add(
+            "--output_file");
+
+
+        startInfo.ArgumentList.Add(
+            outputPath);
+
+
+        startInfo.ArgumentList.Add(
+            "--length_scale");
+
+
+        startInfo.ArgumentList.Add(
+            lengthScale.ToString(
+                "0.###",
+                CultureInfo.InvariantCulture));
+
+
+        startInfo.ArgumentList.Add(
+            "--noise_scale");
+
+
+        startInfo.ArgumentList.Add(
+            noiseScale.ToString(
+                "0.###",
+                CultureInfo.InvariantCulture));
+
+
+        startInfo.ArgumentList.Add(
+            "--noise_w");
+
+
+        startInfo.ArgumentList.Add(
+            noiseW.ToString(
+                "0.###",
+                CultureInfo.InvariantCulture));
+
+
+        using Process process =
+            new()
             {
-                StartInfo = startInfo
+                StartInfo =
+                    startInfo
             };
 
 
         if (!process.Start())
         {
             throw new InvalidOperationException(
-                "Failed to start Piper."
-            );
+                "Failed to start Piper.");
         }
 
 
         try
         {
-            await process.StandardInput.WriteAsync(
-                text.AsMemory(),
-                cancellationToken
-            );
+            Task<string> outputTask =
+                process
+                    .StandardOutput
+                    .ReadToEndAsync(
+                        cancellationToken);
 
 
-            await process.StandardInput.FlushAsync(
-                cancellationToken
-            );
+            Task<string> errorTask =
+                process
+                    .StandardError
+                    .ReadToEndAsync(
+                        cancellationToken);
 
 
-            process.StandardInput.Close();
+            await process
+                .StandardInput
+                .WriteAsync(
+                    text.AsMemory(),
+                    cancellationToken);
 
 
-            var errorTask =
-                process.StandardError.ReadToEndAsync(
-                    cancellationToken
-                );
+            await process
+                .StandardInput
+                .FlushAsync(
+                    cancellationToken);
 
 
-            var outputTask =
-                process.StandardOutput.ReadToEndAsync(
-                    cancellationToken
-                );
+            process
+                .StandardInput
+                .Close();
 
 
-            await process.WaitForExitAsync(
-                cancellationToken
-            );
+            await process
+                .WaitForExitAsync(
+                    cancellationToken);
 
 
-            var error =
+            string output =
+                await outputTask;
+
+
+            string error =
                 await errorTask;
 
 
-            _ = await outputTask;
-
-
-            if (process.ExitCode != 0)
+            if (process.ExitCode !=
+                0)
             {
+                string detail =
+                    string.IsNullOrWhiteSpace(
+                        error)
+                        ? string.Empty
+                        : $" {error.Trim()}";
+
+
                 throw new InvalidOperationException(
-                    $"Piper failed with exit code " +
-                    $"{process.ExitCode}. " +
-                    $"Error: {error}"
-                );
+                    $"Piper exited with code " +
+                    $"{process.ExitCode}.{detail}");
             }
 
 
-            if (!File.Exists(outputPath))
+            if (!File.Exists(
+                    outputPath))
             {
                 throw new InvalidOperationException(
-                    "Piper completed but did not create " +
-                    "the expected WAV file."
-                );
+                    "Piper completed without producing " +
+                    "an audio file.");
             }
-        }
-        catch (OperationCanceledException)
-        {
-            TryKillProcess(
-                process
-            );
 
-            throw;
+
+            if (!string.IsNullOrWhiteSpace(
+                    output))
+            {
+                Debug.WriteLine(
+                    $"[Piper] {output.Trim()}");
+            }
         }
         catch
         {
-            TryKillProcess(
-                process
-            );
+            TryKill(
+                process);
+
 
             throw;
         }
@@ -254,95 +427,7 @@ public sealed class PiperVoiceService : IVoiceService, IDisposable
 
 
     // =========================================================
-    // PLAY AUDIO
-    // =========================================================
-
-    private static async Task PlayAudioAsync(
-        string wavPath,
-        CancellationToken cancellationToken)
-    {
-        using var audioFile =
-            new AudioFileReader(
-                wavPath
-            );
-
-
-        using var outputDevice =
-            new WaveOutEvent();
-
-
-        outputDevice.Init(
-            audioFile
-        );
-
-
-        var completion =
-            new TaskCompletionSource<bool>(
-                TaskCreationOptions
-                    .RunContinuationsAsynchronously
-            );
-
-
-        void OnPlaybackStopped(
-            object? sender,
-            StoppedEventArgs e)
-        {
-            if (e.Exception != null)
-            {
-                completion.TrySetException(
-                    e.Exception
-                );
-
-                return;
-            }
-
-
-            completion.TrySetResult(
-                true
-            );
-        }
-
-
-        outputDevice.PlaybackStopped +=
-            OnPlaybackStopped;
-
-
-        using var registration =
-            cancellationToken.Register(
-                () =>
-                {
-                    try
-                    {
-                        outputDevice.Stop();
-                    }
-                    catch
-                    {
-                        // Ignore playback shutdown race.
-                    }
-                }
-            );
-
-
-        try
-        {
-            outputDevice.Play();
-
-
-            await completion.Task;
-
-
-            cancellationToken.ThrowIfCancellationRequested();
-        }
-        finally
-        {
-            outputDevice.PlaybackStopped -=
-                OnPlaybackStopped;
-        }
-    }
-
-
-    // =========================================================
-    // VALIDATE FILES
+    // VALIDATE
     // =========================================================
 
     private void ValidateFiles()
@@ -352,8 +437,7 @@ public sealed class PiperVoiceService : IVoiceService, IDisposable
         {
             throw new FileNotFoundException(
                 "Piper executable was not found.",
-                _piperExecutable
-            );
+                _piperExecutable);
         }
 
 
@@ -362,31 +446,16 @@ public sealed class PiperVoiceService : IVoiceService, IDisposable
         {
             throw new FileNotFoundException(
                 "Piper voice model was not found.",
-                _modelPath
-            );
-        }
-
-
-        var configPath =
-            _modelPath + ".json";
-
-
-        if (!File.Exists(
-                configPath))
-        {
-            throw new FileNotFoundException(
-                "Piper voice configuration was not found.",
-                configPath
-            );
+                _modelPath);
         }
     }
 
 
     // =========================================================
-    // KILL PROCESS
+    // KILL
     // =========================================================
 
-    private static void TryKillProcess(
+    private static void TryKill(
         Process process)
     {
         try
@@ -394,19 +463,18 @@ public sealed class PiperVoiceService : IVoiceService, IDisposable
             if (!process.HasExited)
             {
                 process.Kill(
-                    entireProcessTree: true
-                );
+                    entireProcessTree:
+                        true);
             }
         }
         catch
         {
-            // Ignore process shutdown race.
         }
     }
 
 
     // =========================================================
-    // DELETE TEMP FILE
+    // TEMP FILE
     // =========================================================
 
     private static void DeleteTemporaryFile(
@@ -414,16 +482,28 @@ public sealed class PiperVoiceService : IVoiceService, IDisposable
     {
         try
         {
-            if (File.Exists(path))
+            if (File.Exists(
+                    path))
             {
-                File.Delete(path);
+                File.Delete(
+                    path);
             }
         }
         catch
         {
-            // Temporary-file cleanup failure should
-            // not crash the voice pipeline.
         }
+    }
+
+
+    // =========================================================
+    // DISPOSE GUARD
+    // =========================================================
+
+    private void ThrowIfDisposed()
+    {
+        ObjectDisposedException.ThrowIf(
+            _disposed,
+            this);
     }
 
 
@@ -439,24 +519,10 @@ public sealed class PiperVoiceService : IVoiceService, IDisposable
         }
 
 
-        _disposed = true;
+        _disposed =
+            true;
 
 
         _speechLock.Dispose();
-    }
-
-
-    // =========================================================
-    // DISPOSE GUARD
-    // =========================================================
-
-    private void ThrowIfDisposed()
-    {
-        if (_disposed)
-        {
-            throw new ObjectDisposedException(
-                nameof(PiperVoiceService)
-            );
-        }
     }
 }

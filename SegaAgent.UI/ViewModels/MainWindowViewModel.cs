@@ -16,14 +16,25 @@ public sealed class MainWindowViewModel
     : INotifyPropertyChanged,
       IDisposable
 {
-    private readonly AgentCore _agent;
+    // =========================================================
+    // DEPENDENCIES
+    // =========================================================
+
+    private readonly AgentCore
+        _agent;
+
 
     private readonly AgentResponseDispatcher
         _dispatcher;
 
+
     private readonly VoiceQueue
         _voiceQueue;
 
+
+    // =========================================================
+    // SPEECH CHUNKERS
+    // =========================================================
 
     private readonly SpeechChunker
         _userSpeechChunker =
@@ -35,9 +46,40 @@ public sealed class MainWindowViewModel
             new();
 
 
+    // =========================================================
+    // SPEECH RESPONSE STATE
+    //
+    // Each response gets:
+    //
+    // ResponseId
+    // sequence number
+    // captured Sega voice expression
+    //
+    // This prevents queued speech from looking up Sega's mood
+    // again later when playback actually begins.
+    // =========================================================
+
+    private readonly SpeechResponseState
+        _userSpeechState =
+            new();
+
+
+    private readonly SpeechResponseState
+        _backgroundSpeechState =
+            new();
+
+
+    // =========================================================
+    // COMMAND
+    // =========================================================
+
     private readonly AsyncRelayCommand
         _sendCommand;
 
+
+    // =========================================================
+    // LIFETIME
+    // =========================================================
 
     private readonly CancellationTokenSource
         _shutdown =
@@ -48,12 +90,21 @@ public sealed class MainWindowViewModel
         _backgroundResponseTask;
 
 
+    // =========================================================
+    // UI STATE
+    // =========================================================
+
     private string _messageInput =
         string.Empty;
 
 
-    private bool _isProcessing;
+    private bool
+        _isProcessing;
 
+
+    // =========================================================
+    // BACKGROUND RESPONSE STATE
+    // =========================================================
 
     private ChatMessageViewModel?
         _backgroundMessage;
@@ -63,6 +114,10 @@ public sealed class MainWindowViewModel
         _backgroundSource;
 
 
+    // =========================================================
+    // MESSAGES
+    // =========================================================
+
     public ObservableCollection<
         ChatMessageViewModel>
         Messages
@@ -71,6 +126,10 @@ public sealed class MainWindowViewModel
     } =
         new();
 
+
+    // =========================================================
+    // MESSAGE INPUT
+    // =========================================================
 
     public string MessageInput
     {
@@ -103,6 +162,10 @@ public sealed class MainWindowViewModel
     }
 
 
+    // =========================================================
+    // PROCESSING
+    // =========================================================
+
     public bool IsProcessing
     {
         get =>
@@ -134,6 +197,10 @@ public sealed class MainWindowViewModel
     }
 
 
+    // =========================================================
+    // CAN SEND
+    // =========================================================
+
     public bool CanSend =>
         !IsProcessing
         &&
@@ -141,9 +208,17 @@ public sealed class MainWindowViewModel
             MessageInput);
 
 
+    // =========================================================
+    // COMMAND
+    // =========================================================
+
     public ICommand SendCommand =>
         _sendCommand;
 
+
+    // =========================================================
+    // CONSTRUCTOR
+    // =========================================================
 
     public MainWindowViewModel(
         AgentCore agent,
@@ -151,15 +226,21 @@ public sealed class MainWindowViewModel
         VoiceQueue voiceQueue)
     {
         _agent =
-            agent;
+            agent
+            ?? throw new ArgumentNullException(
+                nameof(agent));
 
 
         _dispatcher =
-            dispatcher;
+            dispatcher
+            ?? throw new ArgumentNullException(
+                nameof(dispatcher));
 
 
         _voiceQueue =
-            voiceQueue;
+            voiceQueue
+            ?? throw new ArgumentNullException(
+                nameof(voiceQueue));
 
 
         _sendCommand =
@@ -174,6 +255,10 @@ public sealed class MainWindowViewModel
     }
 
 
+    // =========================================================
+    // SEND USER MESSAGE
+    // =========================================================
+
     private async Task SendMessageAsync()
     {
         string input =
@@ -187,11 +272,26 @@ public sealed class MainWindowViewModel
         }
 
 
+        // =====================================================
+        // USER GETS PRIORITY OVER CURRENT SPEECH
+        // =====================================================
+
         _voiceQueue.Interrupt();
 
 
+        // =====================================================
+        // NEW USER RESPONSE
+        // =====================================================
+
         _userSpeechChunker.Clear();
 
+
+        _userSpeechState.Reset();
+
+
+        // =====================================================
+        // UI
+        // =====================================================
 
         MessageInput =
             string.Empty;
@@ -232,12 +332,14 @@ public sealed class MainWindowViewModel
                 HandleChunk(
                     assistantMessage,
                     chunk,
-                    _userSpeechChunker);
+                    _userSpeechChunker,
+                    _userSpeechState);
             }
 
 
             FlushSpeech(
-                _userSpeechChunker);
+                _userSpeechChunker,
+                _userSpeechState);
 
 
             if (string.IsNullOrWhiteSpace(
@@ -252,12 +354,18 @@ public sealed class MainWindowViewModel
             _userSpeechChunker.Clear();
 
 
+            _userSpeechState.Reset();
+
+
             assistantMessage.Content =
                 "Request cancelled.";
         }
         catch (Exception ex)
         {
             _userSpeechChunker.Clear();
+
+
+            _userSpeechState.Reset();
 
 
             assistantMessage.Content =
@@ -271,6 +379,10 @@ public sealed class MainWindowViewModel
         }
     }
 
+
+    // =========================================================
+    // BACKGROUND RESPONSE LOOP
+    // =========================================================
 
     private async Task
         ProcessBackgroundResponsesAsync()
@@ -294,19 +406,32 @@ public sealed class MainWindowViewModel
         }
         catch (OperationCanceledException)
         {
+            // Normal application shutdown.
         }
     }
 
 
+    // =========================================================
+    // BACKGROUND RESPONSE
+    // =========================================================
+
     private void HandleBackgroundResponse(
         AgentResponse response)
     {
+        // =====================================================
+        // CANCELLED
+        // =====================================================
+
         if (
             response.Chunk.Type ==
                 AgentStreamChunkType.Cancelled)
         {
             _backgroundSpeechChunker
                 .Clear();
+
+
+            _backgroundSpeechState
+                .Reset();
 
 
             if (_backgroundMessage !=
@@ -319,9 +444,14 @@ public sealed class MainWindowViewModel
 
             ResetBackgroundResponse();
 
+
             return;
         }
 
+
+        // =====================================================
+        // COMPLETED
+        // =====================================================
 
         if (
             response.Chunk.Type ==
@@ -331,7 +461,8 @@ public sealed class MainWindowViewModel
                 null)
             {
                 FlushSpeech(
-                    _backgroundSpeechChunker);
+                    _backgroundSpeechChunker,
+                    _backgroundSpeechState);
             }
             else
             {
@@ -340,11 +471,20 @@ public sealed class MainWindowViewModel
             }
 
 
+            _backgroundSpeechState
+                .Reset();
+
+
             ResetBackgroundResponse();
+
 
             return;
         }
 
+
+        // =====================================================
+        // TEXT ONLY
+        // =====================================================
 
         if (
             response.Chunk.Type !=
@@ -357,6 +497,10 @@ public sealed class MainWindowViewModel
         }
 
 
+        // =====================================================
+        // NEW BACKGROUND RESPONSE
+        // =====================================================
+
         if (
             _backgroundMessage ==
                 null
@@ -366,6 +510,10 @@ public sealed class MainWindowViewModel
         {
             _backgroundSpeechChunker
                 .Clear();
+
+
+            _backgroundSpeechState
+                .Reset();
 
 
             _backgroundSource =
@@ -383,12 +531,21 @@ public sealed class MainWindowViewModel
         }
 
 
+        // =====================================================
+        // PROCESS BACKGROUND TEXT
+        // =====================================================
+
         HandleChunk(
             _backgroundMessage,
             response.Chunk,
-            _backgroundSpeechChunker);
+            _backgroundSpeechChunker,
+            _backgroundSpeechState);
     }
 
+
+    // =========================================================
+    // RESET BACKGROUND RESPONSE
+    // =========================================================
 
     private void ResetBackgroundResponse()
     {
@@ -401,10 +558,15 @@ public sealed class MainWindowViewModel
     }
 
 
+    // =========================================================
+    // HANDLE STREAM CHUNK
+    // =========================================================
+
     private void HandleChunk(
         ChatMessageViewModel message,
         AgentStreamChunk chunk,
-        SpeechChunker speechChunker)
+        SpeechChunker speechChunker,
+        SpeechResponseState speechState)
     {
         if (
             chunk.Type !=
@@ -417,9 +579,39 @@ public sealed class MainWindowViewModel
         }
 
 
+        // =====================================================
+        // CAPTURE RESPONSE VOCAL EXPRESSION
+        //
+        // This comes from AgentCore.
+        //
+        // It already combines:
+        //
+        // persistent mood
+        // relationship
+        // attitude
+        // situation
+        // current model vocal intent
+        //
+        // The captured value travels with the queued speech.
+        // =====================================================
+
+        speechState.Expression =
+            chunk
+                .VoiceExpression
+                .Normalize();
+
+
+        // =====================================================
+        // CHAT
+        // =====================================================
+
         message.Content +=
             chunk.Content;
 
+
+        // =====================================================
+        // SPEECH CHUNKING
+        // =====================================================
 
         IReadOnlyList<string>
             speechParts =
@@ -427,12 +619,28 @@ public sealed class MainWindowViewModel
                     chunk.Content);
 
 
+        // =====================================================
+        // VOICE QUEUE
+        // =====================================================
+
         foreach (
             string speechPart
             in speechParts)
         {
+            if (string.IsNullOrWhiteSpace(
+                    speechPart))
+            {
+                continue;
+            }
+
+
+            VoiceUtterance utterance =
+                speechState.Create(
+                    speechPart);
+
+
             _voiceQueue.Enqueue(
-                speechPart);
+                utterance);
         }
     }
 
@@ -442,20 +650,33 @@ public sealed class MainWindowViewModel
     // =========================================================
 
     private void FlushSpeech(
-        SpeechChunker speechChunker)
+        SpeechChunker speechChunker,
+        SpeechResponseState speechState)
     {
         string? remaining =
             speechChunker.Complete();
 
 
-        if (!string.IsNullOrWhiteSpace(
+        if (string.IsNullOrWhiteSpace(
                 remaining))
         {
-            _voiceQueue.Enqueue(
-                remaining);
+            return;
         }
+
+
+        VoiceUtterance utterance =
+            speechState.Create(
+                remaining);
+
+
+        _voiceQueue.Enqueue(
+            utterance);
     }
 
+
+    // =========================================================
+    // PROPERTY CHANGED
+    // =========================================================
 
     public event PropertyChangedEventHandler?
         PropertyChanged;
@@ -472,12 +693,28 @@ public sealed class MainWindowViewModel
     }
 
 
+    // =========================================================
+    // DISPOSE
+    // =========================================================
+
     public void Dispose()
     {
         _shutdown.Cancel();
 
 
         _voiceQueue.Interrupt();
+
+
+        _userSpeechChunker.Clear();
+
+
+        _backgroundSpeechChunker.Clear();
+
+
+        _userSpeechState.Reset();
+
+
+        _backgroundSpeechState.Reset();
 
 
         try
@@ -492,5 +729,77 @@ public sealed class MainWindowViewModel
 
 
         _shutdown.Dispose();
+    }
+
+
+    // =========================================================
+    // SPEECH RESPONSE STATE
+    // =========================================================
+
+    private sealed class SpeechResponseState
+    {
+        public Guid ResponseId
+        {
+            get;
+            private set;
+        } =
+            Guid.NewGuid();
+
+
+        public int Sequence
+        {
+            get;
+            private set;
+        }
+
+
+        public SegaVoiceExpression Expression
+        {
+            get;
+            set;
+        } =
+            SegaVoiceExpression.Neutral;
+
+
+        // =====================================================
+        // CREATE UTTERANCE
+        // =====================================================
+
+        public VoiceUtterance Create(
+            string text)
+        {
+            ArgumentException
+                .ThrowIfNullOrWhiteSpace(
+                    text);
+
+
+            Sequence++;
+
+
+            return new VoiceUtterance(
+                ResponseId,
+                Sequence,
+                text,
+                Expression);
+        }
+
+
+        // =====================================================
+        // RESET
+        // =====================================================
+
+        public void Reset()
+        {
+            ResponseId =
+                Guid.NewGuid();
+
+
+            Sequence =
+                0;
+
+
+            Expression =
+                SegaVoiceExpression.Neutral;
+        }
     }
 }
