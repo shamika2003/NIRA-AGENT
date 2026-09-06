@@ -4,7 +4,7 @@
 
 using Microsoft.Extensions.Hosting;
 
-using SegaAgent.Agent;
+using SegaAgent.Mind;
 using SegaAgent.Character.History;
 using SegaAgent.PC.Awareness;
 
@@ -21,7 +21,7 @@ public sealed class CompanionTimerService
         _attention;
 
 
-    private readonly AgentBackgroundProcessor
+    private readonly SegaBackgroundProcessor
         _backgroundProcessor;
 
 
@@ -32,7 +32,7 @@ public sealed class CompanionTimerService
     public CompanionTimerService(
         PcWorldStateService worldState,
         AttentionManager attention,
-        AgentBackgroundProcessor backgroundProcessor,
+        SegaBackgroundProcessor backgroundProcessor,
         SegaSocialHistoryService socialHistory)
     {
         _worldState =

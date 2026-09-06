@@ -14,6 +14,8 @@ using SegaAgent.Agent.State;
 using SegaAgent.Embodiment;
 using SegaAgent.Embodiment.Body;
 using SegaAgent.PC.Awareness;
+using SegaAgent.Settings;
+using SegaAgent.UI;
 
 namespace SegaAgent.UI.Companion;
 
@@ -42,6 +44,10 @@ public partial class CompanionWindow
 
     private readonly SegaBodyPlacementService
         _placement;
+
+
+    private readonly SegaRuntimeSettingsService
+        _settings;
 
 
     // =========================================================
@@ -91,6 +97,35 @@ public partial class CompanionWindow
 
 
     // =========================================================
+    // MAIN WINDOW BODY DOCK
+    //
+    // Sega remains one physical WPF body. When the main UI is
+    // active, this same transparent CompanionWindow moves into
+    // the UI's dock location. It is never faded out and replaced
+    // by a second particle renderer.
+    // =========================================================
+
+    private MainWindow?
+        _mainWindow;
+
+
+    private PcRectangle?
+        _desktopReturnBounds;
+
+
+    private bool
+        _isDockedToMainWindow;
+
+
+    private const int MainDockDurationMilliseconds =
+        420;
+
+
+    private const int MainReturnDurationMilliseconds =
+        360;
+
+
+    // =========================================================
     // STARTUP
     // =========================================================
 
@@ -117,12 +152,6 @@ public partial class CompanionWindow
     // FADE
     // =========================================================
 
-    private static readonly TimeSpan
-        IdleFadeDelay =
-            TimeSpan.FromMinutes(
-                1);
-
-
     private const double FadedOpacity =
         0.22;
 
@@ -144,7 +173,8 @@ public partial class CompanionWindow
         SegaVisualIntentService visualIntent,
         SegaPresenceService presence,
         SegaBodyCommandService bodyCommands,
-        SegaBodyPlacementService placement)
+        SegaBodyPlacementService placement,
+        SegaRuntimeSettingsService settings)
     {
         InitializeComponent();
 
@@ -177,6 +207,16 @@ public partial class CompanionWindow
             placement
             ?? throw new ArgumentNullException(
                 nameof(placement));
+
+
+        _settings =
+            settings
+            ?? throw new ArgumentNullException(
+                nameof(settings));
+
+
+        _settings.Changed +=
+            RuntimeSettings_Changed;
 
 
         _stateSnapshot =
@@ -264,6 +304,541 @@ public partial class CompanionWindow
         // =====================================================
 
         Entity.PrepareStartupEntrance();
+    }
+
+
+    // =========================================================
+    // ATTACH MAIN WINDOW
+    // =========================================================
+
+    public void AttachToMainWindow(
+        MainWindow mainWindow)
+    {
+        ArgumentNullException.ThrowIfNull(
+            mainWindow);
+
+        if (ReferenceEquals(
+                _mainWindow,
+                mainWindow))
+        {
+            if (mainWindow.IsActive)
+            {
+                Dispatcher.BeginInvoke(
+                    new Action(
+                        DockToMainWindow));
+            }
+
+            return;
+        }
+
+        DetachMainWindowEvents();
+
+        _mainWindow =
+            mainWindow;
+
+        _mainWindow.Activated +=
+            MainWindow_Activated;
+
+        _mainWindow.Deactivated +=
+            MainWindow_Deactivated;
+
+        _mainWindow.LocationChanged +=
+            MainWindow_LocationChanged;
+
+        _mainWindow.SizeChanged +=
+            MainWindow_SizeChanged;
+
+        _mainWindow.StateChanged +=
+            MainWindow_StateChanged;
+
+        _mainWindow.IsVisibleChanged +=
+            MainWindow_IsVisibleChanged;
+
+        _mainWindow.Closed +=
+            MainWindow_Closed;
+
+        if (_mainWindow.IsActive)
+        {
+            Dispatcher.BeginInvoke(
+                new Action(
+                    DockToMainWindow));
+        }
+        else if (!_settings.Current.DesktopPresenceEnabled)
+        {
+            Dispatcher.BeginInvoke(
+                new Action(() =>
+                    ApplyDesktopPresenceSetting(false)));
+        }
+    }
+
+
+    // =========================================================
+    // MAIN WINDOW EVENTS
+    // =========================================================
+
+    private void MainWindow_Activated(
+        object? sender,
+        EventArgs e)
+    {
+        DockToMainWindow();
+    }
+
+
+    private void MainWindow_Deactivated(
+        object? sender,
+        EventArgs e)
+    {
+        ReturnFromMainWindow();
+    }
+
+
+    private void MainWindow_LocationChanged(
+        object? sender,
+        EventArgs e)
+    {
+        if (_isDockedToMainWindow)
+        {
+            SnapToMainWindowDock();
+        }
+    }
+
+
+    private void MainWindow_SizeChanged(
+        object sender,
+        SizeChangedEventArgs e)
+    {
+        if (_isDockedToMainWindow)
+        {
+            SnapToMainWindowDock();
+        }
+    }
+
+
+    private void MainWindow_StateChanged(
+        object? sender,
+        EventArgs e)
+    {
+        if (_mainWindow ==
+            null)
+        {
+            return;
+        }
+
+        if (
+            _mainWindow.WindowState ==
+                WindowState.Minimized
+            ||
+            !_mainWindow.IsVisible)
+        {
+            ReturnFromMainWindow();
+
+            return;
+        }
+
+        if (_mainWindow.IsActive)
+        {
+            Dispatcher.BeginInvoke(
+                new Action(
+                    SnapToMainWindowDock));
+        }
+    }
+
+
+    private void MainWindow_IsVisibleChanged(
+        object sender,
+        DependencyPropertyChangedEventArgs e)
+    {
+        if (_mainWindow ==
+            null)
+        {
+            return;
+        }
+
+        if (!_mainWindow.IsVisible)
+        {
+            ReturnFromMainWindow();
+
+            return;
+        }
+
+        if (_mainWindow.IsActive)
+        {
+            Dispatcher.BeginInvoke(
+                new Action(
+                    DockToMainWindow));
+        }
+    }
+
+
+    private void MainWindow_Closed(
+        object? sender,
+        EventArgs e)
+    {
+        ReturnFromMainWindow();
+
+        DetachMainWindowEvents();
+    }
+
+
+    // =========================================================
+    // DOCK TO MAIN WINDOW
+    // =========================================================
+
+    private void DockToMainWindow()
+    {
+        if (
+            _mainWindow ==
+                null
+            ||
+            !_mainWindow.IsVisible
+            ||
+            _mainWindow.WindowState ==
+                WindowState.Minimized)
+        {
+            return;
+        }
+
+        if (!TryResolveMainWindowDockTarget(
+                out int targetLeft,
+                out int targetTop))
+        {
+            return;
+        }
+
+        if (!_isDockedToMainWindow)
+        {
+            ReportPresence();
+
+            SegaPresenceSnapshot presence =
+                _presence.Current;
+
+            if (presence.IsAvailable)
+            {
+                _desktopReturnBounds =
+                    presence.WindowBounds;
+            }
+
+            _isDockedToMainWindow =
+                true;
+
+            ForceVisibleForMainDock();
+
+            Debug.WriteLine(
+                $"[CompanionDock] ENTER | " +
+                $"Target=({targetLeft},{targetTop})");
+
+            StartProgrammaticMovement(
+                SegaBodyCommand.MoveTo(
+                    targetLeft,
+                    targetTop,
+                    TimeSpan.FromMilliseconds(
+                        MainDockDurationMilliseconds),
+                    SegaBodyCommandSource.System));
+
+            return;
+        }
+
+        SnapToMainWindowDock();
+    }
+
+
+    // =========================================================
+    // SNAP WHILE MAIN WINDOW MOVES / RESIZES
+    // =========================================================
+
+    private void SnapToMainWindowDock()
+    {
+        if (
+            !_isDockedToMainWindow
+            ||
+            !TryResolveMainWindowDockTarget(
+                out int targetLeft,
+                out int targetTop))
+        {
+            return;
+        }
+
+        CancelProgrammaticMovement();
+
+        IntPtr handle =
+            new WindowInteropHelper(
+                this)
+                .Handle;
+
+        if (handle ==
+            IntPtr.Zero)
+        {
+            return;
+        }
+
+        SetWindowPosition(
+            handle,
+            targetLeft,
+            targetTop);
+
+        ReportPresence();
+    }
+
+
+    // =========================================================
+    // RETURN TO DESKTOP
+    // =========================================================
+
+    private void ReturnFromMainWindow()
+    {
+        if (!_isDockedToMainWindow)
+        {
+            return;
+        }
+
+        _isDockedToMainWindow =
+            false;
+
+        PcRectangle? returnBounds =
+            _desktopReturnBounds;
+
+        if (!_settings.Current.DesktopPresenceEnabled)
+        {
+            CancelProgrammaticMovement();
+
+            BeginAnimation(
+                OpacityProperty,
+                null);
+
+            Opacity =
+                NormalOpacity;
+
+            _isFaded =
+                false;
+
+            if (IsVisible)
+            {
+                Hide();
+            }
+
+            _presence.SetVisualState(
+                false,
+                false);
+
+            return;
+        }
+
+        _desktopReturnBounds =
+            null;
+
+        if (
+            returnBounds ==
+                null
+            ||
+            returnBounds.Value.IsEmpty)
+        {
+            return;
+        }
+
+        PcRectangle safe =
+            _placement
+                .ClampToAvailableDisplay(
+                    returnBounds.Value);
+
+        ForceVisibleForMainDock();
+
+        Debug.WriteLine(
+            $"[CompanionDock] RETURN | " +
+            $"Target=({safe.Left},{safe.Top})");
+
+        StartProgrammaticMovement(
+            SegaBodyCommand.MoveTo(
+                safe.Left,
+                safe.Top,
+                TimeSpan.FromMilliseconds(
+                    MainReturnDurationMilliseconds),
+                SegaBodyCommandSource.System));
+    }
+
+
+    // =========================================================
+    // RESOLVE DOCK TARGET
+    // =========================================================
+
+    private bool TryResolveMainWindowDockTarget(
+        out int targetLeft,
+        out int targetTop)
+    {
+        targetLeft =
+            0;
+
+        targetTop =
+            0;
+
+        if (
+            _mainWindow ==
+                null
+            ||
+            !_mainWindow.TryGetBodyDockScreenCenter(
+                out Point center))
+        {
+            return false;
+        }
+
+        if (!TryGetPhysicalWindowSize(
+                out int width,
+                out int height))
+        {
+            return false;
+        }
+
+        targetLeft =
+            (int)Math.Round(
+                center.X -
+                width /
+                    2.0);
+
+        targetTop =
+            (int)Math.Round(
+                center.Y -
+                height /
+                    2.0);
+
+        return true;
+    }
+
+
+    // =========================================================
+    // PHYSICAL WINDOW SIZE
+    // =========================================================
+
+    private bool TryGetPhysicalWindowSize(
+        out int width,
+        out int height)
+    {
+        width =
+            0;
+
+        height =
+            0;
+
+        if (
+            !IsLoaded
+            ||
+            ActualWidth <=
+                0.0
+            ||
+            ActualHeight <=
+                0.0)
+        {
+            return false;
+        }
+
+        try
+        {
+            Point topLeft =
+                PointToScreen(
+                    new Point(
+                        0.0,
+                        0.0));
+
+            Point bottomRight =
+                PointToScreen(
+                    new Point(
+                        ActualWidth,
+                        ActualHeight));
+
+            width =
+                Math.Max(
+                    1,
+                    (int)Math.Round(
+                        Math.Abs(
+                            bottomRight.X -
+                            topLeft.X)));
+
+            height =
+                Math.Max(
+                    1,
+                    (int)Math.Round(
+                        Math.Abs(
+                            bottomRight.Y -
+                            topLeft.Y)));
+
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+
+    // =========================================================
+    // DOCK VISIBILITY
+    //
+    // Docking never uses the old idle fade. The body stays fully
+    // present during the physical move into and out of the UI.
+    // =========================================================
+
+    private void ForceVisibleForMainDock()
+    {
+        BeginAnimation(
+            OpacityProperty,
+            null);
+
+        Opacity =
+            NormalOpacity;
+
+        _isFaded =
+            false;
+
+        if (!IsVisible)
+        {
+            Show();
+        }
+
+        Topmost =
+            true;
+
+        _presence.SetVisualState(
+            true,
+            false);
+
+        _lastActivityTime =
+            DateTime.UtcNow;
+    }
+
+
+    // =========================================================
+    // DETACH MAIN WINDOW EVENTS
+    // =========================================================
+
+    private void DetachMainWindowEvents()
+    {
+        if (_mainWindow ==
+            null)
+        {
+            return;
+        }
+
+        _mainWindow.Activated -=
+            MainWindow_Activated;
+
+        _mainWindow.Deactivated -=
+            MainWindow_Deactivated;
+
+        _mainWindow.LocationChanged -=
+            MainWindow_LocationChanged;
+
+        _mainWindow.SizeChanged -=
+            MainWindow_SizeChanged;
+
+        _mainWindow.StateChanged -=
+            MainWindow_StateChanged;
+
+        _mainWindow.IsVisibleChanged -=
+            MainWindow_IsVisibleChanged;
+
+        _mainWindow.Closed -=
+            MainWindow_Closed;
+
+        _mainWindow =
+            null;
     }
 
 
@@ -714,12 +1289,10 @@ public partial class CompanionWindow
             {
                 CancelProgrammaticMovement();
 
-
                 if (IsVisible)
                 {
                     Hide();
                 }
-
 
                 break;
             }
@@ -727,18 +1300,23 @@ public partial class CompanionWindow
 
             case SegaBodyCommandType.Show:
             {
+                if (
+                    !_settings.Current.DesktopPresenceEnabled
+                    &&
+                    !_isDockedToMainWindow)
+                {
+                    break;
+                }
+
                 if (!IsVisible)
                 {
                     Show();
 
-
                     Topmost =
                         true;
 
-
                     ReportPresence();
                 }
-
 
                 break;
             }
@@ -746,15 +1324,18 @@ public partial class CompanionWindow
 
             case SegaBodyCommandType.MoveToScreenPosition:
             {
-                if (_dragging)
+                if (
+                    !_settings.Current.DesktopPresenceEnabled
+                    ||
+                    _dragging
+                    ||
+                    _isDockedToMainWindow)
                 {
                     return;
                 }
 
-
                 StartProgrammaticMovement(
                     command);
-
 
                 break;
             }
@@ -1020,6 +1601,134 @@ public partial class CompanionWindow
     }
 
 
+    private void RuntimeSettings_Changed(
+        SegaRuntimeSettings before,
+        SegaRuntimeSettings after)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(
+                new Action(() =>
+                    ApplyRuntimeSettingsChange(
+                        before,
+                        after)));
+
+            return;
+        }
+
+        ApplyRuntimeSettingsChange(
+            before,
+            after);
+    }
+
+
+    private void ApplyRuntimeSettingsChange(
+        SegaRuntimeSettings before,
+        SegaRuntimeSettings after)
+    {
+        if (before.DesktopPresenceEnabled !=
+            after.DesktopPresenceEnabled)
+        {
+            ApplyDesktopPresenceSetting(
+                after.DesktopPresenceEnabled);
+        }
+
+        if (
+            !after.IdleBehaviorEnabled
+            ||
+            !after.FadeDesktopPresenceWhenIdle
+            ||
+            before.IdleFadeDelaySeconds !=
+                after.IdleFadeDelaySeconds)
+        {
+            RegisterActivity();
+        }
+    }
+
+
+    private void ApplyDesktopPresenceSetting(
+        bool enabled)
+    {
+        if (_isDockedToMainWindow)
+        {
+            ForceVisibleForMainDock();
+            return;
+        }
+
+        if (!enabled)
+        {
+            if (IsVisible)
+            {
+                ReportPresence();
+
+                SegaPresenceSnapshot presence =
+                    _presence.Current;
+
+                if (presence.IsAvailable)
+                {
+                    _desktopReturnBounds =
+                        presence.WindowBounds;
+                }
+            }
+
+            CancelProgrammaticMovement();
+
+            BeginAnimation(
+                OpacityProperty,
+                null);
+
+            Opacity =
+                NormalOpacity;
+
+            _isFaded =
+                false;
+
+            if (IsVisible)
+            {
+                Hide();
+            }
+
+            _presence.SetVisualState(
+                false,
+                false);
+
+            return;
+        }
+
+        ForceVisibleForMainDock();
+
+        if (
+            _desktopReturnBounds is PcRectangle returnBounds
+            &&
+            !returnBounds.IsEmpty)
+        {
+            PcRectangle safe =
+                _placement
+                    .ClampToAvailableDisplay(
+                        returnBounds);
+
+            IntPtr handle =
+                new WindowInteropHelper(
+                    this)
+                    .Handle;
+
+            if (handle !=
+                IntPtr.Zero)
+            {
+                SetWindowPosition(
+                    handle,
+                    safe.Left,
+                    safe.Top);
+            }
+
+            _desktopReturnBounds =
+                null;
+        }
+
+        ReportPresence();
+    }
+
+
     // =========================================================
     // IDLE FADE
     // =========================================================
@@ -1028,6 +1737,25 @@ public partial class CompanionWindow
         object? sender,
         EventArgs e)
     {
+        SegaRuntimeSettings settings =
+            _settings.Current;
+
+        if (
+            !settings.IdleBehaviorEnabled
+            ||
+            !settings.FadeDesktopPresenceWhenIdle)
+        {
+            RestoreFromFade();
+            return;
+        }
+
+
+        if (_isDockedToMainWindow)
+        {
+            return;
+        }
+
+
         if (!IsVisible)
         {
             return;
@@ -1063,7 +1791,8 @@ public partial class CompanionWindow
 
 
         if (idleTime <
-            IdleFadeDelay)
+            TimeSpan.FromSeconds(
+                settings.IdleFadeDelaySeconds))
         {
             return;
         }
@@ -1195,6 +1924,19 @@ public partial class CompanionWindow
             e.ChangedButton !=
             MouseButton.Left)
         {
+            return;
+        }
+
+
+        if (_isDockedToMainWindow)
+        {
+            RegisterActivity();
+
+            _mainWindow?.Activate();
+
+            e.Handled =
+                true;
+
             return;
         }
 
@@ -1467,6 +2209,10 @@ public partial class CompanionWindow
             BodyCommands_CommandIssued;
 
 
+        _settings.Changed -=
+            RuntimeSettings_Changed;
+
+
         LocationChanged -=
             CompanionWindow_LocationChanged;
 
@@ -1477,6 +2223,9 @@ public partial class CompanionWindow
 
         IsVisibleChanged -=
             CompanionWindow_IsVisibleChanged;
+
+
+        DetachMainWindowEvents();
 
 
         CancelProgrammaticMovement();

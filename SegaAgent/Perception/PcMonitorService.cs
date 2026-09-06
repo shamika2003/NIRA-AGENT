@@ -6,7 +6,7 @@ using System.Diagnostics;
 
 using Microsoft.Extensions.Hosting;
 
-using SegaAgent.Agent;
+using SegaAgent.Mind;
 using SegaAgent.Character.History;
 using SegaAgent.PC.Awareness;
 
@@ -31,7 +31,7 @@ public sealed class PcMonitorService
         _attention;
 
 
-    private readonly AgentBackgroundProcessor
+    private readonly SegaBackgroundProcessor
         _backgroundProcessor;
 
 
@@ -39,7 +39,7 @@ public sealed class PcMonitorService
         PcWorldStateService worldState,
         PerceptionAnalyzer analyzer,
         AttentionManager attention,
-        AgentBackgroundProcessor backgroundProcessor,
+        SegaBackgroundProcessor backgroundProcessor,
         SegaSocialHistoryService socialHistory)
     {
         _worldState =
@@ -129,38 +129,48 @@ public sealed class PcMonitorService
                         $"{perception.Type}");
 
 
-                    SegaSocialEvent
-                        socialEvent =
-                            _socialHistory.Record(
-                                SegaSocialEventSource.Environment,
-                                SegaSocialEventKind.EnvironmentEvent,
-                                perception.Type,
-                                perception.TopicKey,
-                                perception.Description,
-                                perception.Metadata);
-
-
-                    perception.SocialEventId =
-                        socialEvent.Id;
-
-
-                    bool accepted =
-                        _attention
-                            .TryAcceptPerception(
-                                perception);
-
-
-                    Debug.WriteLine(
-                        $"[PcMonitor] " +
-                        $"Attention accepted = {accepted}");
-
-
-                    if (accepted)
+                    if (!_attention.IsPerceptionEnabled(
+                            perception))
                     {
-                        await _backgroundProcessor
-                            .ProcessPerceptionAsync(
-                                perception,
-                                stoppingToken);
+                        Debug.WriteLine(
+                            $"[PcMonitor] EVENT IGNORED BY SETTINGS: " +
+                            $"{perception.Type}");
+                    }
+                    else
+                    {
+                        SegaSocialEvent
+                            socialEvent =
+                                _socialHistory.Record(
+                                    SegaSocialEventSource.Environment,
+                                    SegaSocialEventKind.EnvironmentEvent,
+                                    perception.Type,
+                                    perception.TopicKey,
+                                    perception.Description,
+                                    perception.Metadata);
+
+
+                        perception.SocialEventId =
+                            socialEvent.Id;
+
+
+                        bool accepted =
+                            _attention
+                                .TryAcceptPerception(
+                                    perception);
+
+
+                        Debug.WriteLine(
+                            $"[PcMonitor] " +
+                            $"Attention accepted = {accepted}");
+
+
+                        if (accepted)
+                        {
+                            await _backgroundProcessor
+                                .ProcessPerceptionAsync(
+                                    perception,
+                                    stoppingToken);
+                        }
                     }
                 }
 

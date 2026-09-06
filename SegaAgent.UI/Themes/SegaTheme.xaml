@@ -1,0 +1,532 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- =========================================================
+         SEGA UI PALETTE
+         ========================================================= -->
+
+    <Color x:Key="SegaBg0">#02030A</Color>
+    <Color x:Key="SegaBg1">#050815</Color>
+    <Color x:Key="SegaBg2">#0A1020</Color>
+    <Color x:Key="SegaPanel">#C20A1121</Color>
+    <Color x:Key="SegaPanelStrong">#EA0B1225</Color>
+    <Color x:Key="SegaText">#F3FAFF</Color>
+    <Color x:Key="SegaTextSecondary">#A8B3D7</Color>
+    <Color x:Key="SegaTextMuted">#6073A6</Color>
+    <Color x:Key="SegaCyan">#78DBFF</Color>
+    <Color x:Key="SegaBlue">#4D8FFF</Color>
+    <Color x:Key="SegaDeepBlue">#3058F2</Color>
+    <Color x:Key="SegaViolet">#B06EFF</Color>
+    <Color x:Key="SegaGreen">#53F0C9</Color>
+    <Color x:Key="SegaRed">#FF6683</Color>
+
+    <SolidColorBrush x:Key="SegaBackgroundBrush" Color="{StaticResource SegaBg0}"/>
+    <SolidColorBrush x:Key="SegaPanelBrush" Color="{StaticResource SegaPanel}"/>
+    <SolidColorBrush x:Key="SegaPanelStrongBrush" Color="{StaticResource SegaPanelStrong}"/>
+    <SolidColorBrush x:Key="SegaTextBrush" Color="{StaticResource SegaText}"/>
+    <SolidColorBrush x:Key="SegaSecondaryBrush" Color="{StaticResource SegaTextSecondary}"/>
+    <SolidColorBrush x:Key="SegaMutedBrush" Color="{StaticResource SegaTextMuted}"/>
+    <SolidColorBrush x:Key="SegaCyanBrush" Color="{StaticResource SegaCyan}"/>
+    <SolidColorBrush x:Key="SegaBlueBrush" Color="{StaticResource SegaBlue}"/>
+    <SolidColorBrush x:Key="SegaVioletBrush" Color="{StaticResource SegaViolet}"/>
+    <SolidColorBrush x:Key="SegaGreenBrush" Color="{StaticResource SegaGreen}"/>
+    <SolidColorBrush x:Key="SegaRedBrush" Color="{StaticResource SegaRed}"/>
+
+    <LinearGradientBrush x:Key="SegaWindowGradient" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#02030A" Offset="0"/>
+        <GradientStop Color="#060A16" Offset="0.44"/>
+        <GradientStop Color="#08112A" Offset="1"/>
+    </LinearGradientBrush>
+
+    <LinearGradientBrush x:Key="SegaNeonLine" StartPoint="0,0" EndPoint="1,0">
+        <GradientStop Color="#00366CFF" Offset="0"/>
+        <GradientStop Color="#8B6BE8FF" Offset="0.34"/>
+        <GradientStop Color="#C74D8FFF" Offset="0.64"/>
+        <GradientStop Color="#0078DBFF" Offset="1"/>
+    </LinearGradientBrush>
+
+    <LinearGradientBrush x:Key="SegaButtonFill" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#27255ECF" Offset="0"/>
+        <GradientStop Color="#2B122A58" Offset="1"/>
+    </LinearGradientBrush>
+
+    <LinearGradientBrush x:Key="SegaButtonFillHover" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#4F69FF" Offset="0"/>
+        <GradientStop Color="#5C31B9E2" Offset="1"/>
+    </LinearGradientBrush>
+
+    <LinearGradientBrush x:Key="SegaPrimaryButtonFill" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#86E3FF" Offset="0"/>
+        <GradientStop Color="#548FFF" Offset="0.58"/>
+        <GradientStop Color="#A76BFF" Offset="1"/>
+    </LinearGradientBrush>
+
+    <RadialGradientBrush x:Key="SegaSoftGlow">
+        <GradientStop Color="#4A7DEBFF" Offset="0"/>
+        <GradientStop Color="#293B91C8" Offset="0.42"/>
+        <GradientStop Color="#00030A14" Offset="1"/>
+    </RadialGradientBrush>
+
+    <RadialGradientBrush x:Key="SegaVioletGlow">
+        <GradientStop Color="#44A96DFF" Offset="0"/>
+        <GradientStop Color="#256342D5" Offset="0.44"/>
+        <GradientStop Color="#00030A14" Offset="1"/>
+    </RadialGradientBrush>
+
+    <!-- =========================================================
+         GLASS PANELS
+         ========================================================= -->
+
+    <Style x:Key="SegaGlassPanel" TargetType="Border">
+        <Setter Property="Background" Value="#A80A1624"/>
+        <Setter Property="BorderBrush" Value="#4339A9E8"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="14"/>
+    </Style>
+
+    <Style x:Key="SegaGlassPanelStrong" TargetType="Border">
+        <Setter Property="Background" Value="#D30A1625"/>
+        <Setter Property="BorderBrush" Value="#5B47C9FF"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="16"/>
+    </Style>
+
+    <!-- =========================================================
+         BUTTONS
+         ========================================================= -->
+
+    <Style x:Key="SegaButtonBaseStyle" TargetType="Button">
+        <Setter Property="Foreground" Value="{StaticResource SegaTextBrush}"/>
+        <Setter Property="Background" Value="{StaticResource SegaButtonFill}"/>
+        <Setter Property="BorderBrush" Value="#5A3FAFE7"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Padding" Value="15,9"/>
+        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Grid SnapsToDevicePixels="True">
+                        <Border x:Name="OuterGlow"
+                                Margin="0"
+                                CornerRadius="10"
+                                Background="#173EC9FF"
+                                BorderBrush="#3A67E8FF"
+                                BorderThickness="1"
+                                Opacity="0.42"/>
+                        <Border x:Name="Core"
+                                Margin="2"
+                                CornerRadius="8"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="OuterGlow" Property="Opacity" Value="0.95"/>
+                            <Setter TargetName="Core" Property="Background" Value="{StaticResource SegaButtonFillHover}"/>
+                            <Setter TargetName="Core" Property="BorderBrush" Value="#A867E8FF"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Core" Property="Opacity" Value="0.72"/>
+                            <Setter TargetName="OuterGlow" Property="Opacity" Value="0.62"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.38"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="Button" BasedOn="{StaticResource SegaButtonBaseStyle}"/>
+
+    <Style x:Key="SegaPrimaryButtonStyle" TargetType="Button" BasedOn="{StaticResource SegaButtonBaseStyle}">
+        <Setter Property="Foreground" Value="#03101A"/>
+        <Setter Property="Background" Value="{StaticResource SegaPrimaryButtonFill}"/>
+        <Setter Property="BorderBrush" Value="#B5B8F8FF"/>
+    </Style>
+
+    <Style x:Key="SegaDangerButtonStyle" TargetType="Button" BasedOn="{StaticResource SegaButtonBaseStyle}">
+        <Setter Property="Background" Value="#3C3A1730"/>
+        <Setter Property="BorderBrush" Value="#6AFF6A86"/>
+        <Setter Property="Foreground" Value="#FFD9E1"/>
+    </Style>
+
+    <!-- =========================================================
+         TEXT BOX
+         ========================================================= -->
+
+    <Style TargetType="TextBox">
+        <Setter Property="Background" Value="#A20A1726"/>
+        <Setter Property="Foreground" Value="{StaticResource SegaTextBrush}"/>
+        <Setter Property="CaretBrush" Value="{StaticResource SegaCyanBrush}"/>
+        <Setter Property="SelectionBrush" Value="#7056B7E9"/>
+        <Setter Property="BorderBrush" Value="#4A347FB4"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Padding" Value="10,8"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TextBox">
+                    <Border x:Name="Root"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="8"
+                            SnapsToDevicePixels="True">
+                        <ScrollViewer x:Name="PART_ContentHost"
+                                      Padding="{TemplateBinding Padding}"
+                                      Focusable="False"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                            <Setter TargetName="Root" Property="BorderBrush" Value="#9867E8FF"/>
+                            <Setter TargetName="Root" Property="Background" Value="#C20B1B2D"/>
+                        </Trigger>
+                        <Trigger Property="IsReadOnly" Value="True">
+                            <Setter TargetName="Root" Property="Background" Value="#70071220"/>
+                            <Setter Property="Foreground" Value="#B7C9DB"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.45"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- =========================================================
+         CHECK BOX
+         ========================================================= -->
+
+    <Style TargetType="CheckBox">
+        <Setter Property="Foreground" Value="{StaticResource SegaTextBrush}"/>
+        <Setter Property="Margin" Value="0,5,0,5"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="CheckBox">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Border x:Name="Box"
+                                Width="18"
+                                Height="18"
+                                VerticalAlignment="Center"
+                                Background="#9A081522"
+                                BorderBrush="#6B3FA4D5"
+                                BorderThickness="1"
+                                CornerRadius="5">
+                            <Path x:Name="Check"
+                                  Width="10"
+                                  Height="8"
+                                  Stretch="Fill"
+                                  Stroke="#8FF4FF"
+                                  StrokeThickness="2"
+                                  StrokeStartLineCap="Round"
+                                  StrokeEndLineCap="Round"
+                                  Data="M1,4 L4,7 L9,1"
+                                  Visibility="Collapsed"/>
+                        </Border>
+                        <ContentPresenter Grid.Column="1"
+                                          Margin="9,0,0,0"
+                                          VerticalAlignment="Center"/>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Check" Property="Visibility" Value="Visible"/>
+                            <Setter TargetName="Box" Property="BorderBrush" Value="#B367E8FF"/>
+                            <Setter TargetName="Box" Property="Background" Value="#3B1E6EA6"/>
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Box" Property="BorderBrush" Value="#C867E8FF"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.4"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- =========================================================
+         SCROLLBARS
+         ========================================================= -->
+
+    <ControlTemplate x:Key="SegaThumbTemplate" TargetType="Thumb">
+        <Grid Background="Transparent">
+            <Border x:Name="Glow"
+                    Margin="0"
+                    Background="#1E4E85FF"
+                    CornerRadius="3"
+                    Opacity="0.28"/>
+            <Border x:Name="ThumbCore"
+                    Margin="1.2"
+                    Background="#724D8FFF"
+                    BorderBrush="#7F8A6FFF"
+                    BorderThickness="1"
+                    CornerRadius="3"/>
+        </Grid>
+        <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Glow" Property="Opacity" Value="0.72"/>
+                <Setter TargetName="ThumbCore" Property="Background" Value="#966AFFFF"/>
+            </Trigger>
+            <Trigger Property="IsDragging" Value="True">
+                <Setter TargetName="Glow" Property="Opacity" Value="0.95"/>
+                <Setter TargetName="ThumbCore" Property="Background" Value="#B17BFFFF"/>
+            </Trigger>
+        </ControlTemplate.Triggers>
+    </ControlTemplate>
+
+    <ControlTemplate x:Key="SegaTransparentRepeatButton" TargetType="RepeatButton">
+        <Border Background="Transparent"/>
+    </ControlTemplate>
+
+    <ControlTemplate x:Key="SegaVerticalScrollBarTemplate" TargetType="ScrollBar">
+        <Grid Background="Transparent" Margin="0,2">
+            <Border Width="2"
+                    HorizontalAlignment="Center"
+                    Background="#201A2F55"
+                    CornerRadius="1"/>
+            <Track x:Name="PART_Track" IsDirectionReversed="True">
+                <Track.DecreaseRepeatButton>
+                    <RepeatButton Command="{x:Static ScrollBar.PageUpCommand}"
+                                  Template="{StaticResource SegaTransparentRepeatButton}"/>
+                </Track.DecreaseRepeatButton>
+                <Track.Thumb>
+                    <Thumb MinHeight="20" Template="{StaticResource SegaThumbTemplate}"/>
+                </Track.Thumb>
+                <Track.IncreaseRepeatButton>
+                    <RepeatButton Command="{x:Static ScrollBar.PageDownCommand}"
+                                  Template="{StaticResource SegaTransparentRepeatButton}"/>
+                </Track.IncreaseRepeatButton>
+            </Track>
+        </Grid>
+    </ControlTemplate>
+
+    <ControlTemplate x:Key="SegaHorizontalScrollBarTemplate" TargetType="ScrollBar">
+        <Grid Background="Transparent" Margin="2,0">
+            <Border Height="2"
+                    VerticalAlignment="Center"
+                    Background="#201A2F55"
+                    CornerRadius="1"/>
+            <Track x:Name="PART_Track">
+                <Track.DecreaseRepeatButton>
+                    <RepeatButton Command="{x:Static ScrollBar.PageLeftCommand}"
+                                  Template="{StaticResource SegaTransparentRepeatButton}"/>
+                </Track.DecreaseRepeatButton>
+                <Track.Thumb>
+                    <Thumb MinWidth="20" Template="{StaticResource SegaThumbTemplate}"/>
+                </Track.Thumb>
+                <Track.IncreaseRepeatButton>
+                    <RepeatButton Command="{x:Static ScrollBar.PageRightCommand}"
+                                  Template="{StaticResource SegaTransparentRepeatButton}"/>
+                </Track.IncreaseRepeatButton>
+            </Track>
+        </Grid>
+    </ControlTemplate>
+
+    <Style TargetType="ScrollBar">
+        <Setter Property="Width" Value="6"/>
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Template" Value="{StaticResource SegaVerticalScrollBarTemplate}"/>
+        <Style.Triggers>
+            <Trigger Property="Orientation" Value="Horizontal">
+                <Setter Property="Width" Value="Auto"/>
+                <Setter Property="Height" Value="6"/>
+                <Setter Property="Template" Value="{StaticResource SegaHorizontalScrollBarTemplate}"/>
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- =========================================================
+         LISTS
+         ========================================================= -->
+
+    <Style TargetType="ListBox">
+        <Setter Property="Background" Value="#70071220"/>
+        <Setter Property="Foreground" Value="{StaticResource SegaTextBrush}"/>
+        <Setter Property="BorderBrush" Value="#3D2C6D95"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ListBox">
+                    <Border Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="10">
+                        <ScrollViewer Padding="5"
+                                      Focusable="False">
+                            <ItemsPresenter/>
+                        </ScrollViewer>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="ListBoxItem">
+        <Setter Property="Foreground" Value="{StaticResource SegaTextBrush}"/>
+        <Setter Property="Padding" Value="10,9"/>
+        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ListBoxItem">
+                    <Border x:Name="Row"
+                            Margin="2"
+                            Padding="{TemplateBinding Padding}"
+                            Background="Transparent"
+                            BorderBrush="Transparent"
+                            BorderThickness="1"
+                            CornerRadius="8">
+                        <ContentPresenter/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Row" Property="Background" Value="#281C5B88"/>
+                            <Setter TargetName="Row" Property="BorderBrush" Value="#3A3A9BD1"/>
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Row" Property="Background" Value="#4721659D"/>
+                            <Setter TargetName="Row" Property="BorderBrush" Value="#7E4CCBFF"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- =========================================================
+         TABS
+         ========================================================= -->
+
+    <Style TargetType="TabControl">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TabControl">
+                    <Grid KeyboardNavigation.TabNavigation="Local">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <TabPanel Grid.Row="0"
+                                  IsItemsHost="True"
+                                  Margin="0,0,0,14"/>
+                        <Border Grid.Row="1"
+                                Background="#6B071320"
+                                BorderBrush="#352A678F"
+                                BorderThickness="1"
+                                CornerRadius="14"
+                                Padding="14">
+                            <ContentPresenter x:Name="PART_SelectedContentHost"
+                                              ContentSource="SelectedContent"/>
+                        </Border>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="TabItem">
+        <Setter Property="Foreground" Value="#7E9AB5"/>
+        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Padding" Value="15,9"/>
+        <Setter Property="Margin" Value="0,0,8,0"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TabItem">
+                    <Grid>
+                        <Border x:Name="Glow"
+                                CornerRadius="9"
+                                Background="#153DCDFF"
+                                Opacity="0"/>
+                        <Border x:Name="Core"
+                                Margin="1"
+                                CornerRadius="8"
+                                Background="#38101E2E"
+                                BorderBrush="#32316B92"
+                                BorderThickness="1"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter ContentSource="Header"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Glow" Property="Opacity" Value="0.65"/>
+                            <Setter Property="Foreground" Value="#D8F7FF"/>
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Glow" Property="Opacity" Value="0.95"/>
+                            <Setter TargetName="Core" Property="Background" Value="#51245C8E"/>
+                            <Setter TargetName="Core" Property="BorderBrush" Value="#8B5EDBFF"/>
+                            <Setter Property="Foreground" Value="#F3FCFF"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- =========================================================
+         DATA GRID
+         ========================================================= -->
+
+    <Style TargetType="DataGrid">
+        <Setter Property="Background" Value="#6206111D"/>
+        <Setter Property="Foreground" Value="{StaticResource SegaTextBrush}"/>
+        <Setter Property="RowBackground" Value="#54091522"/>
+        <Setter Property="AlternatingRowBackground" Value="#76101E30"/>
+        <Setter Property="BorderBrush" Value="#3B2E6C91"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="GridLinesVisibility" Value="None"/>
+        <Setter Property="HeadersVisibility" Value="Column"/>
+        <Setter Property="CanUserAddRows" Value="False"/>
+        <Setter Property="RowHeaderWidth" Value="0"/>
+    </Style>
+
+    <Style TargetType="DataGridColumnHeader">
+        <Setter Property="Background" Value="#B3122940"/>
+        <Setter Property="Foreground" Value="#BFEFFF"/>
+        <Setter Property="BorderBrush" Value="#38326F96"/>
+        <Setter Property="BorderThickness" Value="0,0,1,1"/>
+        <Setter Property="Padding" Value="10,8"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+    </Style>
+
+    <Style TargetType="DataGridCell">
+        <Setter Property="Padding" Value="9,7"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Foreground" Value="{StaticResource SegaTextBrush}"/>
+        <Setter Property="Background" Value="Transparent"/>
+    </Style>
+
+    <Style TargetType="DataGridRow">
+        <Setter Property="Foreground" Value="{StaticResource SegaTextBrush}"/>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="#3B1D5A87"/>
+            </Trigger>
+            <Trigger Property="IsSelected" Value="True">
+                <Setter Property="Background" Value="#61246BA0"/>
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+</ResourceDictionary>

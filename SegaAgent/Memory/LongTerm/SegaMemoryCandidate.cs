@@ -78,6 +78,22 @@ public sealed record SegaMemoryCandidate
     }
 
 
+    // =========================================================
+    // ASSOCIATIVE RETRIEVAL PROFILE
+    //
+    // This does not change the authoritative proposition stored
+    // in Content. It gives future recall more semantic entry
+    // points into the same memory.
+    // =========================================================
+
+    public SegaMemoryAssociationProfile Association
+    {
+        get;
+        init;
+    } =
+        new();
+
+
     public SegaMemoryProvenance Provenance
     {
         get;
@@ -126,6 +142,10 @@ public sealed record SegaMemoryCandidate
                     EmotionalWeight,
                     0.0,
                     1.0),
+
+            Association =
+                (Association ?? new SegaMemoryAssociationProfile())
+                    .Normalize(),
 
             Provenance =
                 (Provenance ?? new SegaMemoryProvenance())

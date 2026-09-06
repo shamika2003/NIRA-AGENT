@@ -788,6 +788,14 @@ public sealed class SegaMemoryConsolidator
     private static string? ValidateCandidate(
         SegaMemoryCandidate candidate)
     {
+        if (SegaSensitiveMemoryPolicy.ShouldBlockDurableStorage(
+                candidate,
+                out string sensitiveReason))
+        {
+            return sensitiveReason;
+        }
+
+
         if (candidate.Provenance.SourceType ==
             SegaMemorySourceType.Unknown)
         {
@@ -941,6 +949,9 @@ public sealed class SegaMemoryConsolidator
         }
 
 
+        // User facts/preferences may only be replaced by user or
+        // imported authority. A derived inference must never
+        // silently change what the user explicitly established.
         if (
             existing.Kind ==
                 SegaMemoryKind.UserFact
@@ -957,18 +968,90 @@ public sealed class SegaMemoryConsolidator
         }
 
 
+        // Developed self-preference state is mirrored from Sega's
+        // authoritative self-preference subsystem. Only grounded
+        // Sega inference may replace that memory mirror.
         if (existing.Kind ==
             SegaMemoryKind.SegaLearnedPreference)
         {
             return
                 candidate.Provenance.SourceType ==
-                    SegaMemorySourceType.SegaInference;
+                    SegaMemorySourceType.SegaInference
+                &&
+                candidate.Confidence +
+                    0.05 >=
+                    existing.Confidence;
         }
 
 
-        return
-            candidate.Provenance.SourceType !=
-                SegaMemorySourceType.Unknown;
+        int existingAuthority =
+            SourceAuthority(
+                existing.Provenance.SourceType);
+
+
+        int candidateAuthority =
+            SourceAuthority(
+                candidate.Provenance.SourceType);
+
+
+        if (candidateAuthority ==
+            0)
+        {
+            return false;
+        }
+
+
+        // Stronger existing evidence cannot be displaced by a
+        // weaker source merely because the new wording differs.
+        if (candidateAuthority <
+            existingAuthority)
+        {
+            return false;
+        }
+
+
+        // At equal authority, require roughly comparable
+        // confidence. Higher-authority evidence may supersede even
+        // when its numeric confidence is slightly lower.
+        if (
+            candidateAuthority ==
+                existingAuthority
+            &&
+            candidate.Confidence +
+                0.03 <
+                existing.Confidence)
+        {
+            return false;
+        }
+
+
+        return true;
+    }
+
+
+    private static int SourceAuthority(
+        SegaMemorySourceType source)
+    {
+        return source switch
+        {
+            SegaMemorySourceType.UserExplicit =>
+                5,
+
+            SegaMemorySourceType.Imported =>
+                4,
+
+            SegaMemorySourceType.SharedExperience =>
+                3,
+
+            SegaMemorySourceType.SystemDerived =>
+                2,
+
+            SegaMemorySourceType.SegaInference =>
+                1,
+
+            _ =>
+                0
+        };
     }
 
 

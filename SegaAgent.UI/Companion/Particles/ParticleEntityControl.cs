@@ -22,9 +22,11 @@ public sealed class ParticleEntityControl
         1200;
 
 
+    // Render at a smooth 60 Hz cap. The previous 30 Hz throttle made
+    // Sega's body visibly step between frames on modern displays.
     private const double TargetFrameSeconds =
         1.0 /
-        30.0;
+        60.0;
 
 
     // =========================================================
@@ -88,29 +90,29 @@ public sealed class ParticleEntityControl
 
     private static readonly Color ElectricCyan =
         Color.FromRgb(
-            78,
-            236,
+            120,
+            219,
             255);
 
 
     private static readonly Color ElectricBlue =
         Color.FromRgb(
-            72,
-            132,
+            77,
+            143,
             255);
 
 
     private static readonly Color ElectricViolet =
         Color.FromRgb(
-            160,
-            94,
+            178,
+            110,
             255);
 
 
     private static readonly Color HotWhite =
         Color.FromRgb(
-            226,
-            252,
+            232,
+            244,
             255);
 
 
@@ -381,8 +383,12 @@ public sealed class ParticleEntityControl
             _lastTime;
 
 
+        // Give the render clock a small tolerance. Waiting for an exact
+        // 16.666 ms interval can accidentally skip every other frame on
+        // 60 Hz displays whose callbacks arrive a fraction early.
         if (elapsed <
-            TargetFrameSeconds)
+            TargetFrameSeconds *
+                0.80)
         {
             return;
         }
@@ -466,7 +472,7 @@ public sealed class ParticleEntityControl
                 ActualWidth,
                 ActualHeight)
             *
-            0.36
+            0.40
             *
             _intent.Scale;
 
@@ -589,13 +595,11 @@ public sealed class ParticleEntityControl
             particle.Role ==
                 ParticleRole.Accent
             ||
-            (
-                particle.Role ==
-                    ParticleRole.Core
-                &&
-                brightness >=
-                    3
-            ))
+            particle.Role ==
+                ParticleRole.Core
+            ||
+            brightness >=
+                2)
         {
             dc.DrawEllipse(
                 ramp[0],
@@ -604,9 +608,9 @@ public sealed class ParticleEntityControl
                     screenX,
                     screenY),
                 size *
-                    2.45,
+                    (particle.Role == ParticleRole.Accent ? 3.1 : 2.4),
                 size *
-                    2.45);
+                    (particle.Role == ParticleRole.Accent ? 3.1 : 2.4));
         }
 
 
@@ -711,10 +715,10 @@ public sealed class ParticleEntityControl
     {
         byte[] alpha =
         {
-            12,
-            38,
-            105,
-            220
+            8,
+            28,
+            96,
+            212
         };
 
 

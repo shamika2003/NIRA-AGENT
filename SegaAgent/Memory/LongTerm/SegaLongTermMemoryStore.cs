@@ -57,25 +57,49 @@ public sealed class SegaLongTermMemoryStore
     // =========================================================
 
     public SegaLongTermMemoryStore()
+        : this(
+            BuildDefaultDatabasePath())
     {
-        string directory =
-            Path.Combine(
-                Environment.GetFolderPath(
-                    Environment
-                        .SpecialFolder
-                        .LocalApplicationData),
-                "SegaAgent",
-                "memory");
+    }
+
+
+    // =========================================================
+    // EXPLICIT DATABASE PATH
+    //
+    // Keeps acceptance/integration tests and future isolated
+    // Sega profiles away from the application's real memory DB.
+    // Normal desktop DI still selects the parameterless
+    // constructor above.
+    // =========================================================
+
+    public SegaLongTermMemoryStore(
+        string databasePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(
+            databasePath);
+
+
+        _databasePath =
+            Path.GetFullPath(
+                databasePath.Trim());
+
+
+        string? directory =
+            Path.GetDirectoryName(
+                _databasePath);
+
+
+        if (string.IsNullOrWhiteSpace(
+                directory))
+        {
+            throw new ArgumentException(
+                "Sega long-term-memory database path must include a directory.",
+                nameof(databasePath));
+        }
 
 
         Directory.CreateDirectory(
             directory);
-
-
-        _databasePath =
-            Path.Combine(
-                directory,
-                "sega-memory.db");
 
 
         _connectionString =
@@ -98,6 +122,19 @@ public sealed class SegaLongTermMemoryStore
                     5
             }
             .ToString();
+    }
+
+
+    private static string BuildDefaultDatabasePath()
+    {
+        return Path.Combine(
+            Environment.GetFolderPath(
+                Environment
+                    .SpecialFolder
+                    .LocalApplicationData),
+            "SegaAgent",
+            "memory",
+            "sega-memory.db");
     }
 
 
@@ -162,6 +199,126 @@ public sealed class SegaLongTermMemoryStore
         {
             _initializationLock.Release();
         }
+    }
+
+
+    // =========================================================
+    // DATABASE INTEGRITY CHECK
+    //
+    // quick_check validates SQLite page/index structure.
+    // foreign_key_check catches lifecycle links/evidence rows that
+    // no longer point at valid memory rows.
+    //
+    // Maintenance must not write when this result is unhealthy.
+    // =========================================================
+
+    internal async Task<SegaMemoryDatabaseIntegrityResult>
+        CheckIntegrityAsync(
+            CancellationToken cancellationToken = default)
+    {
+        await InitializeAsync(
+            cancellationToken);
+
+
+        await using SqliteConnection connection =
+            CreateConnection();
+
+
+        await connection.OpenAsync(
+            cancellationToken);
+
+
+        await ConfigureConnectionAsync(
+            connection,
+            cancellationToken);
+
+
+        List<string> quickCheck =
+            new();
+
+
+        await using (
+            SqliteCommand command =
+                connection.CreateCommand())
+        {
+            command.CommandText =
+                "PRAGMA quick_check;";
+
+
+            await using SqliteDataReader reader =
+                await command.ExecuteReaderAsync(
+                    cancellationToken);
+
+
+            while (await reader.ReadAsync(
+                       cancellationToken))
+            {
+                if (!reader.IsDBNull(
+                        0))
+                {
+                    quickCheck.Add(
+                        reader.GetString(
+                            0));
+                }
+            }
+        }
+
+
+        int foreignKeyViolations =
+            0;
+
+
+        await using (
+            SqliteCommand command =
+                connection.CreateCommand())
+        {
+            command.CommandText =
+                "PRAGMA foreign_key_check;";
+
+
+            await using SqliteDataReader reader =
+                await command.ExecuteReaderAsync(
+                    cancellationToken);
+
+
+            while (await reader.ReadAsync(
+                       cancellationToken))
+            {
+                foreignKeyViolations++;
+            }
+        }
+
+
+        bool quickHealthy =
+            quickCheck.Count ==
+                1
+            &&
+            string.Equals(
+                quickCheck[0],
+                "ok",
+                StringComparison.OrdinalIgnoreCase);
+
+
+        return new SegaMemoryDatabaseIntegrityResult
+        {
+            IsHealthy =
+                quickHealthy
+                &&
+                foreignKeyViolations ==
+                    0,
+
+            QuickCheckResult =
+                quickCheck.Count ==
+                    0
+                    ? "no-result"
+                    : string.Join(
+                        " | ",
+                        quickCheck.Take(
+                            4)),
+
+            ForeignKeyViolationCount =
+                foreignKeyViolations
+        };
     }
 
 
@@ -790,6 +947,521 @@ public sealed class SegaLongTermMemoryStore
 
         return ReadStoredMemory(
             reader);
+    }
+
+
+    // =========================================================
+    // ARCHIVE ACTIVE BY CANONICAL KEY
+    //
+    // Used by authoritative subsystem mirrors when a previously
+    // current proposition is no longer authoritative.
+    //
+    // Archiving preserves history while preventing stale state
+    // from participating in normal active-memory recall.
+    // =========================================================
+
+    internal async Task<bool> ArchiveActiveByCanonicalKeyAsync(
+        string canonicalKey,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(
+                canonicalKey))
+        {
+            return false;
+        }
+
+
+        await InitializeAsync(
+            cancellationToken);
+
+
+        string normalizedKey =
+            canonicalKey
+                .Trim()
+                .ToLowerInvariant();
+
+
+        await using SqliteConnection connection =
+            CreateConnection();
+
+
+        await connection.OpenAsync(
+            cancellationToken);
+
+
+        await ConfigureConnectionAsync(
+            connection,
+            cancellationToken);
+
+
+        await using SqliteCommand command =
+            connection.CreateCommand();
+
+
+        command.CommandText =
+            """
+            UPDATE memories
+            SET
+                status = $archivedStatus,
+                updated_at_utc = $updatedAtUtc
+            WHERE status = $activeStatus
+              AND canonical_key = $canonicalKey;
+            """;
+
+
+        AddParameter(
+            command,
+            "$archivedStatus",
+            (int)SegaMemoryStatus.Archived);
+
+
+        AddParameter(
+            command,
+            "$updatedAtUtc",
+            ToUnixMilliseconds(
+                DateTimeOffset.UtcNow));
+
+
+        AddParameter(
+            command,
+            "$activeStatus",
+            (int)SegaMemoryStatus.Active);
+
+
+        AddParameter(
+            command,
+            "$canonicalKey",
+            normalizedKey);
+
+
+        int affected =
+            await command.ExecuteNonQueryAsync(
+                cancellationToken);
+
+
+        return affected >
+            0;
+    }
+
+
+    // =========================================================
+    // ARCHIVE ACTIVE BY ID
+    //
+    // Used by conservative maintenance for records whose exact
+    // identity is already known. History remains in SQLite.
+    // =========================================================
+
+    internal async Task<bool> ArchiveActiveByIdAsync(
+        Guid memoryId,
+        CancellationToken cancellationToken = default)
+    {
+        if (memoryId ==
+            Guid.Empty)
+        {
+            return false;
+        }
+
+
+        await InitializeAsync(
+            cancellationToken);
+
+
+        await using SqliteConnection connection =
+            CreateConnection();
+
+
+        await connection.OpenAsync(
+            cancellationToken);
+
+
+        await ConfigureConnectionAsync(
+            connection,
+            cancellationToken);
+
+
+        await using SqliteCommand command =
+            connection.CreateCommand();
+
+
+        command.CommandText =
+            """
+            UPDATE memories
+            SET
+                status = $archivedStatus,
+                updated_at_utc = $updatedAtUtc
+            WHERE id = $id
+              AND status = $activeStatus;
+            """;
+
+
+        AddParameter(
+            command,
+            "$archivedStatus",
+            (int)SegaMemoryStatus.Archived);
+
+
+        AddParameter(
+            command,
+            "$updatedAtUtc",
+            ToUnixMilliseconds(
+                DateTimeOffset.UtcNow));
+
+
+        AddParameter(
+            command,
+            "$id",
+            memoryId.ToString(
+                "D"));
+
+
+        AddParameter(
+            command,
+            "$activeStatus",
+            (int)SegaMemoryStatus.Active);
+
+
+        int affected =
+            await command.ExecuteNonQueryAsync(
+                cancellationToken);
+
+
+        return affected ==
+            1;
+    }
+
+
+    // =========================================================
+    // MERGE EXACT DUPLICATE
+    //
+    // This operation does not decide whether two memories are
+    // equivalent. SegaMemoryMaintenanceService only calls it
+    // after exact normalized-content + structural compatibility
+    // checks.
+    //
+    // Keeper receives the duplicate's evidence/use counters and
+    // strongest weights. Duplicate becomes Archived, preserving
+    // historical traceability.
+    // =========================================================
+
+    internal async Task<bool> MergeExactDuplicateAsync(
+        Guid keeperMemoryId,
+        Guid duplicateMemoryId,
+        CancellationToken cancellationToken = default)
+    {
+        if (
+            keeperMemoryId ==
+                Guid.Empty
+            ||
+            duplicateMemoryId ==
+                Guid.Empty
+            ||
+            keeperMemoryId ==
+                duplicateMemoryId)
+        {
+            return false;
+        }
+
+
+        await InitializeAsync(
+            cancellationToken);
+
+
+        DateTimeOffset now =
+            DateTimeOffset.UtcNow;
+
+
+        await using SqliteConnection connection =
+            CreateConnection();
+
+
+        await connection.OpenAsync(
+            cancellationToken);
+
+
+        await ConfigureConnectionAsync(
+            connection,
+            cancellationToken);
+
+
+        await using SqliteTransaction transaction =
+            (SqliteTransaction)
+            await connection.BeginTransactionAsync(
+                cancellationToken);
+
+
+        int keeperUpdated;
+
+
+        await using (
+            SqliteCommand update =
+                connection.CreateCommand())
+        {
+            update.Transaction =
+                transaction;
+
+
+            update.CommandText =
+                """
+                UPDATE memories
+                SET
+                    importance = MAX
+                    (
+                        importance,
+                        (
+                            SELECT importance
+                            FROM memories
+                            WHERE id = $duplicateId
+                              AND status = $activeStatus
+                        )
+                    ),
+                    confidence = MAX
+                    (
+                        confidence,
+                        (
+                            SELECT confidence
+                            FROM memories
+                            WHERE id = $duplicateId
+                              AND status = $activeStatus
+                        )
+                    ),
+                    emotional_weight = MAX
+                    (
+                        emotional_weight,
+                        (
+                            SELECT emotional_weight
+                            FROM memories
+                            WHERE id = $duplicateId
+                              AND status = $activeStatus
+                        )
+                    ),
+                    reinforcement_count = reinforcement_count + MAX
+                    (
+                        1,
+                        (
+                            SELECT reinforcement_count
+                            FROM memories
+                            WHERE id = $duplicateId
+                              AND status = $activeStatus
+                        )
+                    ),
+                    recall_count = recall_count + COALESCE
+                    (
+                        (
+                            SELECT recall_count
+                            FROM memories
+                            WHERE id = $duplicateId
+                              AND status = $activeStatus
+                        ),
+                        0
+                    ),
+                    last_recalled_at_utc = CASE
+                        WHEN last_recalled_at_utc IS NULL THEN
+                            (
+                                SELECT last_recalled_at_utc
+                                FROM memories
+                                WHERE id = $duplicateId
+                                  AND status = $activeStatus
+                            )
+                        WHEN
+                            (
+                                SELECT last_recalled_at_utc
+                                FROM memories
+                                WHERE id = $duplicateId
+                                  AND status = $activeStatus
+                            ) IS NULL
+                        THEN last_recalled_at_utc
+                        ELSE MAX
+                        (
+                            last_recalled_at_utc,
+                            (
+                                SELECT last_recalled_at_utc
+                                FROM memories
+                                WHERE id = $duplicateId
+                                  AND status = $activeStatus
+                            )
+                        )
+                    END,
+                    updated_at_utc = $updatedAtUtc
+                WHERE id = $keeperId
+                  AND status = $activeStatus
+                  AND EXISTS
+                  (
+                      SELECT 1
+                      FROM memories
+                      WHERE id = $duplicateId
+                        AND status = $activeStatus
+                  );
+                """;
+
+
+            AddParameter(
+                update,
+                "$keeperId",
+                keeperMemoryId.ToString(
+                    "D"));
+
+
+            AddParameter(
+                update,
+                "$duplicateId",
+                duplicateMemoryId.ToString(
+                    "D"));
+
+
+            AddParameter(
+                update,
+                "$activeStatus",
+                (int)SegaMemoryStatus.Active);
+
+
+            AddParameter(
+                update,
+                "$updatedAtUtc",
+                ToUnixMilliseconds(
+                    now));
+
+
+            keeperUpdated =
+                await update.ExecuteNonQueryAsync(
+                    cancellationToken);
+        }
+
+
+        if (keeperUpdated !=
+            1)
+        {
+            await transaction.RollbackAsync(
+                cancellationToken);
+
+
+            return false;
+        }
+
+
+        // Preserve distinct evidence. The existing unique event
+        // index prevents the same source event from being copied
+        // twice to the keeper.
+        await using (
+            SqliteCommand evidence =
+                connection.CreateCommand())
+        {
+            evidence.Transaction =
+                transaction;
+
+
+            evidence.CommandText =
+                """
+                INSERT OR IGNORE INTO memory_evidence
+                (
+                    id,
+                    memory_id,
+                    source_type,
+                    source_event_id,
+                    source_event_sequence,
+                    source_timestamp_utc,
+                    source_excerpt,
+                    recorded_at_utc
+                )
+                SELECT
+                    lower(hex(randomblob(16))),
+                    $keeperId,
+                    source_type,
+                    source_event_id,
+                    source_event_sequence,
+                    source_timestamp_utc,
+                    source_excerpt,
+                    recorded_at_utc
+                FROM memory_evidence
+                WHERE memory_id = $duplicateId;
+                """;
+
+
+            AddParameter(
+                evidence,
+                "$keeperId",
+                keeperMemoryId.ToString(
+                    "D"));
+
+
+            AddParameter(
+                evidence,
+                "$duplicateId",
+                duplicateMemoryId.ToString(
+                    "D"));
+
+
+            await evidence.ExecuteNonQueryAsync(
+                cancellationToken);
+        }
+
+
+        await using (
+            SqliteCommand archive =
+                connection.CreateCommand())
+        {
+            archive.Transaction =
+                transaction;
+
+
+            archive.CommandText =
+                """
+                UPDATE memories
+                SET
+                    status = $archivedStatus,
+                    updated_at_utc = $updatedAtUtc
+                WHERE id = $duplicateId
+                  AND status = $activeStatus;
+                """;
+
+
+            AddParameter(
+                archive,
+                "$archivedStatus",
+                (int)SegaMemoryStatus.Archived);
+
+
+            AddParameter(
+                archive,
+                "$updatedAtUtc",
+                ToUnixMilliseconds(
+                    now));
+
+
+            AddParameter(
+                archive,
+                "$duplicateId",
+                duplicateMemoryId.ToString(
+                    "D"));
+
+
+            AddParameter(
+                archive,
+                "$activeStatus",
+                (int)SegaMemoryStatus.Active);
+
+
+            int archived =
+                await archive.ExecuteNonQueryAsync(
+                    cancellationToken);
+
+
+            if (archived !=
+                1)
+            {
+                await transaction.RollbackAsync(
+                    cancellationToken);
+
+
+                return false;
+            }
+        }
+
+
+        await transaction.CommitAsync(
+            cancellationToken);
+
+
+        return true;
     }
 
 
@@ -1455,13 +2127,6 @@ public sealed class SegaLongTermMemoryStore
                 cancellationToken);
 
 
-        if (storedVersion ==
-            SchemaVersion)
-        {
-            return;
-        }
-
-
         if (storedVersion >
             SchemaVersion)
         {
@@ -1471,15 +2136,38 @@ public sealed class SegaLongTermMemoryStore
         }
 
 
-        if (storedVersion !=
-            1)
+        // =====================================================
+        // SEQUENTIAL MIGRATION PIPELINE
+        //
+        // Future schema versions are added as one explicit
+        // version-to-version migration. We never jump across
+        // unknown versions or rebuild user memory from scratch.
+        // =====================================================
+
+        while (storedVersion <
+               SchemaVersion)
         {
-            throw new InvalidOperationException(
-                $"Cannot migrate Sega long-term memory schema " +
-                $"version {storedVersion} to {SchemaVersion}.");
+            storedVersion =
+                storedVersion switch
+                {
+                    1 =>
+                        await MigrateV1ToV2Async(
+                            connection,
+                            cancellationToken),
+
+                    _ =>
+                        throw new InvalidOperationException(
+                            $"No Sega long-term-memory migration path exists " +
+                            $"from schema version {storedVersion}.")
+                };
         }
+    }
 
 
+    private static async Task<int> MigrateV1ToV2Async(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
         await using SqliteTransaction transaction =
             (SqliteTransaction)
             await connection.BeginTransactionAsync(
@@ -1551,7 +2239,7 @@ public sealed class SegaLongTermMemoryStore
             AddParameter(
                 version,
                 "$version",
-                SchemaVersion.ToString());
+                "2");
 
 
             await version.ExecuteNonQueryAsync(
@@ -1561,6 +2249,9 @@ public sealed class SegaLongTermMemoryStore
 
         await transaction.CommitAsync(
             cancellationToken);
+
+
+        return 2;
     }
 
 

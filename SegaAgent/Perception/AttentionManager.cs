@@ -2,10 +2,11 @@
  * filename: AttentionManager.cs
  */
 
-using SegaAgent.Agent;
+using SegaAgent.Mind;
 using SegaAgent.Character.History;
 using SegaAgent.Character.State;
 using SegaAgent.PC.Awareness;
+using SegaAgent.Settings;
 
 namespace SegaAgent.Perception;
 
@@ -35,7 +36,7 @@ public sealed class AttentionManager
                 2);
 
 
-    private readonly AgentActivityTracker
+    private readonly SegaMindActivityTracker
         _activity;
 
 
@@ -45,6 +46,10 @@ public sealed class AttentionManager
 
     private readonly SegaSocialHistoryService
         _history;
+
+
+    private readonly SegaRuntimeSettingsService
+        _settings;
 
 
     private readonly object _lock =
@@ -64,9 +69,10 @@ public sealed class AttentionManager
 
 
     public AttentionManager(
-        AgentActivityTracker activity,
+        SegaMindActivityTracker activity,
         SegaCharacterStateService character,
-        SegaSocialHistoryService history)
+        SegaSocialHistoryService history,
+        SegaRuntimeSettingsService settings)
     {
         _activity =
             activity
@@ -84,11 +90,60 @@ public sealed class AttentionManager
             history
             ?? throw new ArgumentNullException(
                 nameof(history));
+
+
+        _settings =
+            settings
+            ?? throw new ArgumentNullException(
+                nameof(settings));
+    }
+
+
+    public bool IsPerceptionEnabled(
+        PerceptionEvent perception)
+    {
+        ArgumentNullException.ThrowIfNull(
+            perception);
+
+
+        SegaRuntimeSettings settings =
+            _settings.Current;
+
+
+        if (perception.Type.Equals(
+                "UserIdle",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return settings.IdleBehaviorEnabled
+                && settings.UserIdleAwarenessEnabled;
+        }
+
+
+        if (
+            perception.Type.Equals(
+                "ForegroundApplicationChanged",
+                StringComparison.OrdinalIgnoreCase)
+            ||
+            perception.Type.Equals(
+                "ForegroundWindowChanged",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return settings.PcContextReactionsEnabled;
+        }
+
+
+        return true;
     }
 
 
     public bool CanRunProactiveCheck()
     {
+        if (!_settings.Current.ProactiveCompanionEnabled)
+        {
+            return false;
+        }
+
+
         if (_activity.IsProcessing)
         {
             return false;
@@ -141,6 +196,13 @@ public sealed class AttentionManager
     {
         ArgumentNullException.ThrowIfNull(
             perception);
+
+
+        if (!IsPerceptionEnabled(
+                perception))
+        {
+            return false;
+        }
 
 
         SegaCharacterSnapshot character =
@@ -271,6 +333,16 @@ public sealed class AttentionManager
 
             PerceptionEvent pending =
                 _pending;
+
+
+            if (!IsPerceptionEnabled(
+                    pending))
+            {
+                _pending =
+                    null;
+
+                return false;
+            }
 
 
             if (

@@ -3,8 +3,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:particles="clr-namespace:SegaAgent.UI.Companion.Particles"
 
-        Width="220"
-        Height="220"
+        Width="260"
+        Height="260"
 
         WindowStyle="None"
         AllowsTransparency="True"

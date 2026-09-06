@@ -4,6 +4,7 @@
 
 using System.Diagnostics;
 
+using SegaAgent.Settings;
 using SegaAgent.Voice.Groq;
 
 namespace SegaAgent.Voice;
@@ -11,144 +12,56 @@ namespace SegaAgent.Voice;
 public sealed class AdaptiveVoiceService
     : IVoiceService
 {
-    // =========================================================
-    // PROVIDERS
-    // =========================================================
-
-    private readonly GroqOrpheusVoiceService
-        _groq;
-
-
-    private readonly PiperVoiceService
-        _piper;
-
-
-    // =========================================================
-    // MODE
-    // =========================================================
-
-    private readonly string
-        _mode;
-
-
-    // =========================================================
-    // CONSTRUCTOR
-    // =========================================================
+    private readonly GroqOrpheusVoiceService _groq;
+    private readonly PiperVoiceService _piper;
+    private readonly SegaRuntimeSettingsService _settings;
 
     public AdaptiveVoiceService(
         GroqOrpheusVoiceService groq,
-        PiperVoiceService piper)
+        PiperVoiceService piper,
+        SegaRuntimeSettingsService settings)
     {
-        _groq =
-            groq
-            ?? throw new ArgumentNullException(
-                nameof(groq));
-
-
-        _piper =
-            piper
-            ?? throw new ArgumentNullException(
-                nameof(piper));
-
-
-        string configuredMode =
-            ReadEnvironment(
-                "SEGA_VOICE_ENGINE");
-
-
-        _mode =
-            string.IsNullOrWhiteSpace(
-                configuredMode)
-                ? "auto"
-                : configuredMode
-                    .ToLowerInvariant();
-
-
-        if (
-            _mode !=
-                "auto"
-            &&
-            _mode !=
-                "groq"
-            &&
-            _mode !=
-                "piper")
-        {
-            throw new InvalidOperationException(
-                "SEGA_VOICE_ENGINE must be one of: " +
-                "auto, groq, piper.");
-        }
-
+        _groq = groq ?? throw new ArgumentNullException(nameof(groq));
+        _piper = piper ?? throw new ArgumentNullException(nameof(piper));
+        _settings = settings ?? throw new ArgumentNullException(nameof(settings));
 
         Debug.WriteLine(
-            $"[VoiceConfig] " +
-            $"Mode='{_mode}' | " +
+            $"[VoiceConfig] Mode='{_settings.Current.VoiceEngine}' | " +
             $"GroqConfigured={_groq.IsConfigured} | " +
             $"GroqVoice='{_groq.Voice}' | " +
             $"GroqState='{_groq.AvailabilityDescription}'");
     }
 
-
-    // =========================================================
-    // PREPARE
-    // =========================================================
-
-    public async Task<PreparedVoiceAudio>
-        PrepareAsync(
-            VoiceUtterance utterance,
-            CancellationToken cancellationToken = default)
+    public async Task<PreparedVoiceAudio> PrepareAsync(
+        VoiceUtterance utterance,
+        CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(
-            utterance);
+        ArgumentNullException.ThrowIfNull(utterance);
+        cancellationToken.ThrowIfCancellationRequested();
 
-
-        cancellationToken
-            .ThrowIfCancellationRequested();
-
-
-        return _mode switch
+        return _settings.Current.VoiceEngine switch
         {
-            "groq" =>
-                await PrepareGroqStrictAsync(
-                    utterance,
-                    cancellationToken),
+            SegaVoiceEngineMode.Groq =>
+                await PrepareGroqStrictAsync(utterance, cancellationToken),
 
-            "piper" =>
-                await PreparePiperAsync(
-                    utterance,
-                    cancellationToken),
+            SegaVoiceEngineMode.Piper =>
+                await PreparePiperAsync(utterance, cancellationToken),
 
             _ =>
-                await PrepareAutoAsync(
-                    utterance,
-                    cancellationToken)
+                await PrepareAutoAsync(utterance, cancellationToken)
         };
     }
 
-
-    // =========================================================
-    // AUTO
-    // =========================================================
-
-    private async Task<PreparedVoiceAudio>
-        PrepareAutoAsync(
-            VoiceUtterance utterance,
-            CancellationToken cancellationToken)
+    private async Task<PreparedVoiceAudio> PrepareAutoAsync(
+        VoiceUtterance utterance,
+        CancellationToken cancellationToken)
     {
-        if (
-            _groq.IsConfigured
-            &&
-            _groq.CanAttempt)
+        if (_groq.IsConfigured && _groq.CanAttempt)
         {
             try
             {
-                Debug.WriteLine(
-                    "[Voice] Synthesis=Groq Orpheus");
-
-
-                return await _groq.PrepareAsync(
-                    utterance,
-                    cancellationToken);
+                Debug.WriteLine("[Voice] Synthesis=Groq Orpheus");
+                return await _groq.PrepareAsync(utterance, cancellationToken);
             }
             catch (OperationCanceledException)
             {
@@ -157,132 +70,37 @@ public sealed class AdaptiveVoiceService
             catch (Exception ex)
             {
                 Debug.WriteLine(
-                    $"[Voice] Groq synthesis failed. " +
-                    $"Falling back to Piper. " +
-                    $"Type={ex.GetType().Name} | " +
-                    $"Message={ex.Message}");
+                    $"[Voice] Groq synthesis failed. Falling back to Piper. " +
+                    $"Type={ex.GetType().Name} | Message={ex.Message}");
             }
         }
 
-
-        return await PreparePiperAsync(
-            utterance,
-            cancellationToken);
+        return await PreparePiperAsync(utterance, cancellationToken);
     }
 
-
-    // =========================================================
-    // GROQ STRICT
-    // =========================================================
-
-    private async Task<PreparedVoiceAudio>
-        PrepareGroqStrictAsync(
-            VoiceUtterance utterance,
-            CancellationToken cancellationToken)
+    private async Task<PreparedVoiceAudio> PrepareGroqStrictAsync(
+        VoiceUtterance utterance,
+        CancellationToken cancellationToken)
     {
         if (!_groq.IsConfigured)
         {
-            throw new InvalidOperationException(
-                _groq.BuildConfigurationError());
+            throw new InvalidOperationException(_groq.BuildConfigurationError());
         }
-
 
         if (!_groq.CanAttempt)
         {
-            throw new InvalidOperationException(
-                _groq.AvailabilityDescription);
+            throw new InvalidOperationException(_groq.AvailabilityDescription);
         }
 
-
-        Debug.WriteLine(
-            "[Voice] Synthesis=Groq Orpheus");
-
-
-        return await _groq.PrepareAsync(
-            utterance,
-            cancellationToken);
+        Debug.WriteLine("[Voice] Synthesis=Groq Orpheus");
+        return await _groq.PrepareAsync(utterance, cancellationToken);
     }
 
-
-    // =========================================================
-    // PIPER
-    // =========================================================
-
-    private async Task<PreparedVoiceAudio>
-        PreparePiperAsync(
-            VoiceUtterance utterance,
-            CancellationToken cancellationToken)
+    private async Task<PreparedVoiceAudio> PreparePiperAsync(
+        VoiceUtterance utterance,
+        CancellationToken cancellationToken)
     {
-        Debug.WriteLine(
-            "[Voice] Synthesis=Piper fallback");
-
-
-        return await _piper.PrepareAsync(
-            utterance,
-            cancellationToken);
-    }
-
-
-    // =========================================================
-    // ENVIRONMENT
-    // =========================================================
-
-    private static string ReadEnvironment(
-        string name)
-    {
-        string? value =
-            Environment
-                .GetEnvironmentVariable(
-                    name);
-
-
-        if (!string.IsNullOrWhiteSpace(
-                value))
-        {
-            return value.Trim();
-        }
-
-
-        try
-        {
-            value =
-                Environment
-                    .GetEnvironmentVariable(
-                        name,
-                        EnvironmentVariableTarget.User);
-
-
-            if (!string.IsNullOrWhiteSpace(
-                    value))
-            {
-                return value.Trim();
-            }
-        }
-        catch
-        {
-        }
-
-
-        try
-        {
-            value =
-                Environment
-                    .GetEnvironmentVariable(
-                        name,
-                        EnvironmentVariableTarget.Machine);
-
-
-            if (!string.IsNullOrWhiteSpace(
-                    value))
-            {
-                return value.Trim();
-            }
-        }
-        catch
-        {
-        }
-
-
-        return string.Empty;
+        Debug.WriteLine("[Voice] Synthesis=Piper");
+        return await _piper.PrepareAsync(utterance, cancellationToken);
     }
 }

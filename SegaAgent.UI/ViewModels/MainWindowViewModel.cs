@@ -7,7 +7,8 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
 
-using SegaAgent.Agent;
+using SegaAgent.Mind;
+using SegaAgent.Settings;
 using SegaAgent.Voice;
 
 namespace SegaAgent.UI.ViewModels;
@@ -16,15 +17,11 @@ public sealed class MainWindowViewModel
     : INotifyPropertyChanged,
       IDisposable
 {
-    // =========================================================
-    // DEPENDENCIES
-    // =========================================================
-
-    private readonly AgentCore
-        _agent;
+    private readonly SegaMindRuntime
+        _mind;
 
 
-    private readonly AgentResponseDispatcher
+    private readonly SegaOutputDispatcher
         _dispatcher;
 
 
@@ -32,54 +29,28 @@ public sealed class MainWindowViewModel
         _voiceQueue;
 
 
-    // =========================================================
-    // SPEECH CHUNKERS
-    // =========================================================
+    private readonly SegaRuntimeSettingsService
+        _settings;
+
 
     private readonly SpeechChunker
         _userSpeechChunker =
             new();
 
 
-    private readonly SpeechChunker
-        _backgroundSpeechChunker =
-            new();
-
-
-    // =========================================================
-    // SPEECH RESPONSE STATE
-    //
-    // Each response gets:
-    //
-    // ResponseId
-    // sequence number
-    // captured Sega voice expression
-    //
-    // This prevents queued speech from looking up Sega's mood
-    // again later when playback actually begins.
-    // =========================================================
-
     private readonly SpeechResponseState
         _userSpeechState =
             new();
 
 
-    private readonly SpeechResponseState
-        _backgroundSpeechState =
+    private readonly Dictionary<Guid, BackgroundResponseState>
+        _backgroundResponses =
             new();
 
-
-    // =========================================================
-    // COMMAND
-    // =========================================================
 
     private readonly AsyncRelayCommand
         _sendCommand;
 
-
-    // =========================================================
-    // LIFETIME
-    // =========================================================
 
     private readonly CancellationTokenSource
         _shutdown =
@@ -90,46 +61,21 @@ public sealed class MainWindowViewModel
         _backgroundResponseTask;
 
 
-    // =========================================================
-    // UI STATE
-    // =========================================================
-
-    private string _messageInput =
-        string.Empty;
+    private string
+        _messageInput =
+            string.Empty;
 
 
     private bool
         _isProcessing;
 
 
-    // =========================================================
-    // BACKGROUND RESPONSE STATE
-    // =========================================================
-
-    private ChatMessageViewModel?
-        _backgroundMessage;
-
-
-    private AgentRequestSource?
-        _backgroundSource;
-
-
-    // =========================================================
-    // MESSAGES
-    // =========================================================
-
-    public ObservableCollection<
-        ChatMessageViewModel>
-        Messages
+    public ObservableCollection<ChatMessageViewModel> Messages
     {
         get;
     } =
         new();
 
-
-    // =========================================================
-    // MESSAGE INPUT
-    // =========================================================
 
     public string MessageInput
     {
@@ -156,15 +102,10 @@ public sealed class MainWindowViewModel
                 nameof(CanSend));
 
 
-            _sendCommand
-                .RaiseCanExecuteChanged();
+            _sendCommand.RaiseCanExecuteChanged();
         }
     }
 
-
-    // =========================================================
-    // PROCESSING
-    // =========================================================
 
     public bool IsProcessing
     {
@@ -191,15 +132,10 @@ public sealed class MainWindowViewModel
                 nameof(CanSend));
 
 
-            _sendCommand
-                .RaiseCanExecuteChanged();
+            _sendCommand.RaiseCanExecuteChanged();
         }
     }
 
-
-    // =========================================================
-    // CAN SEND
-    // =========================================================
 
     public bool CanSend =>
         !IsProcessing
@@ -208,27 +144,20 @@ public sealed class MainWindowViewModel
             MessageInput);
 
 
-    // =========================================================
-    // COMMAND
-    // =========================================================
-
     public ICommand SendCommand =>
         _sendCommand;
 
 
-    // =========================================================
-    // CONSTRUCTOR
-    // =========================================================
-
     public MainWindowViewModel(
-        AgentCore agent,
-        AgentResponseDispatcher dispatcher,
-        VoiceQueue voiceQueue)
+        SegaMindRuntime mind,
+        SegaOutputDispatcher dispatcher,
+        VoiceQueue voiceQueue,
+        SegaRuntimeSettingsService settings)
     {
-        _agent =
-            agent
+        _mind =
+            mind
             ?? throw new ArgumentNullException(
-                nameof(agent));
+                nameof(mind));
 
 
         _dispatcher =
@@ -243,6 +172,16 @@ public sealed class MainWindowViewModel
                 nameof(voiceQueue));
 
 
+        _settings =
+            settings
+            ?? throw new ArgumentNullException(
+                nameof(settings));
+
+
+        _settings.Changed +=
+            Settings_Changed;
+
+
         _sendCommand =
             new AsyncRelayCommand(
                 SendMessageAsync,
@@ -254,10 +193,6 @@ public sealed class MainWindowViewModel
             ProcessBackgroundResponsesAsync();
     }
 
-
-    // =========================================================
-    // SEND USER MESSAGE
-    // =========================================================
 
     private async Task SendMessageAsync()
     {
@@ -272,26 +207,14 @@ public sealed class MainWindowViewModel
         }
 
 
-        // =====================================================
-        // USER GETS PRIORITY OVER CURRENT SPEECH
-        // =====================================================
-
         _voiceQueue.Interrupt();
 
-
-        // =====================================================
-        // NEW USER RESPONSE
-        // =====================================================
 
         _userSpeechChunker.Clear();
 
 
         _userSpeechState.Reset();
 
-
-        // =====================================================
-        // UI
-        // =====================================================
 
         MessageInput =
             string.Empty;
@@ -324,8 +247,8 @@ public sealed class MainWindowViewModel
         try
         {
             await foreach (
-                AgentStreamChunk chunk
-                in _agent.ProcessStreamAsync(
+                SegaOutputChunk chunk
+                in _mind.ProcessUserMessageAsync(
                     input,
                     _shutdown.Token))
             {
@@ -333,32 +256,31 @@ public sealed class MainWindowViewModel
                     assistantMessage,
                     chunk,
                     _userSpeechChunker,
-                    _userSpeechState);
+                    _userSpeechState,
+                    _settings.Current.VoiceEnabled);
             }
 
 
             FlushSpeech(
                 _userSpeechChunker,
-                _userSpeechState);
+                _userSpeechState,
+                _settings.Current.VoiceEnabled);
 
 
             if (string.IsNullOrWhiteSpace(
                     assistantMessage.Content))
             {
-                assistantMessage.Content =
-                    "I wasn't able to generate a response.";
+                Messages.Remove(
+                    assistantMessage);
             }
         }
         catch (OperationCanceledException)
+            when (_shutdown.IsCancellationRequested)
         {
             _userSpeechChunker.Clear();
 
 
             _userSpeechState.Reset();
-
-
-            assistantMessage.Content =
-                "Request cancelled.";
         }
         catch (Exception ex)
         {
@@ -369,8 +291,7 @@ public sealed class MainWindowViewModel
 
 
             assistantMessage.Content =
-                $"Sorry, something went wrong.\n\n" +
-                $"{ex.Message}";
+                $"Sorry, something went wrong.\n\n{ex.Message}";
         }
         finally
         {
@@ -380,197 +301,75 @@ public sealed class MainWindowViewModel
     }
 
 
-    // =========================================================
-    // BACKGROUND RESPONSE LOOP
-    // =========================================================
-
-    private async Task
-        ProcessBackgroundResponsesAsync()
+    private async Task ProcessBackgroundResponsesAsync()
     {
         try
         {
             await foreach (
-                AgentResponse response
+                SegaOutputChunk chunk
                 in _dispatcher.ReadAllAsync(
                     _shutdown.Token))
             {
-                await System.Windows
-                    .Application
+                await System.Windows.Application
                     .Current
                     .Dispatcher
                     .InvokeAsync(
                         () =>
-                            HandleBackgroundResponse(
-                                response));
+                            HandleBackgroundChunk(
+                                chunk));
             }
         }
         catch (OperationCanceledException)
+            when (_shutdown.IsCancellationRequested)
         {
-            // Normal application shutdown.
         }
     }
 
 
-    // =========================================================
-    // BACKGROUND RESPONSE
-    // =========================================================
-
-    private void HandleBackgroundResponse(
-        AgentResponse response)
+    private void HandleBackgroundChunk(
+        SegaOutputChunk chunk)
     {
-        // =====================================================
-        // CANCELLED
-        // =====================================================
-
-        if (
-            response.Chunk.Type ==
-                AgentStreamChunkType.Cancelled)
+        if (chunk.Type ==
+            SegaOutputChunkType.Cancelled)
         {
-            _backgroundSpeechChunker
-                .Clear();
-
-
-            _backgroundSpeechState
-                .Reset();
-
-
-            if (_backgroundMessage !=
-                null)
-            {
-                Messages.Remove(
-                    _backgroundMessage);
-            }
-
-
-            ResetBackgroundResponse();
+            RemoveBackgroundRun(
+                chunk.RunId,
+                removeMessage: true);
 
 
             return;
         }
 
 
-        // =====================================================
-        // COMPLETED
-        // =====================================================
-
-        if (
-            response.Chunk.Type ==
-                AgentStreamChunkType.Completed)
+        if (chunk.Type ==
+            SegaOutputChunkType.Completed)
         {
-            if (_backgroundMessage !=
-                null)
+            if (_backgroundResponses.TryGetValue(
+                    chunk.RunId,
+                    out BackgroundResponseState? state))
             {
                 FlushSpeech(
-                    _backgroundSpeechChunker,
-                    _backgroundSpeechState);
+                    state.SpeechChunker,
+                    state.SpeechState,
+                    _settings.Current.VoiceEnabled &&
+                    _settings.Current.SpeakBackgroundUpdates);
+
+
+                state.SpeechState.Reset();
+
+
+                _backgroundResponses.Remove(
+                    chunk.RunId);
             }
-            else
-            {
-                _backgroundSpeechChunker
-                    .Clear();
-            }
-
-
-            _backgroundSpeechState
-                .Reset();
-
-
-            ResetBackgroundResponse();
 
 
             return;
         }
 
 
-        // =====================================================
-        // TEXT ONLY
-        // =====================================================
-
-        if (
-            response.Chunk.Type !=
-                AgentStreamChunkType.Text
-            ||
-            string.IsNullOrEmpty(
-                response.Chunk.Content))
-        {
-            return;
-        }
-
-
-        // =====================================================
-        // NEW BACKGROUND RESPONSE
-        // =====================================================
-
-        if (
-            _backgroundMessage ==
-                null
-            ||
-            _backgroundSource !=
-                response.Source)
-        {
-            _backgroundSpeechChunker
-                .Clear();
-
-
-            _backgroundSpeechState
-                .Reset();
-
-
-            _backgroundSource =
-                response.Source;
-
-
-            _backgroundMessage =
-                new ChatMessageViewModel(
-                    "assistant",
-                    string.Empty);
-
-
-            Messages.Add(
-                _backgroundMessage);
-        }
-
-
-        // =====================================================
-        // PROCESS BACKGROUND TEXT
-        // =====================================================
-
-        HandleChunk(
-            _backgroundMessage,
-            response.Chunk,
-            _backgroundSpeechChunker,
-            _backgroundSpeechState);
-    }
-
-
-    // =========================================================
-    // RESET BACKGROUND RESPONSE
-    // =========================================================
-
-    private void ResetBackgroundResponse()
-    {
-        _backgroundMessage =
-            null;
-
-
-        _backgroundSource =
-            null;
-    }
-
-
-    // =========================================================
-    // HANDLE STREAM CHUNK
-    // =========================================================
-
-    private void HandleChunk(
-        ChatMessageViewModel message,
-        AgentStreamChunk chunk,
-        SpeechChunker speechChunker,
-        SpeechResponseState speechState)
-    {
         if (
             chunk.Type !=
-                AgentStreamChunkType.Text
+                SegaOutputChunkType.Text
             ||
             string.IsNullOrEmpty(
                 chunk.Content))
@@ -579,49 +378,105 @@ public sealed class MainWindowViewModel
         }
 
 
-        // =====================================================
-        // CAPTURE RESPONSE VOCAL EXPRESSION
-        //
-        // This comes from AgentCore.
-        //
-        // It already combines:
-        //
-        // persistent mood
-        // relationship
-        // attitude
-        // situation
-        // current model vocal intent
-        //
-        // The captured value travels with the queued speech.
-        // =====================================================
+        if (!_backgroundResponses.TryGetValue(
+                chunk.RunId,
+                out BackgroundResponseState? responseState))
+        {
+            ChatMessageViewModel message =
+                new(
+                    "assistant",
+                    string.Empty);
+
+
+            Messages.Add(
+                message);
+
+
+            responseState =
+                new BackgroundResponseState(
+                    message);
+
+
+            _backgroundResponses[
+                chunk.RunId] =
+                    responseState;
+        }
+
+
+        HandleChunk(
+            responseState.Message,
+            chunk,
+            responseState.SpeechChunker,
+            responseState.SpeechState,
+            _settings.Current.VoiceEnabled &&
+            _settings.Current.SpeakBackgroundUpdates);
+    }
+
+
+    private void RemoveBackgroundRun(
+        Guid runId,
+        bool removeMessage)
+    {
+        if (!_backgroundResponses.Remove(
+                runId,
+                out BackgroundResponseState? state))
+        {
+            return;
+        }
+
+
+        state.SpeechChunker.Clear();
+
+
+        state.SpeechState.Reset();
+
+
+        if (removeMessage)
+        {
+            Messages.Remove(
+                state.Message);
+        }
+    }
+
+
+    private void HandleChunk(
+        ChatMessageViewModel message,
+        SegaOutputChunk chunk,
+        SpeechChunker speechChunker,
+        SpeechResponseState speechState,
+        bool allowSpeech)
+    {
+        if (
+            chunk.Type !=
+                SegaOutputChunkType.Text
+            ||
+            string.IsNullOrEmpty(
+                chunk.Content))
+        {
+            return;
+        }
+
 
         speechState.Expression =
-            chunk
-                .VoiceExpression
-                .Normalize();
+            chunk.VoiceExpression.Normalize();
 
-
-        // =====================================================
-        // CHAT
-        // =====================================================
 
         message.Content +=
             chunk.Content;
 
 
-        // =====================================================
-        // SPEECH CHUNKING
-        // =====================================================
-
-        IReadOnlyList<string>
-            speechParts =
-                speechChunker.Add(
-                    chunk.Content);
+        if (!allowSpeech)
+        {
+            speechChunker.Clear();
+            speechState.Reset();
+            return;
+        }
 
 
-        // =====================================================
-        // VOICE QUEUE
-        // =====================================================
+        IReadOnlyList<string> speechParts =
+            speechChunker.Add(
+                chunk.Content);
+
 
         foreach (
             string speechPart
@@ -634,25 +489,26 @@ public sealed class MainWindowViewModel
             }
 
 
-            VoiceUtterance utterance =
-                speechState.Create(
-                    speechPart);
-
-
             _voiceQueue.Enqueue(
-                utterance);
+                speechState.Create(
+                    speechPart));
         }
     }
 
 
-    // =========================================================
-    // FLUSH SPEECH
-    // =========================================================
-
     private void FlushSpeech(
         SpeechChunker speechChunker,
-        SpeechResponseState speechState)
+        SpeechResponseState speechState,
+        bool allowSpeech)
     {
+        if (!allowSpeech)
+        {
+            speechChunker.Clear();
+            speechState.Reset();
+            return;
+        }
+
+
         string? remaining =
             speechChunker.Complete();
 
@@ -664,19 +520,27 @@ public sealed class MainWindowViewModel
         }
 
 
-        VoiceUtterance utterance =
-            speechState.Create(
-                remaining);
-
-
         _voiceQueue.Enqueue(
-            utterance);
+            speechState.Create(
+                remaining));
     }
 
 
-    // =========================================================
-    // PROPERTY CHANGED
-    // =========================================================
+    private void Settings_Changed(
+        SegaRuntimeSettings before,
+        SegaRuntimeSettings after)
+    {
+        if (
+            before.VoiceEnabled != after.VoiceEnabled
+            ||
+            before.SpeakBackgroundUpdates != after.SpeakBackgroundUpdates
+            ||
+            before.VoiceEngine != after.VoiceEngine)
+        {
+            _voiceQueue.Interrupt();
+        }
+    }
+
 
     public event PropertyChangedEventHandler?
         PropertyChanged;
@@ -693,12 +557,12 @@ public sealed class MainWindowViewModel
     }
 
 
-    // =========================================================
-    // DISPOSE
-    // =========================================================
-
     public void Dispose()
     {
+        _settings.Changed -=
+            Settings_Changed;
+
+
         _shutdown.Cancel();
 
 
@@ -708,13 +572,21 @@ public sealed class MainWindowViewModel
         _userSpeechChunker.Clear();
 
 
-        _backgroundSpeechChunker.Clear();
-
-
         _userSpeechState.Reset();
 
 
-        _backgroundSpeechState.Reset();
+        foreach (
+            BackgroundResponseState state
+            in _backgroundResponses.Values)
+        {
+            state.SpeechChunker.Clear();
+
+
+            state.SpeechState.Reset();
+        }
+
+
+        _backgroundResponses.Clear();
 
 
         try
@@ -732,9 +604,36 @@ public sealed class MainWindowViewModel
     }
 
 
-    // =========================================================
-    // SPEECH RESPONSE STATE
-    // =========================================================
+    private sealed class BackgroundResponseState
+    {
+        public ChatMessageViewModel Message
+        {
+            get;
+        }
+
+
+        public SpeechChunker SpeechChunker
+        {
+            get;
+        } =
+            new();
+
+
+        public SpeechResponseState SpeechState
+        {
+            get;
+        } =
+            new();
+
+
+        public BackgroundResponseState(
+            ChatMessageViewModel message)
+        {
+            Message =
+                message;
+        }
+    }
+
 
     private sealed class SpeechResponseState
     {
@@ -761,16 +660,11 @@ public sealed class MainWindowViewModel
             SegaVoiceExpression.Neutral;
 
 
-        // =====================================================
-        // CREATE UTTERANCE
-        // =====================================================
-
         public VoiceUtterance Create(
             string text)
         {
-            ArgumentException
-                .ThrowIfNullOrWhiteSpace(
-                    text);
+            ArgumentException.ThrowIfNullOrWhiteSpace(
+                text);
 
 
             Sequence++;
@@ -783,10 +677,6 @@ public sealed class MainWindowViewModel
                 Expression);
         }
 
-
-        // =====================================================
-        // RESET
-        // =====================================================
 
         public void Reset()
         {

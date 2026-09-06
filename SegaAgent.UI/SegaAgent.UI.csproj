@@ -1,4 +1,4 @@
-﻿<!--
+<!--
  filename: SegaAgent.UI.csproj
 -->
 
@@ -27,11 +27,9 @@
 
   <ItemGroup>
 
-    <Resource
-      Include="Assets\SegaAi.ico" />
+    <Resource Include="Assets\SegaAi.ico" />
 
-    <Resource
-      Include="Assets\SegaAi.png" />
+    <Resource Include="Assets\SegaAi.png" />
 
   </ItemGroup>
 
@@ -42,8 +40,7 @@
 
   <ItemGroup>
 
-    <ProjectReference
-      Include="..\SegaAgent\SegaAgent.csproj" />
+    <ProjectReference Include="..\SegaAgent\SegaAgent.csproj" />
 
   </ItemGroup>
 
@@ -54,9 +51,7 @@
 
   <ItemGroup>
 
-    <PackageReference
-      Include="MaterialDesignThemes"
-      Version="5.3.2" />
+    <PackageReference Include="MaterialDesignThemes" Version="5.3.2" />
 
   </ItemGroup>
 
@@ -67,13 +62,9 @@
 
   <ItemGroup>
 
-    <PackageReference
-      Include="Microsoft.Extensions.DependencyInjection"
-      Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10" />
 
-    <PackageReference
-      Include="Microsoft.Extensions.Hosting"
-      Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
 
   </ItemGroup>
 
@@ -84,14 +75,11 @@
 
   <ItemGroup>
 
-    <SegaPromptFiles
-      Include="..\SegaAgent\Prompt\*.yaml" />
+    <SegaPromptFiles Include="..\SegaAgent\Prompt\*.yaml" />
 
-    <SegaPiperFiles
-      Include="..\SegaAgent\Piper\**\*" />
+    <SegaPiperFiles Include="..\SegaAgent\Piper\**\*" />
 
-    <SegaSemanticFiles
-      Include="..\SegaAgent\Semantic\Models\**\*" />
+    <SegaSemanticFiles Include="..\SegaAgent\Semantic\Models\**\*" />
 
   </ItemGroup>
 
@@ -112,45 +100,31 @@
   -->
   <!-- ===================================================== -->
 
-  <Target
-    Name="CopySegaRuntimeResources"
-    AfterTargets="Build">
+  <Target Name="CopySegaRuntimeResources" AfterTargets="Build">
 
 
     <!-- =================================================== -->
     <!-- PROMPTS -->
     <!-- =================================================== -->
 
-    <Copy
-      SourceFiles="@(SegaPromptFiles)"
-      DestinationFiles="
-        @(SegaPromptFiles->
-          '$(OutDir)Prompt\%(Filename)%(Extension)')"
-      SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(SegaPromptFiles)" DestinationFiles="&#xD;&#xA;        @(SegaPromptFiles->
+          '$(OutDir)Prompt\%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
 
 
     <!-- =================================================== -->
     <!-- PIPER -->
     <!-- =================================================== -->
 
-    <Copy
-      SourceFiles="@(SegaPiperFiles)"
-      DestinationFiles="
-        @(SegaPiperFiles->
-          '$(OutDir)Piper\%(RecursiveDir)%(Filename)%(Extension)')"
-      SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(SegaPiperFiles)" DestinationFiles="&#xD;&#xA;        @(SegaPiperFiles->
+          '$(OutDir)Piper\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
 
 
     <!-- =================================================== -->
     <!-- SEMANTIC MODELS -->
     <!-- =================================================== -->
 
-    <Copy
-      SourceFiles="@(SegaSemanticFiles)"
-      DestinationFiles="
-        @(SegaSemanticFiles->
-          '$(OutDir)Semantic\Models\%(RecursiveDir)%(Filename)%(Extension)')"
-      SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(SegaSemanticFiles)" DestinationFiles="&#xD;&#xA;        @(SegaSemanticFiles->
+          '$(OutDir)Semantic\Models\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
 
   </Target>
 
@@ -159,45 +133,31 @@
   <!-- COPY RUNTIME FILES WHEN PUBLISHING -->
   <!-- ===================================================== -->
 
-  <Target
-    Name="CopySegaPublishedRuntimeResources"
-    AfterTargets="Publish">
+  <Target Name="CopySegaPublishedRuntimeResources" AfterTargets="Publish">
 
 
     <!-- =================================================== -->
     <!-- PROMPTS -->
     <!-- =================================================== -->
 
-    <Copy
-      SourceFiles="@(SegaPromptFiles)"
-      DestinationFiles="
-        @(SegaPromptFiles->
-          '$(PublishDir)Prompt\%(Filename)%(Extension)')"
-      SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(SegaPromptFiles)" DestinationFiles="&#xD;&#xA;        @(SegaPromptFiles->
+          '$(PublishDir)Prompt\%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
 
 
     <!-- =================================================== -->
     <!-- PIPER -->
     <!-- =================================================== -->
 
-    <Copy
-      SourceFiles="@(SegaPiperFiles)"
-      DestinationFiles="
-        @(SegaPiperFiles->
-          '$(PublishDir)Piper\%(RecursiveDir)%(Filename)%(Extension)')"
-      SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(SegaPiperFiles)" DestinationFiles="&#xD;&#xA;        @(SegaPiperFiles->
+          '$(PublishDir)Piper\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
 
 
     <!-- =================================================== -->
     <!-- SEMANTIC MODELS -->
     <!-- =================================================== -->
 
-    <Copy
-      SourceFiles="@(SegaSemanticFiles)"
-      DestinationFiles="
-        @(SegaSemanticFiles->
-          '$(PublishDir)Semantic\Models\%(RecursiveDir)%(Filename)%(Extension)')"
-      SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(SegaSemanticFiles)" DestinationFiles="&#xD;&#xA;        @(SegaSemanticFiles->
+          '$(PublishDir)Semantic\Models\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
 
   </Target>
 
