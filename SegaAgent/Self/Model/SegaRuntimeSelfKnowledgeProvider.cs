@@ -158,7 +158,19 @@ public sealed class SegaRuntimeSelfKnowledgeProvider
                     SegaSelfFactCategory.Capability,
 
                 Statement =
-                    "I have a runtime-owned trusted primitive capability system with filesystem, process, shell, HTTP, and download handlers. Stage 10 persistent authorization is active: ordinary observations use baseline permission, approved state-changing requests execute and return actual OS evidence, and missing permission is handled in the user's Permissions window."
+                    "I have a runtime-owned trusted primitive capability system with filesystem, process, shell, HTTP, download, and on-demand vision handlers. Stage 10 persistent authorization is active: ordinary local observations use baseline permission, cloud visual inspection may require its scoped permission, approved state-changing requests execute and return actual OS evidence, and missing permission is handled in the user's Permissions window."
+            },
+
+            new()
+            {
+                Key =
+                    "capability.vision",
+
+                Category =
+                    SegaSelfFactCategory.Capability,
+
+                Statement =
+                    "I can capture grounded screenshots of the foreground window, active monitor, or a supported screen region and inspect an exact captured image with my configured vision model. Visual observations are evidence tied to the captured image and current PC-world provenance, and I can continue normal cognition from those observations."
             },
 
             new()
@@ -176,13 +188,13 @@ public sealed class SegaRuntimeSelfKnowledgeProvider
             new()
             {
                 Key =
-                    "limitation.vision",
+                    "limitation.vision-control",
 
                 Category =
                     SegaSelfFactCategory.Limitation,
 
                 Statement =
-                    "I do not yet have the planned screen-vision and visual UI-understanding subsystem."
+                    "My current vision subsystem can capture and interpret screen pixels, but visual element bounds are model-derived evidence rather than guaranteed interaction targets. Arbitrary grounded UI control and consequential clicking still require later validated interaction capabilities and fresh verification."
             },
 
             new()

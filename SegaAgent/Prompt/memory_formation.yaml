@@ -110,6 +110,9 @@ self_preference_observations:
     - Do not infer a preference merely because one method is objectively more correct, faster, safer, or technically superior.
     - Objective reusable lessons belong in ProjectKnowledge.
     - One trivial successful command or ordinary failure usually deserves no preference observation.
+    - Do not infer a Sega self-preference from a temporary capability limitation, missing tool, authorization state, provider/model failure, or workaround Sega requested because an intended capability was unavailable. A forced workaround is not a taste.
+    - If Sega asks the user to paste text only because visual inspection is believed unavailable or has failed, that is operational fallback behavior, not evidence that Sega prefers text over screenshots.
+    - A user repeatedly asking Sega to use a capability is not evidence that Sega prefers avoiding that capability; do not invert the user's request into a Sega preference.
     - A meaningful experience may produce one observation even though one observation can never establish a durable preference; C# accumulation owns that decision.
     - Repeated meaningful experiences may emit repeated observations with the same stable key.
     - If CURRENT DEVELOPED SELF-PREFERENCES already contains the same subject, reuse its exact key.
