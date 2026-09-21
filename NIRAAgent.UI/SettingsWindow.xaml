@@ -1,0 +1,374 @@
+<Window x:Class="NIRAAgent.UI.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        xmlns:ui="clr-namespace:NIRAAgent.UI"
+        Title="NIRA Settings"
+        Width="1080"
+        Height="760"
+        MinWidth="900"
+        MinHeight="620"
+        WindowStartupLocation="CenterOwner"
+        WindowStyle="None"
+        ResizeMode="CanResize"
+        Background="{DynamicResource NIRABackgroundBrush}"
+        Foreground="{DynamicResource NIRATextBrush}"
+        FontFamily="Segoe UI Variable Text, Segoe UI"
+        FontSize="13"
+        SnapsToDevicePixels="True"
+        UseLayoutRounding="True">
+
+    <WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="0"
+                            ResizeBorderThickness="7"
+                            CornerRadius="0"
+                            GlassFrameThickness="0"
+                            UseAeroCaptionButtons="False"/>
+    </WindowChrome.WindowChrome>
+
+    <Window.Resources>
+        <Style x:Key="UtilityGlassCard" TargetType="ContentControl">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="VerticalContentAlignment" Value="Stretch"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ContentControl">
+                        <Grid ClipToBounds="True">
+                            <ui:NIRAUtilityBackdropBorder Margin="-18" BlurRadius="14" BackdropOpacity="0.72"/>
+                            <Border Background="{DynamicResource NIRAGlassTintBrush}"
+                                    BorderBrush="{DynamicResource NIRAGlassBorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="18">
+                                <ContentPresenter Margin="{TemplateBinding Padding}"/>
+                            </Border>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="UtilityGlassCardStrong" TargetType="ContentControl" BasedOn="{StaticResource UtilityGlassCard}">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ContentControl">
+                        <Grid ClipToBounds="True">
+                            <ui:NIRAUtilityBackdropBorder Margin="-20" BlurRadius="16" BackdropOpacity="0.78"/>
+                            <Border Background="{DynamicResource NIRAGlassStrongTintBrush}"
+                                    BorderBrush="{DynamicResource NIRAGlassBorderStrongBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="19">
+                                <ContentPresenter Margin="{TemplateBinding Padding}"/>
+                            </Border>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SettingsSectionTitle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="16"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
+        </Style>
+
+        <Style x:Key="SettingsDescription" TargetType="TextBlock">
+            <Setter Property="Margin" Value="0,4,0,0"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Foreground" Value="{DynamicResource NIRASecondaryBrush}"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+        </Style>
+
+        <Style x:Key="WindowControl" TargetType="Button">
+            <Setter Property="Width" Value="38"/>
+            <Setter Property="Height" Value="38"/>
+            <Setter Property="Margin" Value="3,0,0,0"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource NIRAGlassBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Foreground" Value="{DynamicResource NIRASecondaryBrush}"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Chrome" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="11">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource NIRACardHoverBrush}"/>
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SettingsNavLabel" TargetType="Border">
+            <Setter Property="CornerRadius" Value="11"/>
+            <Setter Property="Padding" Value="12,9"/>
+            <Setter Property="Margin" Value="0,0,0,5"/>
+            <Setter Property="Background" Value="#0DFFFFFF"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource NIRAGlassBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid x:Name="RootShell">
+        <Image x:Name="UtilityBackgroundEclipse"
+               Source="Assets/nira-utility-eclipse.png"
+               Stretch="UniformToFill"
+               Opacity="1"
+               IsHitTestVisible="False"/>
+        <Image x:Name="UtilityBackgroundHalo"
+               Source="Assets/nira-utility-halo.png"
+               Stretch="UniformToFill"
+               Opacity="0"
+               IsHitTestVisible="False"/>
+        <Rectangle Fill="{DynamicResource NIRABackdropVeilBrush}" Opacity="0.42" IsHitTestVisible="False"/>
+
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="66"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="42"/>
+            </Grid.RowDefinitions>
+
+            <!-- TOP BAR -->
+            <Grid Grid.Row="0" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                <ui:NIRAUtilityBackdropBorder Margin="0,-10,0,-6" BlurRadius="12" BackdropOpacity="0.60"/>
+                <Border Background="{DynamicResource NIRATopBarTintBrush}"
+                        BorderBrush="{DynamicResource NIRAGlassBorderBrush}"
+                        BorderThickness="0,0,0,1"/>
+                <Grid Margin="18,0,12,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Grid Width="40" Height="40" Margin="0,0,13,0">
+                            <Ellipse Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1.4" Opacity="0.8"/>
+                            <Ellipse Margin="5" Stroke="{DynamicResource NIRACyanBrush}" StrokeThickness="1.1" Opacity="0.9"/>
+                            <Ellipse Margin="13" Fill="{DynamicResource NIRACyanBrush}" Opacity="0.9"/>
+                        </Grid>
+                        <StackPanel VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="NIRA" FontFamily="Bahnschrift SemiCondensed" FontSize="23" FontWeight="SemiBold"/>
+                                <TextBlock Text=" / SETTINGS" Margin="7,7,0,0" FontSize="9" FontWeight="SemiBold" Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                            </StackPanel>
+                            <TextBlock Text="PERSONALIZE BEHAVIOR · PRESENCE · INTERFACE"
+                                       Margin="1,0,0,0" FontSize="7.5" Foreground="{DynamicResource NIRAMutedBrush}"/>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button x:Name="ThemeToggleButton"
+                                Content="ECLIPSE"
+                                Width="144" Height="38" Margin="0,0,8,0"
+                                Background="{DynamicResource NIRAChipBrush}"
+                                BorderBrush="{DynamicResource NIRAGlassBorderBrush}"
+                                BorderThickness="1"
+                                Foreground="{DynamicResource NIRATextBrush}"
+                                Cursor="Hand"
+                                Click="ThemeToggleButton_Click"
+                                shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border x:Name="ThemeChrome" Background="{TemplateBinding Background}"
+                                            BorderBrush="{TemplateBinding BorderBrush}"
+                                            BorderThickness="{TemplateBinding BorderThickness}"
+                                            CornerRadius="12">
+                                        <Grid Margin="12,0">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                            <Grid Width="24" Height="24" VerticalAlignment="Center">
+                                                <Ellipse Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1"/>
+                                                <Ellipse Margin="7" Fill="{DynamicResource NIRACyanBrush}"/>
+                                            </Grid>
+                                            <StackPanel Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Content, RelativeSource={RelativeSource TemplatedParent}}" FontSize="9.5" FontWeight="SemiBold"/>
+                                                <TextBlock Text="SWITCH THEME" FontSize="6.5" Foreground="{DynamicResource NIRAMutedBrush}"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="ThemeChrome" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
+                                            <Setter TargetName="ThemeChrome" Property="Background" Value="{DynamicResource NIRACardHoverBrush}"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Button.Template>
+                        </Button>
+
+                        <Button Style="{StaticResource WindowControl}" Click="Minimize_Click" shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                            <Path Width="12" Height="1" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.4" Data="M0,0 L12,0"/>
+                        </Button>
+                        <Button Style="{StaticResource WindowControl}" Click="Close_Click" shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                            <Path Width="11" Height="11" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.4" Data="M1,1 L10,10 M10,1 L1,10"/>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </Grid>
+
+            <!-- BODY -->
+            <Grid Grid.Row="1" Margin="20,18,20,16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="220"/>
+                    <ColumnDefinition Width="18"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <ContentControl Grid.Column="0" Style="{StaticResource UtilityGlassCardStrong}">
+                    <Grid Margin="16">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="CONTROL CENTER" FontSize="9" FontWeight="SemiBold" Foreground="{DynamicResource NIRACyanBrush}"/>
+                            <TextBlock Text="Settings" Margin="0,5,0,0" FontSize="24" FontWeight="SemiBold"/>
+                            <TextBlock Text="Everything here saves immediately."
+                                       Margin="0,5,0,18" FontSize="10.5" TextWrapping="Wrap" Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                        </StackPanel>
+
+                        <StackPanel Grid.Row="1">
+                            <Border Style="{StaticResource SettingsNavLabel}" Background="{DynamicResource NIRACardHoverBrush}"><TextBlock Text="◈  Appearance" FontWeight="SemiBold"/></Border>
+                            <Border Style="{StaticResource SettingsNavLabel}"><TextBlock Text="◉  Voice"/></Border>
+                            <Border Style="{StaticResource SettingsNavLabel}"><TextBlock Text="◎  Presence"/></Border>
+                            <Border Style="{StaticResource SettingsNavLabel}"><TextBlock Text="◇  Attention"/></Border>
+                            <Border Style="{StaticResource SettingsNavLabel}"><TextBlock Text="○  Notifications"/></Border>
+                            <Border Style="{StaticResource SettingsNavLabel}"><TextBlock Text="▦  Interface"/></Border>
+                        </StackPanel>
+
+                        <Border Grid.Row="2" Padding="11" CornerRadius="12" Background="{DynamicResource NIRAChipBrush}" BorderBrush="{DynamicResource NIRAGlassBorderBrush}" BorderThickness="1">
+                            <StackPanel>
+                                <TextBlock Text="NIRA / VEIL" FontSize="8" FontWeight="SemiBold" Foreground="{DynamicResource NIRACyanBrush}"/>
+                                <TextBlock Text="Quiet controls. Immediate effect." Margin="0,4,0,0" FontSize="9.5" TextWrapping="Wrap" Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </ContentControl>
+
+                <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="0,0,5,24">
+                        <TextBlock Text="Personalize NIRA" FontSize="30" FontWeight="Light"/>
+                        <TextBlock Text="Tune how NIRA speaks, appears, notices context, and surfaces ongoing work."
+                                   Margin="0,5,0,16" FontSize="12" Foreground="{DynamicResource NIRASecondaryBrush}"/>
+
+                        <!-- APPEARANCE -->
+                        <TextBlock Text="Appearance" Style="{StaticResource SettingsSectionTitle}"/>
+                        <TextBlock Text="The utility windows follow the same ECLIPSE / HALO system as the main interface." Style="{StaticResource SettingsDescription}"/>
+                        <ContentControl Style="{StaticResource UtilityGlassCard}" Margin="0,10,0,20">
+                            <Grid Margin="17,15">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="Interface theme" FontWeight="SemiBold"/>
+                                    <TextBlock Text="Use the theme switch in the title bar. Settings and Permissions change together with the main NIRA window."
+                                               Margin="0,4,24,0" FontSize="10.5" TextWrapping="Wrap" Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                                </StackPanel>
+                                <Border Grid.Column="1" Padding="12,7" CornerRadius="10" Background="{DynamicResource NIRAChipBrush}" BorderBrush="{DynamicResource NIRAGlassBorderBrush}" BorderThickness="1">
+                                    <TextBlock x:Name="CurrentThemeText" Text="ECLIPSE" FontSize="9" FontWeight="SemiBold"/>
+                                </Border>
+                            </Grid>
+                        </ContentControl>
+
+                        <!-- VOICE -->
+                        <TextBlock Text="Voice" Style="{StaticResource SettingsSectionTitle}"/>
+                        <TextBlock Text="Control when and how NIRA speaks. Chat text is unaffected." Style="{StaticResource SettingsDescription}"/>
+                        <ContentControl Style="{StaticResource UtilityGlassCard}" Margin="0,10,0,20">
+                            <StackPanel Margin="17,15">
+                                <CheckBox x:Name="VoiceEnabledCheck" Content="Speak chat replies" Checked="VoiceEnabled_Changed" Unchecked="VoiceEnabled_Changed"/>
+                                <TextBlock Text="Turning this off stops current speech immediately." Margin="28,0,0,9" FontSize="10" Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                                <CheckBox x:Name="BackgroundVoiceCheck" Content="Speak background updates" Checked="BackgroundVoice_Changed" Unchecked="BackgroundVoice_Changed"/>
+                                <TextBlock Text="Allow autonomous and background work updates to use voice." Margin="28,0,0,12" FontSize="10" Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                                <Grid Margin="0,3,0,12">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="120"/><ColumnDefinition Width="*"/><ColumnDefinition Width="54"/></Grid.ColumnDefinitions>
+                                    <TextBlock Text="Volume" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    <Slider x:Name="VoiceVolumeSlider" Grid.Column="1" Minimum="0" Maximum="100" ValueChanged="VoiceVolume_Changed"/>
+                                    <TextBlock x:Name="VoiceVolumeText" Grid.Column="2" Text="100%" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{DynamicResource NIRACyanBrush}"/>
+                                </Grid>
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="120"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <TextBlock Text="Voice engine" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    <ComboBox x:Name="VoiceEngineBox" Grid.Column="1" Height="34" SelectionChanged="VoiceEngine_Changed"/>
+                                </Grid>
+                            </StackPanel>
+                        </ContentControl>
+
+                        <!-- PRESENCE -->
+                        <TextBlock Text="Presence" Style="{StaticResource SettingsSectionTitle}"/>
+                        <TextBlock Text="Control NIRA's desktop body and idle behavior." Style="{StaticResource SettingsDescription}"/>
+                        <ContentControl Style="{StaticResource UtilityGlassCard}" Margin="0,10,0,20">
+                            <StackPanel Margin="17,15">
+                                <CheckBox x:Name="DesktopPresenceCheck" Content="Show NIRA on the desktop when chat is not active" Checked="DesktopPresence_Changed" Unchecked="DesktopPresence_Changed"/>
+                                <TextBlock Text="Disabling this hides the free desktop body; the main interface presence remains available." Margin="28,0,0,9" FontSize="10" TextWrapping="Wrap" Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                                <CheckBox x:Name="IdleBehaviorCheck" Content="Enable idle behavior" Checked="IdleBehavior_Changed" Unchecked="IdleBehavior_Changed"/>
+                                <CheckBox x:Name="IdleAwarenessCheck" Content="Notice when I have been inactive" Margin="28,3,0,0" Checked="IdleAwareness_Changed" Unchecked="IdleAwareness_Changed"/>
+                                <CheckBox x:Name="IdleFadeCheck" Content="Fade NIRA's desktop presence when idle" Margin="28,3,0,0" Checked="IdleFade_Changed" Unchecked="IdleFade_Changed"/>
+                                <Grid Margin="28,9,0,0">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="180"/></Grid.ColumnDefinitions>
+                                    <TextBlock Text="Fade after" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    <ComboBox x:Name="IdleFadeDelayBox" Grid.Column="1" Height="34" SelectionChanged="IdleFadeDelay_Changed">
+                                        <ComboBoxItem Content="30 seconds" Tag="30"/>
+                                        <ComboBoxItem Content="1 minute" Tag="60"/>
+                                        <ComboBoxItem Content="3 minutes" Tag="180"/>
+                                        <ComboBoxItem Content="5 minutes" Tag="300"/>
+                                    </ComboBox>
+                                </Grid>
+                            </StackPanel>
+                        </ContentControl>
+
+                        <!-- ATTENTION -->
+                        <TextBlock Text="Attention &amp; autonomy" Style="{StaticResource SettingsSectionTitle}"/>
+                        <TextBlock Text="These affect ambient attention only. Active goals and requested work continue normally." Style="{StaticResource SettingsDescription}"/>
+                        <ContentControl Style="{StaticResource UtilityGlassCard}" Margin="0,10,0,20">
+                            <StackPanel Margin="17,15">
+                                <CheckBox x:Name="ProactiveCompanionCheck" Content="Allow proactive companion checks" Checked="ProactiveCompanion_Changed" Unchecked="ProactiveCompanion_Changed"/>
+                                <TextBlock Text="NIRA may reconsider whether there is a natural reason to interact after a quiet period." Margin="28,0,0,9" FontSize="10" TextWrapping="Wrap" Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                                <CheckBox x:Name="PcContextReactionsCheck" Content="React to foreground app and window changes" Checked="PcContextReactions_Changed" Unchecked="PcContextReactions_Changed"/>
+                            </StackPanel>
+                        </ContentControl>
+
+                        <!-- NOTIFICATIONS -->
+                        <TextBlock Text="Notifications" Style="{StaticResource SettingsSectionTitle}"/>
+                        <TextBlock Text="Choose how NIRA surfaces requests that need your attention." Style="{StaticResource SettingsDescription}"/>
+                        <ContentControl Style="{StaticResource UtilityGlassCard}" Margin="0,10,0,20">
+                            <StackPanel Margin="17,15">
+                                <CheckBox x:Name="PermissionNotificationsCheck" Content="Show non-intrusive permission alerts" Checked="PermissionNotifications_Changed" Unchecked="PermissionNotifications_Changed"/>
+                                <TextBlock Text="Pending requests still remain visible in Permissions when alerts are disabled." Margin="28,0,0,0" FontSize="10" Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                            </StackPanel>
+                        </ContentControl>
+
+                        <!-- INTERFACE -->
+                        <TextBlock Text="Interface" Style="{StaticResource SettingsSectionTitle}"/>
+                        <TextBlock Text="Choose which persistent work signals stay visible." Style="{StaticResource SettingsDescription}"/>
+                        <ContentControl Style="{StaticResource UtilityGlassCard}" Margin="0,10,0,16">
+                            <StackPanel Margin="17,15">
+                                <CheckBox x:Name="CardParticlesCheck" Content="Particle transitions for branches and commitments" Checked="CardParticles_Changed" Unchecked="CardParticles_Changed"/>
+                                <CheckBox x:Name="ShowBranchesCheck" Margin="0,6,0,0" Content="Show active branches in the sidebar" Checked="ShowBranches_Changed" Unchecked="ShowBranches_Changed"/>
+                                <CheckBox x:Name="ShowCommitmentsCheck" Margin="0,6,0,0" Content="Show active commitments in the sidebar" Checked="ShowCommitments_Changed" Unchecked="ShowCommitments_Changed"/>
+                            </StackPanel>
+                        </ContentControl>
+
+                        <Button Content="Reset to defaults" Width="150" HorizontalAlignment="Left" Style="{StaticResource NIRAButtonBaseStyle}" Click="Reset_Click"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+
+            <!-- STATUS -->
+            <Grid Grid.Row="2">
+                <ui:NIRAUtilityBackdropBorder Margin="0,-5,0,0" BlurRadius="10" BackdropOpacity="0.56"/>
+                <Border Background="{DynamicResource NIRATopBarTintBrush}" BorderBrush="{DynamicResource NIRAGlassBorderBrush}" BorderThickness="0,1,0,0"/>
+                <Grid Margin="22,0">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Ellipse Width="5" Height="5" Fill="{DynamicResource NIRACyanBrush}" Margin="0,0,8,0"/>
+                        <TextBlock x:Name="StatusText" Text="Changes are saved automatically" FontSize="10" Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                    </StackPanel>
+                </Grid>
+            </Grid>
+        </Grid>
+    </Grid>
+</Window>
+

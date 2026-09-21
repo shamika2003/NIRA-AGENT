@@ -1,0 +1,67 @@
+<Window x:Class="NIRAAgent.UI.Visuals.NIRAVisualArtifactViewerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="NIRA visual insight"
+        Width="980"
+        Height="720"
+        MinWidth="640"
+        MinHeight="460"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource NIRAWindowGradient}"
+        Foreground="{DynamicResource NIRATextBrush}">
+    <Grid x:Name="RootShell" Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <Ellipse Width="320" Height="320" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-140,-110,0" Fill="{DynamicResource NIRASoftGlow}" Opacity="0.18" IsHitTestVisible="False"/>
+        <Ellipse Width="260" Height="260" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="-80,0,0,-110" Fill="{DynamicResource NIRAVioletGlow}" Opacity="0.14" IsHitTestVisible="False"/>
+
+        <StackPanel Grid.Row="0" Margin="2,0,2,14">
+            <TextBlock Text="{Binding Title}"
+                       FontSize="18"
+                       FontWeight="SemiBold"
+                       Foreground="{DynamicResource NIRATextBrush}"
+                       TextTrimming="CharacterEllipsis"/>
+            <TextBlock Text="{Binding Caption}"
+                       Margin="0,5,0,0"
+                       FontSize="12"
+                       Foreground="{DynamicResource NIRASecondaryBrush}"
+                       TextWrapping="Wrap">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="Visibility" Value="Visible"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasCaption}" Value="False">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+        </StackPanel>
+
+        <Border Grid.Row="1"
+                Background="{DynamicResource NIRASurfaceBrush}"
+                BorderBrush="{DynamicResource NIRABorderBrush}"
+                BorderThickness="1"
+                CornerRadius="14"
+                Padding="10">
+            <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollBarVisibility="Auto">
+                <Image Source="{Binding PreviewImage}"
+                       Stretch="Uniform"
+                       SnapsToDevicePixels="True"/>
+            </ScrollViewer>
+        </Border>
+
+        <Button Grid.Row="2"
+                Width="92"
+                Height="34"
+                Margin="0,14,0,0"
+                HorizontalAlignment="Right"
+                Content="Close" Style="{StaticResource NIRASecondaryButtonStyle}"
+                Click="CloseButton_Click"/>
+    </Grid>
+</Window>

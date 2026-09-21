@@ -1,0 +1,172 @@
+<!--
+ filename: NIRAAgent.UI.csproj
+-->
+
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+
+    <OutputType>WinExe</OutputType>
+
+    <TargetFramework>net10.0-windows</TargetFramework>
+
+    <Nullable>enable</Nullable>
+
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <UseWPF>true</UseWPF>
+
+    <ApplicationIcon>Assets\Nira-Icon.ico</ApplicationIcon>
+
+  </PropertyGroup>
+
+
+  <!-- ===================================================== -->
+  <!-- WPF RESOURCES -->
+  <!-- ===================================================== -->
+
+  <ItemGroup>
+
+    <Resource Include="Assets\Nira-Icon.ico" />
+
+    <Resource Include="Assets\Nira-Icon.png" />
+
+    <Resource Include="Assets\nira-background-eclipse.png" />
+
+    <Resource Include="Assets\nira-background-halo.png" />
+
+    <Resource Include="Assets\nira-utility-eclipse.png" />
+
+    <Resource Include="Assets\nira-utility-halo.png" />
+
+  </ItemGroup>
+
+
+  <!-- ===================================================== -->
+  <!-- CORE PROJECT -->
+  <!-- ===================================================== -->
+
+  <ItemGroup>
+
+    <ProjectReference Include="..\NIRAAgent\NIRAAgent.csproj" />
+
+  </ItemGroup>
+
+
+  <!-- ===================================================== -->
+  <!-- UI PACKAGES -->
+  <!-- ===================================================== -->
+
+  <ItemGroup>
+
+    <PackageReference Include="MaterialDesignThemes" Version="5.3.2" />
+
+  </ItemGroup>
+
+
+  <!-- ===================================================== -->
+  <!-- HOST / DI -->
+  <!-- ===================================================== -->
+
+  <ItemGroup>
+
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10" />
+
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
+
+  </ItemGroup>
+
+
+  <!-- ===================================================== -->
+  <!-- NIRA RUNTIME FILE LISTS -->
+  <!-- ===================================================== -->
+
+  <ItemGroup>
+
+    <NIRAPromptFiles Include="..\NIRAAgent\Prompt\*.yaml" />
+
+    <NIRAPiperFiles Include="..\NIRAAgent\Piper\**\*" />
+
+    <NIRASemanticFiles Include="..\NIRAAgent\Semantic\Models\**\*" />
+
+  </ItemGroup>
+
+
+  <!-- ===================================================== -->
+  <!-- COPY RUNTIME FILES AFTER BUILD -->
+  <!--
+       NIRAAgent.UI is the executable.
+
+       Runtime services resolve resources from:
+
+       AppContext.BaseDirectory
+
+       Therefore runtime resources are explicitly copied into
+       the executable output directory.
+
+       We do not depend on class-library content propagation.
+  -->
+  <!-- ===================================================== -->
+
+  <Target Name="CopyNIRARuntimeResources" AfterTargets="Build">
+
+
+    <!-- =================================================== -->
+    <!-- PROMPTS -->
+    <!-- =================================================== -->
+
+    <Copy SourceFiles="@(NIRAPromptFiles)" DestinationFiles="&#xD;&#xA;        @(NIRAPromptFiles->
+          '$(OutDir)Prompt\%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+
+
+    <!-- =================================================== -->
+    <!-- PIPER -->
+    <!-- =================================================== -->
+
+    <Copy SourceFiles="@(NIRAPiperFiles)" DestinationFiles="&#xD;&#xA;        @(NIRAPiperFiles->
+          '$(OutDir)Piper\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+
+
+    <!-- =================================================== -->
+    <!-- SEMANTIC MODELS -->
+    <!-- =================================================== -->
+
+    <Copy SourceFiles="@(NIRASemanticFiles)" DestinationFiles="&#xD;&#xA;        @(NIRASemanticFiles->
+          '$(OutDir)Semantic\Models\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+
+  </Target>
+
+
+  <!-- ===================================================== -->
+  <!-- COPY RUNTIME FILES WHEN PUBLISHING -->
+  <!-- ===================================================== -->
+
+  <Target Name="CopyNIRAPublishedRuntimeResources" AfterTargets="Publish">
+
+
+    <!-- =================================================== -->
+    <!-- PROMPTS -->
+    <!-- =================================================== -->
+
+    <Copy SourceFiles="@(NIRAPromptFiles)" DestinationFiles="&#xD;&#xA;        @(NIRAPromptFiles->
+          '$(PublishDir)Prompt\%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+
+
+    <!-- =================================================== -->
+    <!-- PIPER -->
+    <!-- =================================================== -->
+
+    <Copy SourceFiles="@(NIRAPiperFiles)" DestinationFiles="&#xD;&#xA;        @(NIRAPiperFiles->
+          '$(PublishDir)Piper\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+
+
+    <!-- =================================================== -->
+    <!-- SEMANTIC MODELS -->
+    <!-- =================================================== -->
+
+    <Copy SourceFiles="@(NIRASemanticFiles)" DestinationFiles="&#xD;&#xA;        @(NIRASemanticFiles->
+          '$(PublishDir)Semantic\Models\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+
+  </Target>
+
+</Project>

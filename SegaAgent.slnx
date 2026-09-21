@@ -1,5 +1,0 @@
-<Solution>
-  <Folder Name="/SegaAgent/" />
-  <Project Path="SegaAgent.UI/SegaAgent.UI.csproj" />
-  <Project Path="SegaAgent/SegaAgent.csproj" />
-</Solution>

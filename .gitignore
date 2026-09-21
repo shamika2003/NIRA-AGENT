@@ -48,10 +48,10 @@ obj/
 *_wpftmp.csproj
 
 # Piper runtime
-SegaAgent/Piper/output.wav
-SegaAgent/Piper/*.dll
-SegaAgent/Piper/*.exe
-SegaAgent/Piper/*.ort
+NIRAAgent/Piper/output.wav
+NIRAAgent/Piper/*.dll
+NIRAAgent/Piper/*.exe
+NIRAAgent/Piper/*.ort
 
 # Piper data
-SegaAgent/Piper/espeak-ng-data/
+NIRAAgent/Piper/espeak-ng-data/
