@@ -83,13 +83,7 @@ public sealed class PerceptionAnalyzer
                     currentWindow);
 
 
-            Debug.WriteLine(
-                $"[Perception] " +
-                $"FOREGROUND APPLICATION CHANGED: " +
-                $"'{previousDescription}' -> " +
-                $"'{currentDescription}'");
-
-
+ 
             return new PerceptionEvent
             {
                 Type =
@@ -233,13 +227,7 @@ public sealed class PerceptionAnalyzer
                     currentWindow.Title);
 
 
-            Debug.WriteLine(
-                $"[Perception] " +
-                $"FOREGROUND WINDOW CHANGED: " +
-                $"'{previousTitle}' -> " +
-                $"'{currentTitle}'");
-
-
+ 
             return new PerceptionEvent
             {
                 Type =

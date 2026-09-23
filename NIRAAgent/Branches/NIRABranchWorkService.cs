@@ -187,7 +187,7 @@ public sealed class NIRABranchWorkService
     }
 
 
-    public string BuildCognitionContext(Guid? contextGoalId = null)
+    public string BuildCognitionContext(Guid? contextGoalId = null, bool includeHistoricalPageEvidence = true)
     {
         NIRABranchWorkItem[] open;
         NIRABranchWorkItem[] recent;
@@ -293,7 +293,7 @@ public sealed class NIRABranchWorkService
         // inspect the same page, invalidating its previous refs. Keep the
         // most recent successful inspection for each current branch in
         // context. Data is untrusted web content and cannot grant authority.
-        NIRABranchWorkItem[] latestInspections = recent
+        NIRABranchWorkItem[] latestInspections = (includeHistoricalPageEvidence ? recent : Array.Empty<NIRABranchWorkItem>())
             .Where(item => contextGoalId.HasValue && item.GoalId == contextGoalId.Value)
             .Where(item => item.Succeeded &&
                 !string.IsNullOrWhiteSpace(item.ResultEvidence) &&
@@ -301,7 +301,10 @@ public sealed class NIRABranchWorkService
                  ((item.CapabilityRequest?.CapabilityId == NIRACapabilityIds.BrowserSessionOpen ||
                    item.CapabilityRequest?.CapabilityId == NIRACapabilityIds.BrowserNavigate ||
                    item.CapabilityRequest?.CapabilityId == NIRACapabilityIds.BrowserFollow) &&
-                  item.ResultEvidence!.Contains("CURRENT_PAGE_INSPECTION (read-only, same work item):", StringComparison.Ordinal))))
+                  item.ResultEvidence!.Contains("CURRENT_PAGE_INSPECTION (read-only, same work item):", StringComparison.Ordinal)) ||
+                 (item.CapabilityRequest?.CapabilityId == NIRACapabilityIds.BrowserAuthenticate &&
+                  (item.ResultEvidence!.Contains("POST_AUTHENTICATION_INSPECTION:", StringComparison.Ordinal) ||
+                   item.ResultEvidence!.Contains("AUTH_PREFLIGHT_RECONCILED", StringComparison.Ordinal)))))
             .GroupBy(item => item.BranchId)
             .Select(group => group.First())
             .Take(2)
@@ -887,13 +890,13 @@ public sealed class NIRABranchWorkService
         if (goal.Status == NIRAGoalStatus.Blocked)
             return Reject("This goal is blocked. An explicit user decision or a different task is required; do not schedule more work.");
 
-        // Domain-neutral cross-run guard shared with the Executive: applies
-        // to any capability or dynamic tool, not just browser authentication.
-        // Assess terminal evidence, not merely successful tool return values.
+        // No-progress is scoped to this branch's own durable workstream.
+        // A failing .NET download must not consume the retry budget of the
+        // independent VS Code branch under the same parent goal.
         string? generalBlocker;
         lock (_stateSync)
             generalBlocker = NIRABranchWorkLoopGuard.Evaluate(
-                _work.Values.Where(item => item.GoalId == branch.GoalId));
+                _work.Values.Where(item => item.BranchId == branchId));
         if (generalBlocker != null)
             return Reject("GenericWorkBudgetReached: " + generalBlocker);
 
@@ -905,6 +908,14 @@ public sealed class NIRABranchWorkService
         if (proposal.Kind == NIRABranchWorkKind.Capability &&
             proposal.CapabilityRequest?.CapabilityId == NIRACapabilityIds.BrowserAuthenticate)
         {
+            // A completed submit is never permission to replay the same login.
+            // The ONLY exception is a new model-selected secure replacement;
+            // the browser broker independently verifies explicit site rejection
+            // and enforces its one-refresh-per-task rule.
+            System.Text.Json.JsonElement arguments = proposal.CapabilityRequest.Arguments;
+            bool refreshing = arguments.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                arguments.TryGetProperty("refreshStoredCredential", out var refreshValue) &&
+                refreshValue.ValueKind == System.Text.Json.JsonValueKind.True;
             int submitted;
             lock (_stateSync)
                 submitted = _work.Values.Count(item =>
@@ -912,8 +923,12 @@ public sealed class NIRABranchWorkService
                     item.CapabilityRequest?.CapabilityId == NIRACapabilityIds.BrowserAuthenticate &&
                     item.ResultSummary?.StartsWith("CredentialSubmitted=True;",
                         StringComparison.Ordinal) == true);
-            if (submitted >= 2)
-                return Reject("AuthenticationRetryBudgetReached: the task already recorded two credential submissions. Inspect results and report the blocker; do not submit the same account again or ask for a third password.");
+            if (submitted >= 2 || (submitted >= 1 && !refreshing))
+                return Reject("AuthenticationRetryBudgetReached: a login submission " +
+                    "already occurred for this goal. Do not repeat the same " +
+                    "credentials. Continue from a verified post-login page, " +
+                    "navigate to the correct login role, or request ONE " +
+                    "broker-verified replacement only after explicit site rejection.");
         }
 
         lock (_stateSync)

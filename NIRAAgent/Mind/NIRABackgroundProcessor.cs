@@ -15,6 +15,10 @@ public sealed class NIRABackgroundProcessor
     private readonly NIRAOutputDispatcher
         _dispatcher;
 
+    // One coordinating mind: independent branch workers may finish together,
+    // but their internal cognition must not race on the same goal/branch graph.
+    private readonly SemaphoreSlim _internalCognitionGate = new(1, 1);
+
 
     public NIRABackgroundProcessor(
         NIRAMindRuntime runtime,
@@ -41,11 +45,19 @@ public sealed class NIRABackgroundProcessor
             mindEvent);
 
 
-        await PublishAsync(
-            _runtime.ProcessInternalAsync(
-                mindEvent,
-                cancellationToken),
-            cancellationToken);
+        await _internalCognitionGate.WaitAsync(cancellationToken);
+        try
+        {
+            await PublishAsync(
+                _runtime.ProcessInternalAsync(
+                    mindEvent,
+                    cancellationToken),
+                cancellationToken);
+        }
+        finally
+        {
+            _internalCognitionGate.Release();
+        }
     }
 
 
@@ -105,3 +117,4 @@ public sealed class NIRABackgroundProcessor
         }
     }
 }
+

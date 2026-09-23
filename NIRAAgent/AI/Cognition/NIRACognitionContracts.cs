@@ -3,6 +3,7 @@
  */
 
 using NIRAAgent.Character.State;
+using NIRAAgent.Conversation;
 using NIRAAgent.Character.Appraisal;
 using NIRAAgent.Capabilities;
 using NIRAAgent.Branches;
@@ -11,6 +12,7 @@ using NIRAAgent.Goals;
 using NIRAAgent.Voice;
 using NIRAAgent.Tools;
 using NIRAAgent.Artifacts;
+using NIRAAgent.Presentation;
 
 namespace NIRAAgent.AI.Cognition;
 
@@ -30,6 +32,23 @@ public enum NIRAReplyPresentationMode
     PreserveExact
 }
 
+
+public enum NIRAControlOperation
+{
+    CancelAllBranches,
+    CancelOneBranch,
+    CancelAllCommitments,
+    CancelAllBranchesAndCommitments
+}
+
+// A model may classify explicit user intent, but cannot select a stale inventory
+// or authorize mutations. Executive verifies quote, ownership and current state.
+public sealed record NIRAControlRequest
+{
+    public NIRAControlOperation Operation { get; init; }
+    public string EvidenceQuote { get; init; } = string.Empty;
+    public string? BranchId { get; init; }
+}
 
 public sealed record NIRACognitionDecision
 {
@@ -56,6 +75,10 @@ public sealed record NIRACognitionDecision
         string.Empty;
 
 
+    // Spoken output differs from on-screen prose; empty falls back to Reply.
+    public string Speech { get; init; } = string.Empty;
+    public IReadOnlyList<NIRARichBlock> DisplayBlocks { get; init; } = Array.Empty<NIRARichBlock>();
+
     public NIRAReplyPresentationMode ReplyPresentation
     {
         get;
@@ -64,6 +87,11 @@ public sealed record NIRACognitionDecision
         NIRAReplyPresentationMode.Natural;
 
 
+    // Optional public progress. Not internal reasoning; never proof of an action.
+    public string ProgressUpdate { get; init; } = string.Empty;
+    public string ProgressSpeech { get; init; } = string.Empty;
+    public bool ProgressCorrection { get; init; }
+
     public string DecisionSummary
     {
         get;
@@ -71,6 +99,25 @@ public sealed record NIRACognitionDecision
     } =
         string.Empty;
 
+
+    public IReadOnlyList<NIRAControlRequest> ControlRequests { get; init; } = Array.Empty<NIRAControlRequest>();
+
+    // On-demand context is a model proposal; no user-text keyword matching.
+    // The Executive validates sections and caps expansion per run.
+    public IReadOnlyList<string> ContextRequests { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<string> CapabilityIds { get; init; } = Array.Empty<string>();
+    // Explicit opt-in: skip a second stylistic model call for a complete
+    // self-contained reply. False retains legacy final realization.
+    public bool ReplyReady { get; init; }
+    // Explicit false is permitted only for a direct informational turn
+    // without new durable facts, preference, commitment, or significant event.
+    public bool ReviewExperience { get; init; } = true;
+    // Exact source excerpt for optional user-originated formation; the
+    // Executive checks it against the real user message before extra LLM work.
+    public string NovelExperienceEvidence { get; init; } = string.Empty;
+
+    public IReadOnlyList<NIRAConversationSearchRequest> ConversationSearches { get; init; }
+        = Array.Empty<NIRAConversationSearchRequest>();
 
     public IReadOnlyList<NIRAMemorySearchRequest> MemorySearches
     {
@@ -273,3 +320,6 @@ public sealed record NIRACognitionAppraisalProposal
         init;
     }
 }
+
+
+

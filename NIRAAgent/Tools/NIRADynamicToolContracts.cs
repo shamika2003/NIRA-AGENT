@@ -283,6 +283,10 @@ public sealed record NIRADynamicToolProposal
     public NIRADynamicToolDefinition? Definition { get; init; }
     public string Reason { get; init; } = string.Empty;
     public double Confidence { get; init; }
+    // Optional one-call bounded execution: only a validated newly CREATED
+    // Temporary tool may be invoked this cycle, with its committed GUID.
+    public bool RunAfterCreate { get; init; }
+    public JsonElement InvocationArguments { get; init; }
 
     public NIRADynamicToolProposal Normalize()
     {
@@ -290,12 +294,26 @@ public sealed record NIRADynamicToolProposal
         if (reason.Length > 1600)
             throw new InvalidOperationException("Dynamic tool proposal reason is too long.");
 
+        JsonElement invocationArguments;
+        if (InvocationArguments.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+        {
+            using JsonDocument empty = JsonDocument.Parse("{}");
+            invocationArguments = empty.RootElement.Clone();
+        }
+        else if (InvocationArguments.ValueKind == JsonValueKind.Object)
+            invocationArguments = InvocationArguments.Clone();
+        else
+            throw new InvalidOperationException(
+                "Dynamic tool invocationArguments must be a JSON object.");
+
         return this with
         {
             ToolId = string.IsNullOrWhiteSpace(ToolId) ? null : ToolId.Trim(),
             Definition = Definition?.Normalize(),
             Reason = reason,
-            Confidence = Math.Clamp(Confidence, 0.0, 1.0)
+            Confidence = Math.Clamp(Confidence, 0.0, 1.0),
+            RunAfterCreate = Action == NIRADynamicToolProposalAction.Create && RunAfterCreate,
+            InvocationArguments = invocationArguments
         };
     }
 
@@ -309,7 +327,10 @@ public sealed record NIRADynamicToolProposal
             normalized.Action,
             normalized.ToolId ?? string.Empty,
             definition,
-            normalized.Reason.ToLowerInvariant());
+            normalized.Reason.ToLowerInvariant(),
+            normalized.RunAfterCreate,
+            normalized.RunAfterCreate
+                ? normalized.InvocationArguments.GetRawText() : string.Empty);
     }
 }
 

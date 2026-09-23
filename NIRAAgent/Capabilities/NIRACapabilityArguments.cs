@@ -41,7 +41,10 @@ internal static class NIRACapabilityArguments
         if (!TryGetProperty(
                 request,
                 name,
-                out JsonElement value))
+                out JsonElement value) &&
+            !(name.Equals("ref", StringComparison.OrdinalIgnoreCase) &&
+              request.CapabilityId.StartsWith("browser.", StringComparison.OrdinalIgnoreCase) &&
+              TryGetProperty(request, "elementRef", out value)))
         {
             return null;
         }
@@ -436,4 +439,5 @@ internal static class NIRACapabilityArguments
         return false;
     }
 }
+
 

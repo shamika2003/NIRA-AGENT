@@ -295,9 +295,66 @@ public sealed class NIRACognitionContextBuilder
         Guid? contextGoalId = mindEvent.Metadata.TryGetValue("goalId", out string? contextGoalText)
             && Guid.TryParse(contextGoalText, out Guid parsedContextGoal)
                 ? parsedContextGoal : null;
+        // The current work-result event already carries its complete fresh
+        // document. Avoid re-injecting an older branch inspection (often the
+        // PRE-login page) alongside it and misleading the next model call.
+        bool currentEventCarriesPageObservation =
+            mindEvent.Name == "PersistentBranchWorkResult" &&
+            (mindEvent.Content.Contains("POST_AUTHENTICATION_INSPECTION:", StringComparison.Ordinal) ||
+             mindEvent.Content.Contains("CURRENT_PAGE_INSPECTION (read-only, same work item):", StringComparison.Ordinal) ||
+             mindEvent.Content.Contains("UNTRUSTED_WEB_CONTENT", StringComparison.Ordinal));
         string branchWorkContext =
             _branchWork
-                .BuildCognitionContext(contextGoalId);
+                .BuildCognitionContext(contextGoalId, !currentEventCarriesPageObservation);
+
+        // Authoritative owner is never guessed from wording or an old tool
+        // result. Keep the exact original objective in every branch-result
+        // cognition call even when the global goal/branch catalog is shortened.
+        string ownedTaskContext = string.Empty;
+        if (contextGoalId is Guid ownedGoal &&
+            _goals.TryGetGoal(ownedGoal, out NIRAGoalState? taskGoal) &&
+            taskGoal != null)
+        {
+            ownedTaskContext = $"GoalId={taskGoal.Id:D}; Status={taskGoal.Status}; " +
+                $"OriginalObjective={taskGoal.Objective}\n" +
+                "CompletionCriteria:\n" +
+                string.Join("\n", taskGoal.CompletionCriteria.Select(c => "- " + c)) +
+                $"\nCurrentBlocker={taskGoal.Blocker ?? "-"}";
+            // The final synthesis must see ALL peer deliverables, not just
+            // the branch whose terminal event happened to arrive last. Build
+            // this from committed states, never from unreviewed work receipts.
+            if (mindEvent.Name == "PersistentBranchResult")
+            {
+                NIRABranchState[] requiredPeers = _branches.GetForGoal(ownedGoal)
+                    .Where(b => b.JoinPolicy == NIRABranchJoinPolicy.Required)
+                    .ToArray();
+                if (requiredPeers.Length > 1 && requiredPeers.All(b =>
+                    b.Status == NIRABranchStatus.Completed &&
+                    !string.IsNullOrWhiteSpace(b.ResultSummary)))
+                {
+                    ownedTaskContext += "\nALL REQUIRED BRANCH RESULTS VERIFIED. " +
+                        "Combine these into the user's requested final deliverable; " +
+                        "do not return only the most recent branch:\n";
+                    foreach (NIRABranchState peer in requiredPeers)
+                    {
+                        string summary = peer.ResultSummary!.Trim();
+                        ownedTaskContext += $"Branch={peer.Id:D}; " +
+                            $"Objective={peer.Objective}\n" +
+                            summary[..Math.Min(summary.Length, 1400)] + "\n";
+                    }
+                }
+            }
+            if (mindEvent.Metadata.TryGetValue("branchId", out string? branchText) &&
+                Guid.TryParse(branchText, out Guid taskBranchId) &&
+                _branches.TryGetBranch(taskBranchId, out NIRABranchState? taskBranch) &&
+                taskBranch != null && taskBranch.GoalId == ownedGoal)
+            {
+                ownedTaskContext += $"\nBranchId={taskBranch.Id:D}; " +
+                    $"BranchStatus={taskBranch.Status}; " +
+                    $"BranchObjective={taskBranch.Objective}\nBranchCriteria:\n" +
+                    string.Join("\n", taskBranch.CompletionCriteria.Select(c => "- " + c));
+            }
+        }
 
 
         string capabilityContext =
@@ -494,6 +551,9 @@ public sealed class NIRACognitionContextBuilder
             SelfModelContext =
                 selfModelContext,
 
+            OwnedTaskContext =
+                ownedTaskContext,
+
             GoalContext =
                 goalContext,
 
@@ -550,3 +610,4 @@ public sealed class NIRACognitionContextBuilder
         };
     }
 }
+

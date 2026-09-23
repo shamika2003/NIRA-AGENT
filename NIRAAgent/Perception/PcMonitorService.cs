@@ -112,20 +112,9 @@ public sealed class PcMonitorService
                 if (perception !=
                     null)
                 {
-                    Debug.WriteLine(
-                        $"[PcMonitor] EVENT DETECTED: " +
-                        $"{perception.Type}");
-
-
-                    if (!_attention.IsPerceptionEnabled(
-                            perception))
+                    if (_attention.IsPerceptionEnabled(perception))
                     {
-                        Debug.WriteLine(
-                            $"[PcMonitor] EVENT IGNORED BY SETTINGS: " +
-                            $"{perception.Type}");
-                    }
-                    else
-                    {
+                        Debug.WriteLine($"[PcMonitor] EVENT ACTIVE: {perception.Type}");
                         NIRASocialEvent
                             socialEvent =
                                 _socialHistory.Record(

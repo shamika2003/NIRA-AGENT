@@ -1137,11 +1137,13 @@ public sealed class NIRACharacterDynamicsService
         double value,
         double delta)
     {
-        return Math.Clamp(
-            value +
-            delta,
-            0.0,
-            1.0);
+        // Positive experiences have diminishing impact near saturation;
+        // negative experiences can still move the state away from the ceiling.
+        // No hard cap such as 0.8 or canned mood reset is required.
+        value = Math.Clamp(value, 0.0, 1.0);
+        return delta >= 0.0
+            ? value + (1.0 - value) * (1.0 - Math.Exp(-delta))
+            : value * Math.Exp(delta);
     }
 
 
@@ -1149,11 +1151,10 @@ public sealed class NIRACharacterDynamicsService
         double value,
         double delta)
     {
-        return Math.Clamp(
-            value +
-            delta,
-            -1.0,
-            1.0);
+        value = Math.Clamp(value, -1.0, 1.0);
+        return delta >= 0.0
+            ? value + (1.0 - value) * (1.0 - Math.Exp(-delta))
+            : value - (1.0 + value) * (1.0 - Math.Exp(delta));
     }
 
 

@@ -4,6 +4,7 @@
 
 using System.Diagnostics;
 using System.Text;
+using NIRAAgent.Presentation;
 
 namespace NIRAAgent.Conversation;
 
@@ -63,6 +64,13 @@ public sealed class ConversationManager
     // =========================================================
     // STATE
     // =========================================================
+
+    private readonly NIRAConversationArchiveStore _archive;
+
+    public ConversationManager(NIRAConversationArchiveStore archive)
+    {
+        _archive = archive ?? throw new ArgumentNullException(nameof(archive));
+    }
 
     private readonly object
         _sync =
@@ -136,11 +144,13 @@ public sealed class ConversationManager
     // =========================================================
 
     public void AddUserMessage(
-        string content)
+        string content,
+        Guid? sourceEventId = null)
     {
         AddMessage(
             "user",
-            content);
+            content,
+            sourceEventId);
     }
 
 
@@ -148,12 +158,15 @@ public sealed class ConversationManager
     // ADD ASSISTANT
     // =========================================================
 
-    public void AddAssistantMessage(
-        string content)
+    public Guid? AddAssistantMessage(
+        string content,
+        Guid? sourceEventId = null,
+        NIRAPresentationSnapshot? presentation = null)
     {
-        AddMessage(
+        return AddMessage(
             "assistant",
-            content);
+            content,
+            sourceEventId, presentation);
     }
 
 
@@ -161,9 +174,11 @@ public sealed class ConversationManager
     // ADD
     // =========================================================
 
-    private void AddMessage(
+    private Guid? AddMessage(
         string role,
-        string content)
+        string content,
+        Guid? sourceEventId,
+        NIRAPresentationSnapshot? presentation = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(
             role);
@@ -181,6 +196,17 @@ public sealed class ConversationManager
         string normalizedContent =
             content.Trim();
 
+
+        // Store the actual utterance independently of the bounded prompt window.
+        // Do not add a second LLM call to persist conversation.
+        Guid? archivedMessageId = null;
+        try { archivedMessageId = _archive.Append(normalizedRole, normalizedContent, sourceEventId, presentation); }
+        catch (Exception ex)
+        {
+            // Chat remains usable under disk failure, but never claim the turn
+            // was durably saved. Leave an actionable diagnostic in output.
+            Debug.WriteLine($"[ConversationArchive] SAVE_FAILED | {ex.GetType().Name}: {ex.Message}");
+        }
 
         int removed;
 
@@ -206,6 +232,7 @@ public sealed class ConversationManager
                 $"Removed={removed} | " +
                 $"Retained={Count}");
         }
+        return archivedMessageId;
     }
 
 
@@ -723,3 +750,5 @@ public sealed record ConversationContextSnapshot
     } =
         string.Empty;
 }
+
+

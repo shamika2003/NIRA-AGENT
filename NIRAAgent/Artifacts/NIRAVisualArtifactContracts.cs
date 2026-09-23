@@ -38,8 +38,34 @@ public enum NIRAVisualArtifactPresentationSurface
 }
 
 
+// Coordinates are fractions of the SOURCE IMAGE, not chat/window pixels.
+// They must be supplied from grounded visual evidence or explicit user geometry.
+public sealed record NIRAVisualAnnotation
+{
+    public string Kind { get; init; } = "rectangle"; // rectangle | arrow
+    public double X { get; init; }
+    public double Y { get; init; }
+    public double Width { get; init; }
+    public double Height { get; init; }
+    public string Label { get; init; } = string.Empty;
+
+    public NIRAVisualAnnotation Normalize()
+    {
+        if (Kind is not ("rectangle" or "arrow") ||
+            !double.IsFinite(X) || !double.IsFinite(Y) ||
+            !double.IsFinite(Width) || !double.IsFinite(Height) ||
+            X < 0 || Y < 0 || Width <= 0 || Height <= 0 ||
+            X + Width > 1.000001 || Y + Height > 1.000001)
+            throw new InvalidOperationException("Visual annotation coordinates must be finite fractions inside the actual screenshot.");
+        string label = (Label ?? string.Empty).Trim();
+        return this with { Label = label.Length > 140 ? label[..140] : label };
+    }
+}
+
 public sealed record NIRAVisualArtifactPresentationRequest
 {
+    public IReadOnlyList<NIRAVisualAnnotation> Annotations { get; init; } = Array.Empty<NIRAVisualAnnotation>();
+
     public Guid? EvidenceId
     {
         get;
@@ -109,6 +135,8 @@ public sealed record NIRAVisualArtifactPresentationRequest
                 "A visual presentation request requires a grounded evidenceId or localPath.");
         }
 
+        NIRAVisualAnnotation[] annotations = (Annotations ?? Array.Empty<NIRAVisualAnnotation>())
+            .Take(12).Select(annotation => annotation.Normalize()).ToArray();
         string title = NormalizeText(Title, 180);
         string caption = NormalizeText(Caption, 1000);
         string sourceUri = NormalizeText(SourceUri, 1600);
@@ -126,7 +154,8 @@ public sealed record NIRAVisualArtifactPresentationRequest
             LocalPath = localPath,
             Title = title,
             Caption = caption,
-            SourceUri = sourceUri
+            SourceUri = sourceUri,
+            Annotations = annotations
         };
     }
 
@@ -145,7 +174,9 @@ public sealed record NIRAVisualArtifactPresentationRequest
             normalized.Surface.ToString(),
             normalized.Title,
             normalized.Caption,
-            normalized.SourceUri);
+            normalized.SourceUri,
+            string.Join(";", normalized.Annotations.Select(a =>
+                $"{a.Kind}:{a.X:R}:{a.Y:R}:{a.Width:R}:{a.Height:R}:{a.Label}")));
     }
 
 
@@ -174,6 +205,8 @@ public sealed record NIRAVisualArtifactPresentationRequest
 
 public sealed record NIRAVisualArtifact
 {
+    public IReadOnlyList<NIRAVisualAnnotation> Annotations { get; init; } = Array.Empty<NIRAVisualAnnotation>();
+
     public Guid ArtifactId
     {
         get;

@@ -15,7 +15,7 @@ public sealed class NIRATaskCompletionReviewService
     public const string ModelEnvironmentVariable = "NIRA_OLLAMA_COMPLETION_REVIEW_MODEL";
     private const string DefaultModel = "gpt-oss:120b-cloud";
     private const int MaxObjective = 5000;
-    private const int MaxDraft = 4500;
+    private const int MaxDraft = 12000;
     private const int MaxEvidence = 18000;
     private readonly OllamaClient _ollama;
     private readonly NIRATemporalContextService _temporal;
@@ -97,6 +97,18 @@ public sealed class NIRATaskCompletionReviewService
             time range, deadline or status, distinguish past/current/upcoming using
             the date AND timezone. Never confuse scheduled end with proof that a
             real meeting/connection closed. Do not invent missing dates or times.
+            Cross-check each MATERIAL factual assertion in the draft against
+            the actual execution evidence. A model-written result summary is
+            not independent evidence that the cited site exposed that result.
+            A list of course titles, navigation options or assessment topics
+            must not be substituted for an available lecture timetable when
+            the request asks for scheduled lectures. When the site exposes
+            dates, times or joining arrangements relevant to the objective,
+            require them in the answer rather than announcing a generic list.
+            If the draft claims it "sent", "gave", or "provided" details but
+            the details are missing from the user-facing reply, return NeedsWork.
+            If the current page is an adjacent but unproven section, return
+            NeedsWork with the next evidence-producing navigation or inspect.
             Only call a task Complete when the DRAFT accurately answers the objective
             and its material temporal interpretation. Output a JSON object ONLY:
             {"verdict":"Complete|NeedsWork|Blocked","gap":"brief factual missing requirement","nextStep":"brief next evidence/answer needed"}
@@ -205,3 +217,4 @@ public sealed record NIRATaskCompletionReview(
 {
     public bool NeedsReconsideration => Verdict is "NeedsWork" or "Blocked";
 }
+

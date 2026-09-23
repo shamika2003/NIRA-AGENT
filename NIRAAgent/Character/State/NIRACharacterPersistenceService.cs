@@ -135,8 +135,12 @@ public sealed class NIRACharacterPersistenceService
     {
         try
         {
-            _store.Save(
-                _state.Current);
+            NIRACharacterSnapshot snapshot = _state.Current;
+            _store.Save(snapshot);
+            Debug.WriteLine(
+                $"[CharacterContinuity] SAVED | Version={snapshot.Version} | " +
+                $"Mood={snapshot.Mood.Valence:F3}/{snapshot.Mood.Amusement:F3}/" +
+                $"{snapshot.Mood.Irritation:F3}/{snapshot.Mood.Concern:F3}");
         }
         catch (Exception ex)
         {
@@ -165,3 +169,4 @@ public sealed class NIRACharacterPersistenceService
         _saveTimer.Dispose();
     }
 }
+

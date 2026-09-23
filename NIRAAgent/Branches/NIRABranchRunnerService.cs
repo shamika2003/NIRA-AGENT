@@ -44,6 +44,8 @@ public sealed class NIRABranchRunnerService
     private readonly NIRACapabilityService
         _capabilities;
 
+    private readonly NIRACapabilityRegistry _capabilityRegistry;
+
     private readonly NIRADynamicToolService
         _dynamicTools;
 
@@ -60,6 +62,10 @@ public sealed class NIRABranchRunnerService
     private readonly ConcurrentDictionary<Guid, byte>
         _queuedWorkResults =
             new();
+
+    // One failed fan-in never re-batches the same durable result forever.
+    // Its next wake is delivered alone and can receive its own outcome review.
+    private readonly ConcurrentDictionary<Guid, byte> _fanInAttempted = new();
 
     // Result events are durable through NIRABranchWorkService until cognition
     // successfully consumes them. If cognition is temporarily unavailable
@@ -103,6 +109,7 @@ public sealed class NIRABranchRunnerService
         NIRABranchService branches,
         NIRABranchWorkService work,
         NIRACapabilityService capabilities,
+        NIRACapabilityRegistry capabilityRegistry,
         NIRADynamicToolService dynamicTools,
         NIRABackgroundProcessor background,
         NIRAAuthorityExecutionContextAccessor authorityContext)
@@ -121,6 +128,9 @@ public sealed class NIRABranchRunnerService
             capabilities
             ?? throw new ArgumentNullException(
                 nameof(capabilities));
+
+        _capabilityRegistry = capabilityRegistry
+            ?? throw new ArgumentNullException(nameof(capabilityRegistry));
 
         _dynamicTools =
             dynamicTools
@@ -251,8 +261,20 @@ public sealed class NIRABranchRunnerService
             _work.GetRunnableWork(
                 MaximumConcurrentBranchWork * 4);
 
+        // Distinct branches may overlap, but a single persistent responsibility
+        // must NOT dispatch two steps against the same browser/app state at once.
+        // Work in one branch stays ordered: result -> NIRA decision -> next step.
+        HashSet<Guid> busyBranchIds = _running.Values
+            .Select(handle => handle.BranchId)
+            .ToHashSet();
+
         foreach (NIRABranchWorkItem item in candidates)
         {
+            if (busyBranchIds.Contains(item.BranchId))
+            {
+                continue;
+            }
+
             if (available <= 0)
             {
                 break;
@@ -280,6 +302,10 @@ public sealed class NIRABranchRunnerService
                 cancellation.Dispose();
                 continue;
             }
+
+            // Reserve only after the work item was accepted. Separate branches
+            // remain concurrent up to the existing MaxConcurrent limit.
+            busyBranchIds.Add(item.BranchId);
 
             handle.Task =
                 RunAssignedWorkAsync(
@@ -673,37 +699,140 @@ public sealed class NIRABranchRunnerService
         }
     }
 
+    // Fan-in is deliberately short and restricted to read-only results from
+    // DIFFERENT branches of the SAME goal. Mutations, failed work, large page
+    // snapshots, or unrelated goals retain the original individual delivery.
+    // Never wait for a slower branch: this is a small scheduling window only.
+    private static readonly TimeSpan WorkResultFanInWindow =
+        TimeSpan.FromMilliseconds(140);
+
+    private const int MaximumReadOnlyResultBatch = 4;
+    private const int MaximumResultEvidenceForBatch = 9000;
+
+    private bool IsBatchableObservation(NIRABranchWorkResultEvent result)
+    {
+        if (!result.Succeeded ||
+            result.Kind != NIRABranchWorkKind.Capability ||
+            result.ResultEvidence.Length > MaximumResultEvidenceForBatch ||
+            !_work.TryGetWork(result.WorkId, out NIRABranchWorkItem? work) ||
+            work?.CapabilityRequest == null)
+            return false;
+
+        // Trust the registered capability descriptors, never a string inside
+        // a website's untrusted response claiming to be a read-only action.
+        NIRACapabilityRequest[] steps = new[] { work.CapabilityRequest }
+            .Concat(work.CapabilityRequest.ContinuationRequests ??
+                Array.Empty<NIRACapabilityRequest>()).ToArray();
+        try
+        {
+            return steps.All(step =>
+                _capabilityRegistry.TryResolve(step.CapabilityId,
+                    out INIRACapabilityHandler? handler) &&
+                handler != null &&
+                handler.ResolveRisk(step) == NIRACapabilityRisk.Observe);
+        }
+        catch (Exception)
+        {
+            // An unclassifiable action must be delivered on its own.
+            return false;
+        }
+    }
+
     private async Task ProcessWorkResultEventsAsync(
         CancellationToken stoppingToken)
     {
+        List<NIRABranchWorkResultEvent> pending = new();
         try
         {
-            await foreach (NIRABranchWorkResultEvent result
-                           in _workResultEvents.Reader.ReadAllAsync(
-                               stoppingToken))
+            while (!stoppingToken.IsCancellationRequested)
             {
+                if (pending.Count == 0)
+                {
+                    if (!await _workResultEvents.Reader.WaitToReadAsync(stoppingToken))
+                        break;
+                }
+
+                while (_workResultEvents.Reader.TryRead(out NIRABranchWorkResultEvent drained))
+                    pending.Add(drained);
+                if (pending.Count == 0)
+                    continue;
+
+                NIRABranchWorkResultEvent first = pending[0];
+                pending.RemoveAt(0);
+
+                if (IsBatchableObservation(first) &&
+                    !_fanInAttempted.ContainsKey(first.WorkId) &&
+                    pending.Count == 0 &&
+                    _running.Values.Any(handle =>
+                        handle.BranchId != first.BranchId &&
+                        _branches.TryGetBranch(handle.BranchId,
+                            out NIRABranchState? peer) &&
+                        peer?.GoalId == first.GoalId))
+                {
+                    // A still-running peer may finish just after this result.
+                    // A peer that takes longer NEVER blocks the first result.
+                    await Task.Delay(WorkResultFanInWindow, stoppingToken);
+                    while (_workResultEvents.Reader.TryRead(out NIRABranchWorkResultEvent late))
+                        pending.Add(late);
+                }
+
+                List<NIRABranchWorkResultEvent> batch = new() { first };
+                if (IsBatchableObservation(first) &&
+                    !_fanInAttempted.ContainsKey(first.WorkId))
+                {
+                    for (int i = 0; i < pending.Count &&
+                         batch.Count < MaximumReadOnlyResultBatch;)
+                    {
+                        NIRABranchWorkResultEvent candidate = pending[i];
+                        if (candidate.GoalId == first.GoalId &&
+                            candidate.BranchId != first.BranchId &&
+                            !batch.Any(item => item.BranchId == candidate.BranchId) &&
+                            !_fanInAttempted.ContainsKey(candidate.WorkId) &&
+                            batch.Sum(item => item.ResultEvidence.Length) +
+                                candidate.ResultEvidence.Length <= 14000 &&
+                            IsBatchableObservation(candidate))
+                        {
+                            batch.Add(candidate);
+                            pending.RemoveAt(i);
+                        }
+                        else
+                        {
+                            i++;
+                        }
+                    }
+                }
+
                 try
                 {
-                    Debug.WriteLine(
-                        $"[BranchRunner] WORK RESULT EVENT | " +
-                        $"Work={result.WorkId:D} | " +
-                        $"Branch={result.BranchId:D} | " +
-                        $"Goal={result.GoalId:D} | " +
-                        $"Kind={result.Kind} | " +
-                        $"Status={result.Status}");
+                    Debug.WriteLine($"[BranchRunner] WORK RESULT FAN-IN | " +
+                        $"Goal={first.GoalId:D} | Batch={batch.Count} | " +
+                        $"Work={string.Join(",", batch.Select(item => item.WorkId.ToString("D")))}");
 
                     await _background.ProcessInternalAsync(
-                        NIRAMindEvent.BranchWorkResult(
-                            result),
+                        NIRAMindEvent.BranchWorkResultBatch(batch),
                         stoppingToken);
 
-                    await _work.MarkResultNotifiedAsync(
-                        result.WorkId,
-                        stoppingToken);
+                    if (batch.Count > 1)
+                        foreach (NIRABranchWorkResultEvent result in batch)
+                            _fanInAttempted.TryAdd(result.WorkId, 0);
 
-                    _workResultDeliveryRetries.TryRemove(
-                        result.WorkId,
-                        out _);
+                    foreach (NIRABranchWorkResultEvent result in batch)
+                    {
+                        // Every member of a multi-result cognition turn needs
+                        // its OWN committed continuation or verified completion.
+                        // Otherwise deliver it alone on the next durable poll.
+                        if (batch.Count > 1 && !WasSiblingHandled(result))
+                        {
+                            Debug.WriteLine($"[BranchRunner] FAN-IN SIBLING DEFERRED | " +
+                                $"Work={result.WorkId:D} | " +
+                                "Reason=NoCommittedNextStepOrReviewedCompletion");
+                            continue;
+                        }
+                        await _work.MarkResultNotifiedAsync(
+                            result.WorkId, stoppingToken);
+                        _workResultDeliveryRetries.TryRemove(result.WorkId, out _);
+                        _fanInAttempted.TryRemove(result.WorkId, out _);
+                    }
                 }
                 catch (OperationCanceledException)
                     when (stoppingToken.IsCancellationRequested)
@@ -712,27 +841,23 @@ public sealed class NIRABranchRunnerService
                 }
                 catch (Exception ex)
                 {
-                    WorkResultDeliveryRetryState retry =
-                        ScheduleWorkResultRetry(
-                            result.WorkId);
-
-                    Debug.WriteLine(
-                        $"[BranchRunner] WORK RESULT EVENT ERROR | " +
-                        $"Work={result.WorkId:D} | " +
-                        $"RetryAttempt={retry.Attempt} | " +
-                        $"RetryAfter={retry.RetryAfterUtc:O} | {ex}");
-
-                    Debug.WriteLine(
-                        $"[BranchRunner] WORK RESULT RETRY SCHEDULED | " +
-                        $"Work={result.WorkId:D} | " +
-                        $"Attempt={retry.Attempt} | " +
-                        $"Delay={FormatRetryDelay(retry.RetryAfterUtc - DateTimeOffset.UtcNow)}");
+                    if (batch.Count > 1)
+                        foreach (NIRABranchWorkResultEvent result in batch)
+                            _fanInAttempted.TryAdd(result.WorkId, 0);
+                    foreach (NIRABranchWorkResultEvent result in batch)
+                    {
+                        WorkResultDeliveryRetryState retry =
+                            ScheduleWorkResultRetry(result.WorkId);
+                        Debug.WriteLine($"[BranchRunner] WORK RESULT DELIVERY ERROR | " +
+                            $"Work={result.WorkId:D} | " +
+                            $"RetryAttempt={retry.Attempt} | " +
+                            $"RetryAfter={retry.RetryAfterUtc:O} | {ex}");
+                    }
                 }
                 finally
                 {
-                    _queuedWorkResults.TryRemove(
-                        result.WorkId,
-                        out _);
+                    foreach (NIRABranchWorkResultEvent result in batch)
+                        _queuedWorkResults.TryRemove(result.WorkId, out _);
                 }
             }
         }
@@ -740,6 +865,24 @@ public sealed class NIRABranchRunnerService
             when (stoppingToken.IsCancellationRequested)
         {
         }
+    }
+
+    private bool WasSiblingHandled(NIRABranchWorkResultEvent result)
+    {
+        if (!_branches.TryGetBranch(result.BranchId, out NIRABranchState? branch) ||
+            branch == null || branch.GoalId != result.GoalId)
+            return false;
+
+        if (branch.IsResolved || branch.Status is
+            NIRABranchStatus.Waiting or NIRABranchStatus.Blocked)
+            return true;
+
+        // Another step is committed under the SAME branch; an unrelated
+        // branch's success or a model's progress prose is never sufficient.
+        return _work.CurrentWork.Any(next =>
+            next.BranchId == result.BranchId &&
+            next.Id != result.WorkId &&
+            next.CreatedAtUtc >= result.FinishedAtUtc);
     }
 
     private void Branches_BranchResolved(

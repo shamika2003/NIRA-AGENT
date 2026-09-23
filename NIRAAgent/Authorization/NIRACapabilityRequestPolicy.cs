@@ -119,7 +119,7 @@ public sealed class NIRACapabilityRequestPolicy
             string? rawPageId = NIRACapabilityArguments.GetOptionalString(request, "pageId", 80);
             Guid pageId;
             if (string.IsNullOrWhiteSpace(rawPageId))
-                pageId = _browser.TryGetSoleOwnedPageId() ??
+                pageId = _browser.TryGetActiveOwnedPageId() ??
                     throw new InvalidOperationException(
                         "AmbiguousBrowserPage: call browser.current and browser.inspect to select the correct task-owned page; never ask the user for a runtime GUID.");
             else if (!Guid.TryParse(rawPageId, out pageId) || pageId == Guid.Empty)
@@ -135,16 +135,36 @@ public sealed class NIRACapabilityRequestPolicy
             string? submitRef = NIRACapabilityArguments.GetOptionalString(request, "submitRef", 80);
 
             if (string.IsNullOrWhiteSpace(usernameRef) && string.IsNullOrWhiteSpace(passwordRef))
-                throw new InvalidOperationException("MissingLoginFields: browser.authenticate needs at least a usernameRef or passwordRef from the currently inspected login form. Do not retry with missing refs or ask the user for internal IDs.");
-
-            foreach (string elementRef in new[] { usernameRef, passwordRef, submitRef }
-                         .Where(value => !string.IsNullOrWhiteSpace(value))
-                         .Select(value => value!))
             {
-                if (!_browser.IsGroundedElementRef(pageId, elementRef))
-                    throw new InvalidOperationException(
-                        "StaleLoginFields: one or more element refs are not part of the current browser.inspect for this page. These temporary references cannot be reused after another inspection or a navigation. Use only the CURRENT inspection's fields and do not repeat rejected credentials.");
+                // A unique password field from the actual latest inspection is
+                // authoritative DOM evidence, not a model-guessed selector.
+                if (_browser.TryGetUniqueInspectedLoginRefs(pageId,
+                    out string? inspectedUsername, out string? inspectedPassword,
+                    out string? inspectedSubmit))
+                {
+                    usernameRef = inspectedUsername;
+                    passwordRef = inspectedPassword;
+                    if (string.IsNullOrWhiteSpace(submitRef)) submitRef = inspectedSubmit;
+                    if (!string.IsNullOrWhiteSpace(usernameRef))
+                        args["usernameref"] = JsonSerializer.SerializeToElement(usernameRef);
+                    if (!string.IsNullOrWhiteSpace(passwordRef))
+                        args["passwordref"] = JsonSerializer.SerializeToElement(passwordRef);
+                    if (!string.IsNullOrWhiteSpace(submitRef))
+                        args["submitref"] = JsonSerializer.SerializeToElement(submitRef);
+                    Debug.WriteLine($"[BrowserFlow] AUTH REFS RESOLVED | Page={pageId:D} | " +
+                        $"Username={usernameRef != null} | Password={passwordRef != null} | Submit={submitRef != null}");
+                }
+                else
+                    throw new InvalidOperationException("MissingLoginFields: no unique inspected password field; inspect the current login form and use its exact field refs. The secure credential UI was not invoked.");
             }
+
+            // Keep live page/origin authorization in this trusted preparation
+            // layer, but defer ephemeral DOM-ref validation to the handler's
+            // credential-safe preflight. The handler can then return a FRESH
+            // inspection when a ref is stale, without ever retrieving a secret.
+            // Crucially, do NOT treat this as permission to submit an ungrounded
+            // control: EnsureAuthenticationMayProceedAsync validates all refs
+            // immediately before the trusted credential broker is consulted.
 
             args["pageid"] = JsonSerializer.SerializeToElement(pageId.ToString("D"));
             args["__origin"] = JsonSerializer.SerializeToElement(browserOrigin);
@@ -155,7 +175,7 @@ public sealed class NIRACapabilityRequestPolicy
             string? rawPageId = NIRACapabilityArguments.GetOptionalString(request, "pageId", 80);
             Guid pageId;
             if (string.IsNullOrWhiteSpace(rawPageId))
-                pageId = _browser.TryGetSoleOwnedPageId() ??
+                pageId = _browser.TryGetActiveOwnedPageId() ??
                     throw new InvalidOperationException("AmbiguousBrowserPage: inspect/select your task-owned page; never ask the human for a page GUID.");
             else if (!Guid.TryParse(rawPageId, out pageId) || pageId == Guid.Empty)
                 throw new InvalidOperationException("Invalid runtime pageId; call browser.current yourself.");
@@ -181,7 +201,7 @@ public sealed class NIRACapabilityRequestPolicy
             string? rawPageId = NIRACapabilityArguments.GetOptionalString(request, "pageId", 80);
             Guid pageId;
             if (string.IsNullOrWhiteSpace(rawPageId))
-                pageId = _browser.TryGetSoleOwnedPageId() ??
+                pageId = _browser.TryGetActiveOwnedPageId() ??
                     throw new InvalidOperationException("AmbiguousBrowserPage: inspect/select your task-owned page; never ask the human for an internal GUID.");
             else if (!Guid.TryParse(rawPageId, out pageId) || pageId == Guid.Empty)
                 throw new InvalidOperationException("Invalid pageId; call browser.current yourself.");
@@ -656,8 +676,3 @@ public sealed class NIRACapabilityRequestPolicy
             throw new UnauthorizedAccessException("Files with multiple hard links are not accepted by direct filesystem grants.");
     }
 }
-
-
-
-
-

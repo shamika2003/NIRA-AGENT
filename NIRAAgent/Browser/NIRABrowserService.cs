@@ -52,10 +52,14 @@ public sealed class NIRABrowserService : IAsyncDisposable
         Guid? BranchId,
         Guid? OpenerPageId,
         bool Recovered,
-        Guid? CreatedRunId);
+        Guid? CreatedRunId,
+        Guid? LastDirectRunId);
 
     private readonly Dictionary<IPage, Guid> _pageIds = new();
     private readonly Dictionary<Guid, string> _pageOrigins = new();
+    // Page-local, session-only: stable target + nonsecret observable page state.
+    // A fresh inspection ref must not reset a mechanically ineffective click.
+    private readonly Dictionary<Guid, Dictionary<string, string>> _noProgressClicks = new();
     private readonly Dictionary<Guid, HashSet<string>> _latestElementRefs = new();
     private readonly Dictionary<Guid, Dictionary<string, GroundedElementState>> _latestGroundedElements = new();
     // These are per-session, per-page facts; never persisted as auth state.
@@ -222,6 +226,7 @@ public sealed class NIRABrowserService : IAsyncDisposable
                     _activeByOwner.Clear();
                     _pageIds.Clear();
                     _pageOrigins.Clear();
+                    _noProgressClicks.Clear();
                     _latestElementRefs.Clear();
                     _latestGroundedElements.Clear();
                     _navigation.Clear();
@@ -251,8 +256,14 @@ public sealed class NIRABrowserService : IAsyncDisposable
 
             if (!string.IsNullOrWhiteSpace(initialUrl))
             {
-                IPage page = FindSoleOwnedPage() ?? await CreateOwnedPageAsync();
-                string requestedUrl = ParseHttpUri(initialUrl).AbsoluteUri;
+                // Reuse this task's explicitly tracked active tab across requests. A
+                // multiple-tab session must not create a new page each time
+                // browser.session.open(initialUrl) is called.
+                IPage page = FindActiveOwnedPage() ??
+                    FindSoleOwnedPage() ?? await CreateOwnedPageAsync();
+                Uri initialUri = ParseHttpUri(initialUrl);
+                EnsureUserGroundedLoopbackNavigation(initialUri);
+                string requestedUrl = initialUri.AbsoluteUri;
                 // Repeating browser.session.open with the same initial URL is
                 // not a reason to discard a live session or reload its page.
                 bool navigationRequired = !string.Equals(
@@ -333,10 +344,12 @@ public sealed class NIRABrowserService : IAsyncDisposable
         string url,
         bool newPage,
         int timeoutSeconds,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool forceReload = false)
     {
         ThrowIfDisposed();
         Uri uri = ParseHttpUri(url);
+        EnsureUserGroundedLoopbackNavigation(uri);
 
         await _gate.WaitAsync(cancellationToken);
         try
@@ -354,19 +367,31 @@ public sealed class NIRABrowserService : IAsyncDisposable
                 // Never take over an unclaimed restored or foreign task tab.
                 page = pageId == null && !HasOwnedPages()
                     ? await CreateOwnedPageAsync()
-                    : ResolvePage(pageId);
+                    : ResolvePage(pageId, allowActiveOwned: true);
             }
 
-            await NavigateCoreAsync(
-                page,
-                uri.AbsoluteUri,
-                timeoutSeconds,
-                cancellationToken);
+            Debug.WriteLine($"[BrowserFlow] NAVIGATE START | Session={_sessionId:D} | " +
+                $"Owner={CurrentOwnerKey()} | RequestedPage={pageId?.ToString("D") ?? "active"} | " +
+                $"SelectedPage={EnsurePageId(page):D} | NewPage={newPage} | " +
+                $"Target='{NavigationUrlForCognition(uri.AbsoluteUri)}'");
+            // Idempotent observation: visiting an already-current URL does
+            // not warrant another network round trip or ref invalidation.
+            bool navigationRequired = forceReload || !string.Equals(
+                page.Url, uri.AbsoluteUri, StringComparison.OrdinalIgnoreCase);
+            if (navigationRequired)
+                await NavigateCoreAsync(page, uri.AbsoluteUri, timeoutSeconds, cancellationToken);
+            else
+                Debug.WriteLine($"[BrowserFlow] NAVIGATE SKIPPED | Page={EnsurePageId(page):D} | " +
+                    "Reason=AlreadyAtRequestedUrl");
 
             Guid id = EnsurePageId(page);
-            ClearElementRefs(id);
+            if (navigationRequired)
+                ClearElementRefs(id);
             SetActivePage(id);
             UpdatePageOrigin(id, page.Url);
+            Debug.WriteLine($"[BrowserFlow] NAVIGATE END | Page={id:D} | " +
+                $"Reloaded={navigationRequired} | Url='{NavigationUrlForCognition(page.Url)}' | " +
+                $"Status={NavigationForPage(id)?.MainDocumentHttpStatus?.ToString() ?? "unknown"}");
 
             return await BuildPageSnapshotAsync(id, page);
         }
@@ -474,7 +499,7 @@ public sealed class NIRABrowserService : IAsyncDisposable
         try
         {
             EnsureOpen();
-            IPage page = ResolvePage(pageId);
+            IPage page = ResolvePage(pageId, allowActiveOwned: true);
             Guid id = EnsurePageId(page);
             SetActivePage(id);
             UpdatePageOrigin(id, page.Url);
@@ -656,7 +681,10 @@ public sealed class NIRABrowserService : IAsyncDisposable
                     publishedAt,
                     modifiedAt,
                     string.Join("|", structuredDataTypes),
-                    bodyText));
+                    bodyText,
+                    string.Join("|", elements.Where(e => !e.SensitiveEntry)
+                        .Select(e => string.Join(":", e.Tag, e.InputType,
+                            e.Name, e.ValuePreview, e.Checked, e.Disabled)))));
 
             NIRABrowserInspection inspection =
                 new()
@@ -702,7 +730,11 @@ public sealed class NIRABrowserService : IAsyncDisposable
             lock (_stateSync) _lastPageInspection[id] = inspection.ObservedAtUtc;
 
             Debug.WriteLine(
-                $"[Browser] INSPECT | Session={_sessionId:D} | Page={id:D} | Inspection={inspection.InspectionId:D} | Elements={elements.Count} | TextSource={inspection.TextSource} | Url='{TrimLog(page.Url)}'");
+                $"[BrowserFlow] INSPECT | Session={_sessionId:D} | Page={id:D} | " +
+                $"Inspection={inspection.InspectionId:D} | Elements={elements.Count} | " +
+                $"Forms={forms.Count} | PasswordField={inspection.PasswordControlObserved} | " +
+                $"TextChars={bodyText.Length} | TextSource={inspection.TextSource} | " +
+                $"Url='{NavigationUrlForCognition(page.Url)}'");
 
             return inspection;
         }
@@ -730,6 +762,40 @@ public sealed class NIRABrowserService : IAsyncDisposable
             EnsureNoUncertainAction(id, page);
             ILocator locator = await ValidateGroundedActionTargetAsync(id, page, cleanRef);
             string beforeUrl = page.Url;
+            // Only compare local visible content, never infer server acceptance.
+            // The inspected page's DOM refs are bookkeeping, not page progress.
+            string? beforeState = await TryObservablePageStateAsync(page);
+            string? stableTarget = await TryStableClickTargetAsync(locator);
+            if (beforeState != null && stableTarget != null &&
+                _noProgressClicks.TryGetValue(id, out var previouslyUnchanged) &&
+                previouslyUnchanged.TryGetValue(stableTarget, out string? unchangedState) &&
+                string.Equals(unchangedState, beforeState, StringComparison.Ordinal))
+            {
+                Debug.WriteLine($"[Browser] NO-PROGRESS CLICK BLOCKED | Page={id:D}");
+                // Expected safety refusal, NOT a Playwright exception or a
+                // dispatched second click. Preserve an explicit action receipt
+                // without polluting the Visual Studio first-chance exception log.
+                string rejection =
+                    "BrowserNoProgressRepeatBlocked: this same control on the " +
+                    "unchanged page already returned with no observable result. " +
+                    "A new inspection ref is not progress. Change an actual " +
+                    "prerequisite or navigation strategy; do not replay blindly.";
+                NIRABrowserPageSnapshot blocked = await BuildPageSnapshotAsync(id, page);
+                return blocked with
+                {
+                    ActionEvidence = new NIRABrowserActionEvidence
+                    {
+                        Operation = "click",
+                        ElementRef = cleanRef,
+                        BeforeUrl = RedactUrlForCognition(beforeUrl),
+                        AfterUrl = blocked.Url,
+                        ActionApplied = false,
+                        ObservedPageChange = false,
+                        LocalVerification = rejection,
+                        ObservedAtUtc = DateTimeOffset.UtcNow
+                    }
+                };
+            }
             HashSet<Guid> beforePageIds;
             lock (_stateSync) beforePageIds = _pages.Keys.ToHashSet();
 
@@ -771,8 +837,75 @@ public sealed class NIRABrowserService : IAsyncDisposable
                         _pages.TryGetValue(pair.Key, out IPage? candidate) && !candidate.IsClosed)
                     .Select(pair => pair.Key).ToArray();
 
-            return await ActionSnapshotAsync(id, page, "click", cleanRef,
-                beforeUrl, "Playwright click returned; external/site result NOT verified. Inspect each popup and the source page before claiming completion.", popups);
+            string? afterState = page.IsClosed ? null : await TryObservablePageStateAsync(page);
+            bool routeChanged = !string.Equals(beforeUrl, page.Url, StringComparison.Ordinal);
+            bool? visibleChanged = beforeState == null || afterState == null
+                ? null : !string.Equals(beforeState, afterState, StringComparison.Ordinal);
+            // Some sites populate a timetable or result pane asynchronously.
+            // A bounded local observation is cheaper than several 120B-model
+            // calls and, critically, does NOT dispatch the click again.
+            // Also re-scan popups: one may appear after the click has returned.
+            foreach (int delayMilliseconds in new[] { 300, 550, 700 })
+            {
+                if (routeChanged || popups.Length > 0 || visibleChanged != false)
+                    break;
+                await Task.Delay(delayMilliseconds, cancellationToken);
+                await RefreshPagesAsync();
+                lock (_stateSync)
+                    popups = _ownership
+                        .Where(pair => !beforePageIds.Contains(pair.Key) &&
+                            pair.Value.OpenerPageId == id &&
+                            _pages.TryGetValue(pair.Key, out IPage? candidate) && !candidate.IsClosed)
+                        .Select(pair => pair.Key).ToArray();
+                if (!page.IsClosed)
+                {
+                    afterState = await TryObservablePageStateAsync(page);
+                    visibleChanged = afterState == null ? null :
+                        !string.Equals(beforeState, afterState, StringComparison.Ordinal);
+                }
+                routeChanged = !string.Equals(beforeUrl, page.Url, StringComparison.Ordinal);
+            }
+            if (stableTarget != null && beforeState != null)
+            {
+                if (routeChanged || popups.Length > 0 || visibleChanged == true)
+                    _noProgressClicks.Remove(id);
+                else if (visibleChanged == false)
+                {
+                    if (!_noProgressClicks.TryGetValue(id, out var noProgressForPage))
+                        _noProgressClicks[id] = noProgressForPage = new(StringComparer.Ordinal);
+                    noProgressForPage[stableTarget] = beforeState;
+                }
+            }
+            // A click can trigger an invisible remote side effect. Unchanged
+            // page is NOT proof of failure; it is proof not to assume progress.
+            bool? observedProgress = routeChanged || popups.Length > 0
+                ? true : visibleChanged;
+            string local = observedProgress switch
+            {
+                true => "A route, popup or visible page change was observed. " +
+                    "The website-level user outcome still needs independent evidence.",
+                false => "NO OBSERVABLE PAGE PROGRESS: the click mechanically returned, " +
+                    "but the URL, visible text, non-secret form state and popup list did not change. " +
+                    "Do not click the same target again as if it advanced the task. " +
+                    "Check any actual field validation, embedded frames, or a different " +
+                    "observed route; the site may have had an unobserved side effect. " +
+                    "EmbeddedFrameCount=" + Math.Max(0, page.Frames.Count - 1) + ".",
+                _ => "Page change could not be compared; click mechanically returned, " +
+                    "but the website-level outcome is unverified. Inspect before retrying."
+            };
+            Debug.WriteLine($"[Browser] CLICK EVIDENCE | Page={id:D} | " +
+                $"RouteChanged={routeChanged} | Popups={popups.Length} | " +
+                $"VisibleChanged={visibleChanged?.ToString() ?? "Unknown"}");
+            NIRABrowserPageSnapshot snapshot = await ActionSnapshotAsync(
+                id, page, "click", cleanRef, beforeUrl, local, popups);
+            NIRABrowserActionEvidence? evidence = snapshot.ActionEvidence;
+            return snapshot with
+            {
+                ActionEvidence = evidence is null ? null : evidence with
+                {
+                    ObservedPageChange = observedProgress
+                }
+            };
         }
         finally
         {
@@ -1937,6 +2070,9 @@ public sealed class NIRABrowserService : IAsyncDisposable
         cancellationToken.ThrowIfCancellationRequested();
 
         Guid id = EnsurePageId(page);
+        // Save a verified previous route before an unsuccessful GET can replace
+        // this tab with chrome-error://chromewebdata/ and destroy login state.
+        string previousUrl = page.Url;
         lock (_stateSync)
         {
             if (Uri.TryCreate(url, UriKind.Absolute, out Uri? inputUri) &&
@@ -1980,9 +2116,44 @@ public sealed class NIRABrowserService : IAsyncDisposable
         }
         catch (PlaywrightException ex)
         {
-            SetNavigationFailure(id, page, "NavigationFailedOrTimedOut");
-            throw new InvalidOperationException(
-                "BrowserNavigationUncertain: navigation failed or timed out. Use browser.current and inspect the fresh page state; do not automatically repeat any possibly completed workflow action.", ex);
+            bool restored = false;
+            bool onErrorDocument = !page.IsClosed &&
+                page.Url.StartsWith("chrome-error:", StringComparison.OrdinalIgnoreCase);
+            if (onErrorDocument && Uri.TryCreate(previousUrl, UriKind.Absolute, out Uri? prior) &&
+                (prior.Scheme == Uri.UriSchemeHttps || prior.Scheme == Uri.UriSchemeHttp))
+            {
+                try
+                {
+                    IResponse? recovery = await page.GotoAsync(previousUrl,
+                        new PageGotoOptions { WaitUntil = WaitUntilState.DOMContentLoaded, Timeout = 12000 });
+                    restored = !page.Url.StartsWith("chrome-error:", StringComparison.OrdinalIgnoreCase);
+                    if (restored)
+                    {
+                        SetNavigation(id, new NIRABrowserNavigationEvidence
+                        {
+                            RequestedUrl = NavigationUrlForCognition(previousUrl),
+                            FinalUrl = NavigationUrlForCognition(page.Url),
+                            MainDocumentHttpStatus = recovery?.Status,
+                            FailureKind = string.Empty,
+                            OutcomeUncertain = false
+                        });
+                        UpdatePageOrigin(id, page.Url);
+                    }
+                }
+                catch (PlaywrightException) { /* Preserve the original failure. */ }
+            }
+            if (!restored) SetNavigationFailure(id, page, "NavigationFailedOrTimedOut");
+            Debug.WriteLine($"[BrowserFlow] NAVIGATE FAILED | Page={id:D} | " +
+                $"Attempted='{NavigationUrlForCognition(url)}' | " +
+                $"Previous='{NavigationUrlForCognition(previousUrl)}' | " +
+                $"Current='{NavigationUrlForCognition(page.Url)}' | " +
+                $"Restored={restored} | ErrorType={ex.GetType().Name}");
+            throw new InvalidOperationException(restored
+                ? "BrowserNavigationFailed: destination failed; prior page restored. " +
+                  "Inspect the restored page and follow its grounded links. Do not repeat the rejected URL."
+                : "BrowserNavigationUncertain: navigation failed or timed out. " +
+                  "Use browser.current and inspect the fresh page state before further actions; " +
+                  "do not repeat any possibly completed workflow action.", ex);
         }
     }
 
@@ -2112,7 +2283,7 @@ public sealed class NIRABrowserService : IAsyncDisposable
             Guid id = Guid.NewGuid();
             _pageIds[page] = id;
             _pages[id] = page;
-            _ownership[id] = new PageOwnership(string.Empty, null, null, null, recovered, null);
+            _ownership[id] = new PageOwnership(string.Empty, null, null, null, recovered, null, null);
         }
 
         // Generic transport/runtime events only; never interpret URLs as login
@@ -2312,8 +2483,33 @@ public sealed class NIRABrowserService : IAsyncDisposable
             _ownership[id] = new PageOwnership(
                 key, execution.GoalId, execution.BranchId,
                 existing.OpenerPageId, existing.Recovered,
-                existing.CreatedRunId ?? (execution.RunId == Guid.Empty ? null : execution.RunId));
+                existing.CreatedRunId ?? (execution.RunId == Guid.Empty ? null : execution.RunId),
+                existing.LastDirectRunId);
             _activeByOwner[key] = id;
+        }
+    }
+
+    // Attach the trusted user-turn identity AFTER an observed successful browser
+    // action. AsyncLocal is not guaranteed to survive every capability adapter;
+    // the executive therefore supplies its own authoritative run ID here.
+    // This does not adopt/steal pages: only an already selected interactive tab
+    // can be attributed, never a recovered tab or another goal/branch's tab.
+    public bool MarkInteractivePageObservedByRun(Guid runId)
+    {
+        if (runId == Guid.Empty) return false;
+        lock (_stateSync)
+        {
+            if (!_activeByOwner.TryGetValue("interactive", out Guid pageId) ||
+                !_pages.TryGetValue(pageId, out IPage? page) || page.IsClosed ||
+                !_ownership.TryGetValue(pageId, out PageOwnership? ownership) ||
+                ownership.OwnerKey != "interactive" || ownership.Recovered ||
+                ownership.GoalId != null || ownership.BranchId != null)
+                return false;
+
+            _ownership[pageId] = ownership with { LastDirectRunId = runId };
+            Debug.WriteLine($"[BrowserOwnership] DIRECT RUN OBSERVED | " +
+                $"Run={runId:D} | Page={pageId:D}");
+            return true;
         }
     }
 
@@ -2328,27 +2524,57 @@ public sealed class NIRABrowserService : IAsyncDisposable
             return false;
         lock (_stateSync)
         {
+            // Promotion is a trusted user-turn -> its newly created branch
+            // handoff. Only pages claimed by THIS precise run qualify. A
+            // restored page, a tab from an earlier turn, or a sibling branch
+            // can never be silently adopted. The active page wins only inside
+            // this strictly bounded candidate set.
             Guid[] candidates = _pages.Where(pair => !pair.Value.IsClosed &&
                 _ownership.TryGetValue(pair.Key, out PageOwnership? owner) &&
                 owner.OwnerKey == "interactive" && !owner.Recovered &&
-                owner.CreatedRunId == runId && owner.GoalId == null &&
+                (owner.CreatedRunId == runId || owner.LastDirectRunId == runId) &&
+                owner.GoalId == null &&
                 owner.BranchId == null).Select(pair => pair.Key).ToArray();
-            if (candidates.Length != 1) return false;
-            Guid pageId = candidates[0];
+            _activeByOwner.TryGetValue("interactive", out Guid interactiveActive);
+            Guid pageId = candidates.Length == 1 ? candidates[0] :
+                candidates.Length > 1 && interactiveActive != Guid.Empty &&
+                candidates.Contains(interactiveActive) ? interactiveActive : Guid.Empty;
             string branchKey = "branch:" + branchId.ToString("D");
-            if (_activeByOwner.TryGetValue(branchKey, out Guid branchActive) &&
-                branchActive != pageId) return false;
-            PageOwnership previous = _ownership[pageId];
-            _ownership[pageId] = previous with
+            if (pageId == Guid.Empty ||
+                (_activeByOwner.TryGetValue(branchKey, out Guid branchActive) &&
+                 branchActive != pageId))
             {
-                OwnerKey = branchKey, GoalId = goalId, BranchId = branchId
-            };
-            if (_activeByOwner.TryGetValue("interactive", out Guid active) &&
-                active == pageId) _activeByOwner.Remove("interactive");
+                int interactivePages = _ownership.Count(x => x.Value.OwnerKey == "interactive");
+                int runMatchedPages = _ownership.Count(x => x.Value.CreatedRunId == runId ||
+                    x.Value.LastDirectRunId == runId);
+                Debug.WriteLine($"[BrowserOwnership] HANDOFF NOT APPLIED | " +
+                    $"Run={runId:D} | Candidates={candidates.Length} | " +
+                    $"ActiveIsCandidate={candidates.Contains(interactiveActive)} | " +
+                    $"InteractivePages={interactivePages} | " +
+                    $"RunMatchedPages={runMatchedPages} | " +
+                    $"BranchAlreadyActive={_activeByOwner.ContainsKey(branchKey)}");
+                return false;
+            }
+
+            // Move the full set of tabs created by this exact user run,
+            // including same-run popups, as one task-owned workspace. The
+            // active page remains the selected page for the first worker.
+            // Older interactive tabs and any other branch are untouched.
+            foreach (Guid candidate in candidates)
+            {
+                PageOwnership previous = _ownership[candidate];
+                _ownership[candidate] = previous with
+                {
+                    OwnerKey = branchKey, GoalId = goalId, BranchId = branchId
+                };
+            }
+            if (interactiveActive != Guid.Empty && candidates.Contains(interactiveActive))
+                _activeByOwner.Remove("interactive");
             _activeByOwner[branchKey] = pageId;
             Debug.WriteLine($"[BrowserOwnership] PROMOTED | Page={pageId:D} | " +
-                $"Run={runId:D} | Goal={goalId:D} | Branch={branchId:D} | " +
-                "Reason=SameDirectUserRun");
+                $"PagesTransferred={candidates.Length} | Run={runId:D} | " +
+                $"Goal={goalId:D} | Branch={branchId:D} | " +
+                "Reason=SameDirectUserRunActivePage | ExistingInspectedRefsPreserved=True");
             return true;
         }
     }
@@ -2367,6 +2593,20 @@ public sealed class NIRABrowserService : IAsyncDisposable
             return _pages.Any(pair => !pair.Value.IsClosed &&
                 _ownership.TryGetValue(pair.Key, out PageOwnership? ownership) &&
                 ownership.OwnerKey == CurrentOwnerKey());
+    }
+
+    private IPage? FindActiveOwnedPage()
+    {
+        lock (_stateSync)
+        {
+            string owner = CurrentOwnerKey();
+            if (_activeByOwner.TryGetValue(owner, out Guid id) &&
+                _pages.TryGetValue(id, out IPage? page) && !page.IsClosed &&
+                _ownership.TryGetValue(id, out PageOwnership? state) &&
+                state.OwnerKey == owner)
+                return page;
+            return null;
+        }
     }
 
     private IPage? FindSoleOwnedPage()
@@ -2433,7 +2673,11 @@ public sealed class NIRABrowserService : IAsyncDisposable
         finally { _gate.Release(); }
     }
 
-    private IPage ResolvePage(Guid? pageId)
+    // Only read-only inspection/navigation may resolve an omitted PageId via
+    // this task's runtime-owned active tab. Form actions, clicks, credential
+    // submissions and other consequential operations still require exact,
+    // inspected page identity and grounded element refs.
+    private IPage ResolvePage(Guid? pageId, bool allowActiveOwned = false)
     {
         EnsureOpen();
         lock (_stateSync)
@@ -2468,11 +2712,77 @@ public sealed class NIRABrowserService : IAsyncDisposable
                 _ownership.TryGetValue(pair.Key, out PageOwnership? state) &&
                 state.OwnerKey == owner).Select(pair => pair.Value).ToArray();
             if (owned.Length == 1) return owned[0];
+            if (allowActiveOwned && owned.Length > 1 &&
+                _activeByOwner.TryGetValue(owner, out Guid activeId) &&
+                _pages.TryGetValue(activeId, out IPage? activePage) &&
+                !activePage.IsClosed &&
+                _ownership.TryGetValue(activeId, out PageOwnership? activeOwnership) &&
+                activeOwnership.OwnerKey == owner)
+            {
+                Debug.WriteLine($"[Browser] RESOLVED ACTIVE TASK PAGE | Page={activeId:D} | Owner={owner}");
+                return activePage;
+            }
             if (owned.Length == 0)
                 throw new InvalidOperationException(
                     "This task has no selected page. Call browser.current then browser.page.select, or open a new page with browser.navigate newPage=true.");
             throw new InvalidOperationException(
                 "AmbiguousBrowserPage: multiple pages belong to this task. Supply an exact PageId from browser.current/inspect. Never guess the active tab.");
+        }
+    }
+
+    // The policy may resolve the current task's already selected page without
+    // making cognition repeat browser.current just to copy a GUID. This cannot
+    // adopt a restored tab or another goal/branch's page.
+    public Guid? TryGetActiveOwnedPageId()
+    {
+        lock (_stateSync)
+        {
+            string owner = CurrentOwnerKey();
+            if (_activeByOwner.TryGetValue(owner, out Guid active) &&
+                _pages.TryGetValue(active, out IPage? page) && !page.IsClosed &&
+                _ownership.TryGetValue(active, out PageOwnership? state) &&
+                state.OwnerKey == owner)
+                return active;
+            Guid[] owned = _pages.Where(pair => !pair.Value.IsClosed &&
+                _ownership.TryGetValue(pair.Key, out PageOwnership? state) &&
+                state.OwnerKey == owner).Select(pair => pair.Key).ToArray();
+            return owned.Length == 1 ? owned[0] : null;
+        }
+    }
+
+    // Exact, last-inspected DOM refs only: repair a missing model-provided login
+    // ref without guessing selectors or reading the user's credential. If more
+    // than one candidate exists, let cognition choose from inspection instead.
+    public bool TryGetUniqueInspectedLoginRefs(
+        Guid pageId, out string? usernameRef,
+        out string? passwordRef, out string? submitRef)
+    {
+        usernameRef = passwordRef = submitRef = null;
+        lock (_stateSync)
+        {
+            if (!_pages.TryGetValue(pageId, out IPage? page) || page.IsClosed ||
+                !_ownership.TryGetValue(pageId, out PageOwnership? owner) ||
+                owner.OwnerKey != CurrentOwnerKey() ||
+                !_latestGroundedElements.TryGetValue(pageId,
+                    out Dictionary<string, GroundedElementState>? refs))
+                return false;
+            GroundedElementState[] passwords = refs.Values.Where(x =>
+                !x.Disabled && string.Equals(x.InputType, "password",
+                    StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (passwords.Length != 1) return false;
+            passwordRef = passwords[0].Ref;
+            GroundedElementState[] usernames = refs.Values.Where(x =>
+                !x.Disabled && !x.SensitiveEntry &&
+                string.Equals(x.Tag, "input", StringComparison.OrdinalIgnoreCase) &&
+                (string.Equals(x.InputType, "text", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(x.InputType, "email", StringComparison.OrdinalIgnoreCase))).ToArray();
+            if (usernames.Length == 1) usernameRef = usernames[0].Ref;
+            GroundedElementState[] submits = refs.Values.Where(x =>
+                !x.Disabled &&
+                (string.Equals(x.InputType, "submit", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(x.Role, "button", StringComparison.OrdinalIgnoreCase))).ToArray();
+            if (submits.Length == 1) submitRef = submits[0].Ref;
+            return true;
         }
     }
 
@@ -2582,6 +2892,64 @@ public sealed class NIRABrowserService : IAsyncDisposable
         // previous document even if its temporary marker survived in the UI.
         _ = ResolveGroundedElement(pageId, elementRef);
         return locator;
+    }
+
+    // Read-only local comparison; never log or return page text from this probe.
+    // The normal browser.inspect remains the source of model-visible content.
+    // Hash a bounded, observable, non-secret page state; never log or expose
+    // form values through the no-progress mechanism. Passwords, OTPs, tokens,
+    // hidden/file fields and payment-like inputs are excluded before hashing.
+    private static async Task<string?> TryObservablePageStateAsync(IPage page)
+    {
+        if (page.IsClosed) return null;
+        try
+        {
+            string observed = await page.EvaluateAsync<string>(
+                """
+                () => {
+                  const safe = el => {
+                    const kind = (el.type || '').toLowerCase();
+                    const hint = [el.name, el.id, el.autocomplete, el.placeholder,
+                      el.getAttribute('aria-label')].join(' ').toLowerCase();
+                    return !['password','hidden','file'].includes(kind) &&
+                      !/(password|passcode|otp|one.time|pin|secret|token|api.key|cvv|cvc|card|credit|security.code)/i.test(hint);
+                  };
+                  const controls = Array.from(document.querySelectorAll('input,select,textarea'))
+                    .filter(safe).slice(0, 100)
+                    .map((el, i) => [i, el.tagName, el.type || '',
+                      String(el.value || '').slice(0, 160), !!el.checked, !!el.disabled]);
+                  return JSON.stringify([location.href,
+                    (document.body?.innerText || '').slice(0, 15000), controls]);
+                }
+                """);
+            return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(observed)));
+        }
+        catch (PlaywrightException) { return null; }
+    }
+
+    // A ref changes on every inspection. Build a stable identity from the
+    // observed DOM control, not the synthetic data-NIRA-ref attribute.
+    private static async Task<string?> TryStableClickTargetAsync(ILocator locator)
+    {
+        try
+        {
+            string identity = await locator.EvaluateAsync<string>(
+                """
+                el => {
+                  const controls = document.querySelectorAll(
+                    'a[href],button,input,textarea,select,[role="button"],[role="link"]');
+                  const index = Array.prototype.indexOf.call(controls, el);
+                  return JSON.stringify([el.tagName, index, el.id || '',
+                    el.getAttribute('name') || '', el.getAttribute('type') || '',
+                    el.getAttribute('aria-label') || '',
+                    (el.innerText || el.getAttribute('aria-label') || '').trim().slice(0, 100)]);
+                }
+                """);
+            return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(identity)));
+        }
+        catch (PlaywrightException) { return null; }
     }
 
     private async Task<NIRABrowserPageSnapshot> ActionSnapshotAsync(
@@ -2832,7 +3200,7 @@ public sealed class NIRABrowserService : IAsyncDisposable
             // action into a misleading failed/unknown outcome.
             state = _ownership.TryGetValue(pageId, out PageOwnership? liveOwner)
                 ? liveOwner
-                : new PageOwnership(string.Empty, null, null, null, false, null);
+                : new PageOwnership(string.Empty, null, null, null, false, null, null);
         }
         if (!page.IsClosed) UpdatePageOrigin(pageId, page.Url);
         return new NIRABrowserPageSnapshot
@@ -2893,6 +3261,7 @@ public sealed class NIRABrowserService : IAsyncDisposable
             _activeByOwner.Clear();
             _pageIds.Clear();
             _pageOrigins.Clear();
+            _noProgressClicks.Clear();
             _latestElementRefs.Clear();
             _latestGroundedElements.Clear();
             _navigation.Clear();
@@ -2942,6 +3311,23 @@ public sealed class NIRABrowserService : IAsyncDisposable
         {
             _gate.Release();
             _gate.Dispose();
+        }
+    }
+
+    // Localhost is a valid explicit development target, but NEVER a model-
+    // invented substitute for a site's lecture URL or a browser helper.
+    // Actual inspected link refs use browser.follow and remain available.
+    private void EnsureUserGroundedLoopbackNavigation(Uri uri)
+    {
+        if (!uri.IsLoopback) return;
+        string directRequest = _authority.Current.DirectUserRequest;
+        if (!directRequest.Contains(uri.Host, StringComparison.OrdinalIgnoreCase))
+        {
+            Debug.WriteLine($"[BrowserFlow] REJECT UNGROUNDED LOOPBACK | Host={uri.Host}");
+            throw new InvalidOperationException(
+                "UngroundedLoopbackNavigation: this local address was not supplied " +
+                "by the user. Use the actual inspected website links instead " +
+                "of inventing a localhost shortcut.");
         }
     }
 
@@ -3676,4 +4062,6 @@ public sealed class NIRABrowserService : IAsyncDisposable
         }
         """;
 }
+
+
 

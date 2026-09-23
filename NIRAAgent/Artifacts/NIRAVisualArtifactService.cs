@@ -220,6 +220,7 @@ public sealed class NIRAVisualArtifactService
         NIRAVisualArtifact artifact =
             new()
             {
+                Annotations = request.Annotations,
                 ArtifactId =
                     artifactId,
 
@@ -588,4 +589,3 @@ public sealed class NIRAVisualArtifactService
             : clean[..120] + "...";
     }
 }
-

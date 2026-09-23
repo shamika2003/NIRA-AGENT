@@ -79,6 +79,12 @@ public sealed class NIRAScreenCaptureCapabilityHandler
                         "Optional case-insensitive live/recent external window-title selector for target=window."),
 
                     Parameter(
+                        "presentToUser",
+                        "boolean",
+                        false,
+                        "Set true when this particular capture is itself requested as a visible screenshot. False for internal visual checks. The runtime only presents a successful, grounded capture."),
+
+                    Parameter(
                         "left",
                         "integer",
                         false,
@@ -189,6 +195,23 @@ public sealed class NIRAScreenCaptureCapabilityHandler
 
         output.AppendLine(
             $"EvidenceId: {evidence.EvidenceId:D}");
+
+        // Declarative delivery intent is not an image or a permission itself;
+        // it is recorded for the next cognition cycle's factual wording.
+        bool presentToUser = request.Arguments.ValueKind ==
+            System.Text.Json.JsonValueKind.Object &&
+            request.Arguments.EnumerateObject().Any(property =>
+                string.Equals(property.Name, "presentToUser", StringComparison.OrdinalIgnoreCase) &&
+                property.Value.ValueKind == System.Text.Json.JsonValueKind.True);
+        output.AppendLine($"InlinePresentationRequested: {presentToUser}");
+
+        if (presentToUser)
+        {
+            output.AppendLine(
+                "RuntimePresentationStatus: Grounded image is queued for automatic user delivery.");
+            output.AppendLine(
+                "RuntimePresentationRule: Do not tell the user to open the PNG manually and do not claim NIRA cannot embed/show it.");
+        }
 
         output.AppendLine(
             $"Target: {evidence.Target}");
@@ -305,6 +328,21 @@ public sealed class NIRAScreenCaptureCapabilityHandler
 
             Output =
                 output.ToString().TrimEnd(),
+
+            VisualArtifacts =
+                presentToUser
+                    ? new[]
+                    {
+                        new NIRACapabilityVisualArtifact
+                        {
+                            EvidenceId = evidence.EvidenceId,
+                            Title = "Screenshot",
+                            Caption = $"Captured from {subject}.",
+                            PresentToUser = true,
+                            Surface = "Auto"
+                        }
+                    }
+                    : Array.Empty<NIRACapabilityVisualArtifact>(),
 
             ChangedSystemState =
                 false
@@ -732,4 +770,3 @@ public sealed class NIRAVisualInspectCapabilityHandler
             : clean[..maximum] + "...";
     }
 }
-

@@ -300,8 +300,8 @@
 
         <DataTemplate x:Key="AssistantMessageTemplate">
             <StackPanel x:Name="AssistantMessageRoot"
-                        HorizontalAlignment="Left"
-                        Margin="0,0,96,22"
+                        HorizontalAlignment="Stretch"
+                        Margin="0,0,0,25"
                         Opacity="0">
                 <StackPanel.RenderTransform>
                     <TranslateTransform x:Name="AssistantMessageTranslate" X="-4"/>
@@ -336,23 +336,17 @@
                                Foreground="{DynamicResource NIRACyanBrush}"/>
                 </StackPanel>
 
-                <Grid MaxWidth="740">
-                    <Border x:Name="AssistantBubbleGlow"
-                            Margin="-2"
-                            CornerRadius="18,18,18,5"
-                            Background="#142F9DFF"
-                            Opacity="0.42"/>
-
+                <!-- Assistant prose is full-width and borderless. Actual rich
+                     visuals retain their own themed surfaces where helpful. -->
+                <Grid HorizontalAlignment="Stretch">
                     <Border x:Name="AssistantBubble"
-                            Margin="1"
-                            Padding="17,12"
+                            Padding="6,1,8,0"
                             MinWidth="0"
-                            Background="{DynamicResource NIRAGlassStrongTintBrush}"
-                            BorderBrush="#4B3C8DB8"
-                            BorderThickness="1"
-                            CornerRadius="17,17,17,5">
+                            Background="Transparent"
+                            BorderThickness="0">
                         <Grid>
                             <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
@@ -365,8 +359,11 @@
                                        LineHeight="21"
                                        TextWrapping="Wrap"/>
 
+                            <ItemsControl x:Name="AssistantRichBlocks" Grid.Row="1"
+                                          ItemsSource="{Binding RichElements}" Visibility="Collapsed"/>
+
                             <ItemsControl x:Name="AssistantVisualArtifacts"
-                                          Grid.Row="1"
+                                          Grid.Row="2"
                                           ItemsSource="{Binding VisualArtifacts}"
                                           Visibility="Collapsed">
                                 <ItemsControl.ItemTemplate>
@@ -429,22 +426,36 @@
 
                             <!-- The real empty assistant message keeps the V11 indicator alive
                                  only while waiting for first text / visual artifact. -->
-                            <typing:NIRATypingIndicator x:Name="ThinkingIndicator"
-                                                           Grid.Row="0"
-                                                           Grid.RowSpan="2"
-                                                           Width="46"
-                                                           Height="18"
-                                                           HorizontalAlignment="Left"
-                                                           IndicatorStyle="FinalDepthDrift"
-                                                           SpeedMultiplier="1.00"
-                                                           IsHitTestVisible="False"
-                                                           Visibility="Collapsed"/>
+                            <Border x:Name="JourneyIndicator"
+                                    Grid.Row="0" Grid.RowSpan="3"
+                                    Padding="12,10" MinWidth="300" MaxWidth="640"
+                                    HorizontalAlignment="Left"
+                                    Background="#14244A70"
+                                    BorderBrush="#704BA2CA" BorderThickness="1"
+                                    CornerRadius="12" Visibility="Collapsed">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <typing:NIRATypingIndicator Width="42" Height="19"
+                                        IndicatorStyle="FinalDepthDrift" SpeedMultiplier="0.85"
+                                        IsHitTestVisible="False"/>
+                                    <StackPanel Margin="11,0,0,0">
+                                        <TextBlock Text="NIRA · WORKING" FontSize="10"
+                                            FontWeight="SemiBold" Foreground="#65DDF5"/>
+                                        <TextBlock Text="{Binding ProgressText}"
+                                            FontSize="12.5" LineHeight="18" TextWrapping="Wrap"
+                                            Foreground="#E0F1FF" MaxWidth="560"
+                                            Margin="0,4,0,0"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
                         </Grid>
                     </Border>
                 </Grid>
             </StackPanel>
 
             <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding HasRichElements}" Value="True">
+                    <Setter TargetName="AssistantRichBlocks" Property="Visibility" Value="Visible"/>
+                </DataTrigger>
                 <DataTrigger Binding="{Binding HasVisualArtifacts}" Value="True">
                     <Setter TargetName="AssistantVisualArtifacts" Property="Visibility" Value="Visible"/>
                 </DataTrigger>
@@ -457,11 +468,11 @@
                     <MultiDataTrigger.Conditions>
                         <Condition Binding="{Binding HasContent}" Value="False"/>
                         <Condition Binding="{Binding HasVisualArtifacts}" Value="False"/>
+                        <Condition Binding="{Binding HasRichElements}" Value="False"/>
                     </MultiDataTrigger.Conditions>
-                    <Setter TargetName="ThinkingIndicator" Property="Visibility" Value="Visible"/>
-                    <Setter TargetName="AssistantBubble" Property="Padding" Value="11,9"/>
-                    <Setter TargetName="AssistantBubble" Property="MinWidth" Value="70"/>
-                    <Setter TargetName="AssistantBubbleGlow" Property="Opacity" Value="0.28"/>
+                    <Setter TargetName="JourneyIndicator" Property="Visibility" Value="Visible"/>
+                    <Setter TargetName="AssistantBubble" Property="Padding" Value="6,1,8,0"/>
+                    <Setter TargetName="AssistantBubble" Property="MinWidth" Value="300"/>
                 </MultiDataTrigger>
             </DataTemplate.Triggers>
         </DataTemplate>
@@ -994,12 +1005,12 @@
                     <StackPanel Grid.Row="0">
                         <StackPanel Orientation="Horizontal">
                             <Ellipse x:Name="OnlinePulseDot" Width="6" Height="6" Fill="{DynamicResource NIRAGreenBrush}" VerticalAlignment="Center" Margin="0,0,7,0"/>
-                            <TextBlock Text="PRESENCE" FontSize="9" FontWeight="SemiBold" Foreground="{DynamicResource NIRACyanBrush}"/>
-                            <TextBlock Text="  ONLINE" FontSize="8" Margin="8,1,0,0" Foreground="{DynamicResource NIRAGreenBrush}"/>
+                            <TextBlock Text="PRESENCE" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource NIRACyanBrush}"/>
+                            <TextBlock Text="  ONLINE" FontSize="9.5" Margin="8,1,0,0" Foreground="{DynamicResource NIRAGreenBrush}"/>
                         </StackPanel>
                         <TextBlock Text="NIRA is here" Margin="0,7,0,0" FontSize="21" FontWeight="SemiBold"/>
                         <TextBlock Text="Calm mind. Deeper insight. Further together."
-                                   Margin="0,4,0,0" FontSize="10.5" LineHeight="15"
+                                   Margin="0,4,0,0" FontSize="11.5" LineHeight="16"
                                    Foreground="{DynamicResource NIRASecondaryBrush}" TextWrapping="Wrap"/>
                     </StackPanel>
 
@@ -1034,14 +1045,14 @@
                             <StackPanel>
                                 <StackPanel Orientation="Horizontal">
                                     <Ellipse x:Name="MindStateIndicator" Width="6" Height="6" Fill="{DynamicResource NIRABlueBrush}" Margin="0,0,6,0" VerticalAlignment="Center"/>
-                                    <TextBlock Text="MIND" FontSize="8" Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                                    <TextBlock Text="MIND" FontSize="9.5" Foreground="{DynamicResource NIRASecondaryBrush}"/>
                                 </StackPanel>
-                                <TextBlock x:Name="MindStateText" Text="IDLE" Margin="0,4,0,0" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource NIRABlueBrush}"/>
+                                <TextBlock x:Name="MindStateText" Text="IDLE" Margin="0,4,0,0" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NIRABlueBrush}"/>
                             </StackPanel>
                             <Border Grid.Column="1" Background="{DynamicResource NIRAGlassBorderBrush}"/>
                             <StackPanel Grid.Column="2" HorizontalAlignment="Right">
-                                <TextBlock Text="BODY" FontSize="8" Foreground="{DynamicResource NIRASecondaryBrush}" HorizontalAlignment="Right"/>
-                                <TextBlock x:Name="BodyStateText" Text="RESTING" Margin="0,4,0,0" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource NIRABlueBrush}" HorizontalAlignment="Right"/>
+                                <TextBlock Text="BODY" FontSize="9.5" Foreground="{DynamicResource NIRASecondaryBrush}" HorizontalAlignment="Right"/>
+                                <TextBlock x:Name="BodyStateText" Text="RESTING" Margin="0,4,0,0" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NIRABlueBrush}" HorizontalAlignment="Right"/>
                             </StackPanel>
                         </Grid>
                     </Border>
@@ -1052,7 +1063,7 @@
                             <Grid>
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                                 <Ellipse x:Name="VisionActivityDot" Width="6" Height="6" Fill="#465F7E" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                                <TextBlock x:Name="VisionActivityText" Grid.Column="1" Text="EYES IDLE" FontSize="9" Foreground="{DynamicResource NIRASecondaryBrush}" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="VisionActivityText" Grid.Column="1" Text="EYES IDLE" FontSize="10" Foreground="{DynamicResource NIRASecondaryBrush}" VerticalAlignment="Center"/>
                             </Grid>
                         </Border>
 
@@ -1062,8 +1073,8 @@
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                                 <Ellipse x:Name="AccessPulseDot" Width="7" Height="7" Fill="{DynamicResource NIRACyanBrush}" Margin="0,0,9,0" VerticalAlignment="Center"/>
                                 <StackPanel Grid.Column="1">
-                                    <TextBlock Text="ACCESS" FontSize="7.5" Foreground="{DynamicResource NIRASecondaryBrush}"/>
-                                    <TextBlock x:Name="PermissionStateText" Text="NO ACTIONS WAITING" FontSize="8.5" FontWeight="SemiBold" Margin="0,2,0,0"/>
+                                    <TextBlock Text="ACCESS" FontSize="9" Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                                    <TextBlock x:Name="PermissionStateText" Text="NO ACTIONS WAITING" FontSize="10" FontWeight="SemiBold" Margin="0,2,0,0"/>
                                 </StackPanel>
                             </Grid>
                         </Border>
@@ -1074,16 +1085,16 @@
                     <ScrollViewer Grid.Row="5" Margin="0,10,0,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <StackPanel>
                             <StackPanel x:Name="BranchActivitySection">
-                                <TextBlock Text="ACTIVE BRANCHES" FontSize="8.5" FontWeight="SemiBold" Foreground="{DynamicResource NIRACyanBrush}"/>
-                                <TextBlock x:Name="NoBranchActivityText" Text="No active branches" Margin="0,7,0,8" FontSize="9" Foreground="{DynamicResource NIRAMutedBrush}"/>
+                                <TextBlock x:Name="BranchActivityTitleText" Text="ACTIVE BRANCHES" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource NIRACyanBrush}"/>
+                                <TextBlock x:Name="NoBranchActivityText" Text="No active branches" Margin="0,7,0,8" FontSize="10.5" Foreground="{DynamicResource NIRAMutedBrush}"/>
                                 <StackPanel x:Name="BranchCardsPanel"/>
                             </StackPanel>
 
                             <Border x:Name="ActivitySectionDivider" Height="1" Margin="0,8,0,12" Background="{DynamicResource NIRAGlassBorderBrush}" Opacity="0.55"/>
 
                             <StackPanel x:Name="CommitmentActivitySection">
-                                <TextBlock Text="ACTIVE COMMITMENTS" FontSize="8.5" FontWeight="SemiBold" Foreground="{DynamicResource NIRAVioletBrush}"/>
-                                <TextBlock x:Name="NoCommitmentActivityText" Text="No active commitments" Margin="0,7,0,8" FontSize="9" Foreground="{DynamicResource NIRAMutedBrush}"/>
+                                <TextBlock Text="ACTIVE COMMITMENTS" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource NIRAVioletBrush}"/>
+                                <TextBlock x:Name="NoCommitmentActivityText" Text="No active commitments" Margin="0,7,0,8" FontSize="10.5" Foreground="{DynamicResource NIRAMutedBrush}"/>
                                 <StackPanel x:Name="CommitmentCardsPanel"/>
                             </StackPanel>
                         </StackPanel>
@@ -1106,7 +1117,7 @@
                             BorderThickness="1">
                         <StackPanel Orientation="Horizontal">
                             <Ellipse x:Name="ConnectedPulseDot" Width="6" Height="6" Fill="{DynamicResource NIRABlueBrush}" Margin="0,0,7,0" VerticalAlignment="Center"/>
-                            <TextBlock Text="READY" FontSize="8.5" Foreground="{DynamicResource NIRASecondaryBrush}" VerticalAlignment="Center"/>
+                            <TextBlock Text="READY" FontSize="10" Foreground="{DynamicResource NIRASecondaryBrush}" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Border>
 
@@ -1302,7 +1313,7 @@
                                         Click="QuickPrompt_Click"/>
                             </StackPanel>
                             <TextBlock Grid.Column="1" Text="Press Enter to send  •  Shift + Enter for new line"
-                                       VerticalAlignment="Center" FontSize="8.5" Foreground="{DynamicResource NIRAMutedBrush}"/>
+                                       VerticalAlignment="Center" FontSize="9.5" Foreground="{DynamicResource NIRAMutedBrush}"/>
                         </Grid>
                     </Grid>
                 </ContentControl>
@@ -1313,87 +1324,86 @@
                     <StackPanel Margin="14,14,14,7">
                         <Grid Margin="1,0,1,12">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                            <TextBlock Text="QUICK TOOLS" FontSize="9" FontWeight="SemiBold" Foreground="{DynamicResource NIRABlueBrush}"/>
+                            <TextBlock Text="QUICK TOOLS" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource NIRABlueBrush}"/>
                             <TextBlock Grid.Column="1" Text="•••" FontSize="12" Foreground="{DynamicResource NIRASecondaryBrush}"/>
                         </Grid>
 
                         <Button Style="{StaticResource GlassQuickButtonStyle}" Tag="Summarize what I provide next. Preserve the important details and keep the result concise." Click="QuickPrompt_Click">
                             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="52"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                                 <Border Width="40" Height="40" CornerRadius="20" Background="#140F4C9A" BorderBrush="#446AA8FF" BorderThickness="1" VerticalAlignment="Center"><TextBlock Text="≡" FontSize="21" Foreground="{DynamicResource NIRABlueBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
-                                <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Summarize" FontSize="11.5" FontWeight="SemiBold"/><TextBlock Text="Condense and clarify content" FontSize="8.5" Foreground="{DynamicResource NIRASecondaryBrush}"/></StackPanel>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Summarize" FontSize="11.5" FontWeight="SemiBold"/><TextBlock Text="Condense and clarify content" FontSize="10" Foreground="{DynamicResource NIRASecondaryBrush}"/></StackPanel>
                             </Grid>
                         </Button>
                         <Button Style="{StaticResource GlassQuickButtonStyle}" Tag="Analyze what I provide next. Find the important patterns, problems, tradeoffs, and actionable insights." Click="QuickPrompt_Click">
                             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="52"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                                 <Border Width="40" Height="40" CornerRadius="20" Background="#140B8CC6" BorderBrush="#4474CCFF" BorderThickness="1" VerticalAlignment="Center"><TextBlock Text="▥" FontSize="18" Foreground="{DynamicResource NIRACyanBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
-                                <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Analyze" FontSize="11.5" FontWeight="SemiBold"/><TextBlock Text="Find insights and patterns" FontSize="8.5" Foreground="{DynamicResource NIRASecondaryBrush}"/></StackPanel>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Analyze" FontSize="11.5" FontWeight="SemiBold"/><TextBlock Text="Find insights and patterns" FontSize="10" Foreground="{DynamicResource NIRASecondaryBrush}"/></StackPanel>
                             </Grid>
                         </Button>
                         <Button Style="{StaticResource GlassQuickButtonStyle}" Tag="Help me create something. Ask what I want to make and then help me produce it." Click="QuickPrompt_Click">
                             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="52"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                                 <Border Width="40" Height="40" CornerRadius="20" Background="#14136CFF" BorderBrush="#6289FFFF" BorderThickness="1" VerticalAlignment="Center"><TextBlock Text="✦" FontSize="18" Foreground="{DynamicResource NIRAVioletBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
-                                <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Create" FontSize="11.5" FontWeight="SemiBold"/><TextBlock Text="Generate content and ideas" FontSize="8.5" Foreground="{DynamicResource NIRASecondaryBrush}"/></StackPanel>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Create" FontSize="11.5" FontWeight="SemiBold"/><TextBlock Text="Generate content and ideas" FontSize="10" Foreground="{DynamicResource NIRASecondaryBrush}"/></StackPanel>
                             </Grid>
                         </Button>
                         <Button Style="{StaticResource GlassQuickButtonStyle}" Tag="Help me make a practical plan. Ask what outcome I want, then break it into useful steps and dependencies." Click="QuickPrompt_Click">
                             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="52"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                                 <Border Width="40" Height="40" CornerRadius="20" Background="#142655C8" BorderBrush="#617DFFFF" BorderThickness="1" VerticalAlignment="Center"><TextBlock Text="☷" FontSize="18" Foreground="{DynamicResource NIRABlueBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
-                                <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Plan" FontSize="11.5" FontWeight="SemiBold"/><TextBlock Text="Break down and organize" FontSize="8.5" Foreground="{DynamicResource NIRASecondaryBrush}"/></StackPanel>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Plan" FontSize="11.5" FontWeight="SemiBold"/><TextBlock Text="Break down and organize" FontSize="10" Foreground="{DynamicResource NIRASecondaryBrush}"/></StackPanel>
                             </Grid>
                         </Button>
                         <Button Style="{StaticResource GlassQuickButtonStyle}" Tag="Help me research a topic. Ask what I want to know and what kind of sources or depth I need." Click="QuickPrompt_Click" Margin="0,0,0,2">
                             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="52"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                                 <Border Width="40" Height="40" CornerRadius="20" Background="#140B7A88" BorderBrush="#589AD4F8" BorderThickness="1" VerticalAlignment="Center"><TextBlock Text="⌕" FontSize="20" Foreground="{DynamicResource NIRACyanBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
-                                <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Research" FontSize="11.5" FontWeight="SemiBold"/><TextBlock Text="Explore and compare sources" FontSize="8.5" Foreground="{DynamicResource NIRASecondaryBrush}"/></StackPanel>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Research" FontSize="11.5" FontWeight="SemiBold"/><TextBlock Text="Explore and compare sources" FontSize="10" Foreground="{DynamicResource NIRASecondaryBrush}"/></StackPanel>
                             </Grid>
                         </Button>
                     </StackPanel>
                 </ContentControl>
 
+                <!-- Past chat cards come from the real SQLite archive; no mock entries. -->
                 <ContentControl Style="{StaticResource GlassPanelStyle}" Margin="0,12,0,0">
-                    <StackPanel Margin="15,14">
-                        <Grid Margin="0,0,0,12">
+                    <StackPanel Margin="14,14,14,12">
+                        <Grid Margin="0,0,0,10">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                            <TextBlock Text="RECENT ACTIVITY" FontSize="9" FontWeight="SemiBold" Foreground="{DynamicResource NIRABlueBrush}"/>
-                            <TextBlock Grid.Column="1" Text="•••" FontSize="12" Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                            <TextBlock Text="PAST CHATS" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource NIRABlueBrush}"/>
+                            <Button Grid.Column="1" Content="↻" ToolTip="Refresh past chats" Padding="5,0" Click="RefreshPastChats_Click"
+                                    FontSize="14" Background="Transparent" BorderThickness="0" Foreground="{DynamicResource NIRASecondaryBrush}"/>
                         </Grid>
-
-                        <StackPanel>
-                            <Grid Margin="0,0,0,12">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="38"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <Border Width="30" Height="30" CornerRadius="15" Background="#140F4C9A" BorderBrush="#446AA8FF" BorderThickness="1"><TextBlock Text="≣" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource NIRABlueBrush}"/></Border>
-                                <StackPanel Grid.Column="1"><TextBlock Text="Q4 Planning Outline" FontSize="10.5" FontWeight="SemiBold"/><TextBlock Text="Created document" FontSize="8.5" Foreground="{DynamicResource NIRASecondaryBrush}"/></StackPanel>
-                                <TextBlock Grid.Column="2" Text="2h ago" FontSize="8.5" Foreground="{DynamicResource NIRAMutedBrush}" VerticalAlignment="Center"/>
-                            </Grid>
-                            <Grid Margin="0,0,0,12">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="38"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <Border Width="30" Height="30" CornerRadius="15" Background="#140B7A88" BorderBrush="#589AD4F8" BorderThickness="1"><TextBlock Text="⌕" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource NIRACyanBrush}"/></Border>
-                                <StackPanel Grid.Column="1"><TextBlock Text="Japan Trip Research" FontSize="10.5" FontWeight="SemiBold"/><TextBlock Text="Gathered 12 sources" FontSize="8.5" Foreground="{DynamicResource NIRASecondaryBrush}"/></StackPanel>
-                                <TextBlock Grid.Column="2" Text="4h ago" FontSize="8.5" Foreground="{DynamicResource NIRAMutedBrush}" VerticalAlignment="Center"/>
-                            </Grid>
-                            <Grid Margin="0,0,0,12">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="38"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <Border Width="30" Height="30" CornerRadius="15" Background="#14136CFF" BorderBrush="#6289FFFF" BorderThickness="1"><TextBlock Text="⌂" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource NIRAVioletBrush}"/></Border>
-                                <StackPanel Grid.Column="1"><TextBlock Text="Home Organization Plan" FontSize="10.5" FontWeight="SemiBold"/><TextBlock Text="Created plan" FontSize="8.5" Foreground="{DynamicResource NIRASecondaryBrush}"/></StackPanel>
-                                <TextBlock Grid.Column="2" Text="6h ago" FontSize="8.5" Foreground="{DynamicResource NIRAMutedBrush}" VerticalAlignment="Center"/>
-                            </Grid>
-                            <Grid Margin="0,0,0,12">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="38"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <Border Width="30" Height="30" CornerRadius="15" Background="#142655C8" BorderBrush="#617DFFFF" BorderThickness="1"><TextBlock Text="▥" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource NIRABlueBrush}"/></Border>
-                                <StackPanel Grid.Column="1"><TextBlock Text="AI Agent Capabilities" FontSize="10.5" FontWeight="SemiBold"/><TextBlock Text="Analyzed document" FontSize="8.5" Foreground="{DynamicResource NIRASecondaryBrush}"/></StackPanel>
-                                <TextBlock Grid.Column="2" Text="1d ago" FontSize="8.5" Foreground="{DynamicResource NIRAMutedBrush}" VerticalAlignment="Center"/>
-                            </Grid>
-                            <Grid>
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="38"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <Border Width="30" Height="30" CornerRadius="15" Background="#140B8CC6" BorderBrush="#4474CCFF" BorderThickness="1"><TextBlock Text="♡" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource NIRACyanBrush}"/></Border>
-                                <StackPanel Grid.Column="1"><TextBlock Text="Wellness Routine" FontSize="10.5" FontWeight="SemiBold"/><TextBlock Text="Updated plan" FontSize="8.5" Foreground="{DynamicResource NIRASecondaryBrush}"/></StackPanel>
-                                <TextBlock Grid.Column="2" Text="1d ago" FontSize="8.5" Foreground="{DynamicResource NIRAMutedBrush}" VerticalAlignment="Center"/>
-                            </Grid>
-                        </StackPanel>
+                        <TextBox x:Name="PastChatFilterBox" TextChanged="PastChatFilter_TextChanged"
+                                 ToolTip="Filter saved chats by their opening message"
+                                 Height="30" Margin="0,0,0,5" Padding="9,5" FontSize="10.5"
+                                 Background="{DynamicResource NIRAGlassTintBrush}"
+                                 Foreground="White"
+                                 BorderBrush="{DynamicResource NIRAGlassBorderBrush}" BorderThickness="1"/>
+                        <Grid Margin="0,0,0,8">
+                            <TextBlock Text="FILTER BY OPENING MESSAGE" FontSize="9.5" Foreground="{DynamicResource NIRAMutedBrush}"/>
+                            <TextBlock x:Name="PastChatsCountText" HorizontalAlignment="Right" FontSize="9.5"
+                                       Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                        </Grid>
+                        <TextBlock x:Name="NoPastChatsText" Text="No past chats yet. They appear after NIRA restarts."
+                                   TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource NIRAMutedBrush}"/>
+                        <ScrollViewer MaxHeight="310" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel x:Name="PastChatsListPanel"/>
+                        </ScrollViewer>
+                        <Border x:Name="PastChatAttachStrip" Visibility="Collapsed" Margin="0,10,0,0"
+                                Background="{DynamicResource NIRAGlassTintBrush}" BorderBrush="{DynamicResource NIRAGlassBorderBrush}"
+                                BorderThickness="1" CornerRadius="9" Padding="8">
+                            <DockPanel LastChildFill="True">
+                                <Button DockPanel.Dock="Right" Content="✕" ToolTip="Detach source" Click="DetachPastChat_Click"
+                                        BorderThickness="0" Background="Transparent" Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                                <StackPanel>
+                                    <TextBlock Text="ATTACHED TO NEXT MESSAGE" FontSize="9.5" Foreground="{DynamicResource NIRACyanBrush}"/>
+                                    <TextBlock Text="{Binding AttachedPastChatName}" FontSize="10.5" MaxWidth="182"
+                                               TextTrimming="CharacterEllipsis"/>
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
                     </StackPanel>
                 </ContentControl>
             </StackPanel>
         </Grid>
     </Grid>
 </Window>
+
 

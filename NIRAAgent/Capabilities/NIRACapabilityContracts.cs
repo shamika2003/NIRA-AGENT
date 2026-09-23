@@ -622,6 +622,64 @@ public sealed record NIRACapabilityAuthorizationDecision
 }
 
 
+
+public sealed record NIRACapabilityVisualArtifact
+{
+    public Guid? EvidenceId { get; init; }
+
+    public string LocalPath { get; init; } = string.Empty;
+
+    public string Title { get; init; } = string.Empty;
+
+    public string Caption { get; init; } = string.Empty;
+
+    public bool PresentToUser { get; init; }
+
+    public string Surface { get; init; } = "Auto";
+
+    public NIRACapabilityVisualArtifact Normalize()
+    {
+        bool hasEvidence = EvidenceId.HasValue && EvidenceId.Value != Guid.Empty;
+        bool hasPath = !string.IsNullOrWhiteSpace(LocalPath);
+
+        if (!hasEvidence && !hasPath)
+            throw new InvalidOperationException(
+                "A capability visual artifact requires an evidenceId or localPath.");
+
+        string surface = string.IsNullOrWhiteSpace(Surface)
+            ? "Auto"
+            : Surface.Trim();
+
+        if (surface is not ("Auto" or "InlineOnly" or "ToastOnly" or "InlineAndToast"))
+            surface = "Auto";
+
+        return this with
+        {
+            EvidenceId = hasEvidence ? EvidenceId : null,
+            LocalPath = hasEvidence ? string.Empty : LocalPath.Trim(),
+            Title = NormalizeText(Title, 180),
+            Caption = NormalizeText(Caption, 1000),
+            Surface = surface
+        };
+    }
+
+    private static string NormalizeText(string? value, int maximum)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+
+        string clean = string.Join(
+            ' ',
+            value.Split(
+                (char[]?)null,
+                StringSplitOptions.RemoveEmptyEntries));
+
+        return clean.Length <= maximum
+            ? clean
+            : clean[..maximum];
+    }
+}
+
+
 public sealed record NIRACapabilityHandlerResult
 {
     public bool Succeeded { get; init; } = true;
@@ -642,6 +700,14 @@ public sealed record NIRACapabilityHandlerResult
         init;
     } =
         string.Empty;
+
+
+    public IReadOnlyList<NIRACapabilityVisualArtifact> VisualArtifacts
+    {
+        get;
+        init;
+    } =
+        Array.Empty<NIRACapabilityVisualArtifact>();
 
 
     public bool ChangedSystemState
@@ -704,6 +770,14 @@ public sealed record NIRACapabilityResult
         init;
     } =
         string.Empty;
+
+
+    public IReadOnlyList<NIRACapabilityVisualArtifact> VisualArtifacts
+    {
+        get;
+        init;
+    } =
+        Array.Empty<NIRACapabilityVisualArtifact>();
 
 
     public bool ChangedSystemState

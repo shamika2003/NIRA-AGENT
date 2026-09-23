@@ -701,6 +701,9 @@ public partial class App : WpfApplication
             // =================================================
 
             builder.Services.AddSingleton<
+                NIRAConversationArchiveStore>();
+
+            builder.Services.AddSingleton<
                 ConversationManager>();
 
 
@@ -907,6 +910,9 @@ public partial class App : WpfApplication
             window.AttachSettings(
                 runtimeSettings);
 
+            window.AttachConversationArchive(
+                _host.Services.GetRequiredService<NIRAConversationArchiveStore>());
+
 
             window.Show();
 
@@ -1039,15 +1045,27 @@ public partial class App : WpfApplication
         CredentialPromptWindow dialog =
             new(request);
 
-        if (MainWindow is System.Windows.Window owner &&
-            owner.IsLoaded)
+        bool visibleOwner = MainWindow is System.Windows.Window owner &&
+            owner.IsLoaded && owner.IsVisible &&
+            owner.WindowState != System.Windows.WindowState.Minimized;
+        if (visibleOwner && MainWindow is System.Windows.Window visibleWindow)
         {
-            dialog.Owner = owner;
+            dialog.Owner = visibleWindow;
             dialog.WindowStartupLocation =
                 System.Windows.WindowStartupLocation.CenterOwner;
         }
-
+        else
+        {
+            dialog.WindowStartupLocation =
+                System.Windows.WindowStartupLocation.CenterScreen;
+        }
+        // A user-requested secure login prompt must not hide behind other apps.
+        dialog.Topmost = true;
+        System.Diagnostics.Debug.WriteLine($"[AuthFlow] TRUSTED WINDOW OPEN | " +
+            $"Origin={request.Origin} | ExistingAccounts={request.ExistingCredentials.Count}");
         bool? accepted = dialog.ShowDialog();
+        System.Diagnostics.Debug.WriteLine($"[AuthFlow] TRUSTED WINDOW CLOSED | " +
+            $"Accepted={accepted == true} | HasResolution={dialog.Resolution != null}");
 
         return accepted == true
             ? dialog.Resolution
@@ -1107,6 +1125,15 @@ public partial class App : WpfApplication
             null)
         {
             await _host.StopAsync();
+            try
+            {
+                _host.Services.GetRequiredService<NIRAConversationArchiveStore>()
+                    .CloseCurrentSession();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ConversationArchive] CLOSE_FAILED | {ex.Message}");
+            }
 
 
             _host.Dispose();

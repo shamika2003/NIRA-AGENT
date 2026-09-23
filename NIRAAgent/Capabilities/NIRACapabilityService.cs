@@ -48,6 +48,29 @@ public sealed class NIRACapabilityService
             cancellationToken.ThrowIfCancellationRequested();
             NIRACapabilityResult result = await ExecuteOneAsync(request, cancellationToken);
             results.Add(result);
+            if (result.CapabilityId.StartsWith("browser.", StringComparison.OrdinalIgnoreCase))
+                Debug.WriteLine($"[BrowserFlow] DISPATCH RESULT | Id={result.CapabilityId} | " +
+                    $"Status={result.Status} | Risk={result.Risk} | " +
+                    $"OutputChars={result.Output.Length} | Uncertain={result.OutcomeUncertain} | " +
+                    $"ElapsedMs={(result.FinishedAtUtc - result.StartedAtUtc).TotalMilliseconds:F0} | " +
+                    $"Audit={result.AuditAttemptId?.ToString("D") ?? "-"}");
+            if (result.CapabilityId.StartsWith("browser.", StringComparison.OrdinalIgnoreCase) &&
+                result.Status != NIRACapabilityResultStatus.Succeeded)
+            {
+                string failureKind = result.Summary.StartsWith("UngroundedLoopbackNavigation:", StringComparison.Ordinal)
+                    ? "UngroundedLoopback" :
+                    result.Summary.StartsWith("BrowserNavigationFailed:", StringComparison.Ordinal)
+                    ? "NavigationFailedRestored" :
+                    result.Summary.StartsWith("BrowserNavigationUncertain:", StringComparison.Ordinal)
+                    ? "NavigationUncertain" :
+                    result.Summary.StartsWith("BrowserErrorDocument:", StringComparison.Ordinal)
+                    ? "BrowserErrorDocument" :
+                    result.Summary.Contains("Unknown argument", StringComparison.Ordinal)
+                    ? "ArgumentSchemaMismatch" : "Other";
+                Debug.WriteLine($"[BrowserFlow] ERROR | Capability={result.CapabilityId} | " +
+                    $"Kind={failureKind} | Status={result.Status} | " +
+                    $"Uncertain={result.OutcomeUncertain} | Audit={result.AuditAttemptId?.ToString("D") ?? "-"}");
+            }
             Debug.WriteLine($"[Capability] {result.Status.ToString().ToUpperInvariant()} | Id={result.CapabilityId} | " +
                 $"Risk={result.Risk} | Changed={result.ChangedSystemState} | Uncertain={result.OutcomeUncertain} | " +
                 $"ExitCode={result.ExitCode?.ToString() ?? "-"} | Audit={result.AuditAttemptId?.ToString("D") ?? "-"}");
@@ -139,6 +162,10 @@ public sealed class NIRACapabilityService
                     NIRACapabilityArguments.Truncate(handled.Summary, 2000)) with
                 {
                     Output = NIRACapabilityArguments.Truncate(handled.Output, MaximumResultOutputCharacters),
+                    VisualArtifacts = (handled.VisualArtifacts ?? Array.Empty<NIRACapabilityVisualArtifact>())
+                        .Take(4)
+                        .Select(artifact => artifact.Normalize())
+                        .ToArray(),
                     ChangedSystemState = handled.ChangedSystemState,
                     ExitCode = handled.ExitCode,
                     HttpStatusCode = handled.HttpStatusCode
@@ -156,6 +183,17 @@ public sealed class NIRACapabilityService
         }
         catch (Exception ex)
         {
+            if (request.CapabilityId.StartsWith("browser.", StringComparison.OrdinalIgnoreCase))
+            {
+                // Log NAMES, never values: URLs may carry tokens and credential
+                // arguments must not appear in a diagnostic transcript.
+                string argumentNames = request.Arguments.ValueKind == JsonValueKind.Object
+                    ? string.Join(",", request.Arguments.EnumerateObject().Select(p => p.Name))
+                    : "invalid-json";
+                Debug.WriteLine($"[BrowserFlow] DISPATCH FAILURE | Id={request.CapabilityId} | " +
+                    $"Stage={(dispatched ? "AfterDispatch" : "BeforeDispatch")} | " +
+                    $"ArgumentNames={argumentNames} | ExceptionType={ex.GetType().Name}");
+            }
             result = Make(dispatched ? NIRACapabilityResultStatus.Failed : NIRACapabilityResultStatus.Rejected,
                 ex.Message + (dispatched && risk != NIRACapabilityRisk.Observe
                     ? " Partial effects may remain; inspect before retrying." : "")) with
@@ -202,14 +240,32 @@ public sealed class NIRACapabilityService
         {
             if (!supplied.TryAdd(property.Name, property.Value))
                 throw new InvalidOperationException($"Duplicate argument '{property.Name}'.");
-            if (!descriptor.Parameters.Any(p => string.Equals(p.Name, property.Name, StringComparison.OrdinalIgnoreCase)))
+            bool browserRefAlias = descriptor.Id.StartsWith("browser.", StringComparison.OrdinalIgnoreCase) &&
+                property.Name.Equals("elementRef", StringComparison.OrdinalIgnoreCase) &&
+                descriptor.Parameters.Any(p => p.Name.Equals("ref", StringComparison.OrdinalIgnoreCase));
+            if (!browserRefAlias && !descriptor.Parameters.Any(p => string.Equals(p.Name, property.Name, StringComparison.OrdinalIgnoreCase)))
                 throw new InvalidOperationException($"Unknown argument '{property.Name}' for {descriptor.Id}.");
         }
+        if (descriptor.Id.StartsWith("browser.", StringComparison.OrdinalIgnoreCase) &&
+            supplied.ContainsKey("elementRef") && supplied.ContainsKey("ref"))
+            throw new InvalidOperationException("Supply only 'ref' or 'elementRef', not both.");
         foreach (NIRACapabilityParameterDescriptor parameter in descriptor.Parameters)
         {
-            if (!supplied.TryGetValue(parameter.Name, out JsonElement value) || value.ValueKind == JsonValueKind.Null)
+            bool hasValue = supplied.TryGetValue(parameter.Name, out JsonElement value);
+            if (!hasValue && parameter.Name.Equals("ref", StringComparison.OrdinalIgnoreCase) &&
+                descriptor.Id.StartsWith("browser.", StringComparison.OrdinalIgnoreCase))
+                hasValue = supplied.TryGetValue("elementRef", out value);
+            if (!hasValue || value.ValueKind == JsonValueKind.Null)
             {
-                if (parameter.Required) throw new InvalidOperationException($"Required argument '{parameter.Name}' is missing.");
+                // The browser policy can bind the current exact, task-owned
+                // inspected page for these specific ref actions. It must
+                // still verify ownership, live origin and latest DOM ref
+                // before the handler ever executes. All other required
+                // arguments (including refs) retain strict validation.
+                bool runtimeBoundPage = parameter.Name.Equals("pageId", StringComparison.OrdinalIgnoreCase) &&
+                    NIRACapabilityRequestPolicy.IsBrowserPageAction(descriptor.Id);
+                if (parameter.Required && !runtimeBoundPage)
+                    throw new InvalidOperationException($"Required argument '{parameter.Name}' is missing.");
                 continue;
             }
             bool valid = parameter.Type.ToLowerInvariant() switch

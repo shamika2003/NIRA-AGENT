@@ -27,7 +27,7 @@
             <Setter Property="Background" Value="#E5102235"/>
             <Setter Property="BorderBrush" Value="#815A9BC9"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="FontSize" Value="12"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Focusable" Value="False"/>
@@ -105,7 +105,8 @@
         </Style>
     </Window.Resources>
 
-    <Border x:Name="ToastChrome" Background="#F0060C18"
+    <Grid x:Name="ToastRoot" ClipToBounds="False">
+        <Border x:Name="ToastChrome" Background="#F0060C18"
             BorderBrush="#8A4C91C9"
             BorderThickness="1"
             CornerRadius="16"
@@ -127,13 +128,13 @@
                     <StackPanel Orientation="Horizontal">
                         <Ellipse Width="6" Height="6" Fill="#FF78DBFF" Margin="0,0,7,0" VerticalAlignment="Center"/>
                         <TextBlock Text="NIRA / VISUAL"
-                                   FontSize="9"
+                                   FontSize="10"
                                    FontWeight="SemiBold"
                                    Foreground="#FF78DBFF"/>
                     </StackPanel>
                     <TextBlock Text="{Binding Title}"
                                Margin="0,5,8,0"
-                               FontSize="13"
+                               FontSize="14"
                                FontWeight="SemiBold"
                                Foreground="#FFE9F7FF"
                                TextTrimming="CharacterEllipsis"/>
@@ -159,7 +160,7 @@
                             Background="#D0050A12"
                             Padding="9,7">
                         <TextBlock Text="{Binding Caption}"
-                                   FontSize="11"
+                                   FontSize="12"
                                    Foreground="#FFD3E8F5"
                                    TextWrapping="Wrap"
                                    MaxHeight="42">
@@ -193,5 +194,12 @@
                         Click="OpenChatButton_Click"/>
             </StackPanel>
         </Grid>
-    </Border>
+        </Border>
+
+        <!-- Non-interactive exit particles; toast geometry and image stay unchanged. -->
+        <Canvas x:Name="DissolveParticles"
+                Panel.ZIndex="2"
+                IsHitTestVisible="False"
+                ClipToBounds="False"/>
+    </Grid>
 </Window>

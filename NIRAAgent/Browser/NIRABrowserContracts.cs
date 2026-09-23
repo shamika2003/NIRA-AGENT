@@ -105,6 +105,9 @@ public sealed record NIRABrowserActionEvidence
     public string BeforeUrl { get; init; } = string.Empty;
     public string AfterUrl { get; init; } = string.Empty;
     public bool ActionApplied { get; init; }
+    // Null: change cannot be assessed; false: no route, popup or visible
+    // content change observed. Neither proves a website side effect did not occur.
+    public bool? ObservedPageChange { get; init; }
     public IReadOnlyList<Guid> NewPageIds { get; init; } = Array.Empty<Guid>();
     public string LocalVerification { get; init; } = string.Empty;
     public DateTimeOffset ObservedAtUtc { get; init; } = DateTimeOffset.UtcNow;
@@ -240,6 +243,7 @@ public sealed record NIRABrowserDownloadResult
     public string Sha256 { get; init; } = string.Empty;
     public DateTimeOffset VerifiedAtUtc { get; init; } = DateTimeOffset.UtcNow;
 }
+
 
 
 

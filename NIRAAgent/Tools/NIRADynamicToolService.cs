@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 
 using NIRAAgent.Skills;
+using NIRAAgent.Authorization;
 
 namespace NIRAAgent.Tools;
 
@@ -20,6 +21,7 @@ public sealed class NIRADynamicToolService
     private readonly NIRADynamicToolValidator _validator;
     private readonly NIRADynamicToolExecutor _executor;
     private readonly NIRALearnedSkillService _skills;
+    private readonly NIRAAuthorityExecutionContextAccessor _executionContext;
     private readonly SemaphoreSlim _mutationLock = new(1, 1);
     private readonly object _temporarySync = new();
     private readonly Dictionary<Guid, NIRADynamicToolRecord> _temporary = new();
@@ -28,12 +30,14 @@ public sealed class NIRADynamicToolService
         NIRADynamicToolStore store,
         NIRADynamicToolValidator validator,
         NIRADynamicToolExecutor executor,
-        NIRALearnedSkillService skills)
+        NIRALearnedSkillService skills,
+        NIRAAuthorityExecutionContextAccessor executionContext)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _validator = validator ?? throw new ArgumentNullException(nameof(validator));
         _executor = executor ?? throw new ArgumentNullException(nameof(executor));
         _skills = skills ?? throw new ArgumentNullException(nameof(skills));
+        _executionContext = executionContext;
     }
 
     public async Task<string> BuildCognitionContextAsync(
@@ -184,6 +188,17 @@ public sealed class NIRADynamicToolService
         {
             cancellationToken.ThrowIfCancellationRequested();
             NIRADynamicToolInvocation invocation = raw.Normalize();
+            // Defense in depth: a tool may have non-capability bookkeeping as
+            // well as primitive steps; its invocation still belongs to work.
+            NIRAAuthorityExecutionContext owner = _executionContext.Current;
+            if (owner.GoalId is not Guid goalId || goalId == Guid.Empty ||
+                owner.BranchId is not Guid branchId || branchId == Guid.Empty ||
+                owner.WorkId is not Guid workId || workId == Guid.Empty)
+            {
+                Debug.WriteLine("[BranchOwnership] DIRECT TOOL REJECTED");
+                throw new InvalidOperationException(
+                    "BranchOwnedExecutionRequired: dynamic tool must have committed goal, branch and work ownership.");
+            }
             DateTimeOffset now = DateTimeOffset.UtcNow;
 
             if (!Guid.TryParse(invocation.ToolId, out Guid toolId) || toolId == Guid.Empty)
@@ -344,6 +359,9 @@ public sealed class NIRADynamicToolService
         NIRADynamicToolProposal proposal,
         CancellationToken cancellationToken)
     {
+        if (proposal.RunAfterCreate &&
+            proposal.Definition?.Persistence != NIRADynamicToolPersistence.Temporary)
+            return Rejected("Same-cycle execution is allowed only for a new Temporary tool.");
         if (proposal.Confidence < MinimumCreateConfidence)
             return Rejected("Dynamic tool create confidence is below the authoritative threshold.");
         if (proposal.Definition == null)

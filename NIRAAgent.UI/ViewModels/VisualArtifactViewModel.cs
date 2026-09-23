@@ -29,7 +29,9 @@ public sealed class VisualArtifactViewModel
 
 
     public string Caption =>
-        Artifact.Caption;
+        string.Join("\n", new[] { Artifact.Caption }
+            .Concat(Artifact.Annotations.Select(a => a.Label))
+            .Where(value => !string.IsNullOrWhiteSpace(value)));
 
 
     public bool HasCaption =>
@@ -59,8 +61,8 @@ public sealed class VisualArtifactViewModel
                 nameof(artifact));
 
         PreviewImage =
-            TryLoadPreview(
-                artifact.LocalPath);
+            NIRAVisualAnnotationRenderer.Render(
+                TryLoadPreview(artifact.LocalPath), artifact.Annotations);
     }
 
 

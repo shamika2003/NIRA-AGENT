@@ -8,6 +8,7 @@ using System.Runtime.CompilerServices;
 using System.Windows.Input;
 
 using NIRAAgent.Mind;
+using NIRAAgent.Conversation;
 using NIRAAgent.Artifacts;
 using NIRAAgent.Settings;
 using NIRAAgent.Voice;
@@ -18,6 +19,11 @@ public sealed class MainWindowViewModel
     : INotifyPropertyChanged,
       IDisposable
 {
+    private NIRAConversationArchiveStore? _conversationArchive;
+
+    public void AttachConversationArchive(NIRAConversationArchiveStore store) =>
+        _conversationArchive = store;
+
     private readonly NIRAMindRuntime
         _mind;
 
@@ -48,6 +54,11 @@ public sealed class MainWindowViewModel
         _backgroundResponses =
             new();
 
+
+    // Throttle spoken background milestones across ALL branch runs, not
+    // once per event (each result has its own runId).
+    private DateTimeOffset _lastBackgroundJourneySpeech = DateTimeOffset.MinValue;
+    private string _lastBackgroundJourneySpeechText = string.Empty;
 
     private readonly AsyncRelayCommand
         _sendCommand;
@@ -80,6 +91,28 @@ public sealed class MainWindowViewModel
 
     public event Action<NIRAVisualArtifact>?
         VisualArtifactReceived;
+
+    private Guid? _attachedPastChatSessionId;
+    private string _attachedPastChatName = string.Empty;
+    public string AttachedPastChatName => _attachedPastChatName;
+    public bool HasAttachedPastChat => _attachedPastChatSessionId.HasValue;
+
+    public void AttachPastChat(Guid sessionId, string title)
+    {
+        if (sessionId == Guid.Empty) return;
+        _attachedPastChatSessionId = sessionId;
+        _attachedPastChatName = title;
+        OnPropertyChanged(nameof(AttachedPastChatName));
+        OnPropertyChanged(nameof(HasAttachedPastChat));
+    }
+
+    public void ClearPastChatAttachment()
+    {
+        _attachedPastChatSessionId = null;
+        _attachedPastChatName = string.Empty;
+        OnPropertyChanged(nameof(AttachedPastChatName));
+        OnPropertyChanged(nameof(HasAttachedPastChat));
+    }
 
 
     public string MessageInput
@@ -199,6 +232,15 @@ public sealed class MainWindowViewModel
     }
 
 
+    private void SubmitFollowUp(string choice)
+    {
+        if (string.IsNullOrWhiteSpace(choice)) return;
+        // Clicked options become ordinary user messages, not permissioned actions.
+        // If busy, prefill rather than submitting into an active cognition run.
+        MessageInput = "Regarding your previous answer: " + choice.Trim();
+        if (!IsProcessing) _ = SendMessageAsync();
+    }
+
     private async Task SendMessageAsync()
     {
         string input =
@@ -211,6 +253,10 @@ public sealed class MainWindowViewModel
             return;
         }
 
+
+        // A past chat is a one-turn explicit source, never merged into this transcript.
+        Guid? attachedPastChatSessionId = _attachedPastChatSessionId;
+        ClearPastChatAttachment();
 
         _voiceQueue.Interrupt();
 
@@ -245,9 +291,16 @@ public sealed class MainWindowViewModel
                 string.Empty);
 
 
+        assistantMessage.ProgressText = "Working out the next step…";
         Messages.Add(
             assistantMessage);
 
+        // Spoken journey checkpoints are sparse, not a running narration.
+        // They share the current reply's queue generation, so a new user turn
+        // still interrupts them as usual.
+        DateTimeOffset lastSpokenProgress = DateTimeOffset.UtcNow;
+        bool hasSpokenProgress = false;
+        string lastSpokenProgressText = string.Empty;
 
         try
         {
@@ -255,8 +308,40 @@ public sealed class MainWindowViewModel
                 NIRAOutputChunk chunk
                 in _mind.ProcessUserMessageAsync(
                     input,
-                    _shutdown.Token))
+                    _shutdown.Token,
+                    attachedPastChatSessionId))
             {
+                if (chunk.Type == NIRAOutputChunkType.Progress)
+                {
+                    // Progress is not a chat message, a capability result, or
+                    // archival material; show only while the reply is pending.
+                    if (!assistantMessage.HasContent &&
+                        !assistantMessage.HasRichElements &&
+                        !assistantMessage.HasVisualArtifacts)
+                        assistantMessage.ProgressText = chunk.Content;
+                    string spoken = chunk.SpeechContent.Trim();
+                    TimeSpan gap = DateTimeOffset.UtcNow - lastSpokenProgress;
+                    if (_settings.Current.VoiceEnabled &&
+                        !string.IsNullOrWhiteSpace(spoken) &&
+                        !string.Equals(spoken, lastSpokenProgressText,
+                            StringComparison.OrdinalIgnoreCase) &&
+                        gap >= (!hasSpokenProgress
+                            ? TimeSpan.FromSeconds(6)
+                            : chunk.IsProgressCorrection
+                                ? TimeSpan.FromSeconds(8)
+                                : TimeSpan.FromSeconds(20)))
+                    {
+                        _voiceQueue.Enqueue(new VoiceUtterance(
+                            Guid.NewGuid(), 1, spoken,
+                            NIRAVoiceExpression.Neutral));
+                        lastSpokenProgress = DateTimeOffset.UtcNow;
+                        lastSpokenProgressText = spoken;
+                        hasSpokenProgress = true;
+                    }
+                    continue;
+                }
+                if (chunk.Type == NIRAOutputChunkType.Text)
+                    assistantMessage.ProgressText = string.Empty;
                 HandleChunk(
                     assistantMessage,
                     chunk,
@@ -272,6 +357,7 @@ public sealed class MainWindowViewModel
                 _settings.Current.VoiceEnabled);
 
 
+            assistantMessage.ProgressText = string.Empty;
             if (assistantMessage.IsEmpty)
             {
                 Messages.Remove(
@@ -299,6 +385,9 @@ public sealed class MainWindowViewModel
         }
         finally
         {
+            assistantMessage.ProgressText = string.Empty;
+            if (assistantMessage.IsEmpty)
+                Messages.Remove(assistantMessage);
             IsProcessing =
                 false;
         }
@@ -333,6 +422,34 @@ public sealed class MainWindowViewModel
     private void HandleBackgroundChunk(
         NIRAOutputChunk chunk)
     {
+        if (chunk.Type == NIRAOutputChunkType.Progress)
+        {
+            if (string.IsNullOrWhiteSpace(chunk.Content)) return;
+            BackgroundResponseState progress = GetOrCreateBackgroundResponse(chunk.RunId);
+            if (!progress.Message.HasContent &&
+                !progress.Message.HasRichElements &&
+                !progress.Message.HasVisualArtifacts)
+                progress.Message.ProgressText = chunk.Content;
+
+            string spoken = chunk.SpeechContent.Trim();
+            if (_settings.Current.VoiceEnabled &&
+                _settings.Current.SpeakBackgroundUpdates &&
+                !string.IsNullOrWhiteSpace(spoken) &&
+                !string.Equals(spoken, _lastBackgroundJourneySpeechText,
+                    StringComparison.OrdinalIgnoreCase) &&
+                DateTimeOffset.UtcNow - _lastBackgroundJourneySpeech >=
+                    (chunk.IsProgressCorrection
+                        ? TimeSpan.FromSeconds(8)
+                        : TimeSpan.FromSeconds(20)))
+            {
+                _voiceQueue.Enqueue(new VoiceUtterance(
+                    Guid.NewGuid(), 1, spoken, NIRAVoiceExpression.Neutral));
+                _lastBackgroundJourneySpeech = DateTimeOffset.UtcNow;
+                _lastBackgroundJourneySpeechText = spoken;
+            }
+            return;
+        }
+
         if (chunk.Type ==
             NIRAOutputChunkType.Cancelled)
         {
@@ -389,7 +506,10 @@ public sealed class MainWindowViewModel
 
 
                 state.SpeechState.Reset();
-
+                // Transient progress is not a permanent chat reply.
+                state.Message.ProgressText = string.Empty;
+                if (state.Message.IsEmpty)
+                    Messages.Remove(state.Message);
 
                 _backgroundResponses.Remove(
                     chunk.RunId);
@@ -404,8 +524,8 @@ public sealed class MainWindowViewModel
             chunk.Type !=
                 NIRAOutputChunkType.Text
             ||
-            string.IsNullOrEmpty(
-                chunk.Content))
+            (string.IsNullOrEmpty(chunk.Content) && chunk.DisplayBlocks.Count == 0 &&
+             string.IsNullOrWhiteSpace(chunk.SpeechContent)))
         {
             return;
         }
@@ -416,6 +536,7 @@ public sealed class MainWindowViewModel
                 chunk.RunId);
 
 
+        responseState.Message.ProgressText = string.Empty;
         HandleChunk(
             responseState.Message,
             chunk,
@@ -518,8 +639,8 @@ public sealed class MainWindowViewModel
             chunk.Type !=
                 NIRAOutputChunkType.Text
             ||
-            string.IsNullOrEmpty(
-                chunk.Content))
+            (string.IsNullOrEmpty(chunk.Content) && chunk.DisplayBlocks.Count == 0 &&
+             string.IsNullOrWhiteSpace(chunk.SpeechContent)))
         {
             return;
         }
@@ -532,6 +653,10 @@ public sealed class MainWindowViewModel
         message.Content +=
             chunk.Content;
 
+        if (chunk.DisplayBlocks.Count > 0)
+            message.AddRichBlocks(chunk.DisplayBlocks, _conversationArchive,
+                chunk.ArchiveMessageId, SubmitFollowUp);
+
 
         if (!allowSpeech)
         {
@@ -543,7 +668,7 @@ public sealed class MainWindowViewModel
 
         IReadOnlyList<string> speechParts =
             speechChunker.Add(
-                chunk.Content);
+                string.IsNullOrWhiteSpace(chunk.SpeechContent) ? chunk.Content : chunk.SpeechContent);
 
 
         foreach (
@@ -761,3 +886,6 @@ public sealed class MainWindowViewModel
         }
     }
 }
+
+
+

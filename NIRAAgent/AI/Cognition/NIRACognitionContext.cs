@@ -50,6 +50,8 @@ public sealed record NIRACognitionContext
         string.Empty;
 
 
+    public string OwnedTaskContext { get; init; } = string.Empty;
+
     public string GoalContext
     {
         get;

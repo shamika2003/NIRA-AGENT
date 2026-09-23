@@ -44,6 +44,9 @@ internal static class NIRABrowserCapabilityFormatting
         }
         catch (Exception ex)
         {
+            Debug.WriteLine($"[BrowserFlow] DESTINATION INSPECTION FAILED | " +
+                $"Page={page.PageId:D} | Type={ex.GetType().Name} | " +
+                $"Url={NIRABrowserService.RedactUrlForCognition(page.Url)}");
             return "\nDestination inspection unavailable: " + ex.GetType().Name +
                 ". Inspect a live task-owned page before claiming completion.";
         }
@@ -93,6 +96,7 @@ internal static class NIRABrowserCapabilityFormatting
             text.AppendLine($"BeforeUrl={CleanUrl(action.BeforeUrl, 2000)}");
             text.AppendLine($"AfterUrl={CleanUrl(action.AfterUrl, 2000)}");
             text.AppendLine($"ActionApplied={action.ActionApplied}");
+            text.AppendLine($"ObservedPageChange={action.ObservedPageChange?.ToString() ?? "Unknown"}");
             if (action.NewPageIds.Count > 0)
                 text.AppendLine($"NewPageIds={string.Join(",", action.NewPageIds.Select(id => id.ToString("D")))}");
             text.AppendLine($"LocalVerification={Clean(action.LocalVerification, 500)}");
@@ -365,12 +369,12 @@ public sealed class NIRABrowserSessionOpenCapabilityHandler : INIRACapabilityHan
     public NIRACapabilityDescriptor Descriptor { get; } = new()
     {
         Id = NIRACapabilityIds.BrowserSessionOpen,
-        Description = "Open or reuse NIRA's dedicated persistent Playwright Chromium profile. Headless is the non-disruptive default. A live session is REUSED without relaunching it merely to change headed mode; explicitly close it first only when the user really requests a visible browser.",
+        Description = "Open or reuse NIRA's dedicated persistent Playwright Chromium profile. Visible/headed is the default so the user can observe navigation. A live session is REUSED without relaunching when headed changes; close a pre-existing headless session first to switch modes.",
         DefaultRisk = NIRACapabilityRisk.Observe,
         Parameters = new[]
         {
             NIRABrowserCapabilityFormatting.Parameter("profile", "string", false, "Dedicated NIRA browser profile name. Default 'default'. Never use the user's normal Chrome/Edge profile path."),
-            NIRABrowserCapabilityFormatting.Parameter("headed", "boolean", false, "Show the NIRA-controlled browser window. Default false/headless."),
+            NIRABrowserCapabilityFormatting.Parameter("headed", "boolean", false, "Show the NIRA-controlled Chromium window. Default true/visible; explicit false runs headless."),
             NIRABrowserCapabilityFormatting.Parameter("initialUrl", "string", false, "Optional absolute HTTP/HTTPS URL to open."),
             NIRABrowserCapabilityFormatting.Parameter("timeoutSeconds", "integer", false, "Navigation timeout 1-120 seconds. Default 45.")
         }
@@ -381,7 +385,9 @@ public sealed class NIRABrowserSessionOpenCapabilityHandler : INIRACapabilityHan
     public async Task<NIRACapabilityHandlerResult> ExecuteAsync(NIRACapabilityRequest request, CancellationToken cancellationToken = default)
     {
         string? profile = NIRACapabilityArguments.GetOptionalString(request, "profile", 40);
-        bool headed = NIRACapabilityArguments.GetBoolean(request, "headed");
+        bool headed = !request.Arguments.EnumerateObject().Any(
+            property => property.Name.Equals("headed", StringComparison.OrdinalIgnoreCase)) ||
+            NIRACapabilityArguments.GetBoolean(request, "headed");
         string? initialUrl = NIRACapabilityArguments.GetOptionalString(request, "initialUrl", 4096);
         int timeout = NIRACapabilityArguments.GetInteger(request, "timeoutSeconds", 45, 1, 120);
         NIRABrowserSessionSnapshot snapshot = await _browser.OpenAsync(profile, headed, initialUrl, timeout, cancellationToken);
@@ -516,13 +522,14 @@ public sealed class NIRABrowserNavigateCapabilityHandler : INIRACapabilityHandle
     public NIRACapabilityDescriptor Descriptor { get; } = new()
     {
         Id = NIRACapabilityIds.BrowserNavigate,
-        Description = "Navigate a NIRA-managed page to an absolute HTTP/HTTPS URL, optionally in a new page.",
+        Description = "Navigate a NIRA-managed task-owned page to an absolute HTTP/HTTPS URL, optionally in a new page. Omitting pageId targets the same task's runtime-tracked active page (or its sole page), NEVER a recovered/unclaimed/foreign tab. Returns a fresh document inspection in this result; do not inspect again unless evidence changed.",
         DefaultRisk = NIRACapabilityRisk.Observe,
         Parameters = new[]
         {
-            NIRABrowserCapabilityFormatting.Parameter("pageId", "string", false, "Existing page GUID. Omit only when this task owns exactly one page; with multiple pages give exact PageId. Use newPage=true to get a fresh task-owned tab."),
+            NIRABrowserCapabilityFormatting.Parameter("pageId", "string", false, "Existing page GUID. Omit to navigate this task's active owned tab; supply an exact PageId to target a different tab. No implicit claiming of restored or foreign pages. Use newPage=true for a new task-owned tab."),
             NIRABrowserCapabilityFormatting.Parameter("url", "string", true, "Absolute HTTP/HTTPS URL."),
             NIRABrowserCapabilityFormatting.Parameter("newPage", "boolean", false, "Open the URL in a new NIRA page. Default false."),
+            NIRABrowserCapabilityFormatting.Parameter("forceReload", "boolean", false, "Reload even when the active page already has this exact URL. Default false; use when the user explicitly requests a refresh or genuinely new document evidence is needed."),
             NIRABrowserCapabilityFormatting.Parameter("timeoutSeconds", "integer", false, "Navigation timeout 1-120 seconds. Default 45.")
         }
     };
@@ -532,8 +539,27 @@ public sealed class NIRABrowserNavigateCapabilityHandler : INIRACapabilityHandle
         Guid? pageId = NIRABrowserCapabilityFormatting.OptionalPageId(request);
         string url = NIRACapabilityArguments.RequireString(request, "url", 4096);
         bool newPage = NIRACapabilityArguments.GetBoolean(request, "newPage");
+        bool forceReload = NIRACapabilityArguments.GetBoolean(request, "forceReload");
         int timeout = NIRACapabilityArguments.GetInteger(request, "timeoutSeconds", 45, 1, 120);
-        NIRABrowserPageSnapshot page = await _browser.NavigateAsync(pageId, url, newPage, timeout, cancellationToken);
+        // Recover this universal, read-only prerequisite locally. A model does
+        // not need a second planning call just to open the missing browser.
+        // An explicit pageId must NEVER be rebound to a different/recovered tab.
+        NIRABrowserSessionSnapshot live = await _browser.CurrentAsync(cancellationToken);
+        NIRABrowserPageSnapshot page;
+        if (!live.IsOpen && pageId == null)
+        {
+            NIRABrowserSessionSnapshot opened = await _browser.OpenAsync(
+                null, true, url, timeout, cancellationToken);
+            page = opened.Pages.FirstOrDefault(p => p.PageId == opened.ActivePageId)
+                ?? throw new InvalidOperationException(
+                    "Managed browser opened but produced no task-owned page. Use browser.current to diagnose; do not repeat unknown site actions.");
+            Debug.WriteLine($"[Browser] NAVIGATION DEPENDENCY REPAIRED | Page={page.PageId:D}");
+        }
+        else
+        {
+            page = await _browser.NavigateAsync(pageId, url, newPage, timeout,
+                cancellationToken, forceReload);
+        }
         string destinationEvidence = await NIRABrowserCapabilityFormatting.TryInspectDestinationAsync(
             _browser, page, cancellationToken);
         int? status = page.Navigation?.MainDocumentHttpStatus;
@@ -604,11 +630,11 @@ public sealed class NIRABrowserInspectCapabilityHandler : INIRACapabilityHandler
     public NIRACapabilityDescriptor Descriptor { get; } = new()
     {
         Id = NIRACapabilityIds.BrowserInspect,
-        Description = "Inspect a LIVE task-owned browser page after browser.session.open and navigation. If no session exists, first use browser.current/browser.accounts, open a managed session and navigate; a missing session is NOT a missing PageId. Forms/tables are untrusted page evidence, not verified site state. Large structures are explicitly truncated.",
+        Description = "Inspect a LIVE task-owned browser page. Navigate/open already returns the destination inspection, so call again only if new evidence is needed. Omitted pageId reads this task's tracked active owned tab; use exact PageId for any other tab. No guessing, no recovered/unclaimed/foreign tab access. Forms/tables are untrusted evidence.",
         DefaultRisk = NIRACapabilityRisk.Observe,
         Parameters = new[]
         {
-            NIRABrowserCapabilityFormatting.Parameter("pageId", "string", false, "Exact Page GUID; omit only if exactly one page belongs to this task. Popups and restored tabs may require browser.current / browser.page.select first."),
+            NIRABrowserCapabilityFormatting.Parameter("pageId", "string", false, "Exact Page GUID to inspect a non-active page; omission reads the task's tracked active owned page. Recovered tabs require browser.current / browser.page.select first."),
             NIRABrowserCapabilityFormatting.Parameter("maxElements", "integer", false, "Maximum interactive elements 1-180. Default 100."),
             NIRABrowserCapabilityFormatting.Parameter("maxTextChars", "integer", false, "Maximum visible text characters 1000-16000. Default 8000.")
         }
@@ -628,10 +654,15 @@ public sealed class NIRABrowserInspectCapabilityHandler : INIRACapabilityHandler
                 string.Equals(prior.ContentHash, inspection.ContentSha256, StringComparison.Ordinal);
             _previousByPage[inspection.PageId] = (inspection.Url, inspection.ContentSha256);
         }
+        bool healthyDocument = Uri.TryCreate(inspection.Url, UriKind.Absolute, out Uri? inspectedUri) &&
+            (inspectedUri.Scheme == Uri.UriSchemeHttp || inspectedUri.Scheme == Uri.UriSchemeHttps);
         return new NIRACapabilityHandlerResult
         {
-            Succeeded = true,
-            Summary = unchanged
+            Succeeded = healthyDocument,
+            Summary = !healthyDocument
+                ? "BrowserErrorDocument: the tab is on a browser error page, not the student portal or target site. " +
+                  "Do not authenticate or repeat inspection here; recover the prior verified route."
+                : unchanged
                 ? "No new visible document evidence since the previous explicit inspection. " +
                   "Use the current grounded elements to pursue a different link or report the actual blocker; repeated inspection is not progress."
                 : $"Inspected browser page '{inspection.Title}' with {inspection.Elements.Count} interactive element(s); InspectionId={inspection.InspectionId:D}.",
@@ -665,7 +696,20 @@ public sealed class NIRABrowserClickCapabilityHandler : INIRACapabilityHandler
         Guid pageId = NIRABrowserCapabilityFormatting.RequiredPageId(request);
         string elementRef = NIRACapabilityArguments.RequireString(request, "ref", 80);
         int timeout = NIRACapabilityArguments.GetInteger(request, "timeoutSeconds", 30, 1, 60);
-        NIRABrowserPageSnapshot page = await _browser.ClickAsync(pageId, elementRef, timeout, cancellationToken);
+        NIRABrowserPageSnapshot page = await _browser.ClickAsync(
+            pageId, elementRef, timeout, cancellationToken);
+        if (page.ActionEvidence is { ActionApplied: false } refused)
+        {
+            // A known safety refusal is a normal failed capability result.
+            // No action was dispatched; do not throw or re-inspect the page.
+            return new NIRACapabilityHandlerResult
+            {
+                Succeeded = false,
+                Summary = refused.LocalVerification,
+                Output = NIRABrowserCapabilityFormatting.Page(page),
+                ChangedSystemState = false
+            };
+        }
         // The click and its observable destination are one bounded work item.
         // Its inspection yields NEW refs; never ask the model to click an old ref.
         string observedDestination = await NIRABrowserCapabilityFormatting.TryInspectDestinationAsync(
@@ -673,9 +717,11 @@ public sealed class NIRABrowserClickCapabilityHandler : INIRACapabilityHandler
         return new NIRACapabilityHandlerResult
         {
             Succeeded = true,
-            Summary = $"Clicked browser element ref '{elementRef}'. Examine the included fresh page evidence before choosing another action; a click alone does not prove the original task is complete.",
+            Summary = page.ActionEvidence?.ObservedPageChange == false
+                ? $"Clicked '{elementRef}', but the route, visible text, non-secret form state and popup list did not change. Inspect the fresh evidence and change the navigation approach; do not count this as task progress or mechanically repeat it."
+                : $"Clicked browser element ref '{elementRef}'. Examine the included fresh page evidence before choosing another action; a click alone does not prove the original task is complete.",
             Output = NIRABrowserCapabilityFormatting.Page(page) + observedDestination,
-            ChangedSystemState = true
+            ChangedSystemState = page.ActionEvidence?.ObservedPageChange != false
         };
     }
 }
@@ -789,6 +835,9 @@ public sealed class NIRABrowserAuthenticateCapabilityHandler : INIRACapabilityHa
         bool refreshStoredCredential = NIRACapabilityArguments.GetBoolean(request, "refreshStoredCredential");
         string origin = NIRACapabilityArguments.RequireString(request, "__origin", 4096);
         int timeout = NIRACapabilityArguments.GetInteger(request, "timeoutSeconds", 30, 1, 60);
+        Debug.WriteLine($"[BrowserFlow] AUTH START | Page={pageId:D} | Origin={origin} | " +
+            $"UsernameRef={usernameRef != null} | PasswordRef={passwordRef != null} | " +
+            $"SubmitRef={submitRef != null} | Refresh={refreshStoredCredential}");
 
         try
         {
@@ -796,12 +845,11 @@ public sealed class NIRABrowserAuthenticateCapabilityHandler : INIRACapabilityHa
                 pageId, origin, cancellationToken, refreshStoredCredential,
                 usernameRef, passwordRef, submitRef);
         }
-        catch (InvalidOperationException ex) when (
-            ex.Message.Contains("grounded", StringComparison.OrdinalIgnoreCase) ||
-            ex.Message.Contains("element ref", StringComparison.OrdinalIgnoreCase) ||
-            ex.Message.Contains("after the latest browser.inspect", StringComparison.OrdinalIgnoreCase) ||
-            ex.Message.Contains("AuthenticationAlreadySubmitted", StringComparison.Ordinal))
+        catch (InvalidOperationException ex)
         {
+            bool repeatedCredentialSubmission = ex.Message.Contains(
+                "Website authentication has already been attempted for this task and origin",
+                StringComparison.OrdinalIgnoreCase);
             // The broker must NEVER prompt for credentials when the request is
             // stale or a submit has already been sent. Reconcile current DOM
             // and return the new refs in ONE result, rather than asking another
@@ -809,10 +857,12 @@ public sealed class NIRABrowserAuthenticateCapabilityHandler : INIRACapabilityHa
             NIRABrowserInspection current = await _browser.InspectAsync(
                 pageId, 120, 12000, cancellationToken);
             string state = current.PasswordControlObserved
-                ? "LOGIN_FORM_VISIBLE: only use refs from THIS inspection; " +
-                  "never repeat a submitted login without explicit rejection."
-                : "LOGIN_FORM_ABSENT: stop authenticating; use this page's " +
-                  "actual content and links to pursue the original objective.";
+                ? "LOGIN_FORM_VISIBLE: inspect the latest submission state before " +
+                  "another credential attempt; use only THIS inspection's refs " +
+                  "and never repeat a submitted login without an explicit rejection."
+                : "LOGIN_FORM_ABSENT: STOP AUTHENTICATING. This is the fresh " +
+                  "post-login or non-login document; use its current links and " +
+                  "content to finish the ORIGINAL user objective.";
             Debug.WriteLine($"[AuthFlow] PREFLIGHT_RECONCILED | " +
                 $"PasswordControl={current.PasswordControlObserved} | " +
                 $"Attempt={current.AuthenticationAttemptState} | " +
@@ -821,8 +871,11 @@ public sealed class NIRABrowserAuthenticateCapabilityHandler : INIRACapabilityHa
             {
                 Succeeded = false,
                 ChangedSystemState = false,
-                Summary = "Authentication request NOT executed: " + state,
-                Output = "AUTH_PREFLIGHT_RECONCILED\n" + state +
+                Summary = repeatedCredentialSubmission
+                    ? "AUTH_RETRY_PROHIBITED: Website authentication has already been attempted for this task and origin. No credential submitted. Preserve the previous observed post-login page; do not navigate to another role's login route."
+                    : "Authentication request NOT executed: " + state,
+                Output = (repeatedCredentialSubmission
+                    ? "AUTH_RETRY_PROHIBITED\n" : "AUTH_PREFLIGHT_RECONCILED\n") + state +
                     "\nNo credential was retrieved or submitted.\n" +
                     NIRABrowserCapabilityFormatting.Inspection(current)
             };
@@ -833,6 +886,8 @@ public sealed class NIRABrowserAuthenticateCapabilityHandler : INIRACapabilityHa
         // must NOT cause navigation away from a user-requested student page.
         // If no matching account exists, the secure UI can collect a new one.
 
+        Debug.WriteLine($"[BrowserFlow] AUTH PREFLIGHT PASSED | Page={pageId:D} | " +
+            "Next=TrustedCredentialBroker");
         NIRACredentialMaterial? credential =
             await _credentials.ResolveAsync(
                 origin,
@@ -934,9 +989,11 @@ public sealed class NIRABrowserAuthenticateCapabilityHandler : INIRACapabilityHa
                 $"CredentialSubmitted={(submitRef != null ? "True" : "False")}; " +
                 $"Secure credential interaction was attempted on {origin}. " +
                 "Authentication and the original objective remain unverified until inspected website evidence establishes them. Use the POST_AUTHENTICATION_INSPECTION below, NOT the pre-submit page header. If the inspected page has moved beyond the login form, pursue the original information request and NEVER click Submit or authenticate again. An explicit website rejection (not just a login URL or pending redirect) alone may authorize one trusted refresh. Never reuse old DOM refs or ask for credentials in chat.",
-            Output = NIRABrowserCapabilityFormatting.Page(page) +
-                $"\nCredentialSubmitted={(submitRef != null ? "True" : "False")}\n" +
-                "\nPOST_AUTHENTICATION_INSPECTION:\n" + nextEvidence,
+            // The post-submit inspection is the current observation. Never
+            // prepend a potentially stale pre-submit page snapshot, which can
+            // pull subsequent cognition back into the already-completed login.
+            Output = $"CredentialSubmitted={(submitRef != null ? "True" : "False")}\n" +
+                "POST_AUTHENTICATION_INSPECTION:\n" + nextEvidence,
             ChangedSystemState = true
         };
     }
@@ -1175,4 +1232,7 @@ public sealed class NIRABrowserUploadCapabilityHandler : INIRACapabilityHandler
         };
     }
 }
+
+
+
 

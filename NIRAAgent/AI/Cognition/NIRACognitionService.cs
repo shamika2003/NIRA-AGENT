@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 
 using NIRAAgent.AI.Ollama;
+using NIRAAgent.Conversation;
 using NIRAAgent.Capabilities;
 using NIRAAgent.Character.Appraisal;
 using NIRAAgent.Branches;
@@ -16,11 +17,19 @@ using NIRAAgent.Goals;
 using NIRAAgent.Voice;
 using NIRAAgent.Tools;
 using NIRAAgent.Artifacts;
+using NIRAAgent.Presentation;
 
 namespace NIRAAgent.AI.Cognition;
 
 public sealed class NIRACognitionService
 {
+    private static string NormalizeProgress(string? value, int maximumLength)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        string clean = value.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        return clean.Length <= maximumLength ? clean : clean[..maximumLength].TrimEnd();
+    }
+
     private const string MainReasoningModel =
         "gpt-oss:120b-cloud";
 
@@ -82,6 +91,8 @@ public sealed class NIRACognitionService
     private readonly string
         _memoryRecallPrompt;
 
+    private readonly string _compactContract;
+
 
     private readonly JsonSerializerOptions
         _jsonOptions;
@@ -110,6 +121,8 @@ public sealed class NIRACognitionService
             LoadPromptFile(
                 "memory_recall.yaml");
 
+        _compactContract = LoadPromptFile("cognition_contract.yaml");
+
 
         _jsonOptions =
             new JsonSerializerOptions
@@ -130,19 +143,66 @@ public sealed class NIRACognitionService
 
     public async Task<NIRACognitionDecision> ThinkAsync(
         NIRACognitionContext context,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlySet<string>? expandedSections = null,
+        IReadOnlySet<string>? expandedCapabilityIds = null,
+        bool evidenceSynthesisOnly = false)
     {
         ArgumentNullException.ThrowIfNull(
             context);
 
 
-        string systemPrompt =
-            BuildSystemPrompt();
+        // Safe diagnostic fallback to the source-compatible legacy prompt.
+        // Default is the smaller call-specific context and execution policy.
+        bool legacy = string.Equals(
+            Environment.GetEnvironmentVariable("NIRA_COGNITION_LEGACY_PROMPT"),
+            "1", StringComparison.Ordinal);
+        bool bootstrap = !legacy && context.Cycle == 1 &&
+            context.Event.Source == NIRAAgent.Mind.NIRAMindEventSource.User &&
+            string.IsNullOrWhiteSpace(context.OwnedTaskContext) &&
+            (expandedSections == null || !expandedSections.Contains("capabilities"));
+        // Information-only continuation remains on the same small decision
+        // contract. No giant action schema just to read a requested memory.
+        // If the model requests capability/tool/work context, the next call
+        // automatically uses the complete action contract.
+        bool informationOnly = !legacy &&
+            context.Event.Source == NIRAAgent.Mind.NIRAMindEventSource.User &&
+            string.IsNullOrWhiteSpace(context.OwnedTaskContext) &&
+            string.IsNullOrWhiteSpace(context.CapabilityEvidence) &&
+            string.IsNullOrWhiteSpace(context.DynamicToolEvidence) &&
+            // Read-only context never needs the full action/tool schema.
+            // Actual action contracts are loaded when capability/tool details
+            // are requested, not when inspecting goals or assigned work.
+            (expandedSections == null || expandedSections.All(section =>
+                section is "memory" or "conversation" or "self" or "character" or
+                    "goals" or "branches" or "work" or "pc" or "artifacts" or
+                    "evidence")) &&
+            (expandedCapabilityIds == null || expandedCapabilityIds.Count == 0);
+        string systemPrompt = legacy
+            ? BuildSystemPrompt()
+            : informationOnly || evidenceSynthesisOnly
+                ? NIRACognitionPromptCompiler.BootstrapSystem(_personality)
+                : NIRACognitionPromptCompiler.System(_compactContract, _personality);
+        if (!legacy && evidenceSynthesisOnly)
+        {
+            systemPrompt += "\n\nEVIDENCE SYNTHESIS ONLY: Previous memory searches " +
+                "and archived conversation searches returned no NEW record identities. Do not request repeated memory or chat searches or " +
+                "another search again. Answer the ORIGINAL user question NOW " +
+                "using only the actual retrieved records, relevant available " +
+                "context and known limitations. Give a helpful PARTIAL answer " +
+                "when current details are absent; clearly label any gap. " +
+                "Return state=Complete, emitReply=true, replyReady=true, " +
+                "memorySearches=[], conversationSearches=[], contextRequests=[], reviewExperience=false. " +
+                "Never invent newer project updates or a successful action.";
+        }
 
+        string userPrompt = legacy
+            ? BuildUserPrompt(context)
+            : NIRACognitionPromptCompiler.User(context, expandedSections, expandedCapabilityIds);
 
-        string userPrompt =
-            BuildUserPrompt(
-                context);
+        Debug.WriteLine($"[CognitionPrompt] Run={context.RunId:D} | Cycle={context.Cycle} | " +
+            $"Mode={(legacy ? "Legacy" : evidenceSynthesisOnly ? "EvidenceSynthesis" : bootstrap ? "Bootstrap" : informationOnly ? "Information" : "Focused")} | SystemChars={systemPrompt.Length} | " +
+            $"UserChars={userPrompt.Length} | TotalChars={systemPrompt.Length + userPrompt.Length}");
 
 
         Stopwatch stopwatch =
@@ -391,16 +451,18 @@ public sealed class NIRACognitionService
             outcome, establish its executive ownership before beginning a chain of
             state-changing PC actions. Do not perform several top-level writes/commands
             first and only create the goal/branches later. If the work deserves a
-            persistent goal, create that goal first. If its new GUID is needed for branch
-            ownership, Continue and use the committed GUID on the next cycle.
+            persistent goal, create that goal first. When exactly ONE new goal
+            is created in this decision, branch Create proposals may use
+            goalId="<newly-created-goal-id>"; the executive binds ONLY its
+            actual same-event committed GUID. Do not invent identifiers.
 
-            Never invent identifiers. One documented exception: when EXACTLY ONE
-            branch is being created in this SAME decision for an already-grounded
-            existing goal, its first branchWorkProposals item may use the literal
-            <newly-created-branch-id>; the executive binds it to the actually
-            committed branch. This saves a planning-only model call. If multiple
-            branches are proposed or the parent goal itself has no committed ID,
-            wait for the real IDs rather than guessing or using other placeholders.
+            For independent workstreams, create separate branches and assign
+            one grounded first action to each in the SAME decision. Each branch
+            Create uses a UNIQUE clientKey (e.g. vscode, dotnet); its work uses
+            branchId="<new-branch:vscode>" or "<new-branch:dotnet>". The executive
+            binds only matching ACCEPTED same-decision branch IDs. A rejected
+            Create never receives work. The legacy <newly-created-branch-id>
+            placeholder is ONLY for an unambiguous single new branch.
             Prefer create-branch + assign-first-bounded-work together when safe;
             the existing browser.session.open(initialUrl) itself opens AND
             inspects the destination, so no separate browser.inspect is needed.
@@ -517,6 +579,21 @@ public sealed class NIRACognitionService
             InlineAndToast explicitly requests both. Closing a desktop peek never removes
             the inline artifact or NIRA's text response.
 
+            When vision.capture is used because the user asked to SEE the captured
+            screenshot/result, set the capability argument presentToUser=true. A successful
+            trusted capability result with that flag is automatically queued by the runtime
+            for visual delivery. Do not tell the user to open the backing PNG manually,
+            do not claim NIRA cannot embed/show it, and do not require a second copy of the
+            evidenceId merely to make the image visible. visualPresentations remains useful
+            for custom captions/annotations and for image sources that were not already
+            marked presentToUser by their producing capability.
+
+            For a named external desktop application/window, prefer the grounded PC/vision
+            path (vision.capture target=window with an available HWND/process/title selector).
+            browser.* addresses NIRA's managed Playwright browser, not an arbitrary user
+            browser window. Do not ask for a URL merely to screenshot a currently identifiable
+            external window when vision.capture can resolve it safely.
+
             Each item uses:
             {
               "evidenceId": "exact grounded GUID, or null for a localPath source",
@@ -543,10 +620,14 @@ public sealed class NIRACognitionService
               "reply": "visible NIRA reply draft or empty string",
               "replyPresentation": "Natural|PreserveExact",
               "decisionSummary": "short operational status only",
+              "progressUpdate": "optional short user-visible status while continuing; no secrets",
+              "progressSpeech": "optional natural spoken checkpoint; empty by default",
+              "progressCorrection": false,
               "memorySearches": [],
               "goalProposals": [],
               "branchProposals": [],
               "branchWorkProposals": [],
+              "controlRequests": [],
               "capabilityRequests": [],
               "dynamicToolProposals": [],
               "dynamicToolInvocations": [],
@@ -701,7 +782,9 @@ public sealed class NIRACognitionService
                 "timeoutSeconds": 600
               },
               "reason": "why NIRA should create/revise/change this tool",
-              "confidence": 0.0
+              "confidence": 0.0,
+              "runAfterCreate": false,
+              "invocationArguments": {}
             }
 
             dynamicToolInvocations items use:
@@ -1040,10 +1123,12 @@ public sealed class NIRACognitionService
             every cognition cycle. Never invent goal IDs, branch IDs, parent IDs, dependency
             IDs, work IDs, or dynamic-tool IDs. Use exact authoritative GUIDs from context.
 
-            Create requires an existing open goal GUID, a concrete responsibility/objective,
-            and branch-specific completionCriteria describing when that responsibility is
-            actually satisfied. If this run first creates the parent goal, Continue; use
-            the committed goal GUID on the next cycle.
+            Branch Create requires an existing open goal GUID, OR the literal
+            <newly-created-goal-id> when exactly ONE goal is created in this same
+            decision; the executive binds its actual accepted ID. Each branch also
+            needs a concrete responsibility and branch-specific completionCriteria
+            describing when that responsibility is actually satisfied. Never guess
+            a goal ID and never re-use a blocked goal for a fresh request.
 
             Branch creation/revision are planning operations. When based on NIRA's current
             authoritative plan rather than a verbatim event/reply statement, use
@@ -1093,6 +1178,17 @@ public sealed class NIRACognitionService
             authoritative PersistentBranchWorkResult before deciding that branch's next
             bounded work. A branch may receive another assignment after that result if
             its responsibility is still unsatisfied.
+
+            When the user directly asks to cancel/clear active branches or
+            commitments, emit controlRequests with ONE item. The operation is
+            CancelAllBranches, CancelOneBranch, CancelAllCommitments, or
+            CancelAllBranchesAndCommitments; evidenceQuote must copy the exact
+            fresh user instruction. For a single branch use exact branchId if
+            known; otherwise omit only when the inventory has one open branch.
+            No need to request the full inventory, capability signatures or
+            user confirmation. Do not cancel terminal history, unrelated goals
+            or interpret a quotation/negation as an instruction. The Executive
+            alone validates and performs the state transition.
 
             If an operation belongs to an open branch, prefer branchWorkProposals over
             top-level capabilityRequests/dynamicToolInvocations so the runtime keeps the
@@ -1932,12 +2028,22 @@ public sealed class NIRACognitionService
                 parsed.Reply?.Trim()
                 ?? string.Empty,
 
+            Speech = (parsed.Speech ?? string.Empty).Trim().Length > 7000
+                ? (parsed.Speech ?? string.Empty).Trim()[..7000]
+                : (parsed.Speech ?? string.Empty).Trim(),
+            DisplayBlocks = NIRAPresentationPolicy.Normalize(parsed.DisplayBlocks),
+            ProgressUpdate = NormalizeProgress(parsed.ProgressUpdate, 190),
+            ProgressSpeech = NormalizeProgress(parsed.ProgressSpeech, 145),
             DecisionSummary =
                 parsed.DecisionSummary?.Trim()
                 ?? string.Empty,
 
             MemorySearches =
                 searches,
+
+            ConversationSearches = parsed.ConversationSearches
+                .Where(r => r != null && !string.IsNullOrWhiteSpace(r.Query))
+                .Take(3).Select(r => r.Normalize()).ToArray(),
 
             GoalProposals =
                 goalProposals,
@@ -2006,20 +2112,38 @@ public sealed class NIRACognitionService
                 string.Empty)
                 ?? string.Empty,
 
+            Speech = ReadValue(root, "speech", string.Empty) ?? string.Empty,
+            DisplayBlocks = NIRARichBlockJsonReader.Read(root),
+
             ReplyPresentation = ReadValue(
                 root,
                 "replyPresentation",
                 NIRAReplyPresentationMode.Natural),
 
+            ProgressUpdate = ReadValue(root, "progressUpdate", string.Empty) ?? string.Empty,
+            ProgressSpeech = ReadValue(root, "progressSpeech", string.Empty) ?? string.Empty,
+            ProgressCorrection = ReadValue(root, "progressCorrection", false),
             DecisionSummary = ReadValue(
                 root,
                 "decisionSummary",
                 string.Empty)
                 ?? string.Empty,
 
+            ControlRequests = ReadArrayItems<NIRAControlRequest>(root, "controlRequests"),
+            ContextRequests = ReadStringArrayItems(root, "contextRequests"),
+            CapabilityIds = ReadStringArrayItems(root, "capabilityIds"),
+            ReplyReady = ReadValue(root, "replyReady", false),
+            ReviewExperience = ReadValue(root, "reviewExperience", true),
+            NovelExperienceEvidence = ReadValue(root, "novelExperienceEvidence", string.Empty)
+                ?? string.Empty,
+
             MemorySearches = ReadArrayItems<NIRAMemorySearchRequest>(
                 root,
                 "memorySearches"),
+
+            ConversationSearches = ReadArrayItems<NIRAConversationSearchRequest>(
+                root,
+                "conversationSearches"),
 
             GoalProposals = ReadArrayItems<NIRAGoalProposal>(
                 root,
@@ -2062,6 +2186,77 @@ public sealed class NIRACognitionService
                 "vocalIntent",
                 NIRAVocalIntent.Default)
         };
+    }
+
+
+    private IReadOnlyList<string> ReadStringArrayItems(
+        JsonElement root,
+        string propertyName)
+    {
+        if (!TryGetProperty(root, propertyName, out JsonElement array) ||
+            array.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<string>();
+        }
+
+        List<string> values = new();
+
+        void Add(JsonElement item, int depth)
+        {
+            if (depth > 2)
+            {
+                return;
+            }
+
+            if (item.ValueKind == JsonValueKind.String)
+            {
+                string value = item.GetString()?.Trim() ?? string.Empty;
+
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    values.Add(value);
+                }
+
+                return;
+            }
+
+            if (item.ValueKind == JsonValueKind.Array)
+            {
+                foreach (JsonElement nested in item.EnumerateArray())
+                {
+                    Add(nested, depth + 1);
+                }
+
+                return;
+            }
+
+            if (item.ValueKind == JsonValueKind.Object)
+            {
+                foreach (string alias in new[] { "name", "section", "id", "value" })
+                {
+                    if (TryGetProperty(item, alias, out JsonElement candidate) &&
+                        candidate.ValueKind == JsonValueKind.String)
+                    {
+                        Add(candidate, depth + 1);
+                        return;
+                    }
+                }
+            }
+
+            Debug.WriteLine(
+                $"[Cognition] OPTIONAL ITEM DROPPED | Property={propertyName} | " +
+                $"Reason=Expected string-compatible item, got {item.ValueKind}.");
+        }
+
+        foreach (JsonElement item in array.EnumerateArray())
+        {
+            Add(item, 0);
+        }
+
+        return values
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(32)
+            .ToArray();
     }
 
 
@@ -2476,3 +2671,6 @@ internal sealed class NIRABranchEvidenceSourceJsonConverter
             value.ToString());
     }
 }
+
+
+

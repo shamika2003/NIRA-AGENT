@@ -197,7 +197,7 @@ public sealed record NIRABranchState
             WaitingFor = NormalizeOptional(WaitingFor, 1000),
             Blocker = NormalizeOptional(Blocker, 1000),
             FailureReason = NormalizeOptional(FailureReason, 1600),
-            ResultSummary = NormalizeOptional(ResultSummary, 2400),
+            ResultSummary = NormalizeOptional(ResultSummary, 12000),
             LastEvidenceSummary = NormalizeOptional(
                 LastEvidenceSummary,
                 1600),
@@ -263,6 +263,10 @@ public sealed record NIRABranchProposal
 
     public string? BranchId { get; init; }
 
+    // Transient alias used only to bind new-branch work in this decision.
+    // Not a persistent branch identity or authorization input.
+    public string? ClientKey { get; init; }
+
     public string? GoalId { get; init; }
 
     public string? ParentBranchId { get; init; }
@@ -327,9 +331,16 @@ public sealed record NIRABranchProposal
                 "Branch proposal evidence/reason is too long.");
         }
 
+        string? key = NormalizeId(ClientKey);
+        if (key != null && (key.Length > 40 ||
+            !key.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_')))
+            throw new InvalidOperationException(
+                "Branch clientKey must be 1-40 ASCII letters, digits, hyphens or underscores.");
+
         return this with
         {
             BranchId = NormalizeId(BranchId),
+            ClientKey = key,
             GoalId = NormalizeId(GoalId),
             ParentBranchId = NormalizeId(ParentBranchId),
             Objective = objective,
@@ -355,7 +366,7 @@ public sealed record NIRABranchProposal
                 1600),
             ResultSummary = NIRABranchState.NormalizeOptional(
                 ResultSummary,
-                2400),
+                12000),
             EvidenceQuote = evidenceQuote,
             EvidenceSummary = evidenceSummary,
             Reason = reason,
@@ -371,6 +382,7 @@ public sealed record NIRABranchProposal
             '|',
             normalized.Action,
             normalized.BranchId ?? string.Empty,
+            normalized.ClientKey?.ToLowerInvariant() ?? string.Empty,
             normalized.GoalId ?? string.Empty,
             normalized.ParentBranchId ?? string.Empty,
             normalized.Objective.ToLowerInvariant(),
@@ -475,4 +487,6 @@ public sealed record NIRABranchResultEvent
 
     public DateTimeOffset ResolvedAt { get; init; }
 }
+
+
 

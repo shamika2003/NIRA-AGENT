@@ -48,6 +48,10 @@
       </CopyToOutputDirectory>
     </None>
 
+    <None Update="Prompt\cognition_contract.yaml">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+
     <None Update="Prompt\cognition.yaml">
       <CopyToOutputDirectory>
         PreserveNewest
@@ -103,4 +107,3 @@
   </ItemGroup>
 
 </Project>
-

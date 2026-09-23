@@ -78,7 +78,8 @@ public sealed class NIRAMindRuntime
     public async IAsyncEnumerable<NIRAOutputChunk> ProcessUserMessageAsync(
         string userInput,
         [EnumeratorCancellation]
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Guid? attachedPastChatSessionId = null)
     {
         if (string.IsNullOrWhiteSpace(
                 userInput))
@@ -94,10 +95,6 @@ public sealed class NIRAMindRuntime
         _activity.RecordUserInteraction();
 
 
-        _conversation.AddUserMessage(
-            input);
-
-
         NIRASocialEvent socialEvent =
             _socialHistory.Record(
                 NIRASocialEventSource.User,
@@ -106,12 +103,18 @@ public sealed class NIRAMindRuntime
                 NIRASocialTopicKeys.UserConversation,
                 input);
 
+        _conversation.AddUserMessage(input, socialEvent.Id);
 
         NIRAMindEvent mindEvent =
             NIRAMindEvent.UserMessage(
                 input,
                 socialEvent.Id,
-                socialEvent.TopicKey);
+                socialEvent.TopicKey) with
+            {
+                Metadata = attachedPastChatSessionId is Guid sid && sid != Guid.Empty
+                    ? new Dictionary<string, string> { ["attachedPastChatSessionId"] = sid.ToString("D") }
+                    : new Dictionary<string, string>()
+            };
 
 
         await foreach (

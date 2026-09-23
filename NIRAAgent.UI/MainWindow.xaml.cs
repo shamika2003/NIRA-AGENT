@@ -13,6 +13,7 @@ using System.Windows.Media.Effects;
 using System.Windows.Shapes;
 
 using NIRAAgent.Agent.State;
+using NIRAAgent.Conversation;
 using NIRAAgent.Artifacts;
 using NIRAAgent.Authorization;
 using NIRAAgent.Branches;
@@ -100,6 +101,7 @@ public partial class MainWindow : Window
     private readonly NIRAWorkAreaWindowGuard _workAreaGuard;
     private readonly NIRAVisualToastPlacementService _visualToastPlacement;
     private readonly MainWindowViewModel _viewModel;
+    private NIRAConversationArchiveStore? _conversationArchive;
     private NIRAVisualArtifactToastWindow? _visualArtifactToast;
 
     public void AttachAuthorization(NIRAAuthorityStore store,
@@ -394,6 +396,7 @@ public partial class MainWindow : Window
 
         _viewModel.VisualArtifactReceived +=
             ViewModel_VisualArtifactReceived;
+        _viewModel.PropertyChanged += ViewModel_PastChatAttachmentChanged;
 
         foreach (
             ChatMessageViewModel message
@@ -858,10 +861,10 @@ public partial class MainWindow : Window
             return;
         }
 
+        NIRABranchWorkItem[] allWork =
+            _branchWorkService.CurrentWork.ToArray();
         NIRABranchWorkItem[] openWork =
-            _branchWorkService.CurrentWork
-                .Where(work => work.IsOpen)
-                .ToArray();
+            allWork.Where(work => work.IsOpen).ToArray();
 
         NIRABranchState[] openBranches =
             _branchService.CurrentBranches
@@ -880,8 +883,24 @@ public partial class MainWindow : Window
                     branch => branch.UpdatedAt)
                 .ToArray();
 
+        // Retain a recently resolved branch when no work is open; otherwise
+        // a successful fast branch disappears before a person can see it.
+        NIRABranchState[] visibleBranches = openBranches.Length > 0
+            ? openBranches
+            : _branchService.CurrentBranches
+                .Where(branch => branch.IsResolved &&
+                    DateTimeOffset.UtcNow - (branch.ResolvedAt ?? branch.UpdatedAt) <
+                        TimeSpan.FromHours(2))
+                .OrderByDescending(branch => branch.ResolvedAt ?? branch.UpdatedAt)
+                .Take(1)
+                .ToArray();
+        BranchActivityTitleText.Text = openBranches.Length > 0
+            ? "ACTIVE BRANCHES"
+            : visibleBranches.Length > 0
+                ? "RECENTLY FINISHED"
+                : "ACTIVE BRANCHES";
         HashSet<Guid> desiredIds =
-            openBranches
+            visibleBranches
                 .Select(branch => branch.Id)
                 .ToHashSet();
 
@@ -894,7 +913,7 @@ public partial class MainWindow : Window
             }
         }
 
-        if (openBranches.Length == 0)
+        if (visibleBranches.Length == 0)
         {
             NoBranchActivityText.Text =
                 "No active branches";
@@ -907,19 +926,23 @@ public partial class MainWindow : Window
             Visibility.Collapsed;
 
         for (int index = 0;
-             index < openBranches.Length;
+             index < visibleBranches.Length;
              index++)
         {
             NIRABranchState branch =
-                openBranches[index];
+                visibleBranches[index];
 
+            // While the worker has finished but cognition is processing its
+            // result, retain the LAST actual assignment on this branch card.
+            // A resolved/failed step must not masquerade as another running step.
             NIRABranchWorkItem? work =
-                openWork
+                allWork
                     .Where(item => item.BranchId == branch.Id)
-                    .OrderByDescending(
-                        item => item.Status == NIRABranchWorkStatus.Running)
-                    .ThenByDescending(
-                        item => item.StartedAtUtc ?? item.CreatedAtUtc)
+                    .OrderByDescending(item => item.IsOpen)
+                    .ThenByDescending(item =>
+                        item.Status == NIRABranchWorkStatus.Running)
+                    .ThenByDescending(item =>
+                        item.StartedAtUtc ?? item.CreatedAtUtc)
                     .FirstOrDefault();
 
             string signature =
@@ -1049,6 +1072,7 @@ public partial class MainWindow : Window
             branch.LastReason ?? string.Empty,
             work?.Id.ToString() ?? string.Empty,
             work?.Status.ToString() ?? string.Empty,
+            work?.ResultNotifiedAtUtc?.ToString("O") ?? string.Empty,
             work?.Kind.ToString() ?? string.Empty,
             work?.Reason ?? string.Empty);
     }
@@ -1064,15 +1088,20 @@ public partial class MainWindow : Window
             {
                 NIRABranchWorkStatus.Running => "RUNNING",
                 NIRABranchWorkStatus.Pending => "QUEUED",
+                NIRABranchWorkStatus.Succeeded when branch.IsOpen =>
+                    work?.ResultNotifiedAtUtc.HasValue == true ? "AWAITING NEXT STEP" : "REVIEWING",
+                NIRABranchWorkStatus.Failed or NIRABranchWorkStatus.Rejected
+                    when branch.IsOpen =>
+                    work?.ResultNotifiedAtUtc.HasValue == true ? "AWAITING NEXT STEP" : "REPLANNING",
                 _ => branch.Status.ToString().ToUpperInvariant()
             };
 
         string workKind =
             work?.Kind switch
             {
-                NIRABranchWorkKind.DynamicTool => "WORKFLOW",
-                NIRABranchWorkKind.Capability => "SYSTEM ACTION",
-                _ => "AWAITING NEXT STEP"
+                NIRABranchWorkKind.DynamicTool when work?.IsOpen == true => "WORKFLOW",
+                NIRABranchWorkKind.Capability when work?.IsOpen == true => "SYSTEM ACTION",
+                _ => branch.IsResolved ? "FINISHED" : "RESULT RECEIVED"
             };
 
         string detail =
@@ -1248,10 +1277,16 @@ public partial class MainWindow : Window
         NIRABranchState branch,
         NIRABranchWorkItem? work)
     {
-        if (work != null &&
-            !string.IsNullOrWhiteSpace(work.Reason))
+        if (work != null)
         {
-            return work.Reason;
+            if (work.IsTerminal && branch.IsOpen)
+                return work.ResultNotifiedAtUtc.HasValue
+                    ? "The result was delivered to NIRA. Awaiting an assigned next step."
+                    : work.Status == NIRABranchWorkStatus.Succeeded
+                        ? "Step finished. NIRA is reviewing the result and choosing the next step."
+                        : "Step needs attention. NIRA is reviewing the evidence before continuing.";
+            if (!string.IsNullOrWhiteSpace(work.Reason))
+                return work.Reason;
         }
 
         if (branch.Status == NIRABranchStatus.Waiting &&
@@ -2482,8 +2517,8 @@ public partial class MainWindow : Window
 
     private void VisualArtifactToast_OpenChatRequested()
     {
-        CloseVisualArtifactToast();
-
+        // The toast starts its own dissolve after this callback. Do not call
+        // CloseVisualArtifactToast() here, or the animation is cut off.
         if (!IsVisible)
         {
             Show();
@@ -2739,6 +2774,142 @@ public partial class MainWindow : Window
     // MESSAGE INPUT
     // =========================================================
 
+    // Past chats are read-only archived sessions. Attaching one supplies
+    // bounded source evidence for the NEXT request, never resumes old work.
+    public void AttachConversationArchive(NIRAConversationArchiveStore store)
+    {
+        _conversationArchive = store;
+        _viewModel.AttachConversationArchive(store);
+        RefreshPastChats();
+    }
+
+    private void ViewModel_PastChatAttachmentChanged(object? sender,
+        PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(MainWindowViewModel.HasAttachedPastChat)) return;
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(new Action(UpdatePastChatAttachment));
+            return;
+        }
+        UpdatePastChatAttachment();
+    }
+
+    private void UpdatePastChatAttachment() =>
+        PastChatAttachStrip.Visibility = _viewModel.HasAttachedPastChat
+            ? Visibility.Visible : Visibility.Collapsed;
+
+    private void DetachPastChat_Click(object sender, RoutedEventArgs e) =>
+        _viewModel.ClearPastChatAttachment();
+
+    private IReadOnlyList<NIRAArchivedChatSession> _pastChatSessions =
+        Array.Empty<NIRAArchivedChatSession>();
+
+    private void RefreshPastChats_Click(object sender, RoutedEventArgs e) =>
+        RefreshPastChats();
+
+    private void PastChatFilter_TextChanged(object sender, TextChangedEventArgs e) =>
+        RenderPastChats();
+
+    private void RefreshPastChats()
+    {
+        if (_conversationArchive is not { Enabled: true })
+        {
+            _pastChatSessions = Array.Empty<NIRAArchivedChatSession>();
+            RenderPastChats("Conversation archive is disabled.");
+            return;
+        }
+        try
+        {
+            _pastChatSessions = _conversationArchive.ListPastSessions(100);
+            RenderPastChats();
+        }
+        catch (Exception ex)
+        {
+            _pastChatSessions = Array.Empty<NIRAArchivedChatSession>();
+            RenderPastChats("Past chats unavailable: " + ex.Message);
+        }
+    }
+
+    private void RenderPastChats(string? error = null)
+    {
+        if (PastChatsListPanel == null || NoPastChatsText == null ||
+            PastChatsCountText == null) return;
+        PastChatsListPanel.Children.Clear();
+        string filter = PastChatFilterBox?.Text.Trim() ?? string.Empty;
+        var matches = _pastChatSessions
+            .Where(s => string.IsNullOrEmpty(filter) ||
+                s.Title.Contains(filter, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        PastChatsCountText.Text = $"{matches.Count} / {_pastChatSessions.Count}";
+        NoPastChatsText.Text = error ?? (_pastChatSessions.Count == 0
+            ? "No saved conversations yet. Exit and reopen NIRA to see your first past chat."
+            : "No chats match that search.");
+        NoPastChatsText.Visibility = matches.Count == 0
+            ? Visibility.Visible : Visibility.Collapsed;
+
+        string lastGroup = string.Empty;
+        foreach (NIRAArchivedChatSession session in matches)
+        {
+            DateTime localDay = session.StartedAtUtc.ToLocalTime().Date;
+            string group = localDay == DateTime.Today ? "TODAY"
+                : localDay == DateTime.Today.AddDays(-1) ? "YESTERDAY"
+                : session.StartedAtUtc.ToLocalTime().ToString("MMM d, yyyy").ToUpperInvariant();
+            if (group != lastGroup)
+            {
+                var heading = new TextBlock
+                {
+                    Text = group, FontSize = 8, FontWeight = FontWeights.SemiBold,
+                    Margin = new Thickness(2, 8, 0, 6)
+                };
+                heading.SetResourceReference(TextBlock.ForegroundProperty, "NIRACyanBrush");
+                PastChatsListPanel.Children.Add(heading);
+                lastGroup = group;
+            }
+
+            string label = string.IsNullOrWhiteSpace(session.Title)
+                ? "Past conversation" : session.Title;
+            var card = new Button
+            {
+                Tag = session,
+                Style = FindResource("GlassQuickButtonStyle") as Style,
+                Margin = new Thickness(0, 0, 0, 7),
+                Padding = new Thickness(10, 10, 10, 10),
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                ToolTip = "Open read-only transcript • attach as a source from there"
+            };
+            var detail = new StackPanel();
+            detail.Children.Add(new TextBlock
+            {
+                Text = label, FontSize = 11, FontWeight = FontWeights.SemiBold,
+                TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxHeight = 34
+            });
+            var sub = new TextBlock
+            {
+                Text = $"{session.StartedAtUtc.ToLocalTime():h:mm tt}  ·  {session.MessageCount} messages",
+                FontSize = 9, Margin = new Thickness(0, 7, 0, 0)
+            };
+            sub.SetResourceReference(TextBlock.ForegroundProperty, "NIRASecondaryBrush");
+            detail.Children.Add(sub);
+            card.Content = detail;
+            card.Click += PastChat_Click;
+            PastChatsListPanel.Children.Add(card);
+        }
+    }
+
+    private void PastChat_Click(object sender, RoutedEventArgs e)
+    {
+        if (_conversationArchive == null ||
+            sender is not Button { Tag: NIRAArchivedChatSession session }) return;
+        var view = new PastChatWindow(_conversationArchive, session) { Owner = this };
+        if (view.ShowDialog() == true)
+        {
+            _viewModel.AttachPastChat(session.SessionId, session.Title);
+            MessageInput.Focus();
+        }
+    }
+
     private void MessageInput_PreviewKeyDown(
         object sender,
         KeyEventArgs e)
@@ -2864,6 +3035,7 @@ public partial class MainWindow : Window
 
         _viewModel.VisualArtifactReceived -=
             ViewModel_VisualArtifactReceived;
+        _viewModel.PropertyChanged -= ViewModel_PastChatAttachmentChanged;
 
         _viewModel.Messages.CollectionChanged -=
             Messages_CollectionChanged;
@@ -2882,3 +3054,7 @@ public partial class MainWindow : Window
             MainWindow_Closed;
     }
 }
+
+
+
+
