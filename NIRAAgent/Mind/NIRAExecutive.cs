@@ -584,6 +584,39 @@ public sealed class NIRAExecutive
             // branch or dependency. Do not claim completion here.
         }
 
+        // Multi-branch parent completion belongs to the ONE NIRA mind, not to
+        // another "synthesis/checklist" branch. When every required root branch
+        // has committed a reviewed ResultSummary and no branch work is still
+        // running, the next branch-result event is the single fan-in boundary.
+        // The normal cognition call may synthesize the outputs, but it is not
+        // allowed to manufacture another execution branch just to combine them.
+        Guid? parallelFinalizationGoalId = null;
+        NIRABranchState[] parallelFinalizationBranches =
+            Array.Empty<NIRABranchState>();
+        if (mindEvent.Name == "PersistentBranchResult" &&
+            IsCommittedCompletedBranchResult(mindEvent) &&
+            ownedGoalId is Guid parallelGoalId &&
+            _goals.TryGetGoal(parallelGoalId, out NIRAGoalState? parallelGoal) &&
+            parallelGoal is { IsResolved: false })
+        {
+            NIRABranchState[] required = _branches.GetForGoal(parallelGoalId)
+                .Where(b => b.ParentBranchId == null &&
+                    b.JoinPolicy == NIRABranchJoinPolicy.Required)
+                .ToArray();
+            if (required.Length > 1 &&
+                required.All(b => b.Status == NIRABranchStatus.Completed &&
+                    !string.IsNullOrWhiteSpace(b.ResultSummary)) &&
+                !_branchWork.CurrentWork.Any(w =>
+                    w.GoalId == parallelGoalId && w.IsOpen))
+            {
+                parallelFinalizationGoalId = parallelGoalId;
+                parallelFinalizationBranches = required;
+                Debug.WriteLine($"[Journey] PARALLEL FAN-IN READY | " +
+                    $"Goal={parallelGoalId:D} | Required={required.Length} | " +
+                    "Mode=SingleNIRASynthesis");
+            }
+        }
+
         // A worker waiting for a trusted credential window owns its action.
         // Poll/reconsideration events must not spawn new paid planning turns
         // while that same authoritative work is still running.
@@ -608,6 +641,35 @@ public sealed class NIRAExecutive
 
         StringBuilder executiveEvidence =
             new();
+
+        if (mindEvent.Name == "PersistentBranchWorkResult" &&
+            TryReadMetadataGuid(mindEvent, "branchId", out Guid historyBranchId))
+        {
+            AppendBranchExecutionLedger(
+                executiveEvidence,
+                historyBranchId);
+        }
+
+        if (parallelFinalizationGoalId is Guid readyGoalId)
+        {
+            executiveEvidence.AppendLine(
+                "PARALLEL FAN-IN FINALIZATION: all required independent branches " +
+                "have already committed reviewed results. Synthesize the user's " +
+                "combined answer NOW from the verified branch summaries below. " +
+                "Do not create another branch, do not assign more branch work, " +
+                "and do not call browser/tools merely to combine existing results.");
+            foreach (NIRABranchState branch in parallelFinalizationBranches)
+            {
+                executiveEvidence.AppendLine();
+                executiveEvidence.AppendLine(
+                    $"VERIFIED BRANCH {branch.Id:D}: {branch.Objective}");
+                executiveEvidence.AppendLine(
+                    branch.ResultSummary!.Trim());
+            }
+            executiveEvidence.AppendLine();
+            executiveEvidence.AppendLine(
+                $"Complete parent goal {readyGoalId:D} after producing the combined answer.");
+        }
 
 
         StringBuilder capabilityEvidence =
@@ -782,6 +844,10 @@ public sealed class NIRAExecutive
         int noResultBrowserClickAttempts = 0;
         Guid? noResultBrowserPageId = null;
         int rejectedRepeatReplans = 0;
+        // A branch-local stagnation circuit is a planning signal first, not
+        // proof that the whole user task is blocked. Give NIRA exactly one
+        // evidence-reuse reconsideration before terminalizing anything.
+        int branchStagnationReplans = 0;
         int unchangedBrowserInspections = 0;
         int completionReviewCalls = 0;
         bool secureSignInReturned = false;
@@ -870,6 +936,58 @@ public sealed class NIRAExecutive
                 yield break;
             }
 
+
+            if (parallelFinalizationGoalId is Guid fanInGoalId)
+            {
+                string fanInDeliverable = BuildBranchDeliverable(
+                    decision.Reply, decision.DisplayBlocks);
+                if (string.IsNullOrWhiteSpace(fanInDeliverable))
+                {
+                    fanInDeliverable = string.Join(
+                        "\n\n",
+                        parallelFinalizationBranches.Select(branch =>
+                            branch.Objective + "\n" +
+                            (branch.ResultSummary ?? string.Empty).Trim()));
+                    decision = decision with
+                    {
+                        Reply = fanInDeliverable,
+                        EmitReply = true
+                    };
+                }
+
+                // The branches have already done all task execution. Synthesis
+                // is main-NIRA cognition only; any newly proposed execution here
+                // is orchestration drift and would recreate the immortal-branch
+                // bug this fan-in boundary exists to prevent.
+                decision = decision with
+                {
+                    State = NIRACognitionState.Complete,
+                    EmitReply = true,
+                    BranchProposals = Array.Empty<NIRABranchProposal>(),
+                    BranchWorkProposals = Array.Empty<NIRABranchWorkProposal>(),
+                    CapabilityRequests = Array.Empty<NIRACapabilityRequest>(),
+                    DynamicToolInvocations = Array.Empty<NIRADynamicToolInvocation>(),
+                    GoalProposals = new[]
+                    {
+                        new NIRAGoalProposal
+                        {
+                            Action = NIRAGoalProposalAction.Complete,
+                            GoalId = fanInGoalId.ToString("D"),
+                            EvidenceSource = NIRAGoalEvidenceSource.CurrentEvent,
+                            EvidenceQuote = "Final branch status:\nCompleted",
+                            EvidenceSummary =
+                                "All required root branches have committed reviewed results; " +
+                                "this cognition turn synthesizes those results for the user.",
+                            Reason =
+                                "Finish the multi-branch parent at the verified fan-in boundary.",
+                            Confidence = 0.98
+                        }
+                    }
+                };
+                Debug.WriteLine($"[Journey] PARALLEL FAN-IN SYNTHESIS | " +
+                    $"Goal={fanInGoalId:D} | Branches={parallelFinalizationBranches.Length} | " +
+                    "AdditionalExecution=0");
+            }
 
             // A branch result is not a new user request. A successful login
             // still has to pursue the original objective; a NeedUser with no
@@ -1214,9 +1332,28 @@ public sealed class NIRAExecutive
             // unpersisted blocks from a later branch-completion event.
             string reviewedDeliverable = BuildBranchDeliverable(
                 decision.Reply, decision.DisplayBlocks);
+            // A model can propose Complete for a branch while leaving the
+            // enclosing cognition state at Continue. Without normalizing the
+            // decision, independent review never runs and a paraphrased
+            // CurrentEvent quote is rejected at the repository gate. Only
+            // reinterpret a terminal, work-free branch decision; a proposed
+            // next operation always takes precedence over completion.
+            if (mindEvent.Name == "PersistentBranchWorkResult" &&
+                decision.State == NIRACognitionState.Continue &&
+                decision.BranchProposals.Any(p =>
+                    p.Action == NIRABranchProposalAction.Complete) &&
+                decision.BranchWorkProposals.Count == 0 &&
+                decision.CapabilityRequests.Count == 0 &&
+                decision.DynamicToolInvocations.Count == 0)
+            {
+                decision = decision with { State = NIRACognitionState.Complete };
+                Debug.WriteLine($"[Executive] BRANCH COMPLETION REVIEW ROUTED | " +
+                    $"Run={runId:D} | Source=ContinueWithCompleteProposal");
+            }
+
             // A sibling's browser output cannot prove THIS branch completed.
             // The detailed reviewer sees only the primary work envelope.
-            string primaryReviewEvidence = PrimaryBranchWorkEvidence(mindEvent);
+            string primaryReviewEvidence = BuildBranchCompletionEvidence(mindEvent);
             bool primaryCompletionReviewed = false;
             // The model sometimes says State=Complete and includes the actual
             // requested answer but FORGETS the branch completion proposal.
@@ -1562,6 +1699,36 @@ public sealed class NIRAExecutive
                                 proposal.BuildSignature()))
                     .ToArray();
 
+            // A first-cycle parallel plan occasionally omits the parent goal's
+            // completion criteria. GoalService must still reject empty criteria;
+            // the Executive fills them ONLY for a fresh, explicit user request
+            // that actually creates multiple independent sibling branches.
+            // This describes the already-proposed obligations; it does not
+            // assert that either browser result or the parent task is complete.
+            if (mindEvent.Source == NIRAMindEventSource.User &&
+                decision.BranchProposals.Count(p =>
+                    p.Action == NIRABranchProposalAction.Create &&
+                    string.IsNullOrWhiteSpace(p.ParentBranchId)) > 1)
+            {
+                string[] obligations = decision.BranchProposals
+                    .Where(p => p.Action == NIRABranchProposalAction.Create &&
+                        string.IsNullOrWhiteSpace(p.ParentBranchId) &&
+                        !string.IsNullOrWhiteSpace(p.Objective))
+                    .Select(p => "The branch result is verified: " + p.Objective.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Take(8).ToArray();
+                newGoalProposals = newGoalProposals.Select(p =>
+                    p.Action == NIRAGoalProposalAction.Create &&
+                    p.CompletionCriteria.Count == 0 && obligations.Length > 1
+                        ? p with { CompletionCriteria = obligations.Concat(new[]
+                            { "Deliver the original user's requested combined result using all required branch outcomes." }).ToArray() }
+                        : p).ToArray();
+                if (newGoalProposals.Any(p => p.Action == NIRAGoalProposalAction.Create &&
+                    p.CompletionCriteria.Count > 0))
+                    Debug.WriteLine("[Journey] PARALLEL GOAL CRITERIA CHECKED | " +
+                        "Only current-user sibling obligations may supply missing criteria.");
+            }
+
             // An initial model can correctly propose a new user task but
             // mistakenly cite its own short reply, while the quote actually
             // belongs to this fresh user event. Bind only CREATE evidence to
@@ -1863,8 +2030,6 @@ public sealed class NIRAExecutive
                         // completion, grant or other claimed world evidence.
                         if (mindEvent.Source == NIRAMindEventSource.User &&
                             normalized.Action == NIRABranchProposalAction.Create &&
-                            normalized.EvidenceSource == NIRABranchEvidenceSource.CurrentEvent &&
-                            !ContainsGroundedQuote(mindEvent.Content, normalized.EvidenceQuote) &&
                             !string.IsNullOrWhiteSpace(mindEvent.Content))
                         {
                             string exactUserExcerpt =
@@ -1873,9 +2038,40 @@ public sealed class NIRAExecutive
                                     : mindEvent.Content[..Math.Min(160, mindEvent.Content.Length)];
                             if (!ContainsGroundedQuote(mindEvent.Content, exactUserExcerpt))
                                 exactUserExcerpt = mindEvent.Content[..Math.Min(160, mindEvent.Content.Length)];
-                            normalized = normalized with { EvidenceQuote = exactUserExcerpt };
-                            Debug.WriteLine("[Executive] GROUNDED USER BRANCH CREATION | " +
-                                "Invalid paraphrase replaced with literal user-event evidence.");
+
+                            bool evidenceNeedsRepair =
+                                normalized.EvidenceSource != NIRABranchEvidenceSource.CurrentEvent ||
+                                !ContainsGroundedQuote(mindEvent.Content, normalized.EvidenceQuote);
+                            bool criteriaNeedRepair =
+                                normalized.CompletionCriteria.Count == 0 &&
+                                !string.IsNullOrWhiteSpace(normalized.Objective);
+
+                            if (evidenceNeedsRepair || criteriaNeedRepair)
+                            {
+                                string criterionObjective = normalized.Objective.Trim();
+                                if (criterionObjective.Length > 430)
+                                    criterionObjective = criterionObjective[..430];
+
+                                normalized = normalized with
+                                {
+                                    EvidenceSource = NIRABranchEvidenceSource.CurrentEvent,
+                                    EvidenceQuote = evidenceNeedsRepair
+                                        ? exactUserExcerpt : normalized.EvidenceQuote,
+                                    EvidenceSummary = string.IsNullOrWhiteSpace(normalized.EvidenceSummary)
+                                        ? "Branch creation is grounded in the current explicit user task."
+                                        : normalized.EvidenceSummary,
+                                    CompletionCriteria = criteriaNeedRepair
+                                        ? new[]
+                                        {
+                                            "Return a verified result that satisfies this branch responsibility: " +
+                                            criterionObjective
+                                        }
+                                        : normalized.CompletionCriteria
+                                };
+                                Debug.WriteLine("[Executive] GROUNDED USER BRANCH CREATION | " +
+                                    $"EvidenceRepaired={evidenceNeedsRepair} | " +
+                                    $"CriteriaRepaired={criteriaNeedRepair}");
+                            }
                         }
 
                         // Branch labels must not silently substitute a remembered
@@ -1904,6 +2100,66 @@ public sealed class NIRAExecutive
                             executedBranchProposals.Add(
                                 proposal.BuildSignature()))
                     .ToArray();
+
+            // Once a parent already owns multiple required root workstreams,
+            // an INTERNAL result turn may not create another root branch unless
+            // that new branch also receives its first executable assignment in
+            // the SAME decision. This rejects "assemble/combine/checklist"
+            // orchestration branches and duplicate re-creations of a finished
+            // sibling, while still allowing a genuinely discovered third
+            // independent workstream with concrete first work.
+            if (mindEvent.Source == NIRAMindEventSource.Internal &&
+                ownedGoalId is Guid existingParallelGoalId &&
+                _branches.GetForGoal(existingParallelGoalId).Count(branch =>
+                    branch.ParentBranchId == null &&
+                    branch.JoinPolicy == NIRABranchJoinPolicy.Required) > 1)
+            {
+                NIRABranchState[] existingRoots = _branches.GetForGoal(existingParallelGoalId)
+                    .Where(branch => branch.ParentBranchId == null)
+                    .ToArray();
+
+                bool HasSameDecisionFirstWork(NIRABranchProposal proposal)
+                {
+                    if (string.IsNullOrWhiteSpace(proposal.ClientKey))
+                        return false;
+                    string placeholder = "<new-branch:" + proposal.ClientKey.Trim() + ">";
+                    return decision.BranchWorkProposals.Any(work =>
+                        string.Equals(work.BranchId, placeholder,
+                            StringComparison.OrdinalIgnoreCase));
+                }
+
+                NIRABranchProposal[] before = newBranchProposals;
+                newBranchProposals = newBranchProposals.Where(proposal =>
+                {
+                    if (proposal.Action != NIRABranchProposalAction.Create ||
+                        !string.IsNullOrWhiteSpace(proposal.ParentBranchId) ||
+                        !Guid.TryParse(proposal.GoalId, out Guid proposalGoalId) ||
+                        proposalGoalId != existingParallelGoalId)
+                        return true;
+
+                    bool duplicateObjective = existingRoots.Any(branch =>
+                        string.Equals(branch.Objective.Trim(),
+                            proposal.Objective.Trim(),
+                            StringComparison.OrdinalIgnoreCase));
+                    bool hasFirstWork = HasSameDecisionFirstWork(proposal);
+                    if (!duplicateObjective && hasFirstWork)
+                        return true;
+
+                    Debug.WriteLine($"[Journey] INTERNAL ROOT BRANCH SUPPRESSED | " +
+                        $"Goal={existingParallelGoalId:D} | " +
+                        $"DuplicateObjective={duplicateObjective} | " +
+                        $"HasFirstWork={hasFirstWork} | " +
+                        $"Objective='{TrimLog(proposal.Objective)}'");
+                    return false;
+                }).ToArray();
+
+                if (before.Length != newBranchProposals.Length)
+                    executiveEvidence.AppendLine(
+                        "PARALLEL ORCHESTRATION REPAIR: combining finished sibling " +
+                        "results is main-NIRA cognition, not a new branch. Reuse the " +
+                        "existing authoritative branches; create a new root only for " +
+                        "genuinely independent work with first executable work assigned now.");
+            }
 
             // Branches created together to satisfy ONE newly assigned parent
             // are required outputs of that parent. Background is a scheduling
@@ -2178,22 +2434,80 @@ public sealed class NIRAExecutive
                     newBranchWorkProposals,
                     cancellationToken);
 
-            // Third login dispatch is denied by the durable branch-work
-            // ledger. Do not let ordinary internal-reply suppression hide the
-            // resulting user-facing blocker or pay for another cognition run.
+            // Durable work circuits have TWO meanings:
+            // 1) global failure/authentication exhaustion can terminalize a task;
+            // 2) a branch-local no-progress circuit only says "do not repeat this
+            //    family/state again". It is NOT evidence that the user's objective
+            //    is impossible. Give the ONE NIRA mind one bounded evidence-reuse
+            //    reconsideration so it can finish from accumulated proof or choose
+            //    a materially different grounded operation.
             string? genericBudgetReason = branchWorkResults
                 .Select(result => result.Reason)
                 .FirstOrDefault(reason => reason.StartsWith(
                     "GenericWorkBudgetReached:", StringComparison.Ordinal));
+            string? genericBudgetBody = genericBudgetReason == null
+                ? null
+                : genericBudgetReason["GenericWorkBudgetReached:".Length..].Trim();
             bool authenticationBudgetReached = branchWorkResults.Any(result =>
                 result.Reason.StartsWith("AuthenticationRetryBudgetReached:",
                     StringComparison.Ordinal));
+            bool globalGenericBudgetReached = genericBudgetBody?.StartsWith(
+                "At least six of the last eight attempted steps failed",
+                StringComparison.Ordinal) == true;
+
+            Guid stagnatedBranchId = Guid.Empty;
+            NIRABranchState? stagnatedBranch = null;
+            bool recoverableBranchStagnation =
+                genericBudgetReason != null &&
+                !globalGenericBudgetReached &&
+                mindEvent.Name == "PersistentBranchWorkResult" &&
+                TryReadMetadataGuid(mindEvent, "branchId", out stagnatedBranchId) &&
+                _branches.TryGetBranch(
+                    stagnatedBranchId,
+                    out stagnatedBranch) &&
+                stagnatedBranch is { IsOpen: true };
+
+            if (recoverableBranchStagnation &&
+                branchStagnationReplans == 0)
+            {
+                branchStagnationReplans = 1;
+                executiveEvidence.AppendLine();
+                executiveEvidence.AppendLine(
+                    "BRANCH STAGNATION RECOVERY: the runtime rejected the proposed " +
+                    "next step because it would repeat a branch-local no-progress " +
+                    "pattern. This is NOT proof that the branch or parent goal is " +
+                    "blocked. Reuse the accumulated successful evidence below. " +
+                    "If it already satisfies the branch objective, produce the " +
+                    "concrete branch deliverable and propose Complete NOW. Otherwise " +
+                    "choose ONE materially different grounded operation. Do not " +
+                    "inspect/current/navigate/follow merely to obtain the same page " +
+                    "state again. Do not create a replacement branch.");
+                executiveEvidence.AppendLine(
+                    $"STAGNATION REASON: {genericBudgetBody}");
+                executiveEvidence.AppendLine(
+                    $"EXACT CONTINUATION BRANCH ID: {stagnatedBranchId:D}");
+                executiveEvidence.AppendLine(
+                    $"BRANCH OBJECTIVE: {stagnatedBranch!.Objective}");
+                AppendBranchExecutionLedger(
+                    executiveEvidence,
+                    stagnatedBranchId);
+                Debug.WriteLine(
+                    $"[Executive] BRANCH STAGNATION REPLAN | " +
+                    $"Branch={stagnatedBranchId:D} | Goal={stagnatedBranch.GoalId:D} | " +
+                    "AdditionalReplans=1");
+                continue;
+            }
+
+            // Authentication exhaustion and the true cross-family failure
+            // budget are terminal. A branch-local stagnation that survives
+            // the single evidence-reuse reconsideration is also stopped here
+            // rather than allowing an unbounded paid reasoning loop.
             if ((genericBudgetReason != null || authenticationBudgetReached) &&
                 TryReadMetadataGuid(mindEvent, "goalId", out Guid limitedGoalId))
             {
                 string blocker = genericBudgetReason != null
                     ? "I stopped after repeated steps failed to move this task forward. " +
-                      genericBudgetReason["GenericWorkBudgetReached:".Length..].Trim() +
+                      genericBudgetBody +
                       " I haven't verified the requested outcome."
                     : "The trusted login has already been attempted twice " +
                       "for this task without a verified authenticated result. " +
@@ -3911,11 +4225,158 @@ public sealed class NIRAExecutive
             StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string PrimaryBranchWorkEvidence(NIRAMindEvent mindEvent)
+    private string BuildBranchCompletionEvidence(NIRAMindEvent mindEvent)
     {
         const string boundary = "[CONCURRENT BRANCH RESULTS — SAME PARENT GOAL]";
         int index = mindEvent.Content.IndexOf(boundary, StringComparison.Ordinal);
-        return index < 0 ? mindEvent.Content : mindEvent.Content[..index].TrimEnd();
+        string current = index < 0
+            ? mindEvent.Content
+            : mindEvent.Content[..index].TrimEnd();
+
+        if (!TryReadMetadataGuid(mindEvent, "branchId", out Guid branchId))
+            return current;
+
+        NIRABranchWorkItem[] prior = _branchWork.CurrentWork
+            .Where(item =>
+                item.BranchId == branchId &&
+                item.IsTerminal &&
+                item.Status == NIRABranchWorkStatus.Succeeded &&
+                !string.IsNullOrWhiteSpace(item.ResultEvidence))
+            .OrderByDescending(item => item.FinishedAtUtc ?? item.CreatedAtUtc)
+            .Take(5)
+            .ToArray();
+
+        if (prior.Length <= 1)
+            return current;
+
+        StringBuilder combined = new(current);
+        int remaining = Math.Max(0, 18000 - combined.Length);
+        if (remaining < 800)
+            return current;
+
+        combined.AppendLine();
+        combined.AppendLine();
+        combined.AppendLine(
+            "[RECENT SUCCESSFUL EVIDENCE FROM THIS SAME BRANCH]");
+        combined.AppendLine(
+            "These are earlier authoritative results from this branch. " +
+            "Use them cumulatively; do not repeat a browser observation merely " +
+            "because the newest work item contains only one part of the proof.");
+
+        foreach (NIRABranchWorkItem item in prior.Skip(1))
+        {
+            if (remaining < 500)
+                break;
+
+            string family = item.Kind == NIRABranchWorkKind.Capability
+                ? item.CapabilityRequest?.CapabilityId ?? "unknown"
+                : "dynamic-tool";
+            string compactEvidence = CompactBranchEvidence(item.ResultEvidence!, 2600);
+            string entry =
+                $"\nPrior work {item.Id:D} | {family} | {item.Status}\n" +
+                $"Summary: {item.ResultSummary}\n" +
+                compactEvidence + "\n";
+            if (entry.Length > remaining)
+                entry = entry[..remaining];
+            combined.Append(entry);
+            remaining -= entry.Length;
+        }
+
+        return combined.ToString();
+    }
+
+    private void AppendBranchExecutionLedger(
+        StringBuilder evidence,
+        Guid branchId)
+    {
+        NIRABranchWorkItem[] history = _branchWork.CurrentWork
+            .Where(item => item.BranchId == branchId && item.IsTerminal)
+            .OrderBy(item => item.FinishedAtUtc ?? item.CreatedAtUtc)
+            .TakeLast(8)
+            .ToArray();
+        if (history.Length < 2)
+            return;
+
+        evidence.AppendLine(
+            "BRANCH EXECUTION LEDGER: reason from these persisted results; " +
+            "do not recreate a successful step just to obtain the same page again.");
+        foreach (NIRABranchWorkItem item in history)
+        {
+            string family = item.Kind == NIRABranchWorkKind.Capability
+                ? item.CapabilityRequest?.CapabilityId ?? "unknown"
+                : "dynamic-tool";
+            string url = ExtractEvidenceField(item.ResultEvidence, "Url") ??
+                ExtractEvidenceField(item.ResultEvidence, "FinalUrl") ?? "-";
+            evidence.AppendLine(
+                $"- {family} | {item.Status} | Url={url} | " +
+                $"Summary={TrimLog(item.ResultSummary ?? string.Empty)}");
+        }
+        evidence.AppendLine(
+            "A browser.navigate/follow result already contains a destination " +
+            "inspection. Re-inspect only for a specifically missing/truncated " +
+            "fact or after the document actually changed.");
+    }
+
+    private static string CompactBranchEvidence(
+        string evidence,
+        int maximumLength)
+    {
+        if (string.IsNullOrWhiteSpace(evidence))
+            return string.Empty;
+
+        string[] keepPrefixes =
+        {
+            "Url=", "FinalUrl=", "Title=", "CanonicalUrl=",
+            "MainDocumentHttpStatus=", "ContentSha256="
+        };
+        StringBuilder compact = new();
+        foreach (string line in evidence.Split('\n'))
+        {
+            string trimmed = line.Trim();
+            if (keepPrefixes.Any(prefix =>
+                    trimmed.StartsWith(prefix, StringComparison.Ordinal)))
+                compact.AppendLine(trimmed);
+        }
+
+        const string textMarker = "PRIMARY_VISIBLE_TEXT:";
+        int marker = evidence.IndexOf(textMarker, StringComparison.Ordinal);
+        if (marker >= 0)
+        {
+            string visible = evidence[(marker + textMarker.Length)..].TrimStart();
+            int interactive = visible.IndexOf(
+                "INTERACTIVE_ELEMENTS", StringComparison.Ordinal);
+            if (interactive >= 0)
+                visible = visible[..interactive].TrimEnd();
+            if (visible.Length > 1800)
+                visible = visible[..1800] + "…";
+            compact.AppendLine("PRIMARY_VISIBLE_TEXT:");
+            compact.AppendLine(visible);
+        }
+
+        string result = compact.ToString().TrimEnd();
+        if (result.Length == 0)
+            result = evidence.Length <= maximumLength
+                ? evidence
+                : evidence[..maximumLength];
+        else if (result.Length > maximumLength)
+            result = result[..maximumLength];
+        return result;
+    }
+
+    private static string? ExtractEvidenceField(
+        string? evidence,
+        string key)
+    {
+        if (string.IsNullOrWhiteSpace(evidence))
+            return null;
+        string prefix = key + "=";
+        string? line = evidence.Split('\n')
+            .Select(value => value.Trim())
+            .FirstOrDefault(value =>
+                value.StartsWith(prefix, StringComparison.Ordinal));
+        return line == null
+            ? null
+            : line[prefix.Length..].Trim();
     }
 
     private static bool TryGetExactWorkResultQuote(
@@ -4038,8 +4499,15 @@ public sealed class NIRAExecutive
             .Where(branch => branch.IsOpen).ToArray();
         if (open.Length != 1) return null;
         Guid branchId = open[0].Id;
-        return NIRABranchWorkLoopGuard.Evaluate(
+        string? reason = NIRABranchWorkLoopGuard.Evaluate(
             _branchWork.CurrentWork.Where(item => item.BranchId == branchId));
+        // A family-local circuit is NOT a terminal parent-goal verdict.
+        // BranchWorkService rejects that repeated primitive but allows a
+        // different evidence-grounded operation, including read-only recovery.
+        // Only the cross-family failure budget can terminalize the parent here.
+        return reason != null && reason.StartsWith(
+            "At least six of the last eight attempted steps failed",
+            StringComparison.Ordinal) ? reason : null;
     }
 
     private bool TryGetStaleOwnedInternalEventReason(
@@ -4488,17 +4956,14 @@ public sealed class NIRAExecutive
                     &&
                     result.Goal?.Status == NIRAGoalStatus.Completed);
 
-        bool meaningfulBranchOutcome =
-            branchResults.Any(
-                result =>
-                    result.Changed
-                    &&
-                    result.Branch?.Status is
-                        NIRABranchStatus.Completed
-                        or NIRABranchStatus.Failed);
-
-        return meaningfulGoalOutcome
-            || meaningfulBranchOutcome;
+        // Branch completion inside an open multi-workstream task is
+        // orchestration state, not a durable user-level experience. Forming
+        // memory here costs another model call per sibling and can persist
+        // partial research before the parent result is even synthesized.
+        // Defer internal memory formation until the parent goal itself commits
+        // a meaningful terminal outcome.
+        _ = branchResults;
+        return meaningfulGoalOutcome;
     }
 
 
@@ -5912,5 +6377,3 @@ public sealed class NIRAExecutive
                 "...";
     }
 }
-
-

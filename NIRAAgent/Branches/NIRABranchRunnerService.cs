@@ -700,14 +700,21 @@ public sealed class NIRABranchRunnerService
     }
 
     // Fan-in is deliberately short and restricted to read-only results from
-    // DIFFERENT branches of the SAME goal. Mutations, failed work, large page
-    // snapshots, or unrelated goals retain the original individual delivery.
-    // Never wait for a slower branch: this is a small scheduling window only.
+    // DIFFERENT branches of the SAME goal. Large read-only page snapshots are
+    // compacted only in the mind event; their full durable evidence remains in
+    // branch work storage. Mutations, failures and unrelated goals stay separate.
+    // Never wait long for a slower branch: this is a small scheduling window only.
     private static readonly TimeSpan WorkResultFanInWindow =
-        TimeSpan.FromMilliseconds(140);
+        TimeSpan.FromMilliseconds(1800);
 
     private const int MaximumReadOnlyResultBatch = 4;
-    private const int MaximumResultEvidenceForBatch = 9000;
+    // Full authoritative browser evidence is persisted separately. The mind
+    // event compacts each batched result, so large page snapshots can still
+    // share one cognition turn without overflowing the event budget.
+    private const int MaximumResultEvidenceForBatch = 24000;
+    private const int FanInEvidenceBudgetPerResult = 3200;
+    private const int MaximumFanInEvidenceBudget =
+        MaximumReadOnlyResultBatch * FanInEvidenceBudgetPerResult;
 
     private bool IsBatchableObservation(NIRABranchWorkResultEvent result)
     {
@@ -788,8 +795,10 @@ public sealed class NIRABranchRunnerService
                             candidate.BranchId != first.BranchId &&
                             !batch.Any(item => item.BranchId == candidate.BranchId) &&
                             !_fanInAttempted.ContainsKey(candidate.WorkId) &&
-                            batch.Sum(item => item.ResultEvidence.Length) +
-                                candidate.ResultEvidence.Length <= 14000 &&
+                            batch.Sum(item => Math.Min(
+                                item.ResultEvidence.Length, FanInEvidenceBudgetPerResult)) +
+                                Math.Min(candidate.ResultEvidence.Length,
+                                    FanInEvidenceBudgetPerResult) <= MaximumFanInEvidenceBudget &&
                             IsBatchableObservation(candidate))
                         {
                             batch.Add(candidate);

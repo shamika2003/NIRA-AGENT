@@ -35,6 +35,13 @@ internal static class NIRABranchWorkLoopGuard
 
         NIRABranchWorkItem[] recent = last.TakeLast(8).ToArray();
         NIRABranchWorkItem newest = last[^1];
+        // A cross-primitive failure tail is terminal even if its latest item
+        // also belongs to a failed primitive family. Test this FIRST so a
+        // family-local circuit cannot indefinitely mask the global budget.
+        if (Failed(newest) && recent.Length >= 8 && recent.Count(Failed) >= 6)
+            return "At least six of the last eight attempted steps failed. " +
+                "Report the concrete blocker or ask for a different direction.";
+
         // Three failures of the same primitive within the latest work window
         // are enough to stop repeating it, including across different branch
         // IDs or changing request arguments. A different successful step can
@@ -48,11 +55,89 @@ internal static class NIRABranchWorkLoopGuard
                     "). Inspect the last failure and change the plan rather than retrying it.";
         }
 
-        // Multiple unrelated failures in the same goal indicate a failing
-        // strategy, not a browser-specific login condition.
-        if (recent.Length >= 8 && recent.Count(Failed) >= 6)
-            return "At least six of the last eight attempted steps failed. " +
-                "Report the concrete blocker or ask for a different direction.";
+        // Cross-capability browser observation loop: navigate/follow/inspect
+        // can alternate while still returning the SAME page and content hash,
+        // which defeats exact request-signature guards and burns one cognition
+        // call per no-op observation. Reset this tail on any non-observation
+        // operation so real clicks/fills/downloads remain fully available.
+        static bool BrowserObservation(NIRABranchWorkItem w)
+        {
+            string? id = w.CapabilityRequest?.CapabilityId;
+            return w.Succeeded && id is
+                "browser.inspect" or
+                "browser.navigate" or
+                "browser.follow" or
+                "browser.current";
+        }
+
+        static string? ObservationField(NIRABranchWorkItem w, string key)
+        {
+            string? line = w.ResultEvidence?
+                .Split('\n')
+                .Select(x => x.Trim())
+                .FirstOrDefault(x => x.StartsWith(key + "=", StringComparison.Ordinal));
+            return line?[(key.Length + 1)..].Trim();
+        }
+
+        NIRABranchWorkItem[] observationTail = last
+            .Reverse()
+            .TakeWhile(BrowserObservation)
+            .Take(6)
+            .ToArray();
+
+        static string? ObservationSignature(NIRABranchWorkItem w)
+        {
+            string? url =
+                ObservationField(w, "Url") ??
+                ObservationField(w, "FinalUrl");
+            string? hash = ObservationField(w, "ContentSha256");
+            return string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(hash)
+                ? null
+                : url.Trim() + "|" + hash.Trim();
+        }
+
+        // Detect A->B->A->B observation ping-pong before either page has to be
+        // revisited three times. This is common when cognition alternates
+        // between an instructions page and an adjacent generic download page
+        // even though neither state is changing. A genuine click/fill/download
+        // breaks BrowserObservation() and therefore resets this tail.
+        if (observationTail.Length >= 4)
+        {
+            string? a0 = ObservationSignature(observationTail[0]);
+            string? b0 = ObservationSignature(observationTail[1]);
+            string? a1 = ObservationSignature(observationTail[2]);
+            string? b1 = ObservationSignature(observationTail[3]);
+            if (a0 != null && b0 != null &&
+                string.Equals(a0, a1, StringComparison.Ordinal) &&
+                string.Equals(b0, b1, StringComparison.Ordinal) &&
+                !string.Equals(a0, b0, StringComparison.Ordinal))
+            {
+                return "Read-only browser work is alternating between the same two " +
+                    "unchanged page states. Reuse the accumulated evidence or choose " +
+                    "a materially different grounded action instead of revisiting them.";
+            }
+        }
+
+        if (observationTail.Length >= 3)
+        {
+            string? currentUrl =
+                ObservationField(observationTail[0], "Url") ??
+                ObservationField(observationTail[0], "FinalUrl");
+            string? currentHash =
+                ObservationField(observationTail[0], "ContentSha256");
+            if (!string.IsNullOrWhiteSpace(currentUrl) &&
+                !string.IsNullOrWhiteSpace(currentHash) &&
+                observationTail.Count(w =>
+                    (ObservationField(w, "Url") ??
+                     ObservationField(w, "FinalUrl")) == currentUrl &&
+                    ObservationField(w, "ContentSha256") == currentHash) >= 3)
+            {
+                return "Repeated read-only browser observations reached the same " +
+                    "page URL and content hash at least three times without an " +
+                    "intervening browser action. Reason from the existing evidence " +
+                    "or choose a materially different grounded action.";
+            }
+        }
 
         // Browser snapshots have fresh InspectionIds and element refs on
         // every inspect, so byte-for-byte evidence comparison misses a real
@@ -108,4 +193,3 @@ internal static class NIRABranchWorkLoopGuard
         return null;
     }
 }
-

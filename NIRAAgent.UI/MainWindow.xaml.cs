@@ -1083,8 +1083,13 @@ public partial class MainWindow : Window
         NIRABranchWorkItem? work,
         int index)
     {
+        // A terminal blocked/waiting branch must not be shown as AWAITING
+        // NEXT STEP merely because its last failed work was already notified.
+        // No operation can be queued on a blocked branch without reactivation.
         string displayState =
-            work?.Status switch
+            branch.Status is NIRABranchStatus.Blocked or NIRABranchStatus.Waiting
+                ? branch.Status.ToString().ToUpperInvariant()
+                : work?.Status switch
             {
                 NIRABranchWorkStatus.Running => "RUNNING",
                 NIRABranchWorkStatus.Pending => "QUEUED",
@@ -1277,6 +1282,16 @@ public partial class MainWindow : Window
         NIRABranchState branch,
         NIRABranchWorkItem? work)
     {
+        // Branch lifecycle is authoritative: a notified failed work item
+        // must not hide the blocker recorded on the branch itself.
+        if (branch.Status == NIRABranchStatus.Blocked)
+            return string.IsNullOrWhiteSpace(branch.Blocker)
+                ? "This branch is blocked; review the last verified result."
+                : branch.Blocker;
+        if (branch.Status == NIRABranchStatus.Waiting)
+            return string.IsNullOrWhiteSpace(branch.WaitingFor)
+                ? "Waiting for a required condition before work can resume."
+                : branch.WaitingFor;
         if (work != null)
         {
             if (work.IsTerminal && branch.IsOpen)
@@ -3054,7 +3069,3 @@ public partial class MainWindow : Window
             MainWindow_Closed;
     }
 }
-
-
-
-

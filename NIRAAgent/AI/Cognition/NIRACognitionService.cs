@@ -1243,6 +1243,16 @@ public sealed class NIRACognitionService
             operation into branchWorkProposals for the existing branch (not simply
             state Complete or write a progress message). Use the actual current page
             links/forms; use trusted credential handling when the page needs login.
+            A browser.inspect request accepts only declared capability arguments;
+            never fabricate "focus" or other schema keys. Prefer a successful
+            returned page inspection over another identical inspect. A section
+            heading's same-page anchor is not a new document and does not
+            require browser.click to read text already present. An expired DOM
+            ref is NOT authorization to improvise one; use the newest ref from
+            this branch's actual last inspection or choose a grounded href.
+            When proposing branch Complete, return the actual evidence-grounded
+            deliverable, set state Complete, and quote verbatim from the CURRENT
+            work-result event. Completing one branch never completes its sibling.
             No site names, fixed URLs, or guessed element references are assumed here. A tool
             called session.open, process.start, filesystem.write, navigation, or any other
             setup/intermediate operation proves only its actual returned result. Do not say
@@ -2671,6 +2681,3 @@ internal sealed class NIRABranchEvidenceSourceJsonConverter
             value.ToString());
     }
 }
-
-
-

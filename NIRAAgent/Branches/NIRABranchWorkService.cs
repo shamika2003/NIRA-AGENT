@@ -894,11 +894,83 @@ public sealed class NIRABranchWorkService
         // A failing .NET download must not consume the retry budget of the
         // independent VS Code branch under the same parent goal.
         string? generalBlocker;
+        string? lastFamily;
+        string? lastObservedBrowserUrl;
         lock (_stateSync)
-            generalBlocker = NIRABranchWorkLoopGuard.Evaluate(
-                _work.Values.Where(item => item.BranchId == branchId));
+        {
+            NIRABranchWorkItem[] branchHistory = _work.Values
+                .Where(item => item.BranchId == branchId).ToArray();
+            generalBlocker = NIRABranchWorkLoopGuard.Evaluate(branchHistory);
+            lastFamily = branchHistory.Where(item => item.IsTerminal)
+                .OrderByDescending(item => item.FinishedAtUtc ?? item.CreatedAtUtc)
+                .Select(item => item.Kind == NIRABranchWorkKind.Capability
+                    ? "capability:" + (item.CapabilityRequest?.CapabilityId ?? "unknown")
+                    : "dynamic-tool:" + (item.DynamicToolInvocation?.ToolId ?? "unknown"))
+                .FirstOrDefault();
+            lastObservedBrowserUrl = branchHistory
+                .Where(item => item.IsTerminal && !string.IsNullOrWhiteSpace(item.ResultEvidence))
+                .OrderByDescending(item => item.FinishedAtUtc ?? item.CreatedAtUtc)
+                .Select(item => ReadEvidenceField(item.ResultEvidence, "Url") ??
+                    ReadEvidenceField(item.ResultEvidence, "FinalUrl"))
+                .FirstOrDefault(url => !string.IsNullOrWhiteSpace(url));
+        }
         if (generalBlocker != null)
-            return Reject("GenericWorkBudgetReached: " + generalBlocker);
+        {
+            // A failure of one primitive must not forbid a DIFFERENT plan.
+            // In particular, exhausted browser.click attempts must still let
+            // NIRA inspect/navigate/follow a grounded page in this same branch.
+            // These checks do not bypass the trusted uncertain-action journal,
+            // credential broker or capability permission gates.
+            string attemptedFamily = proposal.Kind switch
+            {
+                NIRABranchWorkKind.Capability =>
+                    "capability:" + (proposal.CapabilityRequest?.CapabilityId ?? "unknown"),
+                NIRABranchWorkKind.DynamicTool =>
+                    "dynamic-tool:" + (proposal.DynamicToolInvocation?.ToolId ?? "unknown"),
+                _ => "unknown"
+            };
+            bool sameFailedPrimitive = generalBlocker.StartsWith(
+                "The same operation failed repeatedly (" + attemptedFamily + ")",
+                StringComparison.Ordinal);
+            bool sameUnchangedInspection = generalBlocker.StartsWith(
+                "Four consecutive browser inspections", StringComparison.Ordinal) &&
+                attemptedFamily == "capability:browser.inspect";
+            bool sameIdenticalResult = generalBlocker.StartsWith(
+                "The same operation returned identical evidence", StringComparison.Ordinal) &&
+                lastFamily == attemptedFamily;
+            bool repeatsSameObservedNavigate = false;
+            if (attemptedFamily == "capability:browser.navigate" &&
+                !string.IsNullOrWhiteSpace(lastObservedBrowserUrl) &&
+                proposal.CapabilityRequest?.Arguments.ValueKind ==
+                    System.Text.Json.JsonValueKind.Object)
+            {
+                System.Text.Json.JsonElement arguments =
+                    proposal.CapabilityRequest.Arguments;
+                string? requestedUrl = arguments.TryGetProperty("url", out var urlElement) &&
+                    urlElement.ValueKind == System.Text.Json.JsonValueKind.String
+                        ? urlElement.GetString()
+                        : null;
+                bool forceReload = arguments.TryGetProperty("forceReload", out var reloadElement) &&
+                    reloadElement.ValueKind == System.Text.Json.JsonValueKind.True;
+                repeatsSameObservedNavigate = !forceReload &&
+                    !string.IsNullOrWhiteSpace(requestedUrl) &&
+                    string.Equals(requestedUrl.Trim(), lastObservedBrowserUrl.Trim(),
+                        StringComparison.OrdinalIgnoreCase);
+            }
+            bool passiveSamePageRead =
+                attemptedFamily == "capability:browser.inspect" ||
+                attemptedFamily == "capability:browser.current";
+            bool repeatedBrowserObservation = generalBlocker.StartsWith(
+                "Repeated read-only browser observations", StringComparison.Ordinal) &&
+                (passiveSamePageRead || repeatsSameObservedNavigate);
+            bool globalFailure = generalBlocker.StartsWith(
+                "At least six of the last eight attempted steps failed", StringComparison.Ordinal);
+            if (sameFailedPrimitive || sameUnchangedInspection ||
+                sameIdenticalResult || repeatedBrowserObservation || globalFailure)
+                return Reject("GenericWorkBudgetReached: " + generalBlocker +
+                    " A different grounded operation may continue unless the " +
+                    "whole branch has exhausted its failure budget.");
+        }
 
         // Stored work is the cross-run source of truth. A fresh LLM run or
         // reworded branch-work reason must NOT reset the login-attempt budget.
@@ -1225,6 +1297,25 @@ public sealed class NIRABranchWorkService
     }
 
 
+    private static string? ReadEvidenceField(
+        string? evidence,
+        string key)
+    {
+        if (string.IsNullOrWhiteSpace(evidence))
+            return null;
+
+        string prefix = key + "=";
+        string? line = evidence
+            .Split('\n')
+            .Select(value => value.Trim())
+            .FirstOrDefault(value =>
+                value.StartsWith(prefix, StringComparison.Ordinal));
+        return line == null
+            ? null
+            : line[prefix.Length..].Trim();
+    }
+
+
     private static string TrimLog(
         string? value)
     {
@@ -1245,5 +1336,3 @@ public sealed class NIRABranchWorkService
             : clean[..maximumLength] + "...";
     }
 }
-
-

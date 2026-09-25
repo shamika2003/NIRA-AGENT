@@ -447,14 +447,24 @@ public sealed record NIRAMindEvent
                 "A result batch must contain distinct work/branches for one goal.",
                 nameof(results));
 
-        NIRAMindEvent primary = BranchWorkResult(results[0]);
+        NIRABranchWorkResultEvent[] compacted = results
+            .Select(result => result with
+            {
+                ResultEvidence = CompactBranchResultEvidenceForFanIn(
+                    result.ResultEvidence,
+                    3200)
+            })
+            .ToArray();
+
+        NIRAMindEvent primary = BranchWorkResult(compacted[0]);
         System.Text.StringBuilder content = new(primary.Content);
         content.AppendLine();
         content.AppendLine("[CONCURRENT BRANCH RESULTS — SAME PARENT GOAL]");
         content.AppendLine("NIRA may choose next work for ALL branches below in ONE decision.");
         content.AppendLine("Each branch keeps its own goal, work ID, evidence and next step.");
+        content.AppendLine("Fan-in evidence is compacted only for this cognition turn; the full authoritative result remains persisted in branch work state.");
         content.AppendLine("Do not claim that a sibling branch is finished merely because another one is.");
-        foreach (NIRABranchWorkResultEvent result in results.Skip(1))
+        foreach (NIRABranchWorkResultEvent result in compacted.Skip(1))
         {
             content.AppendLine();
             content.AppendLine("[ADDITIONAL AUTHORITATIVE BRANCH WORK RESULT]");
@@ -475,11 +485,59 @@ public sealed record NIRAMindEvent
 
         Dictionary<string, string> metadata = primary.Metadata.ToDictionary(
             entry => entry.Key, entry => entry.Value);
-        metadata["batchWorkIds"] = string.Join(",", results.Select(r => r.WorkId.ToString("D")));
-        metadata["batchBranchIds"] = string.Join(",", results.Select(r => r.BranchId.ToString("D")));
-        metadata["batchCount"] = results.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        metadata["batchWorkIds"] = string.Join(",", compacted.Select(r => r.WorkId.ToString("D")));
+        metadata["batchBranchIds"] = string.Join(",", compacted.Select(r => r.BranchId.ToString("D")));
+        metadata["batchCount"] = compacted.Length.ToString(System.Globalization.CultureInfo.InvariantCulture);
         return primary with { Content = content.ToString(), Metadata = metadata };
     }
+
+    private static string CompactBranchResultEvidenceForFanIn(
+        string evidence,
+        int maximumLength)
+    {
+        if (string.IsNullOrWhiteSpace(evidence) ||
+            evidence.Length <= maximumLength)
+            return evidence ?? string.Empty;
+
+        System.Text.StringBuilder compact = new();
+        string[] usefulPrefixes =
+        {
+            "SessionId=", "PageId=", "Url=", "CanonicalUrl=",
+            "Title=", "ContentSha256=", "RequestedUrl=", "FinalUrl=",
+            "MainDocumentHttpStatus=", "FailureKind=", "OutcomeUncertain="
+        };
+
+        foreach (string rawLine in evidence.Split('\n'))
+        {
+            string line = rawLine.Trim();
+            if (usefulPrefixes.Any(prefix =>
+                    line.StartsWith(prefix, StringComparison.Ordinal)))
+                compact.AppendLine(line);
+        }
+
+        const string visibleMarker = "PRIMARY_VISIBLE_TEXT:";
+        int visibleStart = evidence.IndexOf(visibleMarker, StringComparison.Ordinal);
+        if (visibleStart >= 0)
+        {
+            visibleStart += visibleMarker.Length;
+            string visible = evidence[visibleStart..].TrimStart();
+            int end = visible.IndexOf("INTERACTIVE_ELEMENTS", StringComparison.Ordinal);
+            if (end >= 0)
+                visible = visible[..end].TrimEnd();
+            if (visible.Length > 2100)
+                visible = visible[..2100] + "…";
+            compact.AppendLine(visibleMarker);
+            compact.AppendLine(visible);
+        }
+
+        string result = compact.ToString().TrimEnd();
+        if (string.IsNullOrWhiteSpace(result))
+            result = evidence[..Math.Min(maximumLength, evidence.Length)];
+        if (result.Length > maximumLength)
+            result = result[..maximumLength];
+        return result;
+    }
+
 
     public static NIRAMindEvent BranchResult(
         NIRABranchResultEvent result)
