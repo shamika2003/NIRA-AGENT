@@ -130,6 +130,11 @@ public sealed class NIRAExecutive
 
     private readonly NIRABrowserService _browser;
 
+    // Non-secret credential metadata only. Secrets never enter cognition.
+    // This lets cognition know that a previously saved website account exists
+    // before it incorrectly asks the user to paste credentials into chat.
+    private readonly NIRACredentialBroker _credentials;
+
 
     public NIRAExecutive(
         NIRACognitionService cognition,
@@ -157,7 +162,8 @@ public sealed class NIRAExecutive
         NIRAConversationArchiveStore conversationArchive,
         NIRASocialHistoryService socialHistory,
         NIRAAuthorityExecutionContextAccessor authorityContext,
-        NIRABrowserService browser)
+        NIRABrowserService browser,
+        NIRACredentialBroker credentials)
     {
         _cognition =
             cognition
@@ -304,6 +310,10 @@ public sealed class NIRAExecutive
             ?? throw new ArgumentNullException(
                 nameof(authorityContext));
         _browser = browser ?? throw new ArgumentNullException(nameof(browser));
+
+        _credentials =
+            credentials
+            ?? throw new ArgumentNullException(nameof(credentials));
     }
 
 
@@ -642,6 +652,59 @@ public sealed class NIRAExecutive
         StringBuilder executiveEvidence =
             new();
 
+        // Website account existence/route metadata is application-owned context,
+        // not long-term conversational memory and never secret material.
+        // Keep it compact and available on user turns so NIRA can reuse a saved
+        // website account without first guessing that no credentials exist.
+        IReadOnlyList<(string Origin, string AccountLabel, string? LoginRoute)>
+            knownBrowserAccounts =
+                Array.Empty<(string Origin, string AccountLabel, string? LoginRoute)>();
+
+        if (mindEvent.Source == NIRAMindEventSource.User)
+        {
+            try
+            {
+                knownBrowserAccounts =
+                    _credentials
+                        .ReadKnownAccounts()
+                        .Take(12)
+                        .ToArray();
+
+                if (knownBrowserAccounts.Count > 0)
+                {
+                    executiveEvidence.AppendLine(
+                        "SAVED WEBSITE ACCOUNT METADATA — NON-SECRET RUNTIME CONTEXT");
+                    executiveEvidence.AppendLine(
+                        "These records only prove that the trusted credential broker " +
+                        "has saved account metadata. They never expose a password and " +
+                        "do not prove a current authenticated session.");
+
+                    foreach (var account in knownBrowserAccounts)
+                    {
+                        executiveEvidence.AppendLine(
+                            $"Origin={CleanRuntimeMetadata(account.Origin, 300)} | " +
+                            $"AccountLabel={CleanRuntimeMetadata(account.AccountLabel, 160)} | " +
+                            $"ObservedLoginRoute={CleanRuntimeMetadata(account.LoginRoute ?? "-", 800)}");
+                    }
+
+                    executiveEvidence.AppendLine(
+                        "For a matching website, use the browser capabilities and " +
+                        "browser.authenticate trusted broker flow. Do not ask for " +
+                        "username/password in ordinary chat; the secure UI owns " +
+                        "missing, ambiguous or replacement credentials.");
+                }
+            }
+            catch (Exception ex) when (
+                ex is Microsoft.Data.Sqlite.SqliteException
+                or IOException
+                or InvalidOperationException)
+            {
+                Debug.WriteLine(
+                    $"[CredentialContext] METADATA UNAVAILABLE | " +
+                    $"Type={ex.GetType().Name}");
+            }
+        }
+
         if (mindEvent.Name == "PersistentBranchWorkResult" &&
             TryReadMetadataGuid(mindEvent, "branchId", out Guid historyBranchId))
         {
@@ -717,34 +780,10 @@ public sealed class NIRAExecutive
         // the next prompt. Fresh result/failure evidence is always supplied.
         HashSet<string> expandedSections = new(StringComparer.OrdinalIgnoreCase);
         HashSet<string> expandedCapabilityIds = new(StringComparer.OrdinalIgnoreCase);
-        // An explicit browser task needs executable signatures on the FIRST call.
-        // Catalog-only bootstrap previously asked for the same five IDs twice
-        // and the Executive blocked before invoking a single capability.
-        // This supplies metadata, never authority or browser actions.
-        bool browserTask = mindEvent.Source == NIRAMindEventSource.User &&
-            (mindEvent.Content.Contains("browser", StringComparison.OrdinalIgnoreCase) ||
-             mindEvent.Content.Contains("website", StringComparison.OrdinalIgnoreCase) ||
-             mindEvent.Content.Contains("portal", StringComparison.OrdinalIgnoreCase) ||
-             System.Text.RegularExpressions.Regex.IsMatch(mindEvent.Content,
-                 @"\b(?:https?://|[a-z0-9-]+\.(?:com|org|net|edu|gov|io)\b)",
-                 System.Text.RegularExpressions.RegexOptions.IgnoreCase));
-        if (browserTask)
-        {
-            expandedSections.Add("capabilities");
-            foreach (string capability in new[] {
-                NIRACapabilityIds.BrowserNavigate,
-                NIRACapabilityIds.BrowserCurrent,
-                NIRACapabilityIds.BrowserInspect,
-                NIRACapabilityIds.BrowserFollow,
-                NIRACapabilityIds.BrowserClick,
-                NIRACapabilityIds.BrowserAuthenticate,
-                NIRACapabilityIds.BrowserSessionOpen,
-                NIRACapabilityIds.BrowserPageSelect,
-                NIRACapabilityIds.BrowserAccounts,
-                NIRACapabilityIds.BrowserWait
-            }) expandedCapabilityIds.Add(capability);
-            Debug.WriteLine($"[BrowserFlow] TASK SIGNATURES PRELOADED | Count={expandedCapabilityIds.Count} | FirstCycle=True");
-        }
+        // Capability expansion is model-selected from the registered directory.
+        // Do not route user intent with lexical browser/site/URL phrase tables here;
+        // the model can request the exact capability IDs and supporting context in
+        // one read-only expansion cycle, and the trusted runtime still owns authority.
         int contextExpansionCount = 0;
         int repeatedContextRequestCount = 0;
         HashSet<string> validContextSections = new(StringComparer.OrdinalIgnoreCase)
@@ -756,6 +795,9 @@ public sealed class NIRAExecutive
 
         bool initialStateApplied =
             false;
+
+        NIRAInteractionAppraisal? appliedSocialAppraisal =
+            null;
 
 
         int cycle =
@@ -849,10 +891,17 @@ public sealed class NIRAExecutive
         // evidence-reuse reconsideration before terminalizing anything.
         int branchStagnationReplans = 0;
         int unchangedBrowserInspections = 0;
+        int browserExploreRuns = 0;
         int completionReviewCalls = 0;
+        int responseRealizationCalls = 0;
+        bool completionReviewConfirmedComplete = false;
         bool secureSignInReturned = false;
         bool siteLinkOpened = false;
+        string? lastObservedLoginRoute = null;
         string? lastObservedPostLoginRoute = null;
+
+        bool savedCredentialNeedUserRecoveryUsed =
+            false;
 
 
         NIRACognitionContext? latestContext =
@@ -892,7 +941,11 @@ public sealed class NIRAExecutive
                 mindEvent.Source == NIRAMindEventSource.User &&
                 string.IsNullOrWhiteSpace(context.OwnedTaskContext) &&
                 string.IsNullOrWhiteSpace(context.CapabilityEvidence) &&
-                string.IsNullOrWhiteSpace(context.DynamicToolEvidence);
+                string.IsNullOrWhiteSpace(context.DynamicToolEvidence) &&
+                // If cognition already expanded real capabilities, this is no
+                // longer a memory-only question. Forcing EvidenceSynthesisOnly
+                // here used to terminate current/live tasks before execution.
+                expandedCapabilityIds.Count == 0;
 
             NIRACognitionDecision decision =
                 await _cognition.ThinkAsync(
@@ -934,6 +987,56 @@ public sealed class NIRAExecutive
                 };
 
                 yield break;
+            }
+
+            // If the user supplied an exact website URL and the trusted broker
+            // already has account metadata for that same origin, asking the user
+            // for ordinary-chat credentials is not a real blocker. Give cognition
+            // one repaired pass with the relevant browser contracts expanded.
+            // This is structural URL/origin matching, not a phrase table.
+            if (!savedCredentialNeedUserRecoveryUsed &&
+                mindEvent.Source == NIRAMindEventSource.User &&
+                decision.State == NIRACognitionState.NeedUser &&
+                decision.CapabilityRequests.Count == 0 &&
+                TryFindHttpOrigin(mindEvent.Content, out string groundedUserOrigin) &&
+                knownBrowserAccounts.Any(account =>
+                    string.Equals(
+                        account.Origin,
+                        groundedUserOrigin,
+                        StringComparison.OrdinalIgnoreCase)))
+            {
+                savedCredentialNeedUserRecoveryUsed =
+                    true;
+
+                expandedSections.Add(
+                    "capabilities");
+
+                expandedCapabilityIds.Add(
+                    NIRACapabilityIds.BrowserAccounts);
+                expandedCapabilityIds.Add(
+                    NIRACapabilityIds.BrowserCurrent);
+                expandedCapabilityIds.Add(
+                    NIRACapabilityIds.BrowserNavigate);
+                expandedCapabilityIds.Add(
+                    NIRACapabilityIds.BrowserInspect);
+                expandedCapabilityIds.Add(
+                    NIRACapabilityIds.BrowserAuthenticate);
+
+                executiveEvidence.AppendLine();
+                executiveEvidence.AppendLine(
+                    "RUNTIME CREDENTIAL CONTINUITY REPAIR: the current user supplied " +
+                    $"a grounded website origin ({groundedUserOrigin}) and the trusted " +
+                    "credential broker already has matching non-secret account metadata. " +
+                    "Ordinary-chat username/password input is therefore NOT a blocker. " +
+                    "Use the expanded browser contracts and trusted secure broker flow; " +
+                    "ask the user only for a genuinely unavailable requirement such as " +
+                    "an MFA/OTP challenge that the trusted runtime cannot satisfy.");
+
+                Debug.WriteLine(
+                    $"[Executive] SAVED CREDENTIAL NEEDUSER REPAIR | " +
+                    $"Run={runId:D} | Origin={groundedUserOrigin}");
+
+                continue;
             }
 
 
@@ -1074,34 +1177,9 @@ public sealed class NIRAExecutive
                 };
             }
 
-            // A first-pass model can mistakenly describe its OWN familiar
-            // browser tools as the limit of NIRA's registered desktop tools.
-            // A terminal unsupported-visual-capability claim is not proof of
-            // absence. Recheck the actual registered signature ONCE rather
-            // than presenting that guess to the user. This does not execute
-            // an action, infer consent, or bypass the capability authorizer.
-            if (mindEvent.Source == NIRAMindEventSource.User &&
-                cycle == 1 &&
-                !expandedSections.Contains("capabilities") &&
-                string.IsNullOrWhiteSpace(context.CapabilityEvidence) &&
-                ShouldVerifyVisualCapabilityBeforeDenial(decision, context))
-            {
-                Debug.WriteLine(
-                    $"[CapabilityClaimGuard] Run={runId:D} | " +
-                    "Suppressed unverified visual-capability denial; " +
-                    "requesting live vision.capture signature and PC context.");
-                decision = decision with
-                {
-                    State = NIRACognitionState.Continue,
-                    EmitReply = false,
-                    ReplyReady = false,
-                    Reply = string.Empty,
-                    Speech = string.Empty,
-                    DisplayBlocks = Array.Empty<NIRARichBlock>(),
-                    ContextRequests = new[] { "capabilities", "pc" },
-                    CapabilityIds = new[] { NIRACapabilityIds.VisionCapture }
-                };
-            }
+            // Capability availability is established through the registered capability
+            // directory and explicit model-selected expansion, not by scanning reply text
+            // for fixed denial phrases.
 
             // Social appraisal must be committed before a read-only context
             // expansion; otherwise an on-demand turn can complete or wait
@@ -1113,7 +1191,12 @@ public sealed class NIRAExecutive
                  (mindEvent.Source != NIRAMindEventSource.User &&
                   decision.ExperienceAppraisal != null)))
             {
-                ApplyFirstCycleCharacterState(mindEvent, interaction, decision);
+                appliedSocialAppraisal =
+                    ApplyFirstCycleCharacterState(
+                        mindEvent,
+                        interaction,
+                        decision);
+
                 initialStateApplied = true;
                 Debug.WriteLine(
                     $"[CharacterContinuity] Run={runId} | Cycle={cycle} | " +
@@ -1160,8 +1243,35 @@ public sealed class NIRAExecutive
                     newMemories = await AppendMemorySearchEvidenceAsync(
                         memorySearchEvidence, requestedSearches,
                         surfacedMemoryIds, cancellationToken);
-                    memoryEvidenceSaturated = newMemories == 0 && newConversations == 0 &&
+                    // In Full mode the complete active durable-memory set is
+                    // already present in cognition. One explicit structured search
+                    // is enough to rank/confirm candidates; another synonym search
+                    // cannot reveal an omitted active memory because nothing was
+                    // omitted. Force the next cycle into bounded evidence synthesis.
+                    bool fullMemoryCoverageReached =
+                        context.MemoryContextMode == NIRAMemoryContextMode.Full &&
                         mindEvent.Source == NIRAMindEventSource.User;
+
+                    memoryEvidenceSaturated =
+                        fullMemoryCoverageReached ||
+                        (newMemories == 0 &&
+                         newConversations == 0 &&
+                         mindEvent.Source == NIRAMindEventSource.User);
+
+                    if (fullMemoryCoverageReached)
+                    {
+                        memorySearchEvidence.AppendLine();
+                        memorySearchEvidence.AppendLine(
+                            "FULL MEMORY COVERAGE: Every active durable memory was already " +
+                            "supplied to cognition and one explicit structured memory search " +
+                            "has now completed. Synthesize from the available records on the " +
+                            "next decision. Do not issue synonym memory searches or fall " +
+                            "through to archived-conversation search merely to re-check the " +
+                            "same long-term-memory question.");
+                        Debug.WriteLine(
+                            $"[MemoryRetrieval] FULL COVERAGE | Run={runId} | Cycle={cycle} | " +
+                            $"Active={context.ActiveLongTermMemoryCount} | NewRecords={newMemories}");
+                    }
                 }
                 else if ((decision.MemorySearches.Count > 0 ||
                           decision.ConversationSearches.Count > 0) &&
@@ -1658,6 +1768,24 @@ public sealed class NIRAExecutive
                             ProgressSpeech = string.Empty,
                             ProgressCorrection = false,
                             DecisionSummary = "Executing the chosen serial work directly.",
+                            // If this lone branch points at a goal created in
+                            // the SAME decision through <newly-created-goal-id>,
+                            // that fresh goal existed only to parent the branch we
+                            // just collapsed. Do not persist an orphan serial goal,
+                            // even when the model supplied completion criteria.
+                            //
+                            // A genuinely standalone/persistent goal remains
+                            // untouched because it is not referenced by the
+                            // collapsed branch placeholder.
+                            GoalProposals = decision.GoalProposals
+                                .Where(p =>
+                                    !string.Equals(
+                                        lone.GoalId,
+                                        "<newly-created-goal-id>",
+                                        StringComparison.OrdinalIgnoreCase)
+                                    ||
+                                    p.Action != NIRAGoalProposalAction.Create)
+                                .ToArray(),
                             BranchProposals = decision.BranchProposals
                                 .Where(p => !ReferenceEquals(p, lone)).ToArray(),
                             BranchWorkProposals = decision.BranchWorkProposals
@@ -2806,11 +2934,125 @@ public sealed class NIRAExecutive
             List<NIRACapabilityRequest> dispatchCapabilities =
                 new();
 
+            // Once THIS user run has successfully authenticated and reached a
+            // non-login document, do not let a later model plan voluntarily
+            // navigate back to the exact login document that was observed
+            // before authentication and then submit credentials again.
+            //
+            // This is intentionally narrow:
+            //   * no website/domain/login-path strings are hard-coded;
+            //   * the route must have been observed from the real login form;
+            //   * authentication must already have succeeded in this run;
+            //   * only the model-proposed re-entry navigation and its paired
+            //     authenticate request are suppressed;
+            //   * a REAL site redirect/challenge to login is still observable
+            //     and the existing credential safety policy remains authoritative.
+            HashSet<string> postLoginReentrySuppressedSignatures =
+                new(
+                    StringComparer.Ordinal);
+
+            if (secureSignInReturned &&
+                !string.IsNullOrWhiteSpace(lastObservedLoginRoute) &&
+                !string.IsNullOrWhiteSpace(lastObservedPostLoginRoute))
+            {
+                foreach (NIRACapabilityRequest candidate in requestedCapabilities)
+                {
+                    if (candidate.CapabilityId !=
+                            NIRACapabilityIds.BrowserNavigate ||
+                        candidate.Arguments.ValueKind !=
+                            System.Text.Json.JsonValueKind.Object ||
+                        !candidate.Arguments.TryGetProperty(
+                            "url",
+                            out var candidateUrlArg) ||
+                        candidateUrlArg.ValueKind !=
+                            System.Text.Json.JsonValueKind.String ||
+                        candidateUrlArg.GetString() is not string candidateUrl ||
+                        !Uri.TryCreate(
+                            candidateUrl,
+                            UriKind.Absolute,
+                            out Uri? candidateUri) ||
+                        candidateUri.Scheme is not ("http" or "https"))
+                    {
+                        continue;
+                    }
+
+                    string candidateRoute =
+                        candidateUri.GetLeftPart(
+                            UriPartial.Path);
+
+                    if (!string.Equals(
+                            candidateRoute,
+                            lastObservedLoginRoute,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    postLoginReentrySuppressedSignatures.Add(
+                        candidate.BuildSignature());
+                }
+
+                if (postLoginReentrySuppressedSignatures.Count > 0)
+                {
+                    foreach (NIRACapabilityRequest candidate in requestedCapabilities)
+                    {
+                        if (candidate.CapabilityId ==
+                            NIRACapabilityIds.BrowserAuthenticate)
+                        {
+                            postLoginReentrySuppressedSignatures.Add(
+                                candidate.BuildSignature());
+                        }
+                    }
+
+                    executiveEvidence.AppendLine();
+                    executiveEvidence.AppendLine(
+                        "POST-LOGIN CONTINUITY REPAIR: authentication already " +
+                        "succeeded in this user run and the site reached real " +
+                        "non-login content. A later model plan attempted to " +
+                        "navigate voluntarily back to the exact login document " +
+                        "observed before sign-in. That re-entry and its paired " +
+                        "authentication request were not dispatched. Continue " +
+                        "the ORIGINAL objective from the current authenticated " +
+                        "page, the latest grounded links, browser.back, or " +
+                        "browser.explore. Do not treat this repair as evidence " +
+                        "that the session expired.");
+
+                    Debug.WriteLine(
+                        $"[Executive] POST-LOGIN REENTRY SUPPRESSED | " +
+                        $"Run={runId:D} | LoginRoute={lastObservedLoginRoute} | " +
+                        $"PostLoginRoute={lastObservedPostLoginRoute} | " +
+                        $"Requests={postLoginReentrySuppressedSignatures.Count}");
+                }
+            }
+
 
             foreach (NIRACapabilityRequest request in requestedCapabilities)
             {
                 string signature =
                     request.BuildSignature();
+
+                if (postLoginReentrySuppressedSignatures.Contains(
+                        signature))
+                {
+                    executedCapabilityRequests.Add(
+                        signature);
+
+                    capabilityEvidence.AppendLine();
+                    capabilityEvidence.AppendLine(
+                        request.CapabilityId ==
+                            NIRACapabilityIds.BrowserAuthenticate
+                            ? "POST_LOGIN_REAUTH_NOT_DISPATCHED: this run already " +
+                              "authenticated successfully. The paired model-generated " +
+                              "return to the previously observed login route was suppressed; " +
+                              "continue from authenticated evidence instead of submitting " +
+                              "credentials again."
+                            : "POST_LOGIN_LOGIN_ROUTE_NOT_DISPATCHED: this run already " +
+                              "authenticated successfully. The proposed destination was " +
+                              "the exact login route observed before that success; keep " +
+                              "working from the authenticated site state instead.");
+
+                    continue;
+                }
 
                 // An observed HTTP 404/410 is not an uncertain click. If the
                 // model guesses that exact dead document again with newPage or
@@ -2961,6 +3203,50 @@ public sealed class NIRAExecutive
                     {
                         unchangedBrowserInspections = 0;
                     }
+                    // Learn the exact login document from grounded browser
+                    // evidence rather than from words such as "login", a domain,
+                    // or a site-specific URL. This must happen before the first
+                    // successful authentication in the run.
+                    if (!secureSignInReturned &&
+                        result.Succeeded &&
+                        result.CapabilityId is
+                            (NIRACapabilityIds.BrowserSessionOpen or
+                             NIRACapabilityIds.BrowserNavigate or
+                             NIRACapabilityIds.BrowserFollow or
+                             NIRACapabilityIds.BrowserInspect) &&
+                        result.Output.Contains(
+                            "PasswordControlObserved=True",
+                            StringComparison.Ordinal))
+                    {
+                        string? loginRouteLine =
+                            result.Output
+                                .Split('\n')
+                                .Select(
+                                    line =>
+                                        line.Trim())
+                                .FirstOrDefault(
+                                    line =>
+                                        line.StartsWith(
+                                            "Url=",
+                                            StringComparison.Ordinal));
+
+                        if (loginRouteLine != null &&
+                            Uri.TryCreate(
+                                loginRouteLine["Url=".Length..],
+                                UriKind.Absolute,
+                                out Uri? loginUri) &&
+                            loginUri.Scheme is "https" or "http")
+                        {
+                            lastObservedLoginRoute =
+                                loginUri.GetLeftPart(
+                                    UriPartial.Path);
+
+                            Debug.WriteLine(
+                                $"[Executive] LOGIN ROUTE OBSERVED | " +
+                                $"Run={runId:D} | Route={lastObservedLoginRoute}");
+                        }
+                    }
+
                     if (result.Succeeded &&
                         result.CapabilityId == NIRACapabilityIds.BrowserAuthenticate)
                         secureSignInReturned = true;
@@ -2997,7 +3283,7 @@ public sealed class NIRAExecutive
                                     "already returned, and a non-login document was observed " +
                                     "at " + observedRoute + ". Keep pursuing the user's " +
                                     "original objective using the latest real document/links. " +
-                                    "An ungrounded login/admin URL is not a recovery step; " +
+                                    "An ungrounded alternate login/role URL is not a recovery step; " +
                                     "if a login appears again, inspect the site transition " +
                                     "and report the observed cause, not repeat credentials.");
                                 Debug.WriteLine($"[Executive] POST-LOGIN ROUTE | " +
@@ -3049,6 +3335,32 @@ public sealed class NIRAExecutive
                     // browser.fill, browser.inspect and renewed element refs
                     // never reset the unproductive outcome budget.
                 }
+                if (unchangedBrowserInspections == 1 &&
+                    !authenticationRetryProhibited &&
+                    !repeatedNoProgressClick)
+                {
+                    executiveEvidence.AppendLine();
+                    executiveEvidence.AppendLine(
+                        "BROWSER OBSERVATION STAGNATION: the explicit inspect returned " +
+                        "the same stable document evidence that the runtime already had. " +
+                        "Changing maxElements is not a document change. Do NOT inspect " +
+                        "this unchanged page again. If the exact information route is " +
+                        "unknown, use browser.explore; if the last navigation was the " +
+                        "wrong section, use browser.back or a different grounded link. " +
+                        "Otherwise answer from the evidence already present.");
+
+                    expandedSections.Add(
+                        "capabilities");
+                    expandedCapabilityIds.Add(
+                        NIRACapabilityIds.BrowserBack);
+                    expandedCapabilityIds.Add(
+                        NIRACapabilityIds.BrowserExplore);
+
+                    Debug.WriteLine(
+                        $"[Executive] BROWSER UNCHANGED INSPECT RECOVERY | " +
+                        $"Run={runId:D} | Cycle={cycle}");
+                }
+
                 if (repeatedNoProgressClick && !authenticationRetryProhibited &&
                     noResultBrowserClickAttempts < 2 && rejectedRepeatReplans++ == 0)
                 {
@@ -3133,6 +3445,23 @@ public sealed class NIRAExecutive
                 capabilityResults.Any(result =>
                     result.CapabilityId.StartsWith("browser.", StringComparison.OrdinalIgnoreCase)))
             {
+                // Once a browser task is active, keep the two generic recovery/
+                // discovery primitives ready without another context-expansion
+                // round. This is capability-family state, not user-intent phrase
+                // routing and is independent of any particular website.
+                expandedSections.Add(
+                    "capabilities");
+                expandedCapabilityIds.Add(
+                    NIRACapabilityIds.BrowserBack);
+                expandedCapabilityIds.Add(
+                    NIRACapabilityIds.BrowserExplore);
+
+                browserExploreRuns +=
+                    capabilityResults.Count(result =>
+                        result.Succeeded &&
+                        result.CapabilityId ==
+                            NIRACapabilityIds.BrowserExplore);
+
                 bool failedStep = capabilityResults.Any(result =>
                     result.CapabilityId.StartsWith("browser.", StringComparison.OrdinalIgnoreCase) &&
                     !result.Succeeded);
@@ -3401,15 +3730,42 @@ public sealed class NIRAExecutive
                             cancellationToken);
                 }
 
-                // Search novelty is established by returned record identity,
-                // not query wording. Paraphrasing the same search cannot turn
-                // a retrieval loop into apparent progress.
+                // Full memory mode is already exhaustive. Once one explicit
+                // structured long-term-memory search has run, another differently
+                // worded search cannot expose an omitted ACTIVE memory because the
+                // entire active set was already supplied in the prompt. Move to one
+                // bounded synthesis cycle even when the first ranking returned new
+                // candidates.
+                bool fullMemoryCoverageReached =
+                    context.MemoryContextMode == NIRAMemoryContextMode.Full &&
+                    newSearches.Length > 0 &&
+                    mindEvent.Source == NIRAMindEventSource.User;
+
+                // Outside Full mode, search novelty is established by returned
+                // record identity, not query wording. Paraphrasing the same search
+                // cannot turn a retrieval loop into apparent progress.
                 bool repeatedMemoryEvidence =
                     (decision.MemorySearches.Count > 0 ||
                      decision.ConversationSearches.Count > 0) &&
                     newEvidenceCount == 0 &&
                     mindEvent.Source == NIRAMindEventSource.User;
-                if (repeatedMemoryEvidence)
+
+                if (fullMemoryCoverageReached)
+                {
+                    memoryEvidenceSaturated = true;
+                    memorySearchEvidence.AppendLine();
+                    memorySearchEvidence.AppendLine(
+                        "FULL MEMORY COVERAGE: Every active durable memory was already " +
+                        "supplied to cognition and one explicit structured memory search " +
+                        "has now completed. The next decision must synthesize from these " +
+                        "records instead of issuing synonym memory searches or switching " +
+                        "to archived conversation merely to repeat the same lookup.");
+                    Debug.WriteLine(
+                        $"[MemoryRetrieval] FULL COVERAGE | Run={runId} | Cycle={cycle} | " +
+                        $"Active={context.ActiveLongTermMemoryCount} | " +
+                        $"Surfaced={surfacedMemoryIds.Count}");
+                }
+                else if (repeatedMemoryEvidence)
                 {
                     memoryEvidenceSaturated = true;
                     memorySearchEvidence.AppendLine();
@@ -3542,22 +3898,42 @@ public sealed class NIRAExecutive
                 }
             }
 
+            // A direct user run that used only conclusive observation
+            // capabilities does not need an independent completion-model pass
+            // once cognition has already synthesized a non-empty Complete reply.
+            // This is intentionally narrow: no pending task, no dynamic-tool
+            // evidence, no state-changing capability, no uncertain result, and
+            // every dispatched capability must have succeeded.
+            bool directConclusiveObserveCompletion =
+                mindEvent.Source == NIRAMindEventSource.User &&
+                decision.State == NIRACognitionState.Complete &&
+                decision.EmitReply &&
+                !string.IsNullOrWhiteSpace(decision.Reply) &&
+                _conversation.PendingTask is null &&
+                dynamicToolEvidence.Length == 0 &&
+                capabilityResultsBySignature.Count > 0 &&
+                capabilityResultsBySignature.Values.All(result =>
+                    result.Succeeded &&
+                    result.Risk == NIRACapabilityRisk.Observe &&
+                    !result.ChangedSystemState &&
+                    !result.OutcomeUncertain);
+
             // Check the original user outcome before treating a tool-using
             // run as finished. Successful low-level actions are not evidence
             // that the user-requested objective has been satisfied. No fixed
-            // website/lecture/subject names, keyword lists or action counts.
+            // website/topic-specific names, keyword lists or action counts.
             if (mindEvent.Source == NIRAMindEventSource.User &&
                 (decision.State is NIRACognitionState.Complete or NIRACognitionState.NeedUser) &&
                 decision.EmitReply &&
                 taskCompletionReviewCount < 2 &&
+                !directConclusiveObserveCompletion &&
                 // A first-turn NeedUser can itself be a premature stop: the
                 // model may ask what to check BEFORE performing any safe
                 // observation. Review it even when this run has no tool
                 // evidence or preceding conversation. Ordinary Complete
                 // replies still avoid this extra model call unless evidence
                 // or task continuity makes independent review relevant.
-                (decision.State == NIRACognitionState.NeedUser ||
-                 capabilityEvidence.Length > 0 ||
+                (capabilityEvidence.Length > 0 ||
                  dynamicToolEvidence.Length > 0 ||
                  _conversation.PendingTask is not null))
             {
@@ -3574,6 +3950,12 @@ public sealed class NIRAExecutive
                             latestContext?.ConversationContext ?? string.Empty,
                             _conversation.PendingTask?.Objective ?? string.Empty),
                         cancellationToken);
+
+                if (taskReview?.Verdict == "Complete")
+                {
+                    completionReviewConfirmedComplete =
+                        true;
+                }
 
                 if (taskReview?.NeedsReconsideration == true &&
                     (decision.State != NIRACognitionState.NeedUser ||
@@ -3593,6 +3975,35 @@ public sealed class NIRAExecutive
                             "Reconsider the ORIGINAL request. Continue with permitted " +
                             "evidence-gathering where useful, or be explicit about a real blocker. " +
                             "Do not repeat completed actions or invent results.");
+
+                        bool browserRunHasEvidence =
+                            capabilityResultsBySignature
+                                .Values
+                                .Any(result =>
+                                    result.CapabilityId.StartsWith(
+                                        "browser.",
+                                        StringComparison.OrdinalIgnoreCase));
+
+                        if (browserRunHasEvidence)
+                        {
+                            expandedSections.Add(
+                                "capabilities");
+                            expandedCapabilityIds.Add(
+                                NIRACapabilityIds.BrowserBack);
+                            expandedCapabilityIds.Add(
+                                NIRACapabilityIds.BrowserExplore);
+
+                            executiveEvidence.AppendLine(
+                                "BROWSER OBJECTIVE RECOVERY: a reviewer found the current " +
+                                "browser evidence incomplete, but that is NOT automatically " +
+                                "a user blocker. Prefer the next grounded read-only route. " +
+                                (browserExploreRuns == 0
+                                    ? "If the exact same-origin destination is unknown, browser.explore is available now. "
+                                    : "A bounded browser.explore has already run; use its route trace, browser.back, or a specifically grounded different route before asking the user. ") +
+                                "NeedUser is appropriate only when a genuinely unavailable " +
+                                "human input/approval remains.");
+                        }
+
                         continue;
                     }
 
@@ -3610,6 +4021,58 @@ public sealed class NIRAExecutive
                             "Completion review found an unresolved user objective."
                     };
                 }
+            }
+
+            // The independent completion reviewer already spent a model call
+            // checking the factual terminal draft against execution evidence.
+            // When it explicitly confirms Complete, cognition's non-empty Natural
+            // reply is the final response; paying for a second realization model
+            // merely to paraphrase it is redundant.
+            if (completionReviewConfirmedComplete
+                &&
+                decision.State == NIRACognitionState.Complete
+                &&
+                decision.EmitReply
+                &&
+                !string.IsNullOrWhiteSpace(
+                    decision.Reply)
+                &&
+                decision.ReplyPresentation ==
+                    NIRAReplyPresentationMode.Natural
+                &&
+                !decision.ReplyReady)
+            {
+                decision =
+                    decision with
+                    {
+                        ReplyReady =
+                            true
+                    };
+
+                Debug.WriteLine(
+                    $"[Executive] REVIEW-CONFIRMED FAST PATH | Run={runId:D} | " +
+                    $"Cycle={cycle} | CompletionReview=Complete | " +
+                    "SemanticReplyReady=True | CharacterRealization=Preserved");
+            }
+
+
+            // A conclusive observation-only user run is already grounded by
+            // trusted runtime evidence and one terminal cognition synthesis.
+            // Mark the semantic reply ready so completion review can stay skipped.
+            // Natural replies STILL receive the terminal character-realization pass;
+            // factual efficiency must never flatten NIRA's personality.
+            if (directConclusiveObserveCompletion && !decision.ReplyReady)
+            {
+                decision = decision with
+                {
+                    ReplyReady = true
+                };
+
+                Debug.WriteLine(
+                    $"[Executive] DIRECT OBSERVE FAST PATH | Run={runId:D} | " +
+                    $"Cycle={cycle} | Capabilities={capabilityResultsBySignature.Count} | " +
+                    "CompletionReview=Skipped | SemanticReplyReady=True | " +
+                    "CharacterRealization=Preserved");
             }
 
             // If reconsideration really requires the user, persist a waiting
@@ -3717,37 +4180,59 @@ public sealed class NIRAExecutive
             if (!string.IsNullOrWhiteSpace(
                     reply))
             {
-                string originalDraft = reply;
-                bool directlyReady = (decision.ReplyReady || decision.DisplayBlocks.Count > 0 ||
-                    !string.IsNullOrWhiteSpace(decision.Speech)) &&
-                    decision.State == NIRACognitionState.Complete &&
-                    decision.MemorySearches.Count == 0 &&
-                    decision.ConversationSearches.Count == 0 &&
-                    decision.CapabilityRequests.Count == 0 &&
-                    // Completed goal/branch lifecycle proposals are checked by
-                    // the Executive; they don't require an extra style call.
-                    decision.BranchWorkProposals.Count == 0 &&
-                    decision.DynamicToolProposals.Count == 0 &&
-                    decision.DynamicToolInvocations.Count == 0;
-                // Historical tool evidence is not a reason to pay for a
-                // separate style-model call after cognition has interpreted
-                // that evidence and produced a ready final reply.
-                Debug.WriteLine($"[ResponseRoute] Run={runId} | Direct={directlyReady} | " +
-                    $"ReplyReady={decision.ReplyReady}");
-                if (!directlyReady && decision.ReplyPresentation ==
-                    NIRAReplyPresentationMode.Natural)
+                bool hasOutstandingCognitionWork =
+                    decision.State == NIRACognitionState.Continue ||
+                    decision.ContextRequests.Count > 0 ||
+                    decision.CapabilityIds.Count > 0 ||
+                    decision.MemorySearches.Count > 0 ||
+                    decision.ConversationSearches.Count > 0 ||
+                    decision.CapabilityRequests.Count > 0 ||
+                    decision.BranchWorkProposals.Count > 0 ||
+                    decision.DynamicToolProposals.Count > 0 ||
+                    decision.DynamicToolInvocations.Count > 0;
+
+                // CHARACTER CONTINUITY IS A TERMINAL INVARIANT.
+                //
+                // Cognition owns truth, planning and the complete semantic draft.
+                // Every user-visible terminal Natural reply then gets exactly one
+                // presentation-only realization pass using NIRA's CURRENT UPDATED
+                // mood, relationship, attitude, recent social history and grounded
+                // appraisal. ReplyReady means semantic readiness only; it never
+                // bypasses NIRA's character.
+                //
+                // Intermediate work still never pays for a realization call.
+                // PreserveExact intentionally bypasses styling so literal JSON,
+                // code, commands and quoted/verbatim output remain exact.
+                bool shouldRealize =
+                    decision.ReplyPresentation ==
+                        NIRAReplyPresentationMode.Natural
+                    &&
+                    !hasOutstandingCognitionWork;
+
+                Debug.WriteLine(
+                    $"[ResponseRoute] Run={runId} | Realize={shouldRealize} | " +
+                    $"ReplyReady={decision.ReplyReady} | " +
+                    $"Presentation={decision.ReplyPresentation} | " +
+                    $"State={decision.State}");
+
+                if (shouldRealize)
                 {
+                    responseRealizationCalls++;
+
                     IReadOnlyList<string> requiredReplyFragments =
                         CollectRequiredNIRAReplyEvidenceFragments(
                             newGoalProposals,
                             newBranchProposals);
 
-                    reply =
+                    NIRAResponseRealizationResult realized =
                         await _responseRealization.RealizeAsync(
                             new NIRAResponseRealizationRequest
                             {
                                 DraftReply =
                                     reply,
+
+                                DraftSpeech =
+                                    decision.Speech,
 
                                 DecisionSummary =
                                     decision.DecisionSummary,
@@ -3774,19 +4259,28 @@ public sealed class NIRAExecutive
                                 Interaction =
                                     interaction,
 
+                                AppliedSocialAppraisal =
+                                    appliedSocialAppraisal,
+
                                 RequiredVerbatimFragments =
                                     requiredReplyFragments
                             },
                             cancellationToken);
 
-                    // Post-experience formation and social history must observe
-                    // the utterance the user actually received, not the earlier
-                    // executive draft.
+                    reply =
+                        realized.Reply;
+
+                    // Post-experience formation, social history and voice output
+                    // must observe the exact channels the user actually receives,
+                    // not the earlier executive drafts.
                     decision =
                         decision with
                         {
                             Reply =
-                                reply
+                                realized.Reply,
+
+                            Speech =
+                                realized.Speech
                         };
 
                     expression =
@@ -3795,37 +4289,17 @@ public sealed class NIRAExecutive
                             interaction);
                 }
 
-                // A screenshot's successful capture and user-visible artifact are
-                // runtime facts, not model guesses. The model (or the optional
-                // realization pass) can still accidentally produce an obsolete
-                // "I couldn't capture/show it" answer. Repair ONLY that
-                // contradiction, using the authoritative capability result;
-                // do not classify the user's words or invent an image source.
-                bool captureQueuedForDisplay =
-                    runtimeVisualPresentations.Count > 0 &&
-                    capabilityResultsBySignature.Values.Any(result =>
-                        result.Succeeded &&
-                        result.CapabilityId == NIRACapabilityIds.VisionCapture &&
-                        result.VisualArtifacts.Any(artifact => artifact.PresentToUser));
-                if (captureQueuedForDisplay &&
-                    (IsContradictoryVisualDeliveryDenial(reply) ||
-                     IsContradictoryVisualDeliveryDenial(decision.Speech)))
-                {
-                    reply = "I captured the screenshot. I'm showing it below.";
-                    decision = decision with { Reply = reply, Speech = reply };
-                    Debug.WriteLine(
-                        $"[VisualDelivery] REPLY RECONCILED | Run={runId} | " +
-                        "Source=SucceededVisionCaptureWithQueuedArtifact");
-                }
+                // User-visible capability artifacts are attached from structured runtime
+                // evidence. Do not rewrite response text through fixed lexical denial
+                // tables; cognition receives the authoritative capability evidence.
 
-                // One authoritative answer, two presentation channels. A fallback
-                // preserves the old model contract and the one-call path.
+                // One authoritative answer, two presentation channels. If
+                // cognition did not provide a distinct spoken version, reuse
+                // the realized screen reply. A supplied spoken draft is realized
+                // in the SAME final presentation call, so no extra LLM round is
+                // added merely to keep voice and screen text in character.
                 string spoken = string.IsNullOrWhiteSpace(decision.Speech)
                     ? reply : decision.Speech.Trim();
-                // If the fallback style stage revised the semantic draft, never
-                // speak an obsolete draft supplied by the earlier model step.
-                if (!directlyReady && !string.Equals(originalDraft, reply, StringComparison.Ordinal))
-                    spoken = reply;
                 IReadOnlyList<NIRARichBlock> blocks = decision.DisplayBlocks;
                 (reply, spoken, blocks) = NIRAPresentationPolicy.RecoverCode(reply, spoken, blocks);
                 spoken = NIRAPresentationPolicy.EnsureInformativeSpeech(spoken, blocks);
@@ -3983,7 +4457,8 @@ public sealed class NIRAExecutive
 
             Debug.WriteLine($"[Journey] RUN MODEL CALLS | Run={runId:D} | " +
                 $"CognitionCalls={cycle} | CompletionReviewCalls={completionReviewCalls} | " +
-                $"Total={cycle + completionReviewCalls}");
+                $"ResponseRealizationCalls={responseRealizationCalls} | " +
+                $"TrackedTotal={cycle + completionReviewCalls + responseRealizationCalls}");
             yield return new NIRAOutputChunk
             {
                 RunId =
@@ -5048,68 +5523,6 @@ public sealed class NIRAExecutive
     }
 
 
-    // This is a post-execution truth-consistency check, NOT keyword routing
-    // of user requests or a replacement for live capability evidence.
-    private static bool IsContradictoryVisualDeliveryDenial(string? response)
-    {
-        if (string.IsNullOrWhiteSpace(response)) return false;
-
-        string text = response.ToLowerInvariant();
-        return text.Contains("couldn't capture", StringComparison.Ordinal) ||
-               text.Contains("could not capture", StringComparison.Ordinal) ||
-               text.Contains("wasn't able to capture", StringComparison.Ordinal) ||
-               text.Contains("was not able to capture", StringComparison.Ordinal) ||
-               text.Contains("unable to capture", StringComparison.Ordinal) ||
-               text.Contains("failed to capture", StringComparison.Ordinal) ||
-               text.Contains("didn't capture", StringComparison.Ordinal) ||
-               text.Contains("can't show", StringComparison.Ordinal) ||
-               text.Contains("cannot show", StringComparison.Ordinal) ||
-               text.Contains("couldn't show", StringComparison.Ordinal) ||
-               text.Contains("could not show", StringComparison.Ordinal) ||
-               text.Contains("wasn't able to show", StringComparison.Ordinal) ||
-               text.Contains("was not able to show", StringComparison.Ordinal) ||
-               text.Contains("unable to show", StringComparison.Ordinal);
-    }
-
-    private static bool ShouldVerifyVisualCapabilityBeforeDenial(
-        NIRACognitionDecision decision,
-        NIRACognitionContext context)
-    {
-        if (decision.State is not (NIRACognitionState.Complete or
-                                NIRACognitionState.NeedUser or
-                                NIRACognitionState.Blocked) ||
-            decision.CapabilityRequests.Count != 0 ||
-            decision.ContextRequests.Count != 0 ||
-            decision.CapabilityIds.Count != 0 ||
-            !context.CapabilityContext.Contains(
-                "- " + NIRACapabilityIds.VisionCapture + " | defaultRisk=",
-                StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        // Only the model's alleged inability, not keywords in the USER's
-        // request, can trigger this corrective review. It runs once before
-        // any grounded capability evidence and cannot execute a tool itself.
-        string claim = (decision.Reply + " " + decision.DecisionSummary)
-            .ToLowerInvariant();
-        bool denies = claim.Contains("can't", StringComparison.Ordinal) ||
-                      claim.Contains("cannot", StringComparison.Ordinal) ||
-                      claim.Contains("unable", StringComparison.Ordinal) ||
-                      claim.Contains("not able", StringComparison.Ordinal) ||
-                      claim.Contains("don't have", StringComparison.Ordinal) ||
-                      claim.Contains("do not have", StringComparison.Ordinal) ||
-                      claim.Contains("only work", StringComparison.Ordinal);
-        if (!denies) return false;
-
-        return claim.Contains("screenshot", StringComparison.Ordinal) ||
-               claim.Contains("screen shot", StringComparison.Ordinal) ||
-               claim.Contains("capture", StringComparison.Ordinal) ||
-               claim.Contains("snap a picture", StringComparison.Ordinal) ||
-               claim.Contains("desktop window", StringComparison.Ordinal);
-    }
-
-
     private static int CollectRuntimeVisualPresentations(
         List<NIRAVisualArtifactPresentationRequest> target,
         HashSet<string> signatures,
@@ -5416,7 +5829,7 @@ public sealed class NIRAExecutive
     }
 
 
-    private void ApplyFirstCycleCharacterState(
+    private NIRAInteractionAppraisal? ApplyFirstCycleCharacterState(
         NIRAMindEvent mindEvent,
         NIRAInteractionContext? interaction,
         NIRACognitionDecision decision)
@@ -5435,6 +5848,19 @@ public sealed class NIRAExecutive
                     interaction,
                     decision.Appraisal);
 
+            Debug.WriteLine(
+                $"[SocialAppraisal] Event={interaction.Event.Id} | " +
+                $"Respect={appraisal.Meaning.Respect:F2} | " +
+                $"Warmth={appraisal.Meaning.Warmth:F2} | " +
+                $"Affection={appraisal.Meaning.Affection:F2} | " +
+                $"Playfulness={appraisal.Meaning.Playfulness:F2} | " +
+                $"Hostility={appraisal.Meaning.Hostility:F2} | " +
+                $"Dismissal={appraisal.Meaning.Dismissal:F2} | " +
+                $"Repair={appraisal.Meaning.Repair:F2} | " +
+                $"Pressure={appraisal.Meaning.Pressure:F2} | " +
+                $"Confidence={appraisal.Confidence:F2} | " +
+                $"Ambiguity={appraisal.Ambiguity:F2}");
+
             _characterDynamics.Apply(
                 interaction,
                 appraisal);
@@ -5446,7 +5872,8 @@ public sealed class NIRAExecutive
             {
                 Debug.WriteLine($"[SocialEpisode] FAILED | {ex.GetType().Name}: {ex.Message}");
             }
-            return;
+
+            return appraisal;
         }
 
         // Internal/task events do not get a fake social interaction. They may,
@@ -5462,6 +5889,8 @@ public sealed class NIRAExecutive
             _characterDynamics.ApplyExperience(
                 decision.ExperienceAppraisal);
         }
+
+        return null;
     }
 
 
@@ -6376,4 +6805,93 @@ public sealed class NIRAExecutive
             : clean[..maximumLength] +
                 "...";
     }
+
+    private static bool TryFindHttpOrigin(
+        string? text,
+        out string origin)
+    {
+        origin =
+            string.Empty;
+
+        if (string.IsNullOrWhiteSpace(
+                text))
+        {
+            return false;
+        }
+
+        char[] separators =
+        [
+            ' ',
+            '\t',
+            '\r',
+            '\n'
+        ];
+
+        foreach (string raw in text.Split(
+                     separators,
+                     StringSplitOptions.RemoveEmptyEntries))
+        {
+            string candidate =
+                raw.Trim(
+                    '"',
+                    '\'',
+                    '(',
+                    ')',
+                    '[',
+                    ']',
+                    '{',
+                    '}',
+                    '<',
+                    '>',
+                    ',',
+                    ';');
+
+            if (!Uri.TryCreate(
+                    candidate,
+                    UriKind.Absolute,
+                    out Uri? uri))
+            {
+                continue;
+            }
+
+            if (uri.Scheme is not ("http" or "https"))
+            {
+                continue;
+            }
+
+            origin =
+                uri.GetLeftPart(
+                    UriPartial.Authority);
+
+            return true;
+        }
+
+        return false;
+    }
+
+
+    private static string CleanRuntimeMetadata(
+        string? value,
+        int maximumCharacters)
+    {
+        string clean =
+            (value ?? string.Empty)
+                .Replace(
+                    '\r',
+                    ' ')
+                .Replace(
+                    '\n',
+                    ' ')
+                .Trim();
+
+        maximumCharacters =
+            Math.Max(
+                1,
+                maximumCharacters);
+
+        return clean.Length <= maximumCharacters
+            ? clean
+            : clean[..maximumCharacters];
+    }
+
 }

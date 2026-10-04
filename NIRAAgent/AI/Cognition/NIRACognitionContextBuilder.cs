@@ -43,7 +43,7 @@ public sealed class NIRACognitionContextBuilder
 
 
     private const int MinimumMemoryContextCharacters =
-        5000;
+        10000;
 
 
     private const int MaximumMemoryContextCharacters =
@@ -610,4 +610,3 @@ public sealed class NIRACognitionContextBuilder
         };
     }
 }
-

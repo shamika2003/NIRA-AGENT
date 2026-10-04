@@ -48,6 +48,15 @@ public sealed class NIRACapabilityService
             cancellationToken.ThrowIfCancellationRequested();
             NIRACapabilityResult result = await ExecuteOneAsync(request, cancellationToken);
             results.Add(result);
+
+            bool browserFailure =
+                result.CapabilityId.StartsWith(
+                    "browser.",
+                    StringComparison.OrdinalIgnoreCase)
+                &&
+                result.Status !=
+                    NIRACapabilityResultStatus.Succeeded;
+
             if (result.CapabilityId.StartsWith("browser.", StringComparison.OrdinalIgnoreCase))
                 Debug.WriteLine($"[BrowserFlow] DISPATCH RESULT | Id={result.CapabilityId} | " +
                     $"Status={result.Status} | Risk={result.Risk} | " +
@@ -94,6 +103,29 @@ public sealed class NIRACapabilityService
                 Debug.WriteLine($"[AuthDiagnostics] Stage={stage} | " +
                     $"Uncertain={result.OutcomeUncertain} | Audit={result.AuditAttemptId?.ToString("D") ?? "-"}");
             }
+
+            // A direct capability array is executed in order. If one browser
+            // operation fails/rejects, later browser actions may depend on state
+            // that was never established (for example fill -> submit). Stop this
+            // batch and return to cognition instead of dispatching potentially
+            // unsafe or meaningless follow-up actions. Independent work belongs
+            // in explicit branches/another decision, where ownership is clear.
+            if (browserFailure)
+            {
+                bool hasRemainingRequests =
+                    results.Count <
+                        requests.Count;
+
+                if (hasRemainingRequests)
+                {
+                    Debug.WriteLine(
+                        $"[BrowserFlow] BATCH STOP | Failed={result.CapabilityId} | " +
+                        $"Status={result.Status} | Remaining={requests.Count - results.Count} | " +
+                        "Reason=PriorBrowserStepFailed");
+                }
+
+                break;
+            }
         }
         return results;
     }
@@ -110,7 +142,10 @@ public sealed class NIRACapabilityService
         NIRACapabilityResult result;
         try
         {
-            request = raw.Normalize();
+            request =
+                NormalizeCapabilityArgumentAliases(
+                    raw.Normalize());
+
             if (!_registry.TryResolve(request.CapabilityId, out INIRACapabilityHandler? handler) || handler == null)
                 throw new InvalidOperationException("The capability ID is not registered.");
             NIRACapabilityDescriptor descriptor = handler.Descriptor.Normalize();
@@ -232,6 +267,84 @@ public sealed class NIRACapabilityService
             catch (Exception ex) { Debug.WriteLine($"[AuthorityAudit] Result save failed: {ex.GetType().Name}"); return false; }
         }
     }
+
+    // Canonicalize a very small set of capability-level argument aliases
+    // before validation/authorization. These are generic API vocabulary aliases,
+    // not user-intent phrase heuristics or website-specific behavior.
+    //
+    // Keeping normalization here means every direct browser handler, policy and
+    // audit path sees one canonical schema. If both an alias and its canonical
+    // name are supplied, reject the ambiguous request instead of guessing.
+    private static NIRACapabilityRequest NormalizeCapabilityArgumentAliases(
+        NIRACapabilityRequest request)
+    {
+        if (request.Arguments.ValueKind != JsonValueKind.Object
+            ||
+            !request.CapabilityId.StartsWith(
+                "browser.",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return request;
+        }
+
+        Dictionary<string, JsonElement> canonical =
+            new(
+                StringComparer.OrdinalIgnoreCase);
+
+        bool changed =
+            false;
+
+        foreach (JsonProperty property in
+                 request.Arguments.EnumerateObject())
+        {
+            string name =
+                property.Name;
+
+            string mapped =
+                name.Equals(
+                    "elementRef",
+                    StringComparison.OrdinalIgnoreCase)
+                    ? "ref"
+                    : request.CapabilityId ==
+                          NIRACapabilityIds.BrowserFill
+                      &&
+                      name.Equals(
+                          "text",
+                          StringComparison.OrdinalIgnoreCase)
+                        ? "value"
+                        : name;
+
+            if (!canonical.TryAdd(
+                    mapped,
+                    property.Value.Clone()))
+            {
+                throw new InvalidOperationException(
+                    $"Supply only one value for browser argument '{mapped}'.");
+            }
+
+            if (!string.Equals(
+                    mapped,
+                    name,
+                    StringComparison.Ordinal))
+            {
+                changed =
+                    true;
+            }
+        }
+
+        if (!changed)
+        {
+            return request;
+        }
+
+        return request with
+        {
+            Arguments =
+                JsonSerializer.SerializeToElement(
+                    canonical)
+        };
+    }
+
 
     private static void ValidateArguments(NIRACapabilityRequest request, NIRACapabilityDescriptor descriptor)
     {

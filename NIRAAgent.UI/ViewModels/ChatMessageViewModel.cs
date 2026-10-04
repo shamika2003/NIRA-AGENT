@@ -21,19 +21,120 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         _content;
 
     private string _progressText = string.Empty;
+    private bool _isJourneyActive;
+    private bool _isJourneyFading;
+    private int _journeyVersion;
+
     public string ProgressText
     {
         get => _progressText;
         set
         {
-            if (_progressText == value) return;
-            _progressText = value ?? string.Empty;
+            string normalized = value ?? string.Empty;
+            if (_progressText == normalized) return;
+
+            _progressText = normalized;
+
+            // Only real runtime/model progress text appears here.
+            // A new update also keeps the current journey indicator alive.
+            if (!string.IsNullOrWhiteSpace(_progressText))
+            {
+                _journeyVersion++;
+                IsJourneyActive = true;
+                IsJourneyFading = false;
+            }
+
             OnPropertyChanged();
             OnPropertyChanged(nameof(HasProgress));
             OnPropertyChanged(nameof(IsEmpty));
         }
     }
-    public bool HasProgress => !string.IsNullOrWhiteSpace(ProgressText);
+
+    public bool HasProgress =>
+        !string.IsNullOrWhiteSpace(ProgressText);
+
+    public bool IsJourneyActive
+    {
+        get => _isJourneyActive;
+        private set
+        {
+            if (_isJourneyActive == value) return;
+            _isJourneyActive = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsEmpty));
+        }
+    }
+
+    public bool IsJourneyFading
+    {
+        get => _isJourneyFading;
+        private set
+        {
+            if (_isJourneyFading == value) return;
+            _isJourneyFading = value;
+            OnPropertyChanged();
+        }
+    }
+
+    // Start with ONLY the living three dots. No fake/default status text.
+    public void BeginJourney()
+    {
+        _journeyVersion++;
+        _progressText = string.Empty;
+        IsJourneyFading = false;
+        IsJourneyActive = true;
+
+        OnPropertyChanged(nameof(ProgressText));
+        OnPropertyChanged(nameof(HasProgress));
+        OnPropertyChanged(nameof(IsEmpty));
+    }
+
+    // Final content can render immediately while the dots/current real
+    // progress line quietly fade out.
+    public void BeginJourneyFadeOut()
+    {
+        if (!IsJourneyActive || IsJourneyFading)
+            return;
+
+        int version = ++_journeyVersion;
+        IsJourneyFading = true;
+        _ = CompleteJourneyFadeOutAsync(version);
+    }
+
+    public void ClearJourneyImmediately()
+    {
+        _journeyVersion++;
+        _progressText = string.Empty;
+        IsJourneyFading = false;
+        IsJourneyActive = false;
+
+        OnPropertyChanged(nameof(ProgressText));
+        OnPropertyChanged(nameof(HasProgress));
+        OnPropertyChanged(nameof(IsEmpty));
+    }
+
+    private async Task CompleteJourneyFadeOutAsync(int version)
+    {
+        await Task.Delay(190);
+
+        if (version != _journeyVersion)
+            return;
+
+        _progressText = string.Empty;
+        OnPropertyChanged(nameof(ProgressText));
+        OnPropertyChanged(nameof(HasProgress));
+
+        IsJourneyActive = false;
+        IsJourneyFading = false;
+        OnPropertyChanged(nameof(IsEmpty));
+    }
+
+    // Compatibility with the V4 call sites.
+    public void BeginProgressFadeOut() =>
+        BeginJourneyFadeOut();
+
+    public void ClearProgressImmediately() =>
+        ClearJourneyImmediately();
 
 
     public Guid? RunId
@@ -154,7 +255,11 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
     public bool IsEmpty =>
         !HasContent
         &&
-        !HasVisualArtifacts && !HasRichElements && !HasProgress;
+        !HasVisualArtifacts
+        &&
+        !HasRichElements
+        &&
+        !IsJourneyActive;
 
 
     public ChatMessageViewModel(
@@ -237,7 +342,3 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
                 propertyName));
     }
 }
-
-
-
-

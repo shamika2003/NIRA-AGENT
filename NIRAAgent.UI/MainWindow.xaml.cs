@@ -87,6 +87,27 @@ public partial class MainWindow : Window
 
 
     // =========================================================
+    // COLLAPSIBLE WORKSPACE SIDEBARS
+    //
+    // The side rails remain visible while their panels are collapsed,
+    // giving chat a focused wide mode without losing a way back.
+    // =========================================================
+
+    private const double LeftSidebarExpandedWidth = 276.0;
+    private const double LeftSidebarCollapsedWidth = 52.0;
+    private const double RightSidebarExpandedWidth = 268.0;
+    private const double RightSidebarCollapsedWidth = 58.0;
+
+    private bool _leftSidebarCollapsed;
+    private bool _rightSidebarCollapsed;
+
+    public bool IsPresenceSidebarExpanded =>
+        !_leftSidebarCollapsed;
+
+    public event EventHandler? SidebarLayoutChanged;
+
+
+    // =========================================================
     // CONSTRUCTOR
     // =========================================================
 
@@ -1971,6 +1992,8 @@ public partial class MainWindow : Window
             WindowState ==
                 WindowState.Minimized
             ||
+            !IsPresenceSidebarExpanded
+            ||
             NIRADockHost.ActualWidth <=
                 0.0
             ||
@@ -2695,6 +2718,98 @@ public partial class MainWindow : Window
         {
             DragMove();
         }
+    }
+
+
+    // =========================================================
+    // COLLAPSIBLE SIDEBARS / CHAT FOCUS
+    // =========================================================
+
+    private void ToggleLeftSidebar_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        SetLeftSidebarCollapsed(
+            !_leftSidebarCollapsed);
+    }
+
+
+    private void ToggleRightSidebar_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        SetRightSidebarCollapsed(
+            !_rightSidebarCollapsed);
+    }
+
+
+    private void SetLeftSidebarCollapsed(
+        bool collapsed)
+    {
+        if (_leftSidebarCollapsed == collapsed)
+        {
+            return;
+        }
+
+        _leftSidebarCollapsed =
+            collapsed;
+
+        LeftSidebarColumn.Width =
+            new GridLength(
+                collapsed
+                    ? LeftSidebarCollapsedWidth
+                    : LeftSidebarExpandedWidth);
+
+        LeftSidebarExpandedHost.Visibility =
+            collapsed
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+
+        LeftSidebarCompactHost.Visibility =
+            collapsed
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+
+        SidebarLayoutChanged?.Invoke(
+            this,
+            EventArgs.Empty);
+
+        MessageInput.Focus();
+    }
+
+
+    private void SetRightSidebarCollapsed(
+        bool collapsed)
+    {
+        if (_rightSidebarCollapsed == collapsed)
+        {
+            return;
+        }
+
+        _rightSidebarCollapsed =
+            collapsed;
+
+        RightSidebarColumn.Width =
+            new GridLength(
+                collapsed
+                    ? RightSidebarCollapsedWidth
+                    : RightSidebarExpandedWidth);
+
+        RightSidebarExpandedHost.Visibility =
+            collapsed
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+
+        RightSidebarCompactHost.Visibility =
+            collapsed
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+
+        SidebarLayoutChanged?.Invoke(
+            this,
+            EventArgs.Empty);
+
+        MessageInput.Focus();
     }
 
 

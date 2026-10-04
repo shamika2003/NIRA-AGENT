@@ -4,9 +4,11 @@
 
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 
 using NIRAAgent.AI.Ollama;
 using NIRAAgent.Character;
+using NIRAAgent.Character.Appraisal;
 using NIRAAgent.Character.History;
 using NIRAAgent.Character.Interaction;
 using NIRAAgent.Character.State;
@@ -26,7 +28,7 @@ namespace NIRAAgent.AI.Cognition;
 //
 // It cannot request tools, create goals, mutate memory, or change any
 // authoritative state. If realization fails validation, the original
-// cognition draft is returned unchanged.
+// cognition reply/speech drafts are returned unchanged.
 // =============================================================
 
 public sealed class NIRAResponseRealizationService
@@ -114,26 +116,42 @@ public sealed class NIRAResponseRealizationService
         }
     }
 
-    public async Task<string> RealizeAsync(
+    public async Task<NIRAResponseRealizationResult> RealizeAsync(
         NIRAResponseRealizationRequest request,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(
             request);
 
-        string draft =
+        string draftReply =
             NormalizeRequiredDraft(
                 request.DraftReply);
+
+        string draftSpeech =
+            NormalizeOptionalDraft(
+                request.DraftSpeech);
+
+        NIRAResponseRealizationResult fallback =
+            new()
+            {
+                Reply =
+                    draftReply,
+
+                Speech =
+                    draftSpeech
+            };
 
         // Long/code-heavy material should normally have been marked
         // PreserveExact by cognition. Keep an absolute safety bound here
         // so this presentation stage never receives an unbounded payload.
-        if (draft.Length > MaximumDraftCharacters)
+        if (draftReply.Length > MaximumDraftCharacters ||
+            draftSpeech.Length > MaximumDraftCharacters)
         {
             Debug.WriteLine(
-                $"[ResponseRealization] SKIPPED | Reason='Draft too large' | Characters={draft.Length}");
+                $"[ResponseRealization] SKIPPED | Reason='Draft too large' | " +
+                $"ReplyChars={draftReply.Length} | SpeechChars={draftSpeech.Length}");
 
-            return draft;
+            return fallback;
         }
 
         NIRACharacterSnapshot character =
@@ -151,13 +169,29 @@ public sealed class NIRAResponseRealizationService
                 request.Interaction,
                 _socialHistory.GetRecent(10));
 
+        if (request.AppliedSocialAppraisal != null)
+        {
+            NIRAInteractionAppraisal applied =
+                request.AppliedSocialAppraisal.Normalize();
+
+            Debug.WriteLine(
+                $"[ResponseRealization] SOCIAL | " +
+                $"Hostility={applied.Meaning.Hostility:F2} | " +
+                $"Dismissal={applied.Meaning.Dismissal:F2} | " +
+                $"Repair={applied.Meaning.Repair:F2} | " +
+                $"Playfulness={applied.Meaning.Playfulness:F2} | " +
+                $"Respect={applied.Meaning.Respect:F2} | " +
+                $"Confidence={applied.Confidence:F2}");
+        }
+
         string systemPrompt =
             BuildSystemPrompt();
 
         string userPrompt =
             BuildUserPrompt(
                 request,
-                draft,
+                draftReply,
+                draftSpeech,
                 characterContext);
 
         try
@@ -174,25 +208,64 @@ public sealed class NIRAResponseRealizationService
 
             stopwatch.Stop();
 
-            string realized =
-                NormalizeRealized(
-                    raw);
-
-            if (!ValidateRealization(
-                    draft,
-                    realized,
-                    request.RequiredVerbatimFragments,
-                    out string reason))
+            if (!TryNormalizeRealized(
+                    raw,
+                    requireSpeech: !string.IsNullOrWhiteSpace(draftSpeech),
+                    out NIRAResponseRealizationResult realized,
+                    out string parseReason))
             {
                 Debug.WriteLine(
-                    $"[ResponseRealization] REJECTED | Time={stopwatch.ElapsedMilliseconds} ms | Reason='{TrimLog(reason)}'");
+                    $"[ResponseRealization] REJECTED | Time={stopwatch.ElapsedMilliseconds} ms | " +
+                    $"Reason='{TrimLog(parseReason)}'");
 
-                return draft;
+                return fallback;
+            }
+
+            if (!ValidateRealization(
+                    draftReply,
+                    realized.Reply,
+                    request.RequiredVerbatimFragments,
+                    out string replyReason))
+            {
+                Debug.WriteLine(
+                    $"[ResponseRealization] REJECTED | Time={stopwatch.ElapsedMilliseconds} ms | " +
+                    $"Channel=Reply | Reason='{TrimLog(replyReason)}'");
+
+                return fallback;
+            }
+
+            if (!string.IsNullOrWhiteSpace(draftSpeech))
+            {
+                if (!ValidateRealization(
+                        draftSpeech,
+                        realized.Speech,
+                        Array.Empty<string>(),
+                        out string speechReason))
+                {
+                    Debug.WriteLine(
+                        $"[ResponseRealization] REJECTED | Time={stopwatch.ElapsedMilliseconds} ms | " +
+                        $"Channel=Speech | Reason='{TrimLog(speechReason)}'");
+
+                    return fallback;
+                }
+            }
+            else
+            {
+                // Empty speech has an intentional meaning in the Executive:
+                // reuse the realized screen reply. Do not let this stage create
+                // a second channel when cognition deliberately omitted one.
+                realized =
+                    realized with
+                    {
+                        Speech =
+                            string.Empty
+                    };
             }
 
             Debug.WriteLine(
                 $"[ResponseRealization] REALIZED | Time={stopwatch.ElapsedMilliseconds} ms | " +
-                $"DraftChars={draft.Length} | FinalChars={realized.Length}");
+                $"DraftReplyChars={draftReply.Length} | FinalReplyChars={realized.Reply.Length} | " +
+                $"DraftSpeechChars={draftSpeech.Length} | FinalSpeechChars={realized.Speech.Length}");
 
             return realized;
         }
@@ -204,18 +277,19 @@ public sealed class NIRAResponseRealizationService
         catch (Exception ex)
         {
             // Expression failure must never destroy an otherwise valid
-            // executive response. The semantic cognition draft remains the
+            // executive response. The semantic cognition drafts remain the
             // truthful fallback.
             Debug.WriteLine(
                 $"[ResponseRealization] FALLBACK | Type={ex.GetType().Name} | Message='{TrimLog(ex.Message)}'");
 
-            return draft;
+            return fallback;
         }
     }
 
+
     private string BuildSystemPrompt()
     {
-        return $"""
+        return $$"""
             You are the final expression stage inside NIRA's cognition runtime.
 
             You are NOT a planner, executive, fact checker, tool caller, scheduler,
@@ -227,32 +301,46 @@ public sealed class NIRAResponseRealizationService
             utterance NIRA would actually say now, using her CURRENT UPDATED character
             state and recent social continuity.
 
-            The draft is authoritative for concrete semantic content. Preserve its
+            The draft is authoritative for concrete/task semantic content. Preserve
             dates, times, quantities, names, paths, URLs, success/failure status,
-            uncertainty, authorization limitations and other factual commitments.
-            You may change wording, rhythm, contractions, sentence order and social
-            delivery only when that does not change meaning.
+            uncertainty, authorization limitations, genuine responsibility acknowledgements
+            and other factual commitments. For Natural replies, however, the draft's
+            interpersonal wrapper is deliberately provisional because cognition wrote it
+            BEFORE the authoritative character update was committed. You may remove or
+            replace generic appeasement, reassurance, service-style apology, routine
+            help-offers, hedging, softening, teasing or boundary wording when the CURRENT
+            UPDATED character state and CURRENT APPLIED SOCIAL APPRAISAL support a
+            different social stance. This is not permission to change facts, invent blame,
+            add commitments, or intensify beyond the supplied state/appraisal.
 
-            Return ONLY the final user-facing utterance as plain text. No JSON. No
-            analysis. No labels. No quotation marks around the whole reply.
+            Return ONLY one JSON object with exactly these user-facing channels:
+            {"reply":"final screen wording","speech":"final spoken wording or empty"}
+
+            "reply" is required. If a distinct spoken draft is supplied, realize
+            "speech" separately from the SAME established facts and preserve its
+            useful spoken explanation. If no spoken draft is supplied, return
+            "speech":"" so the runtime can reuse the realized reply. Do not add
+            analysis, labels, Markdown fences, planning fields, tool fields or
+            internal-state commentary outside those two strings.
 
             ==================================================
             NIRA IDENTITY / PERSONALITY
             ==================================================
 
-            {_personalityPrompt}
+            {{_personalityPrompt}}
 
             ==================================================
             RESPONSE REALIZATION RULES
             ==================================================
 
-            {_realizationPrompt}
+            {{_realizationPrompt}}
             """;
     }
 
     private static string BuildUserPrompt(
         NIRAResponseRealizationRequest request,
-        string draft,
+        string draftReply,
+        string draftSpeech,
         string characterContext)
     {
         string required =
@@ -280,6 +368,12 @@ public sealed class NIRAResponseRealizationService
             {characterContext}
 
             ==================================================
+            CURRENT APPLIED SOCIAL APPRAISAL
+            ==================================================
+
+            {FormatAppraisal(request.AppliedSocialAppraisal)}
+
+            ==================================================
             CURRENT AUTHORITATIVE CLOCK
             ==================================================
 
@@ -298,10 +392,16 @@ public sealed class NIRAResponseRealizationService
             {NormalizeField(request.DecisionSummary, 1000)}
 
             ==================================================
-            AUTHORITATIVE SEMANTIC REPLY DRAFT
+            AUTHORITATIVE SEMANTIC SCREEN-REPLY DRAFT
             ==================================================
 
-            {draft}
+            {draftReply}
+
+            ==================================================
+            AUTHORITATIVE SPOKEN DRAFT
+            ==================================================
+
+            {(string.IsNullOrWhiteSpace(draftSpeech) ? "(empty — runtime reuses reply)" : draftSpeech)}
 
             ==================================================
             VERBATIM FRAGMENTS THAT MUST SURVIVE IF PRESENT
@@ -309,9 +409,10 @@ public sealed class NIRAResponseRealizationService
 
             {required}
 
-            Realize the final NIRA utterance now. Keep the meaning and concrete facts
+            Realize the final NIRA channels now. Keep the meaning and concrete facts
             intact. Let the updated character state affect the delivery naturally;
-            do not narrate the state itself.
+            do not narrate the state itself. Return only the required reply/speech
+            JSON object.
             """;
     }
 
@@ -374,6 +475,40 @@ public sealed class NIRAResponseRealizationService
         return true;
     }
 
+    private static string FormatAppraisal(
+        NIRAInteractionAppraisal? appraisal)
+    {
+        if (appraisal == null)
+        {
+            return "(none)";
+        }
+
+        NIRAInteractionAppraisal normalized =
+            appraisal.Normalize();
+
+        NIRASocialMeaning meaning =
+            normalized.Meaning;
+
+        return $"""
+            Respect: {meaning.Respect:F2}
+            Warmth: {meaning.Warmth:F2}
+            Trust: {meaning.Trust:F2}
+            Appreciation: {meaning.Appreciation:F2}
+            Affection: {meaning.Affection:F2}
+            Playfulness: {meaning.Playfulness:F2}
+            Hostility: {meaning.Hostility:F2}
+            Dismissal: {meaning.Dismissal:F2}
+            Repair: {meaning.Repair:F2}
+            Concern: {meaning.Concern:F2}
+            Engagement: {meaning.Engagement:F2}
+            Pressure: {meaning.Pressure:F2}
+            Confidence: {normalized.Confidence:F2}
+            Ambiguity: {normalized.Ambiguity:F2}
+            Situation: {normalized.SituationMode}/{normalized.SituationIntensity:F2}
+            """;
+    }
+
+
     private static string NormalizeRequiredDraft(
         string? value)
     {
@@ -386,7 +521,149 @@ public sealed class NIRAResponseRealizationService
         return value.Trim();
     }
 
-    private static string NormalizeRealized(
+    private static bool TryNormalizeRealized(
+        string? raw,
+        bool requireSpeech,
+        out NIRAResponseRealizationResult result,
+        out string reason)
+    {
+        result =
+            new NIRAResponseRealizationResult();
+
+        string clean =
+            StripCodeFence(
+                raw);
+
+        if (string.IsNullOrWhiteSpace(clean))
+        {
+            reason =
+                "The realization was empty.";
+            return false;
+        }
+
+        try
+        {
+            using JsonDocument document =
+                JsonDocument.Parse(
+                    clean);
+
+            JsonElement root =
+                document.RootElement;
+
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                reason =
+                    "The realization transport was not a JSON object.";
+                return false;
+            }
+
+            if (!root.TryGetProperty(
+                    "reply",
+                    out JsonElement replyElement)
+                ||
+                replyElement.ValueKind != JsonValueKind.String)
+            {
+                reason =
+                    "The realization transport did not contain a string reply.";
+                return false;
+            }
+
+            string reply =
+                NormalizeChannelText(
+                    replyElement.GetString());
+
+            string speech =
+                string.Empty;
+
+            if (root.TryGetProperty(
+                    "speech",
+                    out JsonElement speechElement)
+                &&
+                speechElement.ValueKind == JsonValueKind.String)
+            {
+                speech =
+                    NormalizeChannelText(
+                        speechElement.GetString());
+            }
+
+            if (string.IsNullOrWhiteSpace(reply))
+            {
+                reason =
+                    "The realized reply was empty.";
+                return false;
+            }
+
+            if (requireSpeech &&
+                string.IsNullOrWhiteSpace(speech))
+            {
+                reason =
+                    "The distinct spoken draft was not realized.";
+                return false;
+            }
+
+            result =
+                new NIRAResponseRealizationResult
+                {
+                    Reply =
+                        reply,
+
+                    Speech =
+                        speech
+                };
+
+            reason =
+                string.Empty;
+            return true;
+        }
+        catch (JsonException)
+        {
+            // Backward-compatible safety path for a plain one-channel response.
+            // It does not apply when cognition supplied distinct speech because
+            // silently collapsing two semantic channels would lose information.
+            if (!requireSpeech &&
+                !clean.TrimStart().StartsWith(
+                    "{",
+                    StringComparison.Ordinal))
+            {
+                string reply =
+                    NormalizeChannelText(
+                        clean);
+
+                if (!string.IsNullOrWhiteSpace(reply))
+                {
+                    result =
+                        new NIRAResponseRealizationResult
+                        {
+                            Reply =
+                                reply,
+
+                            Speech =
+                                string.Empty
+                        };
+
+                    reason =
+                        string.Empty;
+                    return true;
+                }
+            }
+
+            reason =
+                "The realization transport was malformed JSON.";
+            return false;
+        }
+    }
+
+
+    private static string NormalizeChannelText(
+        string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? string.Empty
+            : value.Trim();
+    }
+
+
+    private static string StripCodeFence(
         string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -397,39 +674,46 @@ public sealed class NIRAResponseRealizationService
         string clean =
             value.Trim();
 
-        if (clean.StartsWith(
-                "```",
-                StringComparison.Ordinal)
-            && clean.EndsWith(
+        if (!clean.StartsWith(
                 "```",
                 StringComparison.Ordinal))
         {
-            int firstBreak =
-                clean.IndexOf('\n');
-
-            if (firstBreak >= 0)
-            {
-                clean =
-                    clean[(firstBreak + 1)..];
-            }
-
-            int closing =
-                clean.LastIndexOf(
-                    "```",
-                    StringComparison.Ordinal);
-
-            if (closing >= 0)
-            {
-                clean =
-                    clean[..closing];
-            }
-
-            clean =
-                clean.Trim();
+            return clean;
         }
 
-        return clean;
+        int firstBreak =
+            clean.IndexOf(
+                '\n');
+
+        if (firstBreak >= 0)
+        {
+            clean =
+                clean[(firstBreak + 1)..];
+        }
+
+        int closing =
+            clean.LastIndexOf(
+                "```",
+                StringComparison.Ordinal);
+
+        if (closing >= 0)
+        {
+            clean =
+                clean[..closing];
+        }
+
+        return clean.Trim();
     }
+
+
+    private static string NormalizeOptionalDraft(
+        string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? string.Empty
+            : value.Trim();
+    }
+
 
     private static string NormalizeField(
         string? value,
@@ -507,9 +791,22 @@ public sealed class NIRAResponseRealizationService
     }
 }
 
+public sealed record NIRAResponseRealizationResult
+{
+    public string Reply { get; init; } =
+        string.Empty;
+
+    public string Speech { get; init; } =
+        string.Empty;
+}
+
+
 public sealed record NIRAResponseRealizationRequest
 {
     public string DraftReply { get; init; } =
+        string.Empty;
+
+    public string DraftSpeech { get; init; } =
         string.Empty;
 
     public string DecisionSummary { get; init; } =
@@ -534,6 +831,8 @@ public sealed record NIRAResponseRealizationRequest
         string.Empty;
 
     public NIRAInteractionContext? Interaction { get; init; }
+
+    public NIRAInteractionAppraisal? AppliedSocialAppraisal { get; init; }
 
     public IReadOnlyList<string> RequiredVerbatimFragments { get; init; } =
         Array.Empty<string>();

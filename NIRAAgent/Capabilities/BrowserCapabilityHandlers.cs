@@ -9,6 +9,7 @@ using System.Text.Json;
 using NIRAAgent.Browser;
 using Microsoft.Playwright;
 using NIRAAgent.Authorization;
+using NIRAAgent.Semantic;
 
 namespace NIRAAgent.Capabilities;
 
@@ -129,6 +130,12 @@ internal static class NIRABrowserCapabilityFormatting
         if (inspection.StructuredDataTypes.Count > 0)
             text.AppendLine($"StructuredDataTypes=[{string.Join("; ", inspection.StructuredDataTypes.Select(x => Clean(x, 120)))}]");
         text.AppendLine($"ContentSha256={inspection.ContentSha256}");
+        text.AppendLine($"DocumentEvidenceSha256={inspection.DocumentEvidenceSha256}");
+        text.AppendLine(
+            $"OBSERVATION_DELTA=" +
+            (inspection.DocumentChangedSincePreviousObservation
+                ? "CHANGED_OR_FIRST_OBSERVATION"
+                : "UNCHANGED"));
         text.AppendLine($"ObservedAtUtc={inspection.ObservedAtUtc:O}");
         AppendNavigation(text, inspection.Navigation);
         AppendRecovery(text, inspection.Recovery);
@@ -591,7 +598,7 @@ public sealed class NIRABrowserFollowCapabilityHandler : INIRACapabilityHandler
         DefaultRisk = NIRACapabilityRisk.Observe,
         Parameters = new[]
         {
-            NIRABrowserCapabilityFormatting.Parameter("pageId", "string", true, "Exact page GUID whose latest inspection produced the link ref."),
+            NIRABrowserCapabilityFormatting.Parameter("pageId", "string", false, "Optional exact page GUID whose latest inspection produced the link ref. Omit to use this task's runtime-tracked active owned page."),
             NIRABrowserCapabilityFormatting.Parameter("ref", "string", true, "Exact grounded link ref from the latest browser.inspect result."),
             NIRABrowserCapabilityFormatting.Parameter("newPage", "boolean", false, "Open the grounded href in a new NIRA page. Default false."),
             NIRABrowserCapabilityFormatting.Parameter("timeoutSeconds", "integer", false, "Navigation timeout 1-120 seconds. Default 45.")
@@ -600,11 +607,16 @@ public sealed class NIRABrowserFollowCapabilityHandler : INIRACapabilityHandler
     public NIRACapabilityRisk ResolveRisk(NIRACapabilityRequest request) => NIRACapabilityRisk.Observe;
     public async Task<NIRACapabilityHandlerResult> ExecuteAsync(NIRACapabilityRequest request, CancellationToken cancellationToken = default)
     {
-        Guid pageId = NIRABrowserCapabilityFormatting.RequiredPageId(request);
+        Guid? pageId = NIRABrowserCapabilityFormatting.OptionalPageId(request);
         string elementRef = NIRACapabilityArguments.RequireString(request, "ref", 80);
         bool newPage = NIRACapabilityArguments.GetBoolean(request, "newPage");
         int timeout = NIRACapabilityArguments.GetInteger(request, "timeoutSeconds", 45, 1, 120);
-        NIRABrowserPageSnapshot page = await _browser.FollowAsync(pageId, elementRef, newPage, timeout, cancellationToken);
+        NIRABrowserPageSnapshot page = await _browser.FollowAsync(
+            pageId,
+            elementRef,
+            newPage,
+            timeout,
+            cancellationToken);
         string destinationEvidence = await NIRABrowserCapabilityFormatting.TryInspectDestinationAsync(
             _browser, page, cancellationToken);
         return new NIRACapabilityHandlerResult
@@ -621,12 +633,1856 @@ public sealed class NIRABrowserFollowCapabilityHandler : INIRACapabilityHandler
     }
 }
 
+
+public sealed class NIRABrowserBackCapabilityHandler
+    : INIRACapabilityHandler
+{
+    private readonly NIRABrowserService _browser;
+
+    public NIRABrowserBackCapabilityHandler(
+        NIRABrowserService browser)
+    {
+        _browser =
+            browser
+            ?? throw new ArgumentNullException(
+                nameof(browser));
+    }
+
+    public NIRACapabilityDescriptor Descriptor { get; } =
+        new()
+        {
+            Id =
+                NIRACapabilityIds.BrowserBack,
+
+            Description =
+                "Move one step backward in the current task-owned browser page's real history and return a fresh destination inspection. Read-only navigation; no guessed URL. Use this to recover from an irrelevant page or return to a previously observed hub.",
+
+            DefaultRisk =
+                NIRACapabilityRisk.Observe,
+
+            Parameters =
+                new[]
+                {
+                    NIRABrowserCapabilityFormatting.Parameter(
+                        "pageId",
+                        "string",
+                        false,
+                        "Optional exact task-owned page GUID. Omit to use the current active owned page."),
+
+                    NIRABrowserCapabilityFormatting.Parameter(
+                        "timeoutSeconds",
+                        "integer",
+                        false,
+                        "Navigation timeout 1-120 seconds. Default 30.")
+                }
+        };
+
+    public NIRACapabilityRisk ResolveRisk(
+        NIRACapabilityRequest request) =>
+        NIRACapabilityRisk.Observe;
+
+    public async Task<NIRACapabilityHandlerResult> ExecuteAsync(
+        NIRACapabilityRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        Guid? pageId =
+            NIRABrowserCapabilityFormatting.OptionalPageId(
+                request);
+
+        int timeout =
+            NIRACapabilityArguments.GetInteger(
+                request,
+                "timeoutSeconds",
+                30,
+                1,
+                120);
+
+        NIRABrowserPageSnapshot page =
+            await _browser.BackAsync(
+                pageId,
+                timeout,
+                cancellationToken);
+
+        string destinationEvidence =
+            await NIRABrowserCapabilityFormatting.TryInspectDestinationAsync(
+                _browser,
+                page,
+                cancellationToken);
+
+        return new NIRACapabilityHandlerResult
+        {
+            Succeeded =
+                page.Navigation?.MainDocumentHttpStatus is not >= 400,
+
+            HttpStatusCode =
+                page.Navigation?.MainDocumentHttpStatus,
+
+            Summary =
+                "Moved to the previous task-owned browser history entry. " +
+                "Use the included fresh destination evidence; do not re-inspect " +
+                "the unchanged page merely to recover refs.",
+
+            Output =
+                NIRABrowserCapabilityFormatting.Page(
+                    page)
+                +
+                destinationEvidence,
+
+            ChangedSystemState =
+                false
+        };
+    }
+}
+
+
+// Generic bounded same-origin information discovery.
+//
+// This is intentionally NOT a website-specific workflow. It performs only
+// reversible GET/navigation observations over hrefs grounded by the current
+// inspected site, ranks routes against the model-supplied user objective using
+// NIRA's LOCAL semantic encoder, and returns the best fresh page evidence in
+// one capability result. No forms are submitted, no controls are clicked, no
+// credentials are exposed, and no cloud LLM is called inside this capability.
+public sealed class NIRABrowserExploreCapabilityHandler
+    : INIRACapabilityHandler
+{
+    private const int MaximumPages =
+        12;
+
+    private const int MaximumDepth =
+        3;
+
+    private const int MaximumSemanticLinksPerPage =
+        24;
+
+    private const int MaximumFrontierLinksPerPage =
+        10;
+
+    private const int PageTextChunkCharacters =
+        1400;
+
+    private const int MaximumPageTextChunks =
+        6;
+
+    private const double LearnedCurrentRouteThreshold =
+        0.56;
+
+    private readonly NIRABrowserService _browser;
+    private readonly INIRASemanticEncoder _semantic;
+    private readonly NIRAAuthorityExecutionContextAccessor _authority;
+    private readonly NIRABrowserSiteKnowledgeStore _siteKnowledge;
+
+    // These are execution-shaping facts, not semantic memory. They are scoped
+    // to an exact trusted user run and only prevent the same broad crawl from
+    // being replayed again and again during that one request.
+    private readonly object _runStateSync = new();
+    private readonly Dictionary<string, DateTimeOffset> _broadExplorationRuns =
+        new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DateTimeOffset> _currentEvidenceReturns =
+        new(StringComparer.Ordinal);
+
+    public NIRABrowserExploreCapabilityHandler(
+        NIRABrowserService browser,
+        INIRASemanticEncoder semantic,
+        NIRAAuthorityExecutionContextAccessor authority)
+    {
+        _browser =
+            browser
+            ?? throw new ArgumentNullException(
+                nameof(browser));
+
+        _semantic =
+            semantic
+            ?? throw new ArgumentNullException(
+                nameof(semantic));
+
+        _authority =
+            authority
+            ?? throw new ArgumentNullException(
+                nameof(authority));
+
+        // Route knowledge is deliberately browser-owned. It persists only
+        // non-secret route metadata + local semantic vectors; page text,
+        // credentials and query values are never stored.
+        _siteKnowledge =
+            new NIRABrowserSiteKnowledgeStore();
+    }
+
+    public NIRACapabilityDescriptor Descriptor { get; } =
+        new()
+        {
+            Id =
+                NIRACapabilityIds.BrowserExplore,
+
+            Description =
+                "Bounded read-only same-origin site exploration for an information objective when the exact page is unknown. The runtime anchors exploration to the trusted direct user request when available, reasons over fresh current-page evidence before crawling away, learns non-secret route/content semantics across visits, suppresses duplicate documents, and permits only one broad crawl for the same user objective in one run. No form submission, no arbitrary URL guessing, no cross-origin crawl, and no cloud LLM inside the capability.",
+
+            DefaultRisk =
+                NIRACapabilityRisk.Observe,
+
+            Parameters =
+                new[]
+                {
+                    NIRABrowserCapabilityFormatting.Parameter(
+                        "pageId",
+                        "string",
+                        false,
+                        "Optional exact task-owned page GUID. Omit to explore from the current active owned page."),
+
+                    NIRABrowserCapabilityFormatting.Parameter(
+                        "objective",
+                        "string",
+                        true,
+                        "Concise current search focus. The runtime keeps the trusted direct user request as the root objective when one exists, so this focus cannot silently replace the user's actual task."),
+
+                    NIRABrowserCapabilityFormatting.Parameter(
+                        "maxPages",
+                        "integer",
+                        false,
+                        "Maximum total pages to inspect including the starting page. Default 7, maximum 12."),
+
+                    NIRABrowserCapabilityFormatting.Parameter(
+                        "maxDepth",
+                        "integer",
+                        false,
+                        "Maximum same-origin link depth from the starting page. Default 2, maximum 3."),
+
+                    NIRABrowserCapabilityFormatting.Parameter(
+                        "maxTextChars",
+                        "integer",
+                        false,
+                        "Maximum visible text captured per explored page. Default 10000, range 3000-16000."),
+
+                    NIRABrowserCapabilityFormatting.Parameter(
+                        "timeoutSeconds",
+                        "integer",
+                        false,
+                        "Per-navigation timeout 1-60 seconds. Default 25.")
+                }
+        };
+
+    public NIRACapabilityRisk ResolveRisk(
+        NIRACapabilityRequest request) =>
+        NIRACapabilityRisk.Observe;
+
+    public async Task<NIRACapabilityHandlerResult> ExecuteAsync(
+        NIRACapabilityRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        Guid? requestedPageId =
+            NIRABrowserCapabilityFormatting.OptionalPageId(
+                request);
+
+        string modelObjective =
+            NIRACapabilityArguments.RequireString(
+                request,
+                "objective",
+                2400)
+            .Trim();
+
+        NIRAAuthorityExecutionContext authorityContext =
+            _authority.Current;
+
+        bool trustedRootObjective =
+            authorityContext.UserInitiated &&
+            !string.IsNullOrWhiteSpace(
+                authorityContext.DirectUserRequest);
+
+        string rootObjective =
+            trustedRootObjective
+                ? authorityContext.DirectUserRequest.Trim()
+                : modelObjective;
+
+        int maxPages =
+            NIRACapabilityArguments.GetInteger(
+                request,
+                "maxPages",
+                7,
+                1,
+                MaximumPages);
+
+        int maxDepth =
+            NIRACapabilityArguments.GetInteger(
+                request,
+                "maxDepth",
+                2,
+                0,
+                MaximumDepth);
+
+        int maxTextChars =
+            NIRACapabilityArguments.GetInteger(
+                request,
+                "maxTextChars",
+                10000,
+                3000,
+                16000);
+
+        int timeoutSeconds =
+            NIRACapabilityArguments.GetInteger(
+                request,
+                "timeoutSeconds",
+                25,
+                1,
+                60);
+
+        NIRABrowserInspection startInspection =
+            await _browser.InspectAsync(
+                requestedPageId,
+                160,
+                maxTextChars,
+                cancellationToken);
+
+        if (!_browser.TryGetOwnedPageUrl(
+                startInspection.PageId,
+                out string startRawUrl))
+        {
+            return new NIRACapabilityHandlerResult
+            {
+                Succeeded =
+                    false,
+
+                Summary =
+                    "The active browser page is no longer a live task-owned page.",
+
+                Output =
+                    NIRABrowserCapabilityFormatting.Inspection(
+                        startInspection),
+
+                ChangedSystemState =
+                    false
+            };
+        }
+
+        Uri startUri =
+            NIRABrowserService.ParseHttpUri(
+                startRawUrl);
+
+        string origin =
+            startUri.GetLeftPart(
+                UriPartial.Authority);
+
+        SemanticEmbedding rootObjectiveEmbedding =
+            _semantic.Encode(
+                rootObjective);
+
+        SemanticEmbedding? focusObjectiveEmbedding =
+            string.Equals(
+                rootObjective,
+                modelObjective,
+                StringComparison.Ordinal)
+                ? null
+                : _semantic.Encode(
+                    modelObjective);
+
+        // Knowledge is based on what routes actually contained on prior visits,
+        // not on a hard-coded website map and not on the model's current guess.
+        IReadOnlyDictionary<string, NIRABrowserRouteKnowledge> learnedRoutes =
+            _siteKnowledge.Recall(
+                origin,
+                rootObjectiveEmbedding);
+
+        ExploreObservation startObservation =
+            ScoreObservation(
+                startInspection,
+                startRawUrl,
+                0,
+                rootObjective,
+                rootObjectiveEmbedding,
+                modelObjective,
+                focusObjectiveEmbedding);
+
+        _siteKnowledge.Remember(
+            origin,
+            startRawUrl,
+            startInspection.DocumentEvidenceSha256,
+            startObservation.ContentEmbeddings);
+
+        string runObjectiveKey =
+            BuildRunObjectiveKey(
+                authorityContext,
+                origin,
+                rootObjective);
+
+        string currentEvidenceKey =
+            BuildCurrentEvidenceKey(
+                runObjectiveKey,
+                startRawUrl,
+                startInspection.DocumentEvidenceSha256);
+
+        bool learnedCurrentRoute =
+            TryLearnedRoute(
+                learnedRoutes,
+                startRawUrl,
+                out NIRABrowserRouteKnowledge? startKnowledge)
+            &&
+            startKnowledge.ContentSimilarity >=
+                LearnedCurrentRouteThreshold;
+
+        // The page can finish rendering between authentication/navigation and
+        // this capability. If InspectAsync just discovered materially NEW
+        // document evidence, return that evidence to cognition before wandering
+        // away. The exact same safeguard also lets a previously learned strong
+        // route get one direct look on a future run.
+        bool currentPageDeservesReasoning =
+            HasMeaningfulEvidence(
+                startInspection)
+            &&
+            (
+                startInspection.DocumentChangedSincePreviousObservation
+                ||
+                learnedCurrentRoute
+            )
+            &&
+            MarkCurrentEvidenceReturned(
+                currentEvidenceKey);
+
+        if (currentPageDeservesReasoning)
+        {
+            StringBuilder evidenceFirst =
+                new();
+
+            evidenceFirst.AppendLine(
+                "BROWSER_SITE_EXPLORATION");
+            evidenceFirst.AppendLine(
+                "ExplorationMode=CurrentPageEvidenceFirst");
+            evidenceFirst.AppendLine(
+                $"ObjectiveAnchor={(trustedRootObjective ? "TrustedDirectUserRequest" : "CapabilityObjective")}");
+            evidenceFirst.AppendLine(
+                "BroadCrawlPerformed=False");
+            evidenceFirst.AppendLine(
+                "ExplorationSaturated=False");
+            evidenceFirst.AppendLine(
+                $"FreshDocumentEvidence={startInspection.DocumentChangedSincePreviousObservation}");
+            evidenceFirst.AppendLine(
+                $"LearnedCurrentRoute={learnedCurrentRoute}");
+            if (startKnowledge != null)
+            {
+                evidenceFirst.AppendLine(
+                    $"LearnedCurrentRouteSimilarity={startKnowledge.ContentSimilarity:F3}");
+                evidenceFirst.AppendLine(
+                    $"LearnedCurrentRouteObservations={startKnowledge.Observations}");
+            }
+            evidenceFirst.AppendLine(
+                "Reason=Reason over the current live document before broad discovery. If it already answers the user or exposes one clearly correct grounded link, use that evidence instead of crawling unrelated sections.");
+            evidenceFirst.AppendLine();
+            evidenceFirst.AppendLine(
+                "CURRENT_PAGE_INSPECTION:");
+            evidenceFirst.AppendLine(
+                NIRABrowserCapabilityFormatting.Inspection(
+                    startInspection));
+
+            Debug.WriteLine(
+                $"[BrowserExplore] EVIDENCE FIRST | " +
+                $"Page={startInspection.PageId:D} | " +
+                $"Fresh={startInspection.DocumentChangedSincePreviousObservation} | " +
+                $"Learned={learnedCurrentRoute} | " +
+                $"Score={startObservation.Score:F3}");
+
+            return new NIRACapabilityHandlerResult
+            {
+                Succeeded =
+                    true,
+
+                Summary =
+                    startInspection.DocumentChangedSincePreviousObservation
+                        ? "The current page exposed new document evidence. Returned it before broad exploration so cognition can answer or follow a clearly grounded route without wandering."
+                        : "A previously learned route is semantically strong for the trusted user objective. Returned the live page before broad exploration.",
+
+                Output =
+                    evidenceFirst
+                        .ToString()
+                        .TrimEnd(),
+
+                ChangedSystemState =
+                    false
+            };
+        }
+
+        if (IsBroadExplorationCompleted(
+                runObjectiveKey))
+        {
+            StringBuilder saturated =
+                new();
+
+            saturated.AppendLine(
+                "BROWSER_SITE_EXPLORATION");
+            saturated.AppendLine(
+                "ExplorationMode=ExistingEvidenceReuse");
+            saturated.AppendLine(
+                $"ObjectiveAnchor={(trustedRootObjective ? "TrustedDirectUserRequest" : "CapabilityObjective")}");
+            saturated.AppendLine(
+                "BroadCrawlPerformed=False");
+            saturated.AppendLine(
+                "ExplorationSaturated=True");
+            saturated.AppendLine(
+                "Reason=One bounded broad crawl already completed for this trusted root objective in this exact user run. Repeating the crawl would revisit the same site graph. Use the prior route trace, the current live document, browser.back, or one specifically grounded link instead.");
+
+            AppendLearnedRouteSummary(
+                saturated,
+                learnedRoutes);
+
+            saturated.AppendLine();
+            saturated.AppendLine(
+                "CURRENT_PAGE_INSPECTION:");
+            saturated.AppendLine(
+                NIRABrowserCapabilityFormatting.Inspection(
+                    startInspection));
+
+            Debug.WriteLine(
+                $"[BrowserExplore] SATURATED | " +
+                $"Page={startInspection.PageId:D} | " +
+                $"Run={authorityContext.RunId:D}");
+
+            return new NIRACapabilityHandlerResult
+            {
+                Succeeded =
+                    true,
+
+                Summary =
+                    "Broad site exploration was not repeated because this user objective already has a completed bounded crawl in the current run. Reuse the existing evidence or take one specifically grounded next step.",
+
+                Output =
+                    saturated
+                        .ToString()
+                        .TrimEnd(),
+
+                ChangedSystemState =
+                    false
+            };
+        }
+
+        HashSet<string> visited =
+            new(
+                StringComparer.OrdinalIgnoreCase)
+            {
+                NormalizeExplorationUrl(
+                    startRawUrl)
+            };
+
+        HashSet<string> observedDocumentHashes =
+            new(
+                StringComparer.Ordinal);
+
+        if (!string.IsNullOrWhiteSpace(
+                startInspection.DocumentEvidenceSha256))
+        {
+            observedDocumentHashes.Add(
+                startInspection.DocumentEvidenceSha256);
+        }
+
+        List<ExploreCandidate> frontier =
+            new();
+
+        List<ExploreObservation> observations =
+            new()
+            {
+                startObservation
+            };
+
+        AddFrontierCandidates(
+            frontier,
+            visited,
+            startInspection,
+            origin,
+            1,
+            startObservation.Score,
+            rootObjective,
+            rootObjectiveEmbedding,
+            modelObjective,
+            focusObjectiveEmbedding,
+            learnedRoutes);
+
+        int failedNavigations =
+            0;
+
+        int duplicateDocumentsSkipped =
+            0;
+
+        while (observations.Count <
+                   maxPages
+               &&
+               frontier.Count >
+                   0)
+        {
+            cancellationToken
+                .ThrowIfCancellationRequested();
+
+            ExploreCandidate candidate =
+                frontier
+                    .OrderByDescending(
+                        item =>
+                            item.Score)
+                    .ThenBy(
+                        item =>
+                            item.Depth)
+                    .First();
+
+            frontier.Remove(
+                candidate);
+
+            if (candidate.Depth >
+                maxDepth)
+            {
+                continue;
+            }
+
+            string normalized =
+                NormalizeExplorationUrl(
+                    candidate.RawUrl);
+
+            if (!visited.Add(
+                    normalized))
+            {
+                continue;
+            }
+
+            try
+            {
+                NIRABrowserPageSnapshot page =
+                    await _browser.NavigateAsync(
+                        startInspection.PageId,
+                        candidate.RawUrl,
+                        false,
+                        timeoutSeconds,
+                        cancellationToken);
+
+                if (page.Navigation?.MainDocumentHttpStatus is >= 400)
+                {
+                    failedNavigations++;
+                    continue;
+                }
+
+                NIRABrowserInspection inspection =
+                    await _browser.InspectAsync(
+                        page.PageId,
+                        160,
+                        maxTextChars,
+                        cancellationToken);
+
+                if (!_browser.TryGetOwnedPageUrl(
+                        inspection.PageId,
+                        out string currentRawUrl))
+                {
+                    failedNavigations++;
+                    continue;
+                }
+
+                if (!TrySameOrigin(
+                        origin,
+                        currentRawUrl))
+                {
+                    // Redirects can legitimately cross an origin, but this
+                    // bounded site exploration never fans out across origins.
+                    failedNavigations++;
+                    continue;
+                }
+
+                if (!string.IsNullOrWhiteSpace(
+                        inspection.DocumentEvidenceSha256)
+                    &&
+                    !observedDocumentHashes.Add(
+                        inspection.DocumentEvidenceSha256))
+                {
+                    duplicateDocumentsSkipped++;
+
+                    Debug.WriteLine(
+                        $"[BrowserExplore] DUPLICATE DOCUMENT | " +
+                        $"Depth={candidate.Depth} | " +
+                        $"Url='{NIRABrowserService.RedactUrlForCognition(currentRawUrl)}'");
+
+                    continue;
+                }
+
+                ExploreObservation observation =
+                    ScoreObservation(
+                        inspection,
+                        currentRawUrl,
+                        candidate.Depth,
+                        rootObjective,
+                        rootObjectiveEmbedding,
+                        modelObjective,
+                        focusObjectiveEmbedding);
+
+                observations.Add(
+                    observation);
+
+                if (candidate.Depth <
+                    maxDepth)
+                {
+                    AddFrontierCandidates(
+                        frontier,
+                        visited,
+                        inspection,
+                        origin,
+                        candidate.Depth + 1,
+                        observation.Score,
+                        rootObjective,
+                        rootObjectiveEmbedding,
+                        modelObjective,
+                        focusObjectiveEmbedding,
+                        learnedRoutes);
+                }
+            }
+            catch (OperationCanceledException)
+                when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+                when (ex is InvalidOperationException or PlaywrightException)
+            {
+                failedNavigations++;
+
+                Debug.WriteLine(
+                    $"[BrowserExplore] CANDIDATE FAILED | " +
+                    $"Depth={candidate.Depth} | " +
+                    $"Type={ex.GetType().Name} | " +
+                    $"Url='{NIRABrowserService.RedactUrlForCognition(candidate.RawUrl)}'");
+            }
+        }
+
+        ExploreObservation best =
+            observations
+                .OrderByDescending(
+                    item =>
+                        item.Score)
+                .ThenBy(
+                    item =>
+                        item.Depth)
+                .First();
+
+        // Learn from the pages that were actually inspected. This is generic
+        // route/content knowledge: later objectives compare semantically to the
+        // learned page vectors. A route that was irrelevant for one objective
+        // can therefore still rank highly for a different objective.
+        foreach (ExploreObservation observation in
+                 observations)
+        {
+            _siteKnowledge.Remember(
+                origin,
+                observation.RawUrl,
+                observation.Inspection.DocumentEvidenceSha256,
+                observation.ContentEmbeddings);
+        }
+
+        NIRABrowserInspection bestInspection =
+            best.Inspection;
+
+        if (_browser.TryGetOwnedPageUrl(
+                bestInspection.PageId,
+                out string currentBestRaw)
+            &&
+            !string.Equals(
+                NormalizeExplorationUrl(
+                    currentBestRaw),
+                NormalizeExplorationUrl(
+                    best.RawUrl),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                NIRABrowserPageSnapshot restoredBest =
+                    await _browser.NavigateAsync(
+                        bestInspection.PageId,
+                        best.RawUrl,
+                        false,
+                        timeoutSeconds,
+                        cancellationToken);
+
+                if (restoredBest.Navigation?.MainDocumentHttpStatus is not >= 400)
+                {
+                    bestInspection =
+                        await _browser.InspectAsync(
+                            restoredBest.PageId,
+                            160,
+                            maxTextChars,
+                            cancellationToken);
+                }
+            }
+            catch (Exception ex)
+                when (ex is InvalidOperationException or PlaywrightException)
+            {
+                Debug.WriteLine(
+                    $"[BrowserExplore] BEST ROUTE RESTORE FAILED | " +
+                    $"Type={ex.GetType().Name}");
+            }
+        }
+
+        MarkBroadExplorationCompleted(
+            runObjectiveKey);
+
+        StringBuilder output =
+            new();
+
+        output.AppendLine(
+            "BROWSER_SITE_EXPLORATION");
+
+        output.AppendLine(
+            "ExplorationMode=BoundedSameOriginReadOnly");
+
+        output.AppendLine(
+            $"ObjectiveAnchor={(trustedRootObjective ? "TrustedDirectUserRequest" : "CapabilityObjective")}");
+
+        output.AppendLine(
+            $"Origin={NIRABrowserService.RedactUrlForCognition(origin)}");
+
+        output.AppendLine(
+            $"PagesObserved={observations.Count}");
+
+        output.AppendLine(
+            $"FailedCandidates={failedNavigations}");
+
+        output.AppendLine(
+            $"DuplicateDocumentsSkipped={duplicateDocumentsSkipped}");
+
+        output.AppendLine(
+            $"LearnedRoutesAvailable={learnedRoutes.Count}");
+
+        output.AppendLine(
+            $"MaxPages={maxPages}");
+
+        output.AppendLine(
+            $"MaxDepth={maxDepth}");
+
+        output.AppendLine(
+            "BroadCrawlPerformed=True");
+
+        output.AppendLine(
+            "ExplorationSaturated=True");
+
+        output.AppendLine(
+            "Ranking=RootObjectiveSemanticEvidencePlusGroundedLinkMeaningPlusPersistentRouteContentKnowledge; no cloud LLM call inside exploration.");
+
+        output.AppendLine();
+        output.AppendLine(
+            "TOP_OBSERVED_ROUTES:");
+
+        foreach (ExploreObservation observation in
+                 observations
+                     .OrderByDescending(
+                         item =>
+                             item.Score)
+                     .Take(
+                         8))
+        {
+            output
+                .Append("- Score=")
+                .Append(
+                    observation.Score.ToString(
+                        "F3",
+                        System.Globalization.CultureInfo.InvariantCulture))
+                .Append(" | Depth=")
+                .Append(
+                    observation.Depth)
+                .Append(" | Url='")
+                .Append(
+                    NIRABrowserService.RedactUrlForCognition(
+                        observation.RawUrl))
+                .Append("' | Title='")
+                .Append(
+                    SafeExploreText(
+                        observation.Inspection.Title,
+                        260))
+                .Append('\'')
+                .AppendLine();
+
+            if (TryLearnedRoute(
+                    learnedRoutes,
+                    observation.RawUrl,
+                    out NIRABrowserRouteKnowledge? learned))
+            {
+                output
+                    .Append("  PriorContentSimilarity=")
+                    .Append(
+                        learned.ContentSimilarity.ToString(
+                            "F3",
+                            System.Globalization.CultureInfo.InvariantCulture))
+                    .Append(" | PriorObservations=")
+                    .Append(
+                        learned.Observations)
+                    .AppendLine();
+            }
+
+            if (!string.IsNullOrWhiteSpace(
+                    observation.RelevantExcerpt))
+            {
+                output
+                    .Append("  RelevantExcerpt='")
+                    .Append(
+                        SafeExploreText(
+                            observation.RelevantExcerpt,
+                            700))
+                    .AppendLine("'");
+            }
+        }
+
+        AppendLearnedRouteSummary(
+            output,
+            learnedRoutes);
+
+        output.AppendLine();
+        output.AppendLine(
+            "BEST_PAGE_INSPECTION:");
+
+        output.AppendLine(
+            NIRABrowserCapabilityFormatting.Inspection(
+                bestInspection));
+
+        Debug.WriteLine(
+            $"[BrowserExplore] COMPLETE | " +
+            $"Page={bestInspection.PageId:D} | " +
+            $"Observed={observations.Count} | " +
+            $"Failed={failedNavigations} | " +
+            $"Duplicates={duplicateDocumentsSkipped} | " +
+            $"LearnedRoutes={learnedRoutes.Count} | " +
+            $"BestScore={best.Score:F3} | " +
+            $"Best='{NIRABrowserService.RedactUrlForCognition(best.RawUrl)}'");
+
+        return new NIRACapabilityHandlerResult
+        {
+            Succeeded =
+                true,
+
+            Summary =
+                $"Explored {observations.Count} unique same-origin document(s), " +
+                "used persistent non-secret route/content knowledge when available, " +
+                "and left the browser on the strongest observed page for the trusted root objective.",
+
+            Output =
+                output
+                    .ToString()
+                    .TrimEnd(),
+
+            ChangedSystemState =
+                false
+        };
+    }
+
+    private void AddFrontierCandidates(
+        List<ExploreCandidate> frontier,
+        IReadOnlySet<string> visited,
+        NIRABrowserInspection inspection,
+        string origin,
+        int depth,
+        double parentPageScore,
+        string rootObjective,
+        SemanticEmbedding rootObjectiveEmbedding,
+        string modelObjective,
+        SemanticEmbedding? focusObjectiveEmbedding,
+        IReadOnlyDictionary<string, NIRABrowserRouteKnowledge> learnedRoutes)
+    {
+        if (depth >
+            MaximumDepth)
+        {
+            return;
+        }
+
+        List<(NIRABrowserInteractiveElement Element, string RawUrl, double Lexical)>
+            links =
+                new();
+
+        foreach (NIRABrowserInteractiveElement element in
+                 inspection.Elements)
+        {
+            if (element.Disabled
+                ||
+                string.IsNullOrWhiteSpace(
+                    element.Ref)
+                ||
+                string.IsNullOrWhiteSpace(
+                    element.Href)
+                ||
+                !_browser.TryGetGroundedHttpHref(
+                    inspection.PageId,
+                    element.Ref,
+                    out string rawUrl)
+                ||
+                !TrySameOrigin(
+                    origin,
+                    rawUrl))
+            {
+                continue;
+            }
+
+            string normalized =
+                NormalizeExplorationUrl(
+                    rawUrl);
+
+            if (visited.Contains(
+                    normalized)
+                ||
+                frontier.Any(item =>
+                    string.Equals(
+                        NormalizeExplorationUrl(
+                            item.RawUrl),
+                        normalized,
+                        StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            string descriptor =
+                BuildLinkDescriptor(
+                    element,
+                    rawUrl);
+
+            links.Add(
+                (
+                    element,
+                    rawUrl,
+                    LexicalCoverage(
+                        rootObjective,
+                        descriptor)
+                ));
+        }
+
+        if (links.Count ==
+            0)
+        {
+            return;
+        }
+
+        // Keep local semantic work bounded even on navigation-heavy pages.
+        // Preserve both lexical candidates and a DOM-order spread so semantic
+        // synonyms are not lost just because wording differs from the user's.
+        List<(NIRABrowserInteractiveElement Element, string RawUrl, double Lexical)>
+            semanticPool =
+                new();
+
+        foreach (var candidate in
+                 links
+                     .OrderByDescending(
+                         item =>
+                             item.Lexical)
+                     .Take(
+                         MaximumSemanticLinksPerPage /
+                         2))
+        {
+            semanticPool.Add(
+                candidate);
+        }
+
+        int remaining =
+            MaximumSemanticLinksPerPage -
+            semanticPool.Count;
+
+        if (remaining >
+            0)
+        {
+            double step =
+                Math.Max(
+                    1.0,
+                    (double)links.Count /
+                    remaining);
+
+            for (int index = 0;
+                 index < links.Count &&
+                 semanticPool.Count <
+                     MaximumSemanticLinksPerPage;
+                 index =
+                     Math.Max(
+                         index + 1,
+                         (int)Math.Round(
+                             index + step)))
+            {
+                var candidate =
+                    links[index];
+
+                if (!semanticPool.Any(existing =>
+                        string.Equals(
+                            existing.RawUrl,
+                            candidate.RawUrl,
+                            StringComparison.OrdinalIgnoreCase)))
+                {
+                    semanticPool.Add(
+                        candidate);
+                }
+            }
+        }
+
+        List<ExploreCandidate> ranked =
+            new();
+
+        foreach (var candidate in
+                 semanticPool)
+        {
+            string descriptor =
+                BuildLinkDescriptor(
+                    candidate.Element,
+                    candidate.RawUrl);
+
+            double semantic =
+                SafeObjectiveSimilarity(
+                    rootObjectiveEmbedding,
+                    focusObjectiveEmbedding,
+                    descriptor);
+
+            double learnedAdjustment =
+                0.0;
+
+            if (TryLearnedRoute(
+                    learnedRoutes,
+                    candidate.RawUrl,
+                    out NIRABrowserRouteKnowledge? learned))
+            {
+                // A low semantic match from a page NIRA has actually inspected
+                // is evidence against revisiting it for THIS objective, but the
+                // route remains fully usable for a different objective.
+                double confidence =
+                    Math.Min(
+                        1.0,
+                        0.60 +
+                        Math.Max(
+                            0,
+                            learned.Observations - 1) *
+                        0.10);
+
+                learnedAdjustment =
+                    Math.Clamp(
+                        (learned.ContentSimilarity - 0.50) *
+                        0.32,
+                        -0.12,
+                        0.16) *
+                    confidence;
+            }
+
+            double score =
+                semantic *
+                    0.68
+                +
+                candidate.Lexical *
+                    0.18
+                +
+                Math.Clamp(
+                    parentPageScore,
+                    0.0,
+                    1.0) *
+                    0.06
+                +
+                learnedAdjustment
+                -
+                Math.Max(
+                    0,
+                    depth - 1) *
+                    0.035;
+
+            ranked.Add(
+                new ExploreCandidate(
+                    candidate.RawUrl,
+                    depth,
+                    Math.Clamp(
+                        score,
+                        0.0,
+                        1.0),
+                    candidate.Element.Name));
+        }
+
+        foreach (ExploreCandidate candidate in
+                 ranked
+                     .OrderByDescending(
+                         item =>
+                             item.Score)
+                     .Take(
+                         MaximumFrontierLinksPerPage))
+        {
+            frontier.Add(
+                candidate);
+        }
+    }
+
+    private ExploreObservation ScoreObservation(
+        NIRABrowserInspection inspection,
+        string rawUrl,
+        int depth,
+        string rootObjective,
+        SemanticEmbedding rootObjectiveEmbedding,
+        string modelObjective,
+        SemanticEmbedding? focusObjectiveEmbedding)
+    {
+        List<string> textChunks =
+            BuildPageChunks(
+                inspection);
+
+        double bestSemantic =
+            0.0;
+
+        string bestExcerpt =
+            string.Empty;
+
+        List<SemanticEmbedding> contentEmbeddings =
+            new();
+
+        foreach (string chunk in
+                 textChunks)
+        {
+            try
+            {
+                SemanticEmbedding chunkEmbedding =
+                    _semantic.Encode(
+                        chunk);
+
+                contentEmbeddings.Add(
+                    chunkEmbedding);
+
+                double similarity =
+                    CombinedObjectiveSimilarity(
+                        rootObjectiveEmbedding,
+                        focusObjectiveEmbedding,
+                        chunkEmbedding);
+
+                if (similarity >
+                    bestSemantic)
+                {
+                    bestSemantic =
+                        similarity;
+
+                    bestExcerpt =
+                        chunk;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(
+                    $"[BrowserExplore] PAGE SEMANTIC FALLBACK | " +
+                    $"Type={ex.GetType().Name}");
+            }
+        }
+
+        string lexicalSource =
+            string.Join(
+                "\n",
+                inspection.Title,
+                inspection.Text,
+                string.Join(
+                    " ",
+                    inspection.Tables.Select(table =>
+                        table.Caption
+                        +
+                        " "
+                        +
+                        string.Join(
+                            " ",
+                            table.Headers))));
+
+        double lexical =
+            LexicalCoverage(
+                rootObjective,
+                lexicalSource);
+
+        string routeDescriptor =
+            string.Join(
+                " ",
+                inspection.Title,
+                RouteSemanticText(
+                    rawUrl));
+
+        double routeSemantic =
+            SafeObjectiveSimilarity(
+                rootObjectiveEmbedding,
+                focusObjectiveEmbedding,
+                routeDescriptor);
+
+        double score =
+            Math.Clamp(
+                bestSemantic *
+                    0.72
+                +
+                lexical *
+                    0.16
+                +
+                routeSemantic *
+                    0.12
+                -
+                depth *
+                    0.02,
+                0.0,
+                1.0);
+
+        return new ExploreObservation(
+            inspection,
+            rawUrl,
+            depth,
+            score,
+            bestExcerpt,
+            contentEmbeddings);
+    }
+
+    private double SafeObjectiveSimilarity(
+        SemanticEmbedding rootObjectiveEmbedding,
+        SemanticEmbedding? focusObjectiveEmbedding,
+        string candidate)
+    {
+        if (string.IsNullOrWhiteSpace(
+                candidate))
+        {
+            return 0.0;
+        }
+
+        try
+        {
+            SemanticEmbedding candidateEmbedding =
+                _semantic.Encode(
+                    candidate);
+
+            return CombinedObjectiveSimilarity(
+                rootObjectiveEmbedding,
+                focusObjectiveEmbedding,
+                candidateEmbedding);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(
+                $"[BrowserExplore] SEMANTIC FALLBACK | " +
+                $"Type={ex.GetType().Name}");
+
+            return 0.0;
+        }
+    }
+
+    private static double CombinedObjectiveSimilarity(
+        SemanticEmbedding rootObjectiveEmbedding,
+        SemanticEmbedding? focusObjectiveEmbedding,
+        SemanticEmbedding candidateEmbedding)
+    {
+        double root =
+            Math.Clamp(
+                NIRASemanticSimilarity.Cosine(
+                    rootObjectiveEmbedding,
+                    candidateEmbedding),
+                0.0,
+                1.0);
+
+        if (focusObjectiveEmbedding ==
+            null)
+        {
+            return root;
+        }
+
+        double focus =
+            Math.Clamp(
+                NIRASemanticSimilarity.Cosine(
+                    focusObjectiveEmbedding,
+                    candidateEmbedding),
+                0.0,
+                1.0);
+
+        // The model may narrow the next sub-question, but it cannot silently
+        // replace the human's actual objective while browsing.
+        return Math.Clamp(
+            root *
+                0.86
+            +
+            focus *
+                0.14,
+            0.0,
+            1.0);
+    }
+
+    private static List<string> BuildPageChunks(
+        NIRABrowserInspection inspection)
+    {
+        List<string> chunks =
+            new();
+
+        // SiteName/origin/canonical URL are intentionally NOT semantic page
+        // evidence here. They are shared chrome across a site and previously
+        // caused every route on a named site to look relevant to the objective.
+        if (!string.IsNullOrWhiteSpace(
+                inspection.Title))
+        {
+            chunks.Add(
+                inspection.Title.Trim());
+        }
+
+        string text =
+            inspection.Text
+                ?? string.Empty;
+
+        for (int offset = 0;
+             offset < text.Length &&
+             chunks.Count <
+                 MaximumPageTextChunks;
+             offset +=
+                 PageTextChunkCharacters)
+        {
+            int length =
+                Math.Min(
+                    PageTextChunkCharacters,
+                    text.Length -
+                        offset);
+
+            string chunk =
+                text.Substring(
+                    offset,
+                    length)
+                .Trim();
+
+            if (!string.IsNullOrWhiteSpace(
+                    chunk))
+            {
+                chunks.Add(
+                    chunk);
+            }
+        }
+
+        foreach (NIRABrowserTableSnapshot table in
+                 inspection.Tables.Take(
+                     4))
+        {
+            string structured =
+                string.Join(
+                    " ",
+                    table.Caption,
+                    string.Join(
+                        " ",
+                        table.Headers),
+                    string.Join(
+                        " ",
+                        table.Rows
+                            .Take(
+                                8)
+                            .SelectMany(
+                                row =>
+                                    row)));
+
+            if (!string.IsNullOrWhiteSpace(
+                    structured))
+            {
+                chunks.Add(
+                    structured);
+            }
+        }
+
+        return chunks;
+    }
+
+    private static string BuildLinkDescriptor(
+        NIRABrowserInteractiveElement element,
+        string rawUrl)
+    {
+        return string.Join(
+            " ",
+            element.Name,
+            element.Role,
+            RouteSemanticText(
+                rawUrl));
+    }
+
+    private static string RouteSemanticText(
+        string rawUrl)
+    {
+        if (!Uri.TryCreate(
+                rawUrl,
+                UriKind.Absolute,
+                out Uri? uri))
+        {
+            return string.Empty;
+        }
+
+        string path =
+            Uri.UnescapeDataString(
+                uri.AbsolutePath)
+            .Replace('-', ' ')
+            .Replace('_', ' ')
+            .Replace('/', ' ')
+            .Trim();
+
+        return path;
+    }
+
+    private static double LexicalCoverage(
+        string objective,
+        string candidate)
+    {
+        string[] tokens =
+            Tokenize(
+                objective);
+
+        if (tokens.Length ==
+            0)
+        {
+            return 0.0;
+        }
+
+        string haystack =
+            candidate
+                .ToLowerInvariant();
+
+        double totalWeight =
+            0.0;
+
+        double matchedWeight =
+            0.0;
+
+        foreach (string token in
+                 tokens)
+        {
+            double weight =
+                Math.Clamp(
+                    token.Length,
+                    3,
+                    12);
+
+            totalWeight +=
+                weight;
+
+            if (haystack.Contains(
+                    token,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                matchedWeight +=
+                    weight;
+            }
+        }
+
+        return totalWeight <=
+               double.Epsilon
+            ? 0.0
+            : Math.Clamp(
+                matchedWeight /
+                totalWeight,
+                0.0,
+                1.0);
+    }
+
+    private static string[] Tokenize(
+        string value)
+    {
+        StringBuilder normalized =
+            new();
+
+        foreach (char character in
+                 value
+                     .ToLowerInvariant())
+        {
+            normalized.Append(
+                char.IsLetterOrDigit(
+                    character)
+                    ? character
+                    : ' ');
+        }
+
+        return normalized
+            .ToString()
+            .Split(
+                ' ',
+                StringSplitOptions.RemoveEmptyEntries |
+                StringSplitOptions.TrimEntries)
+            .Where(token =>
+                token.Length >=
+                    3)
+            .Distinct(
+                StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static bool TrySameOrigin(
+        string origin,
+        string rawUrl)
+    {
+        if (!Uri.TryCreate(
+                rawUrl,
+                UriKind.Absolute,
+                out Uri? uri)
+            ||
+            uri.Scheme is not ("http" or "https"))
+        {
+            return false;
+        }
+
+        return string.Equals(
+            uri.GetLeftPart(
+                UriPartial.Authority),
+            origin,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeExplorationUrl(
+        string rawUrl)
+    {
+        if (!Uri.TryCreate(
+                rawUrl,
+                UriKind.Absolute,
+                out Uri? uri))
+        {
+            return rawUrl.Trim();
+        }
+
+        UriBuilder builder =
+            new(
+                uri)
+            {
+                Fragment =
+                    string.Empty
+            };
+
+        return builder
+            .Uri
+            .AbsoluteUri;
+    }
+
+    private static bool HasMeaningfulEvidence(
+        NIRABrowserInspection inspection)
+    {
+        return !string.IsNullOrWhiteSpace(
+                   inspection.Text)
+               ||
+               inspection.Tables.Count >
+                   0
+               ||
+               inspection.Forms.Count >
+                   0
+               ||
+               inspection.Elements.Count >
+                   0;
+    }
+
+    private static bool TryLearnedRoute(
+        IReadOnlyDictionary<string, NIRABrowserRouteKnowledge> learnedRoutes,
+        string rawUrl,
+        out NIRABrowserRouteKnowledge? knowledge)
+    {
+        string routeKey =
+            NIRABrowserSiteKnowledgeStore.RouteKey(
+                rawUrl);
+
+        if (learnedRoutes.TryGetValue(
+                routeKey,
+                out NIRABrowserRouteKnowledge? found))
+        {
+            knowledge =
+                found;
+            return true;
+        }
+
+        knowledge =
+            null;
+        return false;
+    }
+
+    private static void AppendLearnedRouteSummary(
+        StringBuilder output,
+        IReadOnlyDictionary<string, NIRABrowserRouteKnowledge> learnedRoutes)
+    {
+        if (learnedRoutes.Count ==
+            0)
+        {
+            return;
+        }
+
+        output.AppendLine();
+        output.AppendLine(
+            "LEARNED_ROUTE_CONTENT_PRIORS:");
+
+        foreach (NIRABrowserRouteKnowledge learned in
+                 learnedRoutes.Values
+                     .OrderByDescending(
+                         item =>
+                             item.ContentSimilarity)
+                     .ThenByDescending(
+                         item =>
+                             item.Observations)
+                     .Take(
+                         8))
+        {
+            output
+                .Append("- Route='")
+                .Append(
+                    SafeExploreText(
+                        learned.RouteKey,
+                        360))
+                .Append("' | ContentSimilarity=")
+                .Append(
+                    learned.ContentSimilarity.ToString(
+                        "F3",
+                        System.Globalization.CultureInfo.InvariantCulture))
+                .Append(" | Observations=")
+                .Append(
+                    learned.Observations)
+                .AppendLine();
+        }
+    }
+
+    private string BuildRunObjectiveKey(
+        NIRAAuthorityExecutionContext authorityContext,
+        string origin,
+        string rootObjective)
+    {
+        if (!authorityContext.UserInitiated ||
+            authorityContext.RunId ==
+                Guid.Empty)
+        {
+            // Non-user/browser-internal work is not globally saturated by an
+            // unrelated interactive run.
+            return string.Empty;
+        }
+
+        return string.Join(
+            "|",
+            authorityContext.RunId.ToString("D"),
+            origin,
+            rootObjective.Trim());
+    }
+
+    private static string BuildCurrentEvidenceKey(
+        string runObjectiveKey,
+        string rawUrl,
+        string documentHash)
+    {
+        if (string.IsNullOrWhiteSpace(
+                runObjectiveKey))
+        {
+            return string.Empty;
+        }
+
+        return string.Join(
+            "|",
+            runObjectiveKey,
+            NIRABrowserSiteKnowledgeStore.RouteKey(
+                rawUrl),
+            string.IsNullOrWhiteSpace(
+                documentHash)
+                ? "no-hash"
+                : documentHash);
+    }
+
+    private bool MarkCurrentEvidenceReturned(
+        string key)
+    {
+        if (string.IsNullOrWhiteSpace(
+                key))
+        {
+            return true;
+        }
+
+        lock (_runStateSync)
+        {
+            PruneRunState_NoLock();
+
+            if (_currentEvidenceReturns.ContainsKey(
+                    key))
+            {
+                return false;
+            }
+
+            _currentEvidenceReturns[key] =
+                DateTimeOffset.UtcNow;
+
+            return true;
+        }
+    }
+
+    private bool IsBroadExplorationCompleted(
+        string key)
+    {
+        if (string.IsNullOrWhiteSpace(
+                key))
+        {
+            return false;
+        }
+
+        lock (_runStateSync)
+        {
+            PruneRunState_NoLock();
+
+            return _broadExplorationRuns.ContainsKey(
+                key);
+        }
+    }
+
+    private void MarkBroadExplorationCompleted(
+        string key)
+    {
+        if (string.IsNullOrWhiteSpace(
+                key))
+        {
+            return;
+        }
+
+        lock (_runStateSync)
+        {
+            PruneRunState_NoLock();
+
+            _broadExplorationRuns[key] =
+                DateTimeOffset.UtcNow;
+        }
+    }
+
+    private void PruneRunState_NoLock()
+    {
+        DateTimeOffset cutoff =
+            DateTimeOffset.UtcNow -
+            TimeSpan.FromHours(
+                3);
+
+        foreach (string key in
+                 _broadExplorationRuns
+                     .Where(pair =>
+                         pair.Value <
+                             cutoff)
+                     .Select(pair =>
+                         pair.Key)
+                     .ToArray())
+        {
+            _broadExplorationRuns.Remove(
+                key);
+        }
+
+        foreach (string key in
+                 _currentEvidenceReturns
+                     .Where(pair =>
+                         pair.Value <
+                             cutoff)
+                     .Select(pair =>
+                         pair.Key)
+                     .ToArray())
+        {
+            _currentEvidenceReturns.Remove(
+                key);
+        }
+    }
+
+    private static string SafeExploreText(
+        string? value,
+        int maximum)
+    {
+        string clean =
+            (value ?? string.Empty)
+                .Replace('\r', ' ')
+                .Replace('\n', ' ')
+                .Trim();
+
+        return clean.Length <=
+               maximum
+            ? clean
+            : clean[..Math.Max(
+                0,
+                maximum - 3)] +
+              "...";
+    }
+
+    private sealed record ExploreCandidate(
+        string RawUrl,
+        int Depth,
+        double Score,
+        string Label);
+
+    private sealed record ExploreObservation(
+        NIRABrowserInspection Inspection,
+        string RawUrl,
+        int Depth,
+        double Score,
+        string RelevantExcerpt,
+        IReadOnlyList<SemanticEmbedding> ContentEmbeddings);
+}
+
 public sealed class NIRABrowserInspectCapabilityHandler : INIRACapabilityHandler
 {
     private readonly NIRABrowserService _browser;
-    private readonly object _observationSync = new();
-    private readonly Dictionary<Guid, (string Url, string ContentHash)> _previousByPage = new();
-    public NIRABrowserInspectCapabilityHandler(NIRABrowserService browser) => _browser = browser;
+
+    public NIRABrowserInspectCapabilityHandler(
+        NIRABrowserService browser) =>
+        _browser = browser;
     public NIRACapabilityDescriptor Descriptor { get; } = new()
     {
         Id = NIRACapabilityIds.BrowserInspect,
@@ -643,33 +2499,57 @@ public sealed class NIRABrowserInspectCapabilityHandler : INIRACapabilityHandler
     public async Task<NIRACapabilityHandlerResult> ExecuteAsync(NIRACapabilityRequest request, CancellationToken cancellationToken = default)
     {
         Guid? pageId = NIRABrowserCapabilityFormatting.OptionalPageId(request);
+
+        // browser.inspect is a read-only observation. A model-provided PageId
+        // can become stale across a redirect or can be copied incorrectly.
+        // Never let that bookkeeping error turn a successful authenticated
+        // session into a fake credential blocker. If the supplied ID is not a
+        // live page owned by THIS task, rebound only to the runtime-tracked
+        // active owned page. Consequential actions do NOT get this repair.
+        if (pageId is Guid requestedPage &&
+            !_browser.TryGetAuthorizationOrigin(requestedPage, out _))
+        {
+            Guid? activePage =
+                _browser.TryGetActiveOwnedPageId();
+
+            if (activePage is Guid livePage &&
+                livePage != requestedPage)
+            {
+                Debug.WriteLine(
+                    $"[BrowserFlow] INSPECT PAGE REBOUND | " +
+                    $"Requested={requestedPage:D} | Active={livePage:D}");
+
+                pageId =
+                    livePage;
+            }
+        }
+
         int maxElements = NIRACapabilityArguments.GetInteger(request, "maxElements", 100, 1, 180);
         int maxText = NIRACapabilityArguments.GetInteger(request, "maxTextChars", 8000, 1000, 16000);
-        NIRABrowserInspection inspection = await _browser.InspectAsync(pageId, maxElements, maxText, cancellationToken);
-        bool unchanged;
-        lock (_observationSync)
-        {
-            unchanged = _previousByPage.TryGetValue(inspection.PageId, out var prior) &&
-                string.Equals(prior.Url, inspection.Url, StringComparison.Ordinal) &&
-                string.Equals(prior.ContentHash, inspection.ContentSha256, StringComparison.Ordinal);
-            _previousByPage[inspection.PageId] = (inspection.Url, inspection.ContentSha256);
-        }
+        NIRABrowserInspection inspection = await _browser.InspectAsync(
+            pageId,
+            maxElements,
+            maxText,
+            cancellationToken);
+
+        bool unchanged =
+            !inspection.DocumentChangedSincePreviousObservation;
+
         bool healthyDocument = Uri.TryCreate(inspection.Url, UriKind.Absolute, out Uri? inspectedUri) &&
             (inspectedUri.Scheme == Uri.UriSchemeHttp || inspectedUri.Scheme == Uri.UriSchemeHttps);
         return new NIRACapabilityHandlerResult
         {
             Succeeded = healthyDocument,
             Summary = !healthyDocument
-                ? "BrowserErrorDocument: the tab is on a browser error page, not the student portal or target site. " +
+                ? "BrowserErrorDocument: the tab is on a browser error page, not the requested target site. " +
                   "Do not authenticate or repeat inspection here; recover the prior verified route."
                 : unchanged
                 ? "No new visible document evidence since the previous explicit inspection. " +
                   "Use the current grounded elements to pursue a different link or report the actual blocker; repeated inspection is not progress."
                 : $"Inspected browser page '{inspection.Title}' with {inspection.Elements.Count} interactive element(s); InspectionId={inspection.InspectionId:D}.",
-            Output = (unchanged
-                ? "OBSERVATION_DELTA=UNCHANGED: no new visible content or route. Do not inspect this page again without an actual change or a specifically different evidence need.\n"
-                : "OBSERVATION_DELTA=CHANGED_OR_FIRST_OBSERVATION\n") +
-                NIRABrowserCapabilityFormatting.Inspection(inspection)
+            Output =
+                NIRABrowserCapabilityFormatting.Inspection(
+                    inspection)
         };
     }
 }
@@ -677,54 +2557,212 @@ public sealed class NIRABrowserInspectCapabilityHandler : INIRACapabilityHandler
 public sealed class NIRABrowserClickCapabilityHandler : INIRACapabilityHandler
 {
     private readonly NIRABrowserService _browser;
-    public NIRABrowserClickCapabilityHandler(NIRABrowserService browser) => _browser = browser;
-    public NIRACapabilityDescriptor Descriptor { get; } = new()
-    {
-        Id = NIRACapabilityIds.BrowserClick,
-        Description = "Invoke one exact DOM element ref from the latest browser.inspect result. This proves only that Playwright executed the click; completion-relevant site state must be verified separately. The runtime authorizes the action against the page's current origin.",
-        DefaultRisk = NIRACapabilityRisk.Execute,
-        Parameters = new[]
+
+    public NIRABrowserClickCapabilityHandler(
+        NIRABrowserService browser) =>
+        _browser =
+            browser;
+
+    public NIRACapabilityDescriptor Descriptor { get; } =
+        new()
         {
-            NIRABrowserCapabilityFormatting.Parameter("pageId", "string", true, "Exact page GUID returned by browser.current/browser.inspect."),
-            NIRABrowserCapabilityFormatting.Parameter("ref", "string", true, "Exact temporary element ref from the latest browser.inspect."),
-            NIRABrowserCapabilityFormatting.Parameter("timeoutSeconds", "integer", false, "Action timeout 1-60 seconds. Default 30.")
+            Id =
+                NIRACapabilityIds.BrowserClick,
+
+            Description =
+                "Invoke one exact DOM element ref from the latest browser.inspect result. " +
+                "If that ref is an ordinary grounded HTTP/HTTPS link, the runtime safely " +
+                "canonicalizes it to read-only link following instead of requiring a " +
+                "fragile visible DOM click. Non-link controls remain state-changing clicks " +
+                "and require normal authorization.",
+
+            DefaultRisk =
+                NIRACapabilityRisk.Execute,
+
+            Parameters =
+                new[]
+                {
+                    NIRABrowserCapabilityFormatting.Parameter(
+                        "pageId",
+                        "string",
+                        false,
+                        "Optional exact page GUID. Omit to use this task's runtime-tracked active owned page."),
+
+                    NIRABrowserCapabilityFormatting.Parameter(
+                        "ref",
+                        "string",
+                        true,
+                        "Exact temporary element ref from the latest browser.inspect."),
+
+                    NIRABrowserCapabilityFormatting.Parameter(
+                        "timeoutSeconds",
+                        "integer",
+                        false,
+                        "Action/navigation timeout 1-60 seconds. Default 30.")
+                }
+        };
+
+    public NIRACapabilityRisk ResolveRisk(
+        NIRACapabilityRequest request)
+    {
+        try
+        {
+            Guid? pageId =
+                NIRABrowserCapabilityFormatting.OptionalPageId(
+                    request)
+                ??
+                _browser.TryGetActiveOwnedPageId();
+
+            string? elementRef =
+                NIRACapabilityArguments.GetOptionalString(
+                    request,
+                    "ref",
+                    80);
+
+            if (pageId is Guid page &&
+                !string.IsNullOrWhiteSpace(elementRef) &&
+                _browser.TryGetGroundedHttpHref(
+                    page,
+                    elementRef,
+                    out _))
+            {
+                return NIRACapabilityRisk.Observe;
+            }
         }
-    };
-    public NIRACapabilityRisk ResolveRisk(NIRACapabilityRequest request) => NIRACapabilityRisk.Execute;
-    public async Task<NIRACapabilityHandlerResult> ExecuteAsync(NIRACapabilityRequest request, CancellationToken cancellationToken = default)
-    {
-        Guid pageId = NIRABrowserCapabilityFormatting.RequiredPageId(request);
-        string elementRef = NIRACapabilityArguments.RequireString(request, "ref", 80);
-        int timeout = NIRACapabilityArguments.GetInteger(request, "timeoutSeconds", 30, 1, 60);
-        NIRABrowserPageSnapshot page = await _browser.ClickAsync(
-            pageId, elementRef, timeout, cancellationToken);
-        if (page.ActionEvidence is { ActionApplied: false } refused)
+        catch
         {
-            // A known safety refusal is a normal failed capability result.
-            // No action was dispatched; do not throw or re-inspect the page.
+            // Malformed arguments are rejected by normal validation/preflight.
+            // Never downgrade an unclassifiable request.
+        }
+
+        return NIRACapabilityRisk.Execute;
+    }
+
+    public async Task<NIRACapabilityHandlerResult> ExecuteAsync(
+        NIRACapabilityRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        Guid pageId =
+            NIRABrowserCapabilityFormatting.RequiredPageId(
+                request);
+
+        string elementRef =
+            NIRACapabilityArguments.RequireString(
+                request,
+                "ref",
+                80);
+
+        int timeout =
+            NIRACapabilityArguments.GetInteger(
+                request,
+                "timeoutSeconds",
+                30,
+                1,
+                60);
+
+        // Ordinary grounded links are navigation, not a reason to depend on
+        // element visibility or JavaScript clickability.
+        if (_browser.TryGetGroundedHttpHref(
+                pageId,
+                elementRef,
+                out _))
+        {
+            NIRABrowserPageSnapshot followed =
+                await _browser.FollowAsync(
+                    pageId,
+                    elementRef,
+                    newPage: false,
+                    timeout,
+                    cancellationToken);
+
+            string destinationEvidence =
+                await NIRABrowserCapabilityFormatting.TryInspectDestinationAsync(
+                    _browser,
+                    followed,
+                    cancellationToken);
+
+            bool documentOk =
+                followed.Navigation?.MainDocumentHttpStatus is not >= 400;
+
             return new NIRACapabilityHandlerResult
             {
-                Succeeded = false,
-                Summary = refused.LocalVerification,
-                Output = NIRABrowserCapabilityFormatting.Page(page),
-                ChangedSystemState = false
+                Succeeded =
+                    documentOk,
+
+                HttpStatusCode =
+                    followed.Navigation?.MainDocumentHttpStatus,
+
+                Summary =
+                    documentOk
+                        ? $"Grounded HTTP link ref '{elementRef}' was followed as read-only navigation. Examine the included fresh destination evidence."
+                        : $"Grounded HTTP link ref '{elementRef}' reached HTTP {followed.Navigation?.MainDocumentHttpStatus}; do not claim the requested destination succeeded.",
+
+                Output =
+                    NIRABrowserCapabilityFormatting.Page(
+                        followed)
+                    +
+                    destinationEvidence,
+
+                ChangedSystemState =
+                    false
             };
         }
-        // The click and its observable destination are one bounded work item.
-        // Its inspection yields NEW refs; never ask the model to click an old ref.
-        string observedDestination = await NIRABrowserCapabilityFormatting.TryInspectDestinationAsync(
-            _browser, page, cancellationToken);
+
+        NIRABrowserPageSnapshot page =
+            await _browser.ClickAsync(
+                pageId,
+                elementRef,
+                timeout,
+                cancellationToken);
+
+        if (page.ActionEvidence is { ActionApplied: false } refused)
+        {
+            return new NIRACapabilityHandlerResult
+            {
+                Succeeded =
+                    false,
+
+                Summary =
+                    refused.LocalVerification,
+
+                Output =
+                    NIRABrowserCapabilityFormatting.Page(
+                        page),
+
+                ChangedSystemState =
+                    false
+            };
+        }
+
+        string observedDestination =
+            await NIRABrowserCapabilityFormatting.TryInspectDestinationAsync(
+                _browser,
+                page,
+                cancellationToken);
+
         return new NIRACapabilityHandlerResult
         {
-            Succeeded = true,
-            Summary = page.ActionEvidence?.ObservedPageChange == false
-                ? $"Clicked '{elementRef}', but the route, visible text, non-secret form state and popup list did not change. Inspect the fresh evidence and change the navigation approach; do not count this as task progress or mechanically repeat it."
-                : $"Clicked browser element ref '{elementRef}'. Examine the included fresh page evidence before choosing another action; a click alone does not prove the original task is complete.",
-            Output = NIRABrowserCapabilityFormatting.Page(page) + observedDestination,
-            ChangedSystemState = page.ActionEvidence?.ObservedPageChange != false
+            Succeeded =
+                true,
+
+            Summary =
+                page.ActionEvidence?.ObservedPageChange == false
+                    ? $"Clicked '{elementRef}', but the route, visible text, non-secret form state and popup list did not change. Inspect the fresh evidence and change the navigation approach; do not count this as task progress or mechanically repeat it."
+                    : $"Clicked browser element ref '{elementRef}'. Examine the included fresh page evidence before choosing another action; a click alone does not prove the original task is complete.",
+
+            Output =
+                NIRABrowserCapabilityFormatting.Page(
+                    page)
+                +
+                observedDestination,
+
+            ChangedSystemState =
+                page.ActionEvidence?.ObservedPageChange !=
+                false
         };
     }
 }
+
 
 public sealed class NIRABrowserFillCapabilityHandler : INIRACapabilityHandler
 {
@@ -882,8 +2920,8 @@ public sealed class NIRABrowserAuthenticateCapabilityHandler : INIRACapabilityHa
         }
         string? observedLoginRoute = _browser.TryGetObservedPageRoute(pageId, origin);
 
-        // The broker performs route-aware account selection. An admin account
-        // must NOT cause navigation away from a user-requested student page.
+        // The broker performs route-aware account selection. A saved account for
+        // a different role/service route must NOT redirect the user's current target.
         // If no matching account exists, the secure UI can collect a new one.
 
         Debug.WriteLine($"[BrowserFlow] AUTH PREFLIGHT PASSED | Page={pageId:D} | " +
@@ -959,6 +2997,32 @@ public sealed class NIRABrowserAuthenticateCapabilityHandler : INIRACapabilityHa
         {
             NIRABrowserInspection afterLogin = await _browser.InspectAsync(
                 pageId, 120, 12000, cancellationToken);
+
+            // A successful navigation can expose the new URL slightly before a
+            // client-rendered dashboard has produced meaningful DOM/text.
+            // When the login form is already gone but the first destination
+            // observation is empty, allow one short bounded settle and inspect
+            // the SAME authoritative page again. This is observation-only and
+            // never repeats credential submission.
+            if (!afterLogin.PasswordControlObserved &&
+                afterLogin.Elements.Count == 0 &&
+                string.IsNullOrWhiteSpace(afterLogin.Text))
+            {
+                Debug.WriteLine(
+                    $"[BrowserFlow] AUTH DESTINATION SETTLING | " +
+                    $"Page={pageId:D} | Url={afterLogin.Url}");
+
+                await Task.Delay(
+                    750,
+                    cancellationToken);
+
+                afterLogin = await _browser.InspectAsync(
+                    pageId,
+                    120,
+                    12000,
+                    cancellationToken);
+            }
+
             nextEvidence = NIRABrowserCapabilityFormatting.Inspection(afterLogin);
             // Do not promote a rejected credential's route as this account's
             // known login location. A changed document without a password

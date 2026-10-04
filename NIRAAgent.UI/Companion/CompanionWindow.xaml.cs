@@ -368,6 +368,9 @@ public partial class CompanionWindow
         _mainWindow.IsVisibleChanged +=
             MainWindow_IsVisibleChanged;
 
+        _mainWindow.SidebarLayoutChanged +=
+            MainWindow_SidebarLayoutChanged;
+
         _mainWindow.Closed +=
             MainWindow_Closed;
 
@@ -484,6 +487,42 @@ public partial class CompanionWindow
     }
 
 
+    private void MainWindow_SidebarLayoutChanged(
+        object? sender,
+        EventArgs e)
+    {
+        if (_mainWindow ==
+            null)
+        {
+            return;
+        }
+
+        if (!_mainWindow.IsActive)
+        {
+            return;
+        }
+
+        if (!_mainWindow.IsPresenceSidebarExpanded)
+        {
+            CancelProgrammaticMovement();
+
+            if (IsVisible)
+            {
+                Hide();
+            }
+
+            _presence.SetVisualState(
+                false,
+                false);
+
+            return;
+        }
+
+        ForceVisibleForMainDock();
+        DockToMainWindow();
+    }
+
+
     private void MainWindow_Closed(
         object? sender,
         EventArgs e)
@@ -511,6 +550,23 @@ public partial class CompanionWindow
         {
             return;
         }
+
+        if (!_mainWindow.IsPresenceSidebarExpanded)
+        {
+            CancelProgrammaticMovement();
+
+            if (IsVisible)
+            {
+                Hide();
+            }
+
+            _presence.SetVisualState(
+                false,
+                false);
+
+            return;
+        }
+
 
         if (!TryResolveMainWindowDockTarget(
                 out int targetLeft,
@@ -553,6 +609,7 @@ public partial class CompanionWindow
             return;
         }
 
+        ForceVisibleForMainDock();
         SnapToMainWindowDock();
     }
 
@@ -848,6 +905,9 @@ public partial class CompanionWindow
 
         _mainWindow.IsVisibleChanged -=
             MainWindow_IsVisibleChanged;
+
+        _mainWindow.SidebarLayoutChanged -=
+            MainWindow_SidebarLayoutChanged;
 
         _mainWindow.Closed -=
             MainWindow_Closed;

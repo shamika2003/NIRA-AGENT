@@ -291,7 +291,9 @@ public sealed class MainWindowViewModel
                 string.Empty);
 
 
-        assistantMessage.ProgressText = "Working out the next step…";
+        // Start with NIRA's living dots only.
+        // Text appears later only when the runtime/model emits a real progress update.
+        assistantMessage.BeginJourney();
         Messages.Add(
             assistantMessage);
 
@@ -341,7 +343,7 @@ public sealed class MainWindowViewModel
                     continue;
                 }
                 if (chunk.Type == NIRAOutputChunkType.Text)
-                    assistantMessage.ProgressText = string.Empty;
+                    assistantMessage.BeginProgressFadeOut();
                 HandleChunk(
                     assistantMessage,
                     chunk,
@@ -357,11 +359,20 @@ public sealed class MainWindowViewModel
                 _settings.Current.VoiceEnabled);
 
 
-            assistantMessage.ProgressText = string.Empty;
-            if (assistantMessage.IsEmpty)
+            if (assistantMessage.HasContent ||
+                assistantMessage.HasRichElements ||
+                assistantMessage.HasVisualArtifacts)
             {
-                Messages.Remove(
-                    assistantMessage);
+                assistantMessage.BeginProgressFadeOut();
+            }
+            else
+            {
+                assistantMessage.ClearProgressImmediately();
+                if (assistantMessage.IsEmpty)
+                {
+                    Messages.Remove(
+                        assistantMessage);
+                }
             }
         }
         catch (OperationCanceledException)
@@ -382,12 +393,23 @@ public sealed class MainWindowViewModel
 
             assistantMessage.Content =
                 $"Sorry, something went wrong.\n\n{ex.Message}";
+            assistantMessage.BeginProgressFadeOut();
         }
         finally
         {
-            assistantMessage.ProgressText = string.Empty;
-            if (assistantMessage.IsEmpty)
-                Messages.Remove(assistantMessage);
+            if (assistantMessage.HasContent ||
+                assistantMessage.HasRichElements ||
+                assistantMessage.HasVisualArtifacts)
+            {
+                assistantMessage.BeginProgressFadeOut();
+            }
+            else
+            {
+                assistantMessage.ClearProgressImmediately();
+                if (assistantMessage.IsEmpty)
+                    Messages.Remove(assistantMessage);
+            }
+
             IsProcessing =
                 false;
         }
@@ -506,10 +528,19 @@ public sealed class MainWindowViewModel
 
 
                 state.SpeechState.Reset();
-                // Transient progress is not a permanent chat reply.
-                state.Message.ProgressText = string.Empty;
-                if (state.Message.IsEmpty)
-                    Messages.Remove(state.Message);
+                // Transient progress fades away when a real result exists.
+                if (state.Message.HasContent ||
+                    state.Message.HasRichElements ||
+                    state.Message.HasVisualArtifacts)
+                {
+                    state.Message.BeginProgressFadeOut();
+                }
+                else
+                {
+                    state.Message.ClearProgressImmediately();
+                    if (state.Message.IsEmpty)
+                        Messages.Remove(state.Message);
+                }
 
                 _backgroundResponses.Remove(
                     chunk.RunId);
@@ -536,7 +567,7 @@ public sealed class MainWindowViewModel
                 chunk.RunId);
 
 
-        responseState.Message.ProgressText = string.Empty;
+        responseState.Message.BeginProgressFadeOut();
         HandleChunk(
             responseState.Message,
             chunk,
@@ -564,6 +595,8 @@ public sealed class MainWindowViewModel
 
         message.AssociateRun(
             runId);
+
+        message.BeginJourney();
 
         Messages.Add(
             message);
@@ -886,6 +919,3 @@ public sealed class MainWindowViewModel
         }
     }
 }
-
-
-

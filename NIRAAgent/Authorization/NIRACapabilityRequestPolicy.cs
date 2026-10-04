@@ -248,12 +248,44 @@ public sealed class NIRACapabilityRequestPolicy
             string? path = NIRACapabilityArguments.GetOptionalString(request, name, 32760);
             if (path != null) paths.Add(path);
         }
-        // filesystem.locate traverses the requested root. Treat that root
-        // exactly like any other filesystem target for protected-directory,
-        // sensitive-location and scope checks; a different argument name must
-        // never bypass the existing authority boundary.
+        // filesystem.locate may either use one explicit grounded root or,
+        // when root is omitted, perform one bounded whole-PC observation across
+        // all ready fixed local drives. Expand that implicit scope HERE so the
+        // authority layer validates exactly what the handler will traverse.
+        // Do not require a synthetic root merely to satisfy authorization.
         if (request.CapabilityId == NIRACapabilityIds.FileLocate)
-            paths.Add(NIRACapabilityArguments.RequireString(request, "root", 32760));
+        {
+            string? locateRoot =
+                NIRACapabilityArguments.GetOptionalString(
+                    request,
+                    "root",
+                    32760);
+
+            if (!string.IsNullOrWhiteSpace(locateRoot))
+            {
+                paths.Add(locateRoot);
+            }
+            else
+            {
+                string[] fixedRoots =
+                    DriveInfo.GetDrives()
+                        .Where(drive =>
+                            drive.IsReady &&
+                            drive.DriveType == DriveType.Fixed)
+                        .Select(drive =>
+                            drive.RootDirectory.FullName)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToArray();
+
+                if (fixedRoots.Length == 0)
+                {
+                    throw new InvalidOperationException(
+                        "No ready fixed local drives are available for a whole-PC location search.");
+                }
+
+                paths.AddRange(fixedRoots);
+            }
+        }
         bool sensitive = false;
         foreach (string path in paths)
         {

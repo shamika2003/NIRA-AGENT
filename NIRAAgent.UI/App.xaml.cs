@@ -447,6 +447,11 @@ public partial class App : WpfApplication
 
             builder.Services.AddSingleton<
                 INIRACapabilityHandler,
+                NIRASystemStorageListCapabilityHandler>();
+
+
+            builder.Services.AddSingleton<
+                INIRACapabilityHandler,
                 NIRAShellExecuteCapabilityHandler>();
 
 
@@ -479,6 +484,14 @@ public partial class App : WpfApplication
             builder.Services.AddSingleton<
                 INIRACapabilityHandler,
                 NIRABrowserNavigateCapabilityHandler>();
+
+            builder.Services.AddSingleton<
+                INIRACapabilityHandler,
+                NIRABrowserBackCapabilityHandler>();
+
+            builder.Services.AddSingleton<
+                INIRACapabilityHandler,
+                NIRABrowserExploreCapabilityHandler>();
 
             builder.Services.AddSingleton<
                 INIRACapabilityHandler,

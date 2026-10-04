@@ -90,6 +90,14 @@ public sealed class NIRABrowserService : IAsyncDisposable
     private readonly Dictionary<string, CredentialSubmission> _credentialSubmissions =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<Guid, DateTimeOffset> _lastPageInspection = new();
+
+    // Runtime-wide per-page document evidence continuity. This is updated by
+    // EVERY InspectAsync call, including the inspections bundled with navigation
+    // and authentication capability results. It therefore detects a redundant
+    // explicit browser.inspect immediately after a bundled fresh inspection.
+    private readonly Dictionary<Guid, (string Url, string EvidenceSha256)>
+        _lastObservedDocumentEvidence = new();
+
     private readonly HashSet<string> _trustedRefreshUsed = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<Guid> _queryBearingNavigation = new();
 
@@ -237,6 +245,7 @@ public sealed class NIRABrowserService : IAsyncDisposable
                     _credentialAttemptRunsByScope.Clear();
                     _credentialSubmissions.Clear();
                     _lastPageInspection.Clear();
+                    _lastObservedDocumentEvidence.Clear();
                     _trustedRefreshUsed.Clear();
                     _queryBearingNavigation.Clear();
                 }
@@ -401,8 +410,193 @@ public sealed class NIRABrowserService : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Navigate one step backward in the task-owned page's real browser history.
+    /// This is a read-only navigation primitive: no model-invented URL is needed,
+    /// and the runtime keeps exact page ownership/route provenance.
+    /// </summary>
+    public async Task<NIRABrowserPageSnapshot> BackAsync(
+        Guid? pageId,
+        int timeoutSeconds,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+
+        timeoutSeconds =
+            Math.Clamp(
+                timeoutSeconds,
+                1,
+                120);
+
+        await _gate.WaitAsync(
+            cancellationToken);
+
+        try
+        {
+            EnsureOpen();
+
+            IPage page =
+                ResolvePage(
+                    pageId,
+                    allowActiveOwned: true);
+
+            Guid id =
+                EnsurePageId(
+                    page);
+
+            string beforeUrl =
+                page.Url;
+
+            ClearElementRefs(
+                id);
+
+            SetNavigation(
+                id,
+                new NIRABrowserNavigationEvidence
+                {
+                    RequestedUrl =
+                        "browser-history:back",
+
+                    FinalUrl =
+                        NavigationUrlForCognition(
+                            beforeUrl),
+
+                    FailureKind =
+                        "NavigationInProgress",
+
+                    OutcomeUncertain =
+                        true
+                });
+
+            IResponse? response;
+
+            try
+            {
+                response =
+                    await page.GoBackAsync(
+                        new PageGoBackOptions
+                        {
+                            WaitUntil =
+                                WaitUntilState.DOMContentLoaded,
+
+                            Timeout =
+                                timeoutSeconds *
+                                1000
+                        });
+
+                cancellationToken
+                    .ThrowIfCancellationRequested();
+            }
+            catch (OperationCanceledException)
+                when (cancellationToken.IsCancellationRequested)
+            {
+                SetNavigationFailure(
+                    id,
+                    page,
+                    "NavigationInterrupted");
+
+                throw;
+            }
+            catch (PlaywrightException ex)
+            {
+                SetNavigationFailure(
+                    id,
+                    page,
+                    "HistoryNavigationFailed");
+
+                throw new InvalidOperationException(
+                    "BrowserHistoryBackFailed: the current page could not move " +
+                    "to its previous history entry. Keep the current grounded " +
+                    "page evidence and choose another observed route.",
+                    ex);
+            }
+
+            if (response == null &&
+                string.Equals(
+                    beforeUrl,
+                    page.Url,
+                    StringComparison.Ordinal))
+            {
+                SetNavigation(
+                    id,
+                    new NIRABrowserNavigationEvidence
+                    {
+                        RequestedUrl =
+                            "browser-history:back",
+
+                        FinalUrl =
+                            NavigationUrlForCognition(
+                                page.Url),
+
+                        FailureKind =
+                            "NoPreviousHistoryEntry",
+
+                        OutcomeUncertain =
+                            false
+                    });
+
+                throw new InvalidOperationException(
+                    "BrowserHistoryBackUnavailable: this task-owned page has no " +
+                    "previous browser history entry. Use a grounded link or a " +
+                    "known observed route instead.");
+            }
+
+            ClearElementRefs(
+                id);
+
+            SetActivePage(
+                id);
+
+            UpdatePageOrigin(
+                id,
+                page.Url);
+
+            SetNavigation(
+                id,
+                new NIRABrowserNavigationEvidence
+                {
+                    RequestedUrl =
+                        "browser-history:back",
+
+                    FinalUrl =
+                        NavigationUrlForCognition(
+                            page.Url),
+
+                    MainDocumentHttpStatus =
+                        response?.Status,
+
+                    RedirectChain =
+                        response == null
+                            ? Array.Empty<string>()
+                            : BuildRedirectChain(
+                                response.Request),
+
+                    FailureKind =
+                        string.Empty,
+
+                    OutcomeUncertain =
+                        false
+                });
+
+            Debug.WriteLine(
+                $"[BrowserFlow] BACK | " +
+                $"Session={_sessionId:D} | " +
+                $"Page={id:D} | " +
+                $"From='{NavigationUrlForCognition(beforeUrl)}' | " +
+                $"To='{NavigationUrlForCognition(page.Url)}'");
+
+            return await BuildPageSnapshotAsync(
+                id,
+                page);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     public async Task<NIRABrowserPageSnapshot> FollowAsync(
-        Guid pageId,
+        Guid? pageId,
         string elementRef,
         bool newPage,
         int timeoutSeconds,
@@ -415,10 +609,43 @@ public sealed class NIRABrowserService : IAsyncDisposable
         try
         {
             EnsureOpen();
-            IPage sourcePage = ResolvePage(pageId);
+            IPage sourcePage = ResolvePage(
+                pageId,
+                allowActiveOwned: true);
             Guid sourceId = EnsurePageId(sourcePage);
             GroundedElementState grounded = ResolveGroundedElement(sourceId, cleanRef);
-            ILocator sourceLocator = await ValidateGroundedActionTargetAsync(sourceId, sourcePage, cleanRef);
+
+            // browser.follow is read-only navigation to the exact inspected href.
+            // It does NOT need the anchor to be visually clickable. Real pages often
+            // expose duplicate/hidden navigation links that remain authoritative DOM
+            // links even though Playwright's clickability checks reject them.
+            //
+            // We still require the exact latest grounded ref, one live DOM element,
+            // the same element type, the same href, and a non-disabled target.
+            ILocator sourceLocator =
+                ResolveRefLocator(
+                    sourceId,
+                    sourcePage,
+                    cleanRef);
+
+            if (await sourceLocator.CountAsync() != 1)
+            {
+                throw new InvalidOperationException(
+                    "StaleTarget: the grounded link is missing or ambiguous. Re-inspect the current page before following it.");
+            }
+
+            string liveTag =
+                await sourceLocator.EvaluateAsync<string>(
+                    "el => el.tagName.toLowerCase()");
+
+            if (!string.Equals(
+                    liveTag,
+                    grounded.Tag,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "StaleTarget: the grounded link element changed after inspection. Re-inspect the current page before following it.");
+            }
 
             if (grounded.Disabled)
             {
@@ -669,6 +896,8 @@ public sealed class NIRABrowserService : IAsyncDisposable
 
             string title = await SafeTitleAsync(page);
             string visibleUrl = RedactUrlForCognition(page.Url);
+
+            // Full inspection hash keeps the bounded interactive surface.
             string contentHash = ComputeSha256Hex(
                 string.Join(
                     "\n",
@@ -686,6 +915,85 @@ public sealed class NIRABrowserService : IAsyncDisposable
                         .Select(e => string.Join(":", e.Tag, e.InputType,
                             e.Name, e.ValuePreview, e.Checked, e.Disabled)))));
 
+            // Stable document-evidence hash intentionally excludes the
+            // maxElements-dependent interactive list. A larger inspect window
+            // must not be treated as a changed document when route/body/forms/
+            // tables are still the same.
+            string documentEvidenceHash = ComputeSha256Hex(
+                string.Join(
+                    "\n",
+                    visibleUrl,
+                    canonicalUrl,
+                    title,
+                    siteName,
+                    language,
+                    textSource,
+                    publishedAt,
+                    modifiedAt,
+                    string.Join("|", structuredDataTypes),
+                    bodyText,
+                    string.Join(
+                        "|",
+                        forms.Select(form =>
+                            string.Join(
+                                ":",
+                                form.Name,
+                                form.Method,
+                                form.Action,
+                                string.Join(
+                                    ",",
+                                    form.Fields
+                                        .Where(field => !field.SensitiveEntry)
+                                        .Select(field =>
+                                            string.Join(
+                                                "/",
+                                                field.Label,
+                                                field.Name,
+                                                field.Kind,
+                                                field.Required,
+                                                field.Disabled)))))),
+                    string.Join(
+                        "|",
+                        tables.Select(table =>
+                            string.Join(
+                                ":",
+                                table.Caption,
+                                string.Join(",", table.Headers),
+                                string.Join(
+                                    ";",
+                                    table.Rows.Select(row =>
+                                        string.Join(",", row))))))));
+
+            bool documentChangedSincePreviousObservation =
+                true;
+
+            lock (_stateSync)
+            {
+                if (_lastObservedDocumentEvidence.TryGetValue(
+                        id,
+                        out var previousDocument)
+                    &&
+                    string.Equals(
+                        previousDocument.Url,
+                        visibleUrl,
+                        StringComparison.Ordinal)
+                    &&
+                    string.Equals(
+                        previousDocument.EvidenceSha256,
+                        documentEvidenceHash,
+                        StringComparison.Ordinal))
+                {
+                    documentChangedSincePreviousObservation =
+                        false;
+                }
+
+                _lastObservedDocumentEvidence[id] =
+                    (
+                        visibleUrl,
+                        documentEvidenceHash
+                    );
+            }
+
             NIRABrowserInspection inspection =
                 new()
                 {
@@ -702,6 +1010,9 @@ public sealed class NIRABrowserService : IAsyncDisposable
                     ModifiedAt = modifiedAt,
                     StructuredDataTypes = structuredDataTypes,
                     ContentSha256 = contentHash,
+                    DocumentEvidenceSha256 = documentEvidenceHash,
+                    DocumentChangedSincePreviousObservation =
+                        documentChangedSincePreviousObservation,
                     Text = bodyText,
                     Elements = elements,
                     Forms = forms,
@@ -841,7 +1152,7 @@ public sealed class NIRABrowserService : IAsyncDisposable
             bool routeChanged = !string.Equals(beforeUrl, page.Url, StringComparison.Ordinal);
             bool? visibleChanged = beforeState == null || afterState == null
                 ? null : !string.Equals(beforeState, afterState, StringComparison.Ordinal);
-            // Some sites populate a timetable or result pane asynchronously.
+            // Some sites populate a result pane asynchronously.
             // A bounded local observation is cheaper than several 120B-model
             // calls and, critically, does NOT dispatch the click again.
             // Also re-scan popups: one may appear after the click has returned.
@@ -2209,6 +2520,8 @@ public sealed class NIRABrowserService : IAsyncDisposable
                 _navigation.Remove(stale);
                 _crashedPages.Remove(stale);
                 _uncertainActions.Remove(stale);
+                _lastPageInspection.Remove(stale);
+                _lastObservedDocumentEvidence.Remove(stale);
 
             }
 
@@ -3003,6 +3316,153 @@ public sealed class NIRABrowserService : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Trusted runtime helper for compound read-only browser primitives.
+    /// Returns the exact current URL only for a live page owned by THIS task.
+    /// The raw value never has to be inserted into cognition.
+    /// </summary>
+    public bool TryGetOwnedPageUrl(
+        Guid pageId,
+        out string url)
+    {
+        url =
+            string.Empty;
+
+        lock (_stateSync)
+        {
+            if (!_pages.TryGetValue(
+                    pageId,
+                    out IPage? page)
+                ||
+                page.IsClosed
+                ||
+                !_ownership.TryGetValue(
+                    pageId,
+                    out PageOwnership? ownership)
+                ||
+                ownership.OwnerKey !=
+                    CurrentOwnerKey())
+            {
+                return false;
+            }
+
+            url =
+                page.Url;
+
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Resolve the raw HTTP(S) destination behind an element ref that was
+    /// grounded by the latest inspection of THIS task-owned page.
+    /// This is intentionally not exposed as model-visible evidence; callers
+    /// should redact it before returning any URL to cognition.
+    /// </summary>
+    public bool TryGetGroundedHttpHref(
+        Guid pageId,
+        string elementRef,
+        out string absoluteUrl)
+    {
+        absoluteUrl =
+            string.Empty;
+
+        string clean;
+
+        try
+        {
+            clean =
+                NormalizeElementRef(
+                    elementRef);
+        }
+        catch
+        {
+            return false;
+        }
+
+        lock (_stateSync)
+        {
+            if (!_pages.TryGetValue(
+                    pageId,
+                    out IPage? page)
+                ||
+                page.IsClosed
+                ||
+                !_ownership.TryGetValue(
+                    pageId,
+                    out PageOwnership? ownership)
+                ||
+                ownership.OwnerKey !=
+                    CurrentOwnerKey()
+                ||
+                !_latestGroundedElements.TryGetValue(
+                    pageId,
+                    out Dictionary<string, GroundedElementState>? elements)
+                ||
+                !elements.TryGetValue(
+                    clean,
+                    out GroundedElementState? grounded)
+                ||
+                !string.Equals(
+                    page.Url,
+                    grounded.ObservedPageUrl,
+                    StringComparison.Ordinal)
+                ||
+                string.IsNullOrWhiteSpace(
+                    grounded.RawHref))
+            {
+                return false;
+            }
+
+            // Exploration inspects many anchors, including mailto:, javascript:,
+            // fragments and malformed hrefs. Reject non-HTTP destinations without
+            // throwing: first-chance exceptions here are expected data filtering,
+            // not exceptional runtime failures, and they polluted production logs.
+            string rawHref =
+                grounded.RawHref.Trim();
+
+            Uri? destination =
+                null;
+
+            if (Uri.TryCreate(
+                    rawHref,
+                    UriKind.Absolute,
+                    out Uri? absolute))
+            {
+                destination =
+                    absolute;
+            }
+            else if (Uri.TryCreate(
+                         page.Url,
+                         UriKind.Absolute,
+                         out Uri? baseUri)
+                     &&
+                     Uri.TryCreate(
+                         baseUri,
+                         rawHref,
+                         out Uri? relative))
+            {
+                destination =
+                    relative;
+            }
+
+            if (destination == null
+                ||
+                destination.Scheme is not ("http" or "https")
+                ||
+                !string.IsNullOrEmpty(
+                    destination.UserInfo))
+            {
+                return false;
+            }
+
+            absoluteUrl =
+                destination.AbsoluteUri;
+
+            return true;
+        }
+    }
+
     private void SetLatestElements(
         Guid pageId,
         IReadOnlyDictionary<string, GroundedElementState> elements)
@@ -3272,6 +3732,7 @@ public sealed class NIRABrowserService : IAsyncDisposable
             _credentialAttemptRunsByScope.Clear();
             _credentialSubmissions.Clear();
             _lastPageInspection.Clear();
+            _lastObservedDocumentEvidence.Clear();
             _trustedRefreshUsed.Clear();
             _queryBearingNavigation.Clear();
         }
@@ -3315,7 +3776,7 @@ public sealed class NIRABrowserService : IAsyncDisposable
     }
 
     // Localhost is a valid explicit development target, but NEVER a model-
-    // invented substitute for a site's lecture URL or a browser helper.
+    // invented substitute for a site's real content URL or a browser helper.
     // Actual inspected link refs use browser.follow and remain available.
     private void EnsureUserGroundedLoopbackNavigation(Uri uri)
     {

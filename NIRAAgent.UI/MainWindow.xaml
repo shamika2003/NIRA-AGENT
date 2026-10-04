@@ -325,17 +325,6 @@
                     </EventTrigger>
                 </StackPanel.Triggers>
 
-                <StackPanel Orientation="Horizontal" Margin="6,0,0,6">
-                    <Ellipse Width="6" Height="6"
-                             Fill="{DynamicResource NIRACyanBrush}"
-                             VerticalAlignment="Center"
-                             Margin="0,0,7,0"/>
-                    <TextBlock Text="NIRA"
-                               FontSize="9"
-                               FontWeight="SemiBold"
-                               Foreground="{DynamicResource NIRACyanBrush}"/>
-                </StackPanel>
-
                 <!-- Assistant prose is full-width and borderless. Actual rich
                      visuals retain their own themed surfaces where helpful. -->
                 <Grid HorizontalAlignment="Stretch">
@@ -424,29 +413,37 @@
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
 
-                            <!-- The real empty assistant message keeps the V11 indicator alive
-                                 only while waiting for first text / visual artifact. -->
-                            <Border x:Name="JourneyIndicator"
-                                    Grid.Row="0" Grid.RowSpan="3"
-                                    Padding="12,10" MinWidth="300" MaxWidth="640"
-                                    HorizontalAlignment="Left"
-                                    Background="#14244A70"
-                                    BorderBrush="#704BA2CA" BorderThickness="1"
-                                    CornerRadius="12" Visibility="Collapsed">
-                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                    <typing:NIRATypingIndicator Width="42" Height="19"
-                                        IndicatorStyle="FinalDepthDrift" SpeedMultiplier="0.85"
+                            <!-- Quiet inline journey state:
+                                 only NIRA's living three-dot motion plus the current
+                                 grounded progress line. No card, border, badge or label. -->
+                            <Grid x:Name="JourneyIndicator"
+                                  Grid.Row="0" Grid.RowSpan="3"
+                                  Margin="6,1,8,0"
+                                  HorizontalAlignment="Left"
+                                  Visibility="Collapsed"
+                                  Opacity="1"
+                                  RenderTransformOrigin="0.5,0.5">
+                                <Grid.RenderTransform>
+                                    <TranslateTransform x:Name="JourneyIndicatorTranslate"/>
+                                </Grid.RenderTransform>
+                                <StackPanel>
+                                    <typing:NIRATypingIndicator Width="42" Height="18"
+                                        HorizontalAlignment="Left"
+                                        IndicatorStyle="FinalDepthDrift"
+                                        SpeedMultiplier="0.85"
                                         IsHitTestVisible="False"/>
-                                    <StackPanel Margin="11,0,0,0">
-                                        <TextBlock Text="NIRA · WORKING" FontSize="10"
-                                            FontWeight="SemiBold" Foreground="#65DDF5"/>
-                                        <TextBlock Text="{Binding ProgressText}"
-                                            FontSize="12.5" LineHeight="18" TextWrapping="Wrap"
-                                            Foreground="#E0F1FF" MaxWidth="560"
-                                            Margin="0,4,0,0"/>
-                                    </StackPanel>
+                                    <TextBlock x:Name="JourneyProgressText"
+                                               Text="{Binding ProgressText}"
+                                               Margin="1,5,0,0"
+                                               MaxWidth="560"
+                                               FontSize="10.5"
+                                               LineHeight="16"
+                                               TextWrapping="Wrap"
+                                               Foreground="{DynamicResource NIRASecondaryBrush}"
+                                               Opacity="0.82"
+                                               Visibility="Collapsed"/>
                                 </StackPanel>
-                            </Border>
+                            </Grid>
                         </Grid>
                     </Border>
                 </Grid>
@@ -464,16 +461,36 @@
                     <Setter TargetName="AssistantContentText" Property="Visibility" Value="Collapsed"/>
                 </DataTrigger>
 
-                <MultiDataTrigger>
-                    <MultiDataTrigger.Conditions>
-                        <Condition Binding="{Binding HasContent}" Value="False"/>
-                        <Condition Binding="{Binding HasVisualArtifacts}" Value="False"/>
-                        <Condition Binding="{Binding HasRichElements}" Value="False"/>
-                    </MultiDataTrigger.Conditions>
+                <DataTrigger Binding="{Binding IsJourneyActive}" Value="True">
                     <Setter TargetName="JourneyIndicator" Property="Visibility" Value="Visible"/>
                     <Setter TargetName="AssistantBubble" Property="Padding" Value="6,1,8,0"/>
-                    <Setter TargetName="AssistantBubble" Property="MinWidth" Value="300"/>
-                </MultiDataTrigger>
+                    <Setter TargetName="AssistantBubble" Property="MinWidth" Value="0"/>
+                </DataTrigger>
+
+                <DataTrigger Binding="{Binding HasProgress}" Value="True">
+                    <Setter TargetName="JourneyProgressText" Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+
+                <DataTrigger Binding="{Binding IsJourneyFading}" Value="True">
+                    <DataTrigger.EnterActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="JourneyIndicator"
+                                                 Storyboard.TargetProperty="Opacity"
+                                                 To="0"
+                                                 Duration="0:0:0.18"/>
+                                <DoubleAnimation Storyboard.TargetName="JourneyIndicatorTranslate"
+                                                 Storyboard.TargetProperty="Y"
+                                                 To="-4"
+                                                 Duration="0:0:0.18">
+                                    <DoubleAnimation.EasingFunction>
+                                        <CubicEase EasingMode="EaseOut"/>
+                                    </DoubleAnimation.EasingFunction>
+                                </DoubleAnimation>
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </DataTrigger.EnterActions>
+                </DataTrigger>
             </DataTemplate.Triggers>
         </DataTemplate>
 
@@ -735,6 +752,288 @@
             </Setter>
         </Style>
 
+        <!-- =====================================================
+             CHAT FOCUS / EDGE HANDLES
+
+             These are intentionally not ordinary buttons. They behave like
+             small pieces of NIRA's glass shell: thin, quiet edge handles that
+             only brighten when the pointer approaches them.
+             ===================================================== -->
+        <Style x:Key="SidebarEdgeHandleBaseStyle" TargetType="Button">
+            <Setter Property="Width" Value="22"/>
+            <Setter Property="Height" Value="88"/>
+            <Setter Property="Background" Value="#52071120"/>
+            <Setter Property="BorderBrush" Value="#3B6E9CC7"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Foreground" Value="{DynamicResource NIRASecondaryBrush}"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="HorizontalAlignment" Value="Center"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Panel.ZIndex" Value="30"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid Width="{TemplateBinding Width}"
+                              Height="{TemplateBinding Height}"
+                              SnapsToDevicePixels="True">
+                            <ui:NIRABackdropBorder Margin="-8"
+                                                   BlurRadius="12"
+                                                   BackdropOpacity="0.72"/>
+
+                            <!-- soft outer bloom -->
+                            <Border x:Name="HandleBloom"
+                                    Margin="-2"
+                                    CornerRadius="12"
+                                    BorderBrush="#3672D9FF"
+                                    BorderThickness="1"
+                                    Opacity="0.10"/>
+
+                            <!-- main glass capsule -->
+                            <Border x:Name="HandleChrome"
+                                    Margin="2,5"
+                                    CornerRadius="9"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}">
+                                <Grid>
+                                    <!-- quiet cyan energy line -->
+                                    <Border x:Name="EnergyLine"
+                                            Width="1"
+                                            Height="30"
+                                            CornerRadius="1"
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
+                                            Background="#75A9EEFF"
+                                            Opacity="0.34"/>
+
+                                    <!-- tiny center node gives it a NIRA-instrument feel -->
+                                    <Ellipse x:Name="CenterNode"
+                                             Width="3.5"
+                                             Height="3.5"
+                                             Fill="{DynamicResource NIRACyanBrush}"
+                                             HorizontalAlignment="Center"
+                                             VerticalAlignment="Center"
+                                             Opacity="0.72"/>
+
+                                    <ContentPresenter HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center"/>
+                                </Grid>
+                            </Border>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="HandleBloom" Property="Opacity" Value="0.72"/>
+                                <Setter TargetName="HandleChrome" Property="Background" Value="#9A0A1B30"/>
+                                <Setter TargetName="HandleChrome" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
+                                <Setter TargetName="EnergyLine" Property="Height" Value="48"/>
+                                <Setter TargetName="EnergyLine" Property="Opacity" Value="0.74"/>
+                                <Setter TargetName="CenterNode" Property="Width" Value="5"/>
+                                <Setter TargetName="CenterNode" Property="Height" Value="5"/>
+                                <Setter TargetName="CenterNode" Property="Opacity" Value="1"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="HandleChrome" Property="Opacity" Value="0.70"/>
+                                <Setter TargetName="HandleBloom" Property="Opacity" Value="0.35"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Left edge: expanded points outward, collapsed points inward. -->
+        <Style x:Key="LeftSidebarEdgeHandleStyle"
+               TargetType="Button"
+               BasedOn="{StaticResource SidebarEdgeHandleBaseStyle}">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid Width="{TemplateBinding Width}"
+                              Height="{TemplateBinding Height}"
+                              SnapsToDevicePixels="True">
+                            <ui:NIRABackdropBorder Margin="-8"
+                                                   BlurRadius="12"
+                                                   BackdropOpacity="0.72"/>
+                            <Border x:Name="HandleBloom"
+                                    Margin="-2"
+                                    CornerRadius="12"
+                                    BorderBrush="#3672D9FF"
+                                    BorderThickness="1"
+                                    Opacity="0.10"/>
+                            <Border x:Name="HandleChrome"
+                                    Margin="2,5"
+                                    CornerRadius="9"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}">
+                                <Grid>
+                                    <Border x:Name="EnergyLine"
+                                            Width="1"
+                                            Height="30"
+                                            CornerRadius="1"
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
+                                            Background="#75A9EEFF"
+                                            Opacity="0.34"/>
+                                    <Ellipse x:Name="CenterNode"
+                                             Width="3.5"
+                                             Height="3.5"
+                                             Fill="{DynamicResource NIRACyanBrush}"
+                                             HorizontalAlignment="Center"
+                                             VerticalAlignment="Center"
+                                             Opacity="0.72"/>
+
+                                    <Path x:Name="ChevronExpanded"
+                                          Width="7"
+                                          Height="12"
+                                          Data="M 6,1 L 1,6 L 6,11"
+                                          Stretch="Fill"
+                                          Stroke="#BFD8F8"
+                                          StrokeThickness="1.35"
+                                          StrokeStartLineCap="Round"
+                                          StrokeEndLineCap="Round"
+                                          StrokeLineJoin="Round"
+                                          Opacity="0.86"/>
+
+                                    <Path x:Name="ChevronCollapsed"
+                                          Width="7"
+                                          Height="12"
+                                          Data="M 1,1 L 6,6 L 1,11"
+                                          Stretch="Fill"
+                                          Stroke="#DDF7FF"
+                                          StrokeThickness="1.35"
+                                          StrokeStartLineCap="Round"
+                                          StrokeEndLineCap="Round"
+                                          StrokeLineJoin="Round"
+                                          Visibility="Collapsed"
+                                          Opacity="0.96"/>
+                                </Grid>
+                            </Border>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="Tag" Value="Collapsed">
+                                <Setter TargetName="ChevronExpanded" Property="Visibility" Value="Collapsed"/>
+                                <Setter TargetName="ChevronCollapsed" Property="Visibility" Value="Visible"/>
+                                <Setter TargetName="HandleChrome" Property="Background" Value="#6808172A"/>
+                                <Setter TargetName="HandleBloom" Property="Opacity" Value="0.28"/>
+                                <Setter TargetName="CenterNode" Property="Opacity" Value="0.95"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="HandleBloom" Property="Opacity" Value="0.78"/>
+                                <Setter TargetName="HandleChrome" Property="Background" Value="#9A0A1B30"/>
+                                <Setter TargetName="HandleChrome" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
+                                <Setter TargetName="EnergyLine" Property="Height" Value="48"/>
+                                <Setter TargetName="EnergyLine" Property="Opacity" Value="0.76"/>
+                                <Setter TargetName="CenterNode" Property="Width" Value="5"/>
+                                <Setter TargetName="CenterNode" Property="Height" Value="5"/>
+                                <Setter TargetName="CenterNode" Property="Opacity" Value="1"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="HandleChrome" Property="Opacity" Value="0.68"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Right edge mirrors the left handle. -->
+        <Style x:Key="RightSidebarEdgeHandleStyle"
+               TargetType="Button"
+               BasedOn="{StaticResource SidebarEdgeHandleBaseStyle}">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid Width="{TemplateBinding Width}"
+                              Height="{TemplateBinding Height}"
+                              SnapsToDevicePixels="True">
+                            <ui:NIRABackdropBorder Margin="-8"
+                                                   BlurRadius="12"
+                                                   BackdropOpacity="0.72"/>
+                            <Border x:Name="HandleBloom"
+                                    Margin="-2"
+                                    CornerRadius="12"
+                                    BorderBrush="#3672D9FF"
+                                    BorderThickness="1"
+                                    Opacity="0.10"/>
+                            <Border x:Name="HandleChrome"
+                                    Margin="2,5"
+                                    CornerRadius="9"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}">
+                                <Grid>
+                                    <Border x:Name="EnergyLine"
+                                            Width="1"
+                                            Height="30"
+                                            CornerRadius="1"
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
+                                            Background="#75A9EEFF"
+                                            Opacity="0.34"/>
+                                    <Ellipse x:Name="CenterNode"
+                                             Width="3.5"
+                                             Height="3.5"
+                                             Fill="{DynamicResource NIRACyanBrush}"
+                                             HorizontalAlignment="Center"
+                                             VerticalAlignment="Center"
+                                             Opacity="0.72"/>
+
+                                    <Path x:Name="ChevronExpanded"
+                                          Width="7"
+                                          Height="12"
+                                          Data="M 1,1 L 6,6 L 1,11"
+                                          Stretch="Fill"
+                                          Stroke="#BFD8F8"
+                                          StrokeThickness="1.35"
+                                          StrokeStartLineCap="Round"
+                                          StrokeEndLineCap="Round"
+                                          StrokeLineJoin="Round"
+                                          Opacity="0.86"/>
+
+                                    <Path x:Name="ChevronCollapsed"
+                                          Width="7"
+                                          Height="12"
+                                          Data="M 6,1 L 1,6 L 6,11"
+                                          Stretch="Fill"
+                                          Stroke="#DDF7FF"
+                                          StrokeThickness="1.35"
+                                          StrokeStartLineCap="Round"
+                                          StrokeEndLineCap="Round"
+                                          StrokeLineJoin="Round"
+                                          Visibility="Collapsed"
+                                          Opacity="0.96"/>
+                                </Grid>
+                            </Border>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="Tag" Value="Collapsed">
+                                <Setter TargetName="ChevronExpanded" Property="Visibility" Value="Collapsed"/>
+                                <Setter TargetName="ChevronCollapsed" Property="Visibility" Value="Visible"/>
+                                <Setter TargetName="HandleChrome" Property="Background" Value="#6808172A"/>
+                                <Setter TargetName="HandleBloom" Property="Opacity" Value="0.28"/>
+                                <Setter TargetName="CenterNode" Property="Opacity" Value="0.95"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="HandleBloom" Property="Opacity" Value="0.78"/>
+                                <Setter TargetName="HandleChrome" Property="Background" Value="#9A0A1B30"/>
+                                <Setter TargetName="HandleChrome" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
+                                <Setter TargetName="EnergyLine" Property="Height" Value="48"/>
+                                <Setter TargetName="EnergyLine" Property="Opacity" Value="0.76"/>
+                                <Setter TargetName="CenterNode" Property="Width" Value="5"/>
+                                <Setter TargetName="CenterNode" Property="Height" Value="5"/>
+                                <Setter TargetName="CenterNode" Property="Opacity" Value="1"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="HandleChrome" Property="Opacity" Value="0.68"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="WindowGlyphButtonStyle" TargetType="Button">
             <Setter Property="Width" Value="36"/>
             <Setter Property="Height" Value="36"/>
@@ -762,6 +1061,111 @@
                                 <Setter TargetName="WindowChrome" Property="Background" Value="{DynamicResource NIRACardHoverBrush}"/>
                                 <Setter TargetName="WindowChrome" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
                                 <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+
+        <!-- =====================================================
+             INTEGRATED SIDEBAR CONTROLS
+             ===================================================== -->
+        <Style x:Key="SidebarHeaderIconButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="30"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Background" Value="#240B1728"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource NIRAGlassBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Foreground" Value="{DynamicResource NIRASecondaryBrush}"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid>
+                            <Border x:Name="Glow" Margin="-2" CornerRadius="11"
+                                    BorderBrush="#2878DFFF" BorderThickness="1" Opacity="0"/>
+                            <Border x:Name="Chrome" CornerRadius="9"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Glow" Property="Opacity" Value="0.72"/>
+                                <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource NIRACardHoverBrush}"/>
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Chrome" Property="Opacity" Value="0.72"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="CompactSidebarHostStyle" TargetType="ContentControl">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="VerticalContentAlignment" Value="Stretch"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ContentControl">
+                        <Grid ClipToBounds="True">
+                            <ui:NIRABackdropBorder Margin="-16"
+                                                   BlurRadius="16"
+                                                   BackdropOpacity="0.58"/>
+                            <Border Background="{DynamicResource NIRAGlassStrongTintBrush}"
+                                    BorderThickness="0"
+                                    CornerRadius="18"
+                                    SnapsToDevicePixels="True">
+                                <ContentPresenter Margin="{TemplateBinding Padding}"
+                                                  HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                  VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
+                            </Border>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="CompactSidebarToolButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="40"/>
+            <Setter Property="Height" Value="40"/>
+            <Setter Property="Margin" Value="0,0,0,8"/>
+            <Setter Property="Background" Value="#180A1526"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource NIRAGlassBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Foreground" Value="{DynamicResource NIRASecondaryBrush}"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid>
+                            <Border x:Name="Glow" Margin="-3" CornerRadius="16"
+                                    Background="{DynamicResource NIRASoftGlow}" Opacity="0"/>
+                            <Border x:Name="Chrome" CornerRadius="13"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Glow" Property="Opacity" Value="0.55"/>
+                                <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource NIRACardHoverBrush}"/>
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Chrome" Property="Opacity" Value="0.72"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -981,17 +1385,17 @@
         <!-- =====================================================
              MAIN WORKSPACE
              ===================================================== -->
-        <Grid Grid.Row="1" Margin="12,10,12,12" Background="Transparent">
+        <Grid x:Name="MainWorkspace" Grid.Row="1" Margin="12,10,12,12" Background="Transparent">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="276"/>
+                <ColumnDefinition x:Name="LeftSidebarColumn" Width="276"/>
                 <ColumnDefinition Width="12"/>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="12"/>
-                <ColumnDefinition Width="268"/>
+                <ColumnDefinition x:Name="RightSidebarColumn" Width="268"/>
             </Grid.ColumnDefinitions>
 
             <!-- LEFT / PRESENCE -->
-            <ContentControl Grid.Column="0" Style="{StaticResource GlassPanelStrongStyle}">
+            <ContentControl x:Name="LeftSidebarExpandedHost" Grid.Column="0" Style="{StaticResource GlassPanelStrongStyle}">
                 <Grid Margin="16,14,16,14">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -1002,7 +1406,8 @@
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <StackPanel Grid.Row="0">
+                    <Grid Grid.Row="0">
+                        <StackPanel>
                         <StackPanel Orientation="Horizontal">
                             <Ellipse x:Name="OnlinePulseDot" Width="6" Height="6" Fill="{DynamicResource NIRAGreenBrush}" VerticalAlignment="Center" Margin="0,0,7,0"/>
                             <TextBlock Text="PRESENCE" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource NIRACyanBrush}"/>
@@ -1012,7 +1417,19 @@
                         <TextBlock Text="Calm mind. Deeper insight. Further together."
                                    Margin="0,4,0,0" FontSize="11.5" LineHeight="16"
                                    Foreground="{DynamicResource NIRASecondaryBrush}" TextWrapping="Wrap"/>
-                    </StackPanel>
+                        </StackPanel>
+                        <Button Style="{StaticResource SidebarHeaderIconButtonStyle}"
+                                HorizontalAlignment="Right" VerticalAlignment="Top"
+                                ToolTip="Hide presence panel"
+                                AutomationProperties.Name="Hide presence panel"
+                                Click="ToggleLeftSidebar_Click">
+                            <Grid Width="14" Height="14">
+                                <Rectangle Height="1.4" Width="13" RadiusX="1" RadiusY="1" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" VerticalAlignment="Top" Margin="0,2,0,0"/>
+                                <Rectangle Height="1.4" Width="13" RadiusX="1" RadiusY="1" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" VerticalAlignment="Center"/>
+                                <Rectangle Height="1.4" Width="13" RadiusX="1" RadiusY="1" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" VerticalAlignment="Bottom" Margin="0,0,0,2"/>
+                            </Grid>
+                        </Button>
+                    </Grid>
 
                     <Grid Grid.Row="1" x:Name="NIRADockHost" Width="190" Height="190" HorizontalAlignment="Center" VerticalAlignment="Center">
                         <!--
@@ -1101,6 +1518,43 @@
                     </ScrollViewer>
                 </Grid>
             </ContentControl>
+
+            <!-- LEFT / COLLAPSED PRESENCE -->
+            <ContentControl x:Name="LeftSidebarCompactHost"
+                            Grid.Column="0"
+                            Visibility="Collapsed"
+                            Style="{StaticResource CompactSidebarHostStyle}">
+                <Grid Margin="7,10">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="18"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Button Grid.Row="0"
+                            Style="{StaticResource SidebarHeaderIconButtonStyle}"
+                            Width="34" Height="34"
+                            HorizontalAlignment="Center"
+                            ToolTip="Open presence panel"
+                            AutomationProperties.Name="Open presence panel"
+                            Click="ToggleLeftSidebar_Click">
+                        <Grid Width="15" Height="15">
+                            <Rectangle Height="1.5" Width="14" RadiusX="1" RadiusY="1" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" VerticalAlignment="Top" Margin="0,2,0,0"/>
+                            <Rectangle Height="1.5" Width="14" RadiusX="1" RadiusY="1" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" VerticalAlignment="Center"/>
+                            <Rectangle Height="1.5" Width="14" RadiusX="1" RadiusY="1" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" VerticalAlignment="Bottom" Margin="0,0,0,2"/>
+                        </Grid>
+                    </Button>
+                    <StackPanel Grid.Row="3" VerticalAlignment="Top" Margin="0,8,0,0">
+                        <Ellipse Width="7" Height="7" Fill="{DynamicResource NIRAGreenBrush}" HorizontalAlignment="Center" ToolTip="NIRA online"/>
+                        <Border Width="30" Height="30" Margin="0,12,0,0" CornerRadius="15"
+                                Background="#160B5A78" BorderBrush="#3C78D8F0" BorderThickness="1">
+                            <TextBlock Text="N" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NIRACyanBrush}"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </StackPanel>
+                </Grid>
+            </ContentControl>
+
             <!-- CENTER / DIALOGUE -->
             <Grid Grid.Column="2" Background="Transparent">
                 <Grid.RowDefinitions>
@@ -1318,14 +1772,65 @@
                     </Grid>
                 </ContentControl>
             </Grid>
+            <!-- RIGHT / COLLAPSED QUICK TOOLS -->
+            <ContentControl x:Name="RightSidebarCompactHost"
+                            Grid.Column="4"
+                            Visibility="Collapsed"
+                            Style="{StaticResource CompactSidebarHostStyle}">
+                <StackPanel Margin="8,10" HorizontalAlignment="Center">
+                    <Button Style="{StaticResource SidebarHeaderIconButtonStyle}"
+                            Width="36" Height="34" Margin="0,0,0,12"
+                            ToolTip="Open tools panel"
+                            AutomationProperties.Name="Open tools panel"
+                            Click="ToggleRightSidebar_Click">
+                        <Path Width="11" Height="11" Data="M 3,1 L 8,5 L 3,9"
+                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                              StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+                    </Button>
+                    <Button Style="{StaticResource CompactSidebarToolButtonStyle}"
+                            Tag="Summarize what I provide next. Preserve the important details and keep the result concise."
+                            ToolTip="Summarize" Click="QuickPrompt_Click">
+                        <TextBlock Text="≡" FontSize="19" Foreground="{DynamicResource NIRABlueBrush}"/>
+                    </Button>
+                    <Button Style="{StaticResource CompactSidebarToolButtonStyle}"
+                            Tag="Analyze what I provide next. Find the important patterns, problems, tradeoffs, and actionable insights."
+                            ToolTip="Analyze" Click="QuickPrompt_Click">
+                        <TextBlock Text="▥" FontSize="16" Foreground="{DynamicResource NIRACyanBrush}"/>
+                    </Button>
+                    <Button Style="{StaticResource CompactSidebarToolButtonStyle}"
+                            Tag="Help me create something. Ask what I want to make and then help me produce it."
+                            ToolTip="Create" Click="QuickPrompt_Click">
+                        <TextBlock Text="✦" FontSize="17" Foreground="{DynamicResource NIRAVioletBrush}"/>
+                    </Button>
+                    <Button Style="{StaticResource CompactSidebarToolButtonStyle}"
+                            Tag="Help me make a practical plan. Ask what outcome I want, then break it into useful steps and dependencies."
+                            ToolTip="Plan" Click="QuickPrompt_Click">
+                        <TextBlock Text="☷" FontSize="16" Foreground="{DynamicResource NIRABlueBrush}"/>
+                    </Button>
+                    <Button Style="{StaticResource CompactSidebarToolButtonStyle}"
+                            Tag="Help me research a topic. Ask what I want to know and what kind of sources or depth I need."
+                            ToolTip="Research" Click="QuickPrompt_Click">
+                        <TextBlock Text="⌕" FontSize="18" Foreground="{DynamicResource NIRACyanBrush}"/>
+                    </Button>
+                </StackPanel>
+            </ContentControl>
+
             <!-- RIGHT / QUICK TOOLS -->
-            <StackPanel Grid.Column="4">
+            <StackPanel x:Name="RightSidebarExpandedHost" Grid.Column="4">
                 <ContentControl Style="{StaticResource GlassPanelStrongStyle}">
                     <StackPanel Margin="14,14,14,7">
                         <Grid Margin="1,0,1,12">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                            <TextBlock Text="QUICK TOOLS" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource NIRABlueBrush}"/>
-                            <TextBlock Grid.Column="1" Text="•••" FontSize="12" Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                            <TextBlock Text="QUICK TOOLS" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource NIRABlueBrush}" VerticalAlignment="Center"/>
+                            <Button Grid.Column="1" Style="{StaticResource SidebarHeaderIconButtonStyle}"
+                                    Width="28" Height="28"
+                                    ToolTip="Hide tools panel"
+                                    AutomationProperties.Name="Hide tools panel"
+                                    Click="ToggleRightSidebar_Click">
+                                <Path Width="10" Height="10" Data="M 8,1 L 3,5 L 8,9"
+                                      Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                      StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+                            </Button>
                         </Grid>
 
                         <Button Style="{StaticResource GlassQuickButtonStyle}" Tag="Summarize what I provide next. Preserve the important details and keep the result concise." Click="QuickPrompt_Click">

@@ -96,6 +96,10 @@ public static class NIRACapabilityIds
         "process.stop";
 
 
+    public const string SystemStorageList =
+        "system.storage.list";
+
+
     public const string ShellExecute =
         "shell.execute";
 
@@ -125,6 +129,14 @@ public static class NIRACapabilityIds
 
     public const string BrowserNavigate =
         "browser.navigate";
+
+
+    public const string BrowserBack =
+        "browser.back";
+
+
+    public const string BrowserExplore =
+        "browser.explore";
 
 
     public const string BrowserInspect =

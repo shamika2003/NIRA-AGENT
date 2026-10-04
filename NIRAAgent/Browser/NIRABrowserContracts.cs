@@ -174,7 +174,22 @@ public sealed record NIRABrowserInspection
     public string PublishedAt { get; init; } = string.Empty;
     public string ModifiedAt { get; init; } = string.Empty;
     public IReadOnlyList<string> StructuredDataTypes { get; init; } = Array.Empty<string>();
+    // Full inspection fingerprint (includes the bounded interactive element set).
+    // This can legitimately differ when an inspection asks for a larger element
+    // window, even if the underlying document did not change.
     public string ContentSha256 { get; init; } = string.Empty;
+
+    // Stable document-evidence fingerprint: route/title/body/forms/tables only.
+    // It intentionally excludes the maxElements-dependent interactive list so
+    // repeated inspections with a different element cap do not masquerade as
+    // new page evidence.
+    public string DocumentEvidenceSha256 { get; init; } = string.Empty;
+
+    // True on the first observation of a page or after material document
+    // evidence changes. False means the same page evidence was already observed
+    // by the runtime (including inspections bundled with navigate/follow/click/auth).
+    public bool DocumentChangedSincePreviousObservation { get; init; } = true;
+
     public string Text { get; init; } = string.Empty;
     public IReadOnlyList<NIRABrowserInteractiveElement> Elements { get; init; } =
         Array.Empty<NIRABrowserInteractiveElement>();

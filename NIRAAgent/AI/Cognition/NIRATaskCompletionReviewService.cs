@@ -83,13 +83,14 @@ public sealed class NIRATaskCompletionReviewService
             of a requested comparison unless that comparison was performed.
             A successful login,
             successful click, discovered menu, or link to more information is not
-            completion when the user requested information BEYOND it.
-            For site news/notifications, seeing the login page or generic home
-            page does NOT establish "no news". Require current evidence of the
-            relevant news/notification content, or report the exact part still
-            unverified. A rejected old element ref is an argument failure, not
-            a website credential rejection. If a post-login home page is already
-            observed, do not recommend returning to login for more information. Do not demand
+            completion when the user requested information BEYOND it. A login page,
+            generic home page, category page, adjacent section, or navigation list
+            does NOT establish that the requested information is absent. Require
+            current evidence from a page/source that materially addresses the
+            ORIGINAL objective, or report the exact part still unverified. A
+            rejected old element ref is an argument failure, not a website
+            credential rejection. If a post-login content page is already observed,
+            do not recommend returning to login for more information. Do not demand
             optional work the user did not request. A follow-up can be needed if
             the answer omits a material fact already available in evidence.
 
@@ -100,11 +101,12 @@ public sealed class NIRATaskCompletionReviewService
             Cross-check each MATERIAL factual assertion in the draft against
             the actual execution evidence. A model-written result summary is
             not independent evidence that the cited site exposed that result.
-            A list of course titles, navigation options or assessment topics
-            must not be substituted for an available lecture timetable when
-            the request asks for scheduled lectures. When the site exposes
-            dates, times or joining arrangements relevant to the objective,
-            require them in the answer rather than announcing a generic list.
+            Navigation labels, neighboring categories, snippets or summary
+            cards must not be substituted for a more specific detail source when
+            the ORIGINAL objective requires that detail. When the source exposes
+            material dates, times, availability, status, identifiers, amounts,
+            or other qualifiers relevant to the objective, require those facts
+            in the answer rather than accepting an adjacent generic list.
             If the draft claims it "sent", "gave", or "provided" details but
             the details are missing from the user-facing reply, return NeedsWork.
             If the current page is an adjacent but unproven section, return

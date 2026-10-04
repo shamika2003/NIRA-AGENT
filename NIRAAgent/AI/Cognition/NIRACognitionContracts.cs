@@ -106,8 +106,12 @@ public sealed record NIRACognitionDecision
     // The Executive validates sections and caps expansion per run.
     public IReadOnlyList<string> ContextRequests { get; init; } = Array.Empty<string>();
     public IReadOnlyList<string> CapabilityIds { get; init; } = Array.Empty<string>();
-    // Explicit opt-in: skip a second stylistic model call for a complete
-    // self-contained reply. False retains legacy final realization.
+    // Cognition has completed the grounded semantic reply for this turn.
+    // ReplyReady is a semantic-completion signal only; it NEVER bypasses
+    // NIRA's terminal character-realization pass for Natural replies.
+    //
+    // PreserveExact remains the literal/verbatim path and intentionally does
+    // not allow personality styling to alter exact requested output.
     public bool ReplyReady { get; init; }
     // Explicit false is permitted only for a direct informational turn
     // without new durable facts, preference, commitment, or significant event.
@@ -320,6 +324,3 @@ public sealed record NIRACognitionAppraisalProposal
         init;
     }
 }
-
-
-

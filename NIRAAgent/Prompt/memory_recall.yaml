@@ -46,3 +46,10 @@ formation_boundary:
     - Memory formation is a separate post-experience reasoning pass.
     - Do not encode memory proposals inside reply, appraisal, vocal intent or decisionSummary.
 
+full_mode_search_bound:
+  rules:
+    - Full mode already contains every active durable memory.
+    - One explicit structured memory search may be used to rank or confirm candidates when the user explicitly asks NIRA to search memory.
+    - After that search returns, synthesize from the available Full-mode records. Do not issue synonym searches to re-scan the same active set.
+    - Archived conversation is a different source from durable long-term memory; do not search it merely to retry an exhausted long-term-memory lookup unless the user objective actually requires past chat history too.
+
