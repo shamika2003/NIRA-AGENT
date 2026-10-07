@@ -12,21 +12,12 @@ public sealed class NIRACharacterPersistenceService
     : IHostedService,
       IDisposable
 {
-    private static readonly TimeSpan
-        SaveDebounce =
-            TimeSpan.FromSeconds(
-                2);
-
-
     private readonly NIRACharacterStateService
         _state;
 
 
     private readonly NIRACharacterStateStore
         _store;
-
-
-    private readonly Timer _saveTimer;
 
 
     private bool _started;
@@ -48,14 +39,6 @@ public sealed class NIRACharacterPersistenceService
             store
             ?? throw new ArgumentNullException(
                 nameof(store));
-
-
-        _saveTimer =
-            new Timer(
-                SaveTimer_Callback,
-                null,
-                Timeout.InfiniteTimeSpan,
-                Timeout.InfiniteTimeSpan);
     }
 
 
@@ -76,6 +59,13 @@ public sealed class NIRACharacterPersistenceService
             State_StateChanged;
 
 
+        // Write-through continuity: once the runtime is up, the currently loaded
+        // character snapshot is immediately durable. Every later committed
+        // character mutation is persisted synchronously as well.
+        SaveSnapshot(
+            _state.Current);
+
+
         return Task.CompletedTask;
     }
 
@@ -85,6 +75,8 @@ public sealed class NIRACharacterPersistenceService
     {
         if (!_started)
         {
+            SaveNow();
+
             return Task.CompletedTask;
         }
 
@@ -95,11 +87,6 @@ public sealed class NIRACharacterPersistenceService
 
         _state.StateChanged -=
             State_StateChanged;
-
-
-        _saveTimer.Change(
-            Timeout.InfiniteTimeSpan,
-            Timeout.InfiniteTimeSpan);
 
 
         SaveNow();
@@ -118,29 +105,45 @@ public sealed class NIRACharacterPersistenceService
         }
 
 
-        _saveTimer.Change(
-            SaveDebounce,
-            Timeout.InfiniteTimeSpan);
-    }
-
-
-    private void SaveTimer_Callback(
-        object? state)
-    {
-        SaveNow();
+        SaveSnapshot(
+            snapshot);
     }
 
 
     private void SaveNow()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
+
+        SaveSnapshot(
+            _state.Current);
+    }
+
+
+    private void SaveSnapshot(
+        NIRACharacterSnapshot snapshot)
+    {
         try
         {
-            NIRACharacterSnapshot snapshot = _state.Current;
-            _store.Save(snapshot);
+            NIRACharacterSnapshot normalized =
+                snapshot.Normalize();
+
+
+            _store.Save(
+                normalized);
+
+
             Debug.WriteLine(
-                $"[CharacterContinuity] SAVED | Version={snapshot.Version} | " +
-                $"Mood={snapshot.Mood.Valence:F3}/{snapshot.Mood.Amusement:F3}/" +
-                $"{snapshot.Mood.Irritation:F3}/{snapshot.Mood.Concern:F3}");
+                $"[CharacterContinuity] SAVED | Version={normalized.Version} | " +
+                $"Mood={normalized.Mood.Valence:F3}/{normalized.Mood.Amusement:F3}/" +
+                $"{normalized.Mood.Irritation:F3}/{normalized.Mood.Concern:F3} | " +
+                $"Affection={normalized.Mood.Affection:F3} | " +
+                $"Relationship={normalized.Relationship.Warmth:F3}/" +
+                $"{normalized.Relationship.Trust:F3}/" +
+                $"{normalized.Relationship.Friction:F3}");
         }
         catch (Exception ex)
         {
@@ -158,15 +161,16 @@ public sealed class NIRACharacterPersistenceService
         }
 
 
+        // Flush before setting _disposed so a host disposal path that bypassed
+        // StopAsync still preserves the latest committed character snapshot.
+        SaveNow();
+
+
         _disposed =
             true;
 
 
         _state.StateChanged -=
             State_StateChanged;
-
-
-        _saveTimer.Dispose();
     }
 }
-

@@ -79,6 +79,13 @@ public sealed class NIRATaskCompletionReviewService
             that exact missing decision. Do not authorize writes, disclosure
             or other consequential operations by assuming user intent.
             Do not require optional work outside the original request.
+            Treat independent sub-results independently. If one requested component
+            remains unverified, do not invalidate another component that authoritative
+            evidence already established. In a multi-part objective, a NeedsWork gap
+            and nextStep must target only the genuinely missing or contradicted part.
+            Do not recommend rerunning an already successful command/observation merely
+            because a different independent path or application result is incomplete.
+            Preserve the fact that an independently verified sub-result is complete.
             Existence is not evidence of contents; contents are not evidence
             of a requested comparison unless that comparison was performed.
             A successful login,
@@ -98,6 +105,11 @@ public sealed class NIRATaskCompletionReviewService
             time range, deadline or status, distinguish past/current/upcoming using
             the date AND timezone. Never confuse scheduled end with proof that a
             real meeting/connection closed. Do not invent missing dates or times.
+            Calendar consistency is a completion requirement: whenever the draft
+            pairs a named weekday with an explicit yyyy-MM-dd date, verify that the
+            weekday actually belongs to that date. A mismatch is NeedsWork, never
+            Complete. If the source evidence itself conflicts, require the reply to
+            state that conflict rather than silently choosing or combining values.
             Cross-check each MATERIAL factual assertion in the draft against
             the actual execution evidence. A model-written result summary is
             not independent evidence that the cited site exposed that result.

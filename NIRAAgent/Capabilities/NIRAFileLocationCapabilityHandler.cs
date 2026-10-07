@@ -9,15 +9,28 @@ namespace NIRAAgent.Capabilities;
 
 public sealed class NIRAFileLocationCapabilityHandler : INIRACapabilityHandler
 {
+    private static readonly EnumerationOptions SafeEnumeration =
+        new()
+        {
+            IgnoreInaccessible = true,
+            RecurseSubdirectories = false,
+            ReturnSpecialDirectories = false,
+            AttributesToSkip = FileAttributes.ReparsePoint
+        };
+
     public NIRACapabilityDescriptor Descriptor { get; } =
         new NIRACapabilityDescriptor
         {
             Id = NIRACapabilityIds.FileLocate,
             Description =
-                "Find files or folders by exact name with bounded observation-only traversal. " +
+                "Find a filesystem file or folder by exact object name with bounded observation-only traversal. " +
+                "For installed-application identity/location by human application name, prefer application.resolve; " +
+                "do not guess conventional installation roots and use this as a substitute for Windows application discovery. " +
                 "Use a grounded absolute root when one is known. If no root is supplied, the " +
-                "handler can search all ready fixed local drives so an explicit whole-PC locate " +
-                "request does not require the user to invent a base directory. It does not access file contents.",
+                "handler can search all ready fixed local drives so an explicit whole-PC exact-name locate " +
+                "request does not require the user to invent a base directory. File matches include " +
+                "basic metadata (size and last-write time) so a location/size request does not need " +
+                "a second filesystem.metadata call. It never accesses file contents.",
             DefaultRisk = NIRACapabilityRisk.Observe,
             Parameters = new[]
             {
@@ -120,7 +133,10 @@ public sealed class NIRAFileLocationCapabilityHandler : INIRACapabilityHandler
                 IEnumerator<string> enumerator;
                 try
                 {
-                    enumerator = Directory.EnumerateFileSystemEntries(directory).GetEnumerator();
+                    enumerator = Directory.EnumerateFileSystemEntries(
+                        directory,
+                        "*",
+                        SafeEnumeration).GetEnumerator();
                 }
                 catch (UnauthorizedAccessException) { unreadable++; continue; }
                 catch (IOException) { unreadable++; continue; }
@@ -163,7 +179,33 @@ public sealed class NIRAFileLocationCapabilityHandler : INIRACapabilityHandler
                                 StringComparison.OrdinalIgnoreCase) &&
                             (isDirectory ? wantDirectories : wantFiles))
                         {
-                            output.AppendLine($"{(isDirectory ? "DIR" : "FILE")}\t{entry}");
+                            if (isDirectory)
+                            {
+                                output.AppendLine($"DIR\t{entry}");
+                            }
+                            else
+                            {
+                                try
+                                {
+                                    FileInfo fileInfo =
+                                        new(entry);
+
+                                    output.AppendLine(
+                                        $"FILE\t{entry}\tSizeBytes={fileInfo.Length}\t" +
+                                        $"LastWriteUtc={fileInfo.LastWriteTimeUtc:O}");
+                                }
+                                catch (UnauthorizedAccessException)
+                                {
+                                    output.AppendLine(
+                                        $"FILE\t{entry}\tSizeBytes=Unknown\tLastWriteUtc=Unknown");
+                                }
+                                catch (IOException)
+                                {
+                                    output.AppendLine(
+                                        $"FILE\t{entry}\tSizeBytes=Unknown\tLastWriteUtc=Unknown");
+                                }
+                            }
+
                             matches++;
                             if (matches >= maxMatches)
                             {
@@ -195,7 +237,12 @@ public sealed class NIRAFileLocationCapabilityHandler : INIRACapabilityHandler
                 $"UnreadableDirectories={unreadable} | Truncated={truncated} | " +
                 $"TruncatedRoots={truncatedRoots.Count} | MaxEntriesPerRoot={maxEntries} | " +
                 $"MaxDepth={maxDepth}. Results are path observations, not authorization or proof of content.",
-            Output = output.ToString().TrimEnd(),
+            Output =
+                (matches > 0
+                    ? "MatchEvidence=ExactNamePathObservation\n" +
+                      "FileMetadataIncluded=True\n"
+                    : string.Empty) +
+                output.ToString().TrimEnd(),
             ChangedSystemState = false
         });
     }

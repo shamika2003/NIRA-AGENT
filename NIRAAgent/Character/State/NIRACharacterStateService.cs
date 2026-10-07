@@ -37,6 +37,7 @@ public sealed class NIRACharacterStateService
             $"[CharacterContinuity] LOADED | Version={_current.Version} | " +
             $"Mood={_current.Mood.Valence:F3}/{_current.Mood.Amusement:F3}/" +
             $"{_current.Mood.Irritation:F3}/{_current.Mood.Concern:F3} | " +
+            $"Affection={_current.Mood.Affection:F3} | " +
             $"Relationship={_current.Relationship.Warmth:F3}/" +
             $"{_current.Relationship.Trust:F3}/" +
             $"{_current.Relationship.Friction:F3}");

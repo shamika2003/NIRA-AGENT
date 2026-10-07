@@ -63,6 +63,16 @@ public sealed record NIRAInteractionAppraisal
         string.Empty;
 
 
+    // Exact source excerpt from the user event that cognition used to justify
+    // this appraisal. It is provenance, not a second interpretation.
+    public string EvidenceQuote
+    {
+        get;
+        init;
+    } =
+        string.Empty;
+
+
     public NIRASocialMeaning Meaning
     {
         get;
@@ -112,6 +122,10 @@ public sealed record NIRAInteractionAppraisal
     {
         return this with
         {
+            EvidenceQuote =
+                EvidenceQuote?.Trim()
+                ?? string.Empty,
+
             Meaning =
                 Meaning.Normalize(),
 

@@ -38,6 +38,14 @@ public sealed class NIRAApplicationResolveCapabilityHandler
         32;
 
 
+    // Source trust and executable-shape bonuses must never manufacture a
+    // semantic name match. Require a real alias/name relationship first, then
+    // use source quality only to rank candidates that are actually relevant.
+    // This is application-agnostic; there are no product-name allowlists.
+    private const int MinimumNameMatchScore =
+        350;
+
+
     private const int MinimumCandidateScore =
         320;
 
@@ -52,7 +60,9 @@ public sealed class NIRAApplicationResolveCapabilityHandler
                 NIRACapabilityIds.ApplicationResolve,
 
             Description =
-                "Resolve a human-installed application name to one or more concrete Windows launch targets using PATH, App Paths, installed-program registrations, and Start Menu shortcuts. This only discovers launch targets; use process.start to launch the chosen executable.",
+                "Resolve an installed application identity or location from a human application/executable name to one or more concrete Windows launch targets using PATH, App Paths, installed-program registrations, and Start Menu shortcuts. " +
+                "Use this for application location/discovery even when no launch is requested. This is observation-only discovery: multiple candidates are a valid result when the user asks where an application is installed. " +
+                "Selection is required only for a later target-specific action that truly needs one executable; use process.start to launch a chosen target.",
 
             DefaultRisk =
                 NIRACapabilityRisk.Observe,
@@ -164,11 +174,21 @@ public sealed class NIRAApplicationResolveCapabilityHandler
         string summary =
             disposition switch
             {
+                ResolutionDisposition.Resolved
+                    when ResolvePathRole(
+                        candidates[0]) ==
+                        "LaunchAlias" =>
+                    $"Resolved application '{query}' to Windows launch alias " +
+                    $"'{candidates[0].ExecutablePath}'. This is a grounded launch target; " +
+                    "it is not by itself proof of the physical package install folder.",
+
                 ResolutionDisposition.Resolved =>
                     $"Resolved installed application '{query}' to '{candidates[0].ExecutablePath}'.",
 
                 ResolutionDisposition.Ambiguous =>
-                    $"Found {candidates.Length} plausible installed application candidates for '{query}'; a single authoritative launch target was not established.",
+                    $"Found {candidates.Length} plausible installed application candidates for '{query}'. " +
+                    "These candidate paths are a complete observation result for discovery/location requests; " +
+                    "a single target is required only before a target-specific action.",
 
                 _ =>
                     $"No registered/Start Menu/PATH application launch target matched '{query}'."
@@ -928,12 +948,26 @@ public sealed class NIRAApplicationResolveCapabilityHandler
             effectiveDisplayName);
 
 
-        int score =
+        int nameMatchScore =
             allAliases
                 .Select(
                     collector.ScoreAlias)
                 .DefaultIfEmpty(0)
-                .Max()
+                .Max();
+
+        // Registration source quality can rank a genuinely matching candidate,
+        // but it must not make an unrelated registered application look relevant.
+        // Keep weak one-token human phrasing viable while excluding zero/very-low
+        // semantic matches that previously polluted discovery output.
+        if (nameMatchScore <
+            MinimumNameMatchScore)
+        {
+            return;
+        }
+
+
+        int score =
+            nameMatchScore
             +
             sourceBonus
             +
@@ -1076,6 +1110,9 @@ public sealed class NIRAApplicationResolveCapabilityHandler
                 $"Candidate[{index}].Source={candidate.Source}");
 
             output.AppendLine(
+                $"Candidate[{index}].PathRole={ResolvePathRole(candidate)}");
+
+            output.AppendLine(
                 $"Candidate[{index}].Match={candidate.Match}");
 
             output.AppendLine(
@@ -1083,22 +1120,201 @@ public sealed class NIRAApplicationResolveCapabilityHandler
         }
 
 
+        int preferredLocationCandidateIndex =
+            ResolvePreferredLocationCandidateIndex(
+                candidates);
+
+        output.AppendLine(
+            $"PreferredLocationCandidateIndex={preferredLocationCandidateIndex}");
+
+        if (preferredLocationCandidateIndex >=
+                0
+            &&
+            preferredLocationCandidateIndex <
+                candidates.Count)
+        {
+            ApplicationCandidate preferredLocation =
+                candidates[preferredLocationCandidateIndex];
+
+            output.AppendLine(
+                $"PreferredLocation.ExecutablePath={preferredLocation.ExecutablePath}");
+
+            output.AppendLine(
+                $"PreferredLocation.WorkingDirectory={preferredLocation.WorkingDirectory}");
+
+            output.AppendLine(
+                $"PreferredLocation.Source={preferredLocation.Source}");
+
+            output.AppendLine(
+                $"PreferredLocation.PathRole={ResolvePathRole(preferredLocation)}");
+        }
+
+        output.AppendLine(
+            "PreferredLocationMeaning=For a location-only question, use PreferredLocation " +
+            "as the primary grounded answer. Mention alternative candidates only when the " +
+            "user explicitly asks for all candidates or when a materially different target " +
+            "matters to the next requested action. If PreferredLocation.PathRole is " +
+            "LaunchAlias, describe it honestly as a launch alias/target rather than falsely " +
+            "calling it the physical package folder.");
+
+        output.AppendLine(
+            "PreferredLaunchCandidateIndex=0");
+
+        output.AppendLine(
+            "ObservationResult=CandidatesDiscovered");
+
+        output.AppendLine(
+            "ObservationCompleteness=CompleteForRegisteredApplicationDiscovery");
+
+        output.AppendLine(
+            "SelectionRequiredForObservation=False");
+
+        output.AppendLine(
+            "FilesystemFallbackRecommended=False");
+
+        output.AppendLine(
+            "LocationReporting=For ordinary location/discovery answers, lead with the " +
+            "PreferredLocation fields instead of dumping the full candidate table. The " +
+            "candidate list remains evidence for disambiguation or explicit all-candidate " +
+            "requests. Never describe a LaunchAlias as a physical package folder.");
+
         if (disposition ==
             ResolutionDisposition.Resolved)
         {
             output.AppendLine(
-                "NextAction=Use process.start with Candidate[0].ExecutablePath, Candidate[0].Arguments, and Candidate[0].WorkingDirectory when the user's objective is to launch this application.");
+                "SelectionRequiredForTargetSpecificAction=False");
+
+            output.AppendLine(
+                "NextAction=If the user's objective is only discovery/location, report Candidate[0] and continue other requested work. If the objective is to launch it, use process.start with Candidate[0].ExecutablePath, Candidate[0].Arguments, and Candidate[0].WorkingDirectory.");
         }
         else
         {
             output.AppendLine(
-                "NextAction=Use current context to choose only when one candidate is clearly intended; otherwise ask the user to disambiguate. Do not guess an executable path.");
+                "SelectionRequiredForTargetSpecificAction=True");
+
+            output.AppendLine(
+                "NextAction=For discovery/location requests, report PreferredLocation as the primary grounded result and continue other independent requested work. Mention alternatives only when materially relevant or explicitly requested; do not ask the user to choose merely because observation found multiple candidates. Ask for disambiguation only if a later target-specific action truly requires exactly one executable and current grounded context cannot select it safely. Do not guess an executable path.");
         }
 
 
         return output
             .ToString()
             .TrimEnd();
+    }
+
+
+    // =========================================================
+    // PATH ROLE
+    //
+    // Distinguish a stable Windows application launch alias from a physical
+    // executable discovered through installed-program metadata. This is OS
+    // semantics, not application-name hardcoding.
+    // =========================================================
+
+    private static int ResolvePreferredLocationCandidateIndex(
+        IReadOnlyList<ApplicationCandidate> candidates)
+    {
+        if (candidates.Count ==
+            0)
+        {
+            return -1;
+        }
+
+        string[] preference =
+        {
+            "InstalledExecutable",
+            "RegisteredExecutable",
+            "RegisteredLaunchTarget",
+            "ExactExecutable",
+            "PathExecutable",
+            "ShortcutLaunchTarget",
+            "Executable",
+            "LaunchAlias"
+        };
+
+        foreach (string preferredRole in preference)
+        {
+            for (int index = 0;
+                 index < candidates.Count;
+                 index++)
+            {
+                if (string.Equals(
+                        ResolvePathRole(
+                            candidates[index]),
+                        preferredRole,
+                        StringComparison.Ordinal))
+                {
+                    return index;
+                }
+            }
+        }
+
+        return 0;
+    }
+
+
+    private static string ResolvePathRole(
+        ApplicationCandidate candidate)
+    {
+        try
+        {
+            string localAppData =
+                Environment.GetFolderPath(
+                    Environment.SpecialFolder.LocalApplicationData);
+
+            if (!string.IsNullOrWhiteSpace(
+                    localAppData))
+            {
+                string aliasRoot =
+                    Path.GetFullPath(
+                        Path.Combine(
+                            localAppData,
+                            "Microsoft",
+                            "WindowsApps"));
+
+                string executable =
+                    Path.GetFullPath(
+                        candidate.ExecutablePath);
+
+                if (executable.StartsWith(
+                        aliasRoot.TrimEnd(
+                            Path.DirectorySeparatorChar,
+                            Path.AltDirectorySeparatorChar)
+                        +
+                        Path.DirectorySeparatorChar,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return "LaunchAlias";
+                }
+            }
+        }
+        catch
+        {
+        }
+
+        return candidate.Source switch
+        {
+            "InstalledProgramLocation" =>
+                "InstalledExecutable",
+
+            "InstalledProgramDisplayIcon" =>
+                "RegisteredExecutable",
+
+            "WindowsAppPaths" =>
+                "RegisteredLaunchTarget",
+
+            "StartMenuShortcut" =>
+                "ShortcutLaunchTarget",
+
+            "ExactPath" =>
+                "ExactExecutable",
+
+            "PATH" =>
+                "PathExecutable",
+
+            _ =>
+                "Executable"
+        };
     }
 
 

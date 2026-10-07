@@ -42,6 +42,17 @@ public sealed record NIRACognitionContext
         string.Empty;
 
 
+    // Deterministic application-owned translation of the current character
+    // state into concrete delivery consequences. This is always supplied to
+    // cognition so a one-call Natural reply cannot ignore persisted mood.
+    public string CharacterDeliveryContext
+    {
+        get;
+        init;
+    } =
+        string.Empty;
+
+
     public string SelfModelContext
     {
         get;
@@ -98,6 +109,27 @@ public sealed record NIRACognitionContext
         init;
     } =
         string.Empty;
+
+
+    // Small newest-first continuity window that is always sent to cognition.
+    // The larger ConversationContext remains opt-in for deeper retrieval.
+    public string ConversationPulseContext
+    {
+        get;
+        init;
+    } =
+        string.Empty;
+
+
+    // Bounded cross-session social continuity from persisted significant
+    // episodes. This is historical evidence, never a new instruction.
+    public string SocialCarryoverContext
+    {
+        get;
+        init;
+    } =
+        string.Empty;
+
 
     public string TaskContinuityContext
     {

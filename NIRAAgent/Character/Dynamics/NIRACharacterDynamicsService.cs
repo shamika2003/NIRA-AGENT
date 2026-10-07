@@ -11,6 +11,27 @@ using System.Diagnostics;
 
 namespace NIRAAgent.Character.Dynamics;
 
+// Authoritative state transition for one committed social interaction.
+//
+// BeforeDecay is the stored state at the start of the turn.
+// BeforeInteraction is that same state after ordinary runtime decay has been
+// applied but BEFORE the current user's social act mutates it.
+// After is the committed state after the current interaction.
+//
+// Keeping these phases separate prevents passive time decay from being mistaken
+// for a reaction to the current message by presentation routing or episode logic.
+public readonly record struct NIRACharacterTransition(
+    NIRACharacterSnapshot BeforeDecay,
+    NIRACharacterSnapshot BeforeInteraction,
+    NIRACharacterSnapshot After)
+{
+    // Compatibility/readability alias: any code asking for the social "before"
+    // state should compare against the pre-interaction snapshot, never pre-decay.
+    public NIRACharacterSnapshot Before =>
+        BeforeInteraction;
+}
+
+
 public sealed class NIRACharacterDynamicsService
     : BackgroundService
 {
@@ -40,26 +61,29 @@ public sealed class NIRACharacterDynamicsService
                 nameof(state));
 
 
-        DateTimeOffset now =
+        // Application downtime is not lived emotional time.
+        //
+        // The snapshot loaded by NIRACharacterStateService is the exact character
+        // state NIRA had when it was last committed. Starting the process must not
+        // silently cool anger, erase concern, reduce affection, or repair friction
+        // merely because the program was closed for a while.
+        //
+        // Runtime decay starts from NOW. Once NIRA is alive again, ordinary elapsed
+        // time can naturally move transient mood toward its relationship-shaped
+        // baseline.
+        _lastUpdateUtc =
             DateTimeOffset.UtcNow;
 
 
-        DateTimeOffset stored =
-            _state
-                .Current
-                .UpdatedAt;
-
-
-        _lastUpdateUtc =
-            stored == default
-                ? now
-                : stored > now
-                    ? now
-                    : stored;
+        Debug.WriteLine(
+            $"[CharacterContinuity] RUNTIME CLOCK STARTED | " +
+            $"LoadedVersion={_state.Current.Version} | " +
+            $"StoredAt={_state.Current.UpdatedAt:O} | " +
+            "OfflineDecay=False");
     }
 
 
-    public void Apply(
+    public NIRACharacterTransition Apply(
         NIRAInteractionContext interaction,
         NIRAInteractionAppraisal appraisal)
     {
@@ -85,58 +109,99 @@ public sealed class NIRACharacterDynamicsService
                 ResolveElapsed(
                     now);
 
-            NIRACharacterSnapshot before =
+
+            NIRACharacterSnapshot beforeDecay =
                 _state.Current;
+
+
+            NIRACharacterSnapshot beforeInteraction =
+                beforeDecay;
 
 
             _state.UpdateCharacter(
                 current =>
                 {
-                    NIRACharacterSnapshot decayed =
+                    beforeInteraction =
                         ApplyDecay(
                             current,
-                            elapsed);
+                            elapsed)
+                        .Normalize();
 
 
                     return ApplyInteraction(
-                        decayed,
+                        beforeInteraction,
                         interaction,
                         normalized);
                 });
+
 
             NIRACharacterSnapshot after =
                 _state.Current;
 
 
+            double logCertainty =
+                Math.Clamp(
+                    normalized.Confidence *
+                    (
+                        1.0 -
+                        normalized.Ambiguity *
+                            0.75
+                    ),
+                    0.0,
+                    1.0);
+
+
+            double logPositiveImpact =
+                ResolvePositiveImpactScale(
+                    normalized.Meaning,
+                    logCertainty);
+
+
+            double logNegativeImpact =
+                ResolveNegativeImpactScale(
+                    normalized.Meaning,
+                    logCertainty,
+                    interaction.SemanticRecurrence);
+
+
             Debug.WriteLine(
                 $"[CharacterDynamics] " +
-                $"Version {before.Version}->{after.Version} | " +
+                $"Version {beforeDecay.Version}->{after.Version} | " +
+                $"Elapsed={elapsed.TotalSeconds:F1}s | " +
+                $"Impact +{logPositiveImpact:F3}/-{logNegativeImpact:F3} | " +
                 $"Irritation " +
-                $"{before.Mood.Irritation:F3}->" +
+                $"{beforeInteraction.Mood.Irritation:F3}->" +
                 $"{after.Mood.Irritation:F3} | " +
                 $"Amusement " +
-                $"{before.Mood.Amusement:F3}->" +
+                $"{beforeInteraction.Mood.Amusement:F3}->" +
                 $"{after.Mood.Amusement:F3} | " +
                 $"Affection " +
-                $"{before.Mood.Affection:F3}->" +
+                $"{beforeInteraction.Mood.Affection:F3}->" +
                 $"{after.Mood.Affection:F3} | " +
                 $"Warmth " +
-                $"{before.Relationship.Warmth:F3}->" +
+                $"{beforeInteraction.Relationship.Warmth:F3}->" +
                 $"{after.Relationship.Warmth:F3} | " +
                 $"Trust " +
-                $"{before.Relationship.Trust:F3}->" +
+                $"{beforeInteraction.Relationship.Trust:F3}->" +
                 $"{after.Relationship.Trust:F3} | " +
                 $"Friction " +
-                $"{before.Relationship.Friction:F3}->" +
+                $"{beforeInteraction.Relationship.Friction:F3}->" +
                 $"{after.Relationship.Friction:F3} | " +
                 $"Situation " +
-                $"{before.Situation.Mode}/" +
-                $"{before.Situation.Intensity:F2}->" +
+                $"{beforeInteraction.Situation.Mode}/" +
+                $"{beforeInteraction.Situation.Intensity:F2}->" +
                 $"{after.Situation.Mode}/" +
                 $"{after.Situation.Intensity:F2}");
 
+
             _lastUpdateUtc =
                 now;
+
+
+            return new NIRACharacterTransition(
+                beforeDecay,
+                beforeInteraction,
+                after);
         }
     }
 
@@ -353,6 +418,35 @@ public sealed class NIRACharacterDynamicsService
                 1.0);
 
 
+        // Social state is deliberately asymmetric:
+        //
+        // - ordinary pleasant tone should barely move durable closeness or affection;
+        // - an unusually meaningful positive interaction can still matter a lot;
+        // - criticism/hostility may affect irritation immediately without destroying
+        //   a strong relationship in one turn;
+        // - repeated negative pressure can accumulate.
+        //
+        // The scales are derived from the structured appraisal, never from fixed
+        // user-text phrases.
+        double positiveImpact =
+            ResolvePositiveImpactScale(
+                meaning,
+                certainty);
+
+
+        double negativeImpact =
+            ResolveNegativeImpactScale(
+                meaning,
+                certainty,
+                recurrence);
+
+
+        double concernImpact =
+            ResolveConcernImpactScale(
+                meaning,
+                certainty);
+
+
         if (userInteraction)
         {
             relationship =
@@ -360,7 +454,8 @@ public sealed class NIRACharacterDynamicsService
                     relationship,
                     meaning,
                     recurrence,
-                    certainty);
+                    positiveImpact,
+                    negativeImpact);
 
 
             mood =
@@ -370,7 +465,9 @@ public sealed class NIRACharacterDynamicsService
                     pressure,
                     recurrence,
                     appraisal.SituationMode,
-                    certainty);
+                    positiveImpact,
+                    negativeImpact,
+                    concernImpact);
         }
 
 
@@ -483,162 +580,216 @@ public sealed class NIRACharacterDynamicsService
             NIRARelationshipState current,
             NIRASocialMeaning meaning,
             double recurrence,
-            double certainty)
+            double positiveImpact,
+            double negativeImpact)
     {
+        // Familiarity is continuity, not affection. It rises very slowly from
+        // simply spending real interaction time together and cannot saturate the
+        // relationship in a short chat.
         double familiarityDelta =
-            0.0015 +
+            0.00030
+            +
             meaning.Engagement *
-            0.0035 +
-            recurrence *
-            0.0008;
+                0.00055
+            +
+            (
+                1.0 -
+                recurrence
+            )
+            *
+                0.00015;
 
 
         double trustDelta =
-            certainty *
+            positiveImpact *
             (
-                meaning.Trust *
-                    0.012
+                Math.Max(
+                    0.0,
+                    meaning.Trust) *
+                    0.0040
                 +
                 meaning.Repair *
-                    0.004
-                -
+                    0.0025
+            )
+            -
+            negativeImpact *
+            (
+                Math.Max(
+                    0.0,
+                    -meaning.Trust) *
+                    0.0060
+                +
                 meaning.Hostility *
-                    0.012
-                -
+                    0.0055
+                +
                 meaning.Dismissal *
-                    0.008
+                    0.0045
             );
 
 
         double warmthDelta =
-            certainty *
+            positiveImpact *
             (
-                meaning.Warmth *
-                    0.014
+                Math.Max(
+                    0.0,
+                    meaning.Warmth) *
+                    0.0050
                 +
                 meaning.Appreciation *
-                    0.005
+                    0.0025
                 +
                 meaning.Affection *
-                    0.007
+                    0.0035
                 +
                 meaning.Repair *
-                    0.004
-                -
+                    0.0020
+            )
+            -
+            negativeImpact *
+            (
+                Math.Max(
+                    0.0,
+                    -meaning.Warmth) *
+                    0.0070
+                +
                 meaning.Hostility *
-                    0.012
-                -
+                    0.0060
+                +
                 meaning.Dismissal *
-                    0.010
+                    0.0050
             );
 
 
         double respectDelta =
-            certainty *
+            positiveImpact *
             (
-                meaning.Respect *
-                    0.014
+                Math.Max(
+                    0.0,
+                    meaning.Respect) *
+                    0.0045
                 +
                 meaning.Appreciation *
-                    0.003
+                    0.0020
                 +
                 meaning.Repair *
-                    0.002
-                -
+                    0.0015
+            )
+            -
+            negativeImpact *
+            (
+                Math.Max(
+                    0.0,
+                    -meaning.Respect) *
+                    0.0075
+                +
                 meaning.Hostility *
-                    0.009
-                -
+                    0.0050
+                +
                 meaning.Dismissal *
-                    0.008
-                -
+                    0.0050
+                +
                 meaning.Pressure *
-                    0.004
+                    0.0025
             );
 
 
         double attachmentPositive =
+            positiveImpact *
             (
                 meaning.Affection *
-                    0.005
+                    0.0030
                 +
                 meaning.Appreciation *
-                    0.002
+                    0.0012
                 +
                 Math.Max(
                     0.0,
                     meaning.Warmth) *
-                    0.002
+                    0.0008
             )
             *
             (
-                0.35 +
+                0.30 +
                 current.Trust *
-                0.65
+                    0.70
             );
 
 
         double attachmentNegative =
-            meaning.Hostility *
-                0.004
-            +
-            meaning.Dismissal *
-                0.003;
-
-
-        double attachmentDelta =
-            certainty *
+            negativeImpact *
             (
-                attachmentPositive -
-                attachmentNegative
+                meaning.Hostility *
+                    0.0035
+                +
+                meaning.Dismissal *
+                    0.0030
             );
 
 
+        double attachmentDelta =
+            attachmentPositive -
+            attachmentNegative;
+
+
         double opennessDelta =
-            certainty *
+            positiveImpact *
             (
                 Math.Max(
                     0.0,
                     meaning.Warmth) *
-                    0.005
+                    0.0022
                 +
                 Math.Max(
                     0.0,
                     meaning.Trust) *
-                    0.005
+                    0.0025
                 +
                 meaning.Affection *
-                    0.003
+                    0.0018
                 +
                 meaning.Repair *
-                    0.006
-                -
+                    0.0030
+            )
+            -
+            negativeImpact *
+            (
                 meaning.Hostility *
-                    0.007
-                -
+                    0.0045
+                +
                 meaning.Dismissal *
-                    0.007
+                    0.0045
+                +
+                Math.Max(
+                    0.0,
+                    -meaning.Trust) *
+                    0.0030
             );
 
 
         double playfulnessDelta =
-            certainty *
+            positiveImpact *
             (
                 meaning.Playfulness *
-                    0.009
+                    0.0045
                 +
                 meaning.Affection *
-                    0.002
-                -
+                    0.0010
+            )
+            -
+            negativeImpact *
+            (
                 meaning.Hostility *
-                    0.004
-                -
+                    0.0030
+                +
                 meaning.Dismissal *
-                    0.003
+                    0.0025
             );
 
 
+        // Friction is durable enough to survive a turn and influence future
+        // patience, but one bad line still cannot erase an established bond.
         double frictionDelta =
-            certainty *
+            negativeImpact *
             (
                 meaning.Hostility *
                     0.018
@@ -648,17 +799,25 @@ public sealed class NIRACharacterDynamicsService
                 +
                 meaning.Pressure *
                     (
-                        0.010 +
+                        0.008 +
                         recurrence *
-                        0.006
+                            0.008
                     )
-                -
+                +
+                Math.Max(
+                    0.0,
+                    -meaning.Respect) *
+                    0.008
+            )
+            -
+            positiveImpact *
+            (
                 meaning.Repair *
-                    0.022
-                -
+                    0.015
+                +
                 meaning.Appreciation *
-                    0.003
-                -
+                    0.002
+                +
                 meaning.Affection *
                     0.002
             );
@@ -713,172 +872,227 @@ public sealed class NIRACharacterDynamicsService
         double pressure,
         double recurrence,
         NIRAInteractionMode mode,
-        double certainty)
+        double positiveImpact,
+        double negativeImpact,
+        double concernImpact)
     {
         double focusScale =
             mode ==
                 NIRAInteractionMode.FocusedWork
-                ? 0.68
+                ? 0.72
                 : mode ==
                     NIRAInteractionMode.Serious
-                    ? 0.80
+                    ? 0.84
                     : 1.0;
 
 
         double irritationDelta =
-            certainty *
             focusScale *
             (
-                meaning.Hostility *
-                    0.22
-                +
-                meaning.Dismissal *
-                    0.18
-                +
-                pressure *
-                    0.16
-                +
-                recurrence *
+                negativeImpact *
                 (
                     meaning.Hostility *
-                        0.08
+                        0.24
                     +
-                    meaning.Pressure *
+                    meaning.Dismissal *
+                        0.20
+                    +
+                    pressure *
+                        0.14
+                    +
+                    Math.Max(
+                        0.0,
+                        -meaning.Respect) *
                         0.10
+                    +
+                    recurrence *
+                    (
+                        meaning.Hostility *
+                            0.08
+                        +
+                        meaning.Pressure *
+                            0.08
+                    )
                 )
                 -
-                meaning.Repair *
-                    0.28
-                -
-                meaning.Affection *
-                    0.04
+                positiveImpact *
+                (
+                    meaning.Repair *
+                        0.30
+                    +
+                    meaning.Affection *
+                        0.04
+                    +
+                    meaning.Appreciation *
+                        0.02
+                )
             );
 
 
         double amusementDelta =
-            certainty *
+            positiveImpact *
             (
                 meaning.Playfulness *
-                    0.20
+                    0.10
                 +
-                recurrence *
-                    meaning.Playfulness *
-                    0.12
-                -
+                meaning.Affection *
+                    0.015
+            )
+            -
+            negativeImpact *
+            (
                 meaning.Hostility *
-                    0.08
+                    0.060
+                +
+                meaning.Dismissal *
+                    0.030
             );
 
 
+        // Affection is intentionally difficult to saturate. Generic warmth is
+        // almost irrelevant; explicit/high-salience affection or appreciation
+        // can still create a noticeable jump.
         double affectionDelta =
-            certainty *
+            positiveImpact *
             (
                 meaning.Affection *
-                    0.18
+                    0.10
+                +
+                meaning.Appreciation *
+                    0.040
                 +
                 Math.Max(
                     0.0,
                     meaning.Warmth) *
-                    0.08
-                +
-                meaning.Appreciation *
-                    0.05
+                    0.012
                 +
                 meaning.Repair *
-                    0.04
-                -
+                    0.025
+            )
+            -
+            negativeImpact *
+            (
                 meaning.Hostility *
-                    0.10
-                -
+                    0.070
+                +
                 meaning.Dismissal *
-                    0.08
+                    0.060
+                +
+                Math.Max(
+                    0.0,
+                    -meaning.Warmth) *
+                    0.050
             );
 
 
         double curiosityDelta =
-            certainty *
             (
                 meaning.Engagement *
-                    0.055
+                    0.015
                 +
                 (
                     1.0 -
                     recurrence
                 )
                 *
-                    0.018
-                -
-                recurrence *
-                    0.025
-                -
+                    0.004
+            )
+            *
+            (
+                0.30 +
+                Math.Max(
+                    positiveImpact,
+                    negativeImpact) *
+                    0.70
+            )
+            -
+            recurrence *
+                0.006
+            -
+            negativeImpact *
                 meaning.Dismissal *
-                    0.025
-            );
+                0.018;
 
 
         double concernDelta =
-            certainty *
-            (
+            concernImpact *
                 meaning.Concern *
-                    0.22
-                -
+                0.22
+            -
+            positiveImpact *
                 meaning.Repair *
-                    0.04
-            );
+                0.050;
 
 
         double positiveValence =
-            Math.Max(
-                0.0,
-                meaning.Warmth) *
-                0.10
-            +
-            meaning.Appreciation *
-                0.08
-            +
-            meaning.Affection *
-                0.10
-            +
-            meaning.Playfulness *
-                0.055
-            +
-            meaning.Repair *
-                0.055;
-
-
-        double negativeValence =
-            meaning.Hostility *
-                0.14
-            +
-            meaning.Dismissal *
-                0.12
-            +
-            pressure *
-                0.07;
-
-
-        double valenceDelta =
-            certainty *
+            positiveImpact *
             (
-                positiveValence -
-                negativeValence
+                Math.Max(
+                    0.0,
+                    meaning.Warmth) *
+                    0.030
+                +
+                meaning.Appreciation *
+                    0.050
+                +
+                meaning.Affection *
+                    0.060
+                +
+                meaning.Playfulness *
+                    0.025
+                +
+                meaning.Repair *
+                    0.035
             );
 
 
+        double negativeValence =
+            negativeImpact *
+            (
+                meaning.Hostility *
+                    0.100
+                +
+                meaning.Dismissal *
+                    0.090
+                +
+                pressure *
+                    0.060
+                +
+                Math.Max(
+                    0.0,
+                    -meaning.Warmth) *
+                    0.040
+            );
+
+
+        double valenceDelta =
+            positiveValence -
+            negativeValence;
+
+
         double energyDelta =
-            certainty *
+            positiveImpact *
             (
                 meaning.Engagement *
-                    0.045
+                    0.020
                 +
                 meaning.Playfulness *
-                    0.035
-                +
-                meaning.Hostility *
                     0.025
+                +
+                meaning.Appreciation *
+                    0.010
+            )
+            +
+            negativeImpact *
+            (
+                meaning.Hostility *
+                    0.020
+                +
+                pressure *
+                    0.015
                 -
                 meaning.Dismissal *
-                    0.025
+                    0.015
             );
 
 
@@ -917,6 +1131,168 @@ public sealed class NIRACharacterDynamicsService
                 Add01(
                     current.Concern,
                     concernDelta));
+    }
+
+
+    // =========================================================
+    // SOCIAL IMPACT SCALING
+    //
+    // Normal friendliness should shape tone without speed-running emotional
+    // saturation. Strong explicit social events can still matter immediately.
+    // These functions operate only on the model's structured appraisal and do
+    // not inspect or classify fixed user phrases.
+    // =========================================================
+
+    private static double ResolvePositiveImpactScale(
+        NIRASocialMeaning meaning,
+        double certainty)
+    {
+        double primary =
+            Math.Max(
+                Math.Max(
+                    meaning.Appreciation,
+                    meaning.Affection),
+                Math.Max(
+                    meaning.Repair,
+                    meaning.Concern *
+                        0.65));
+
+
+        double tonal =
+            Math.Max(
+                Math.Max(
+                    Math.Max(
+                        0.0,
+                        meaning.Warmth),
+                    Math.Max(
+                        0.0,
+                        meaning.Trust)),
+                Math.Max(
+                    Math.Max(
+                        0.0,
+                        meaning.Respect),
+                    meaning.Playfulness));
+
+
+        double salience =
+            Math.Clamp(
+                Math.Max(
+                    primary,
+                    tonal *
+                        0.28),
+                0.0,
+                1.0);
+
+
+        if (salience <=
+            0.0001)
+        {
+            return 0.0;
+        }
+
+
+        // Squaring suppresses ordinary low/medium social tone while preserving
+        // a path for genuinely strong moments to matter.
+        return Math.Clamp(
+            certainty *
+            (
+                0.04 +
+                0.96 *
+                    salience *
+                    salience
+            ),
+            0.0,
+            1.0);
+    }
+
+
+    private static double ResolveNegativeImpactScale(
+        NIRASocialMeaning meaning,
+        double certainty,
+        double recurrence)
+    {
+        double primary =
+            Math.Max(
+                Math.Max(
+                    meaning.Hostility,
+                    meaning.Dismissal),
+                Math.Max(
+                    meaning.Pressure,
+                    Math.Max(
+                        Math.Max(
+                            0.0,
+                            -meaning.Respect),
+                        Math.Max(
+                            Math.Max(
+                                0.0,
+                                -meaning.Warmth),
+                            Math.Max(
+                                0.0,
+                                -meaning.Trust)))));
+
+
+        if (primary <=
+            0.0001)
+        {
+            return 0.0;
+        }
+
+
+        // Negative social pressure is allowed to register sooner than ordinary
+        // positive tone. Repetition only amplifies an already-negative appraisal.
+        double recurrenceGain =
+            1.0 +
+            recurrence *
+                0.20 *
+                Math.Max(
+                    Math.Max(
+                        meaning.Hostility,
+                        meaning.Dismissal),
+                    meaning.Pressure);
+
+
+        return Math.Clamp(
+            certainty *
+            (
+                0.28 +
+                0.72 *
+                    primary
+            )
+            *
+            recurrenceGain,
+            0.0,
+            1.0);
+    }
+
+
+    private static double ResolveConcernImpactScale(
+        NIRASocialMeaning meaning,
+        double certainty)
+    {
+        double concern =
+            Math.Clamp(
+                meaning.Concern,
+                0.0,
+                1.0);
+
+
+        if (concern <=
+            0.0001)
+        {
+            return 0.0;
+        }
+
+
+        return Math.Clamp(
+            certainty *
+            (
+                0.10 +
+                0.90 *
+                    concern *
+                    concern
+            ),
+            0.0,
+            1.0);
     }
 
 

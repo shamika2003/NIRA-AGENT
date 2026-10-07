@@ -31,13 +31,39 @@ public sealed class NIRACapabilityRequestPolicy
     {
         Dictionary<string, JsonElement> args = ReadObject(request.Arguments);
         foreach (string key in new[] { "path", "source", "destination", "workingdirectory" })
-            if (args.TryGetValue(key, out JsonElement value) && value.ValueKind != JsonValueKind.Null)
-                args[key] = JsonSerializer.SerializeToElement(NormalizeLocalPath(RequireText(value, key)));
+        {
+            if (!args.TryGetValue(key, out JsonElement value) ||
+                value.ValueKind == JsonValueKind.Null)
+            {
+                continue;
+            }
+
+            // Optional path parameters are frequently emitted as an empty JSON
+            // string by a model. Empty means omitted; it must not be passed to
+            // NormalizeLocalPath(), where it becomes the misleading hard failure
+            // "A local path is required." Required path handlers still validate
+            // their own required arguments normally.
+            if (value.ValueKind == JsonValueKind.String &&
+                string.IsNullOrWhiteSpace(value.GetString()))
+            {
+                args.Remove(key);
+                continue;
+            }
+
+            args[key] = JsonSerializer.SerializeToElement(
+                NormalizeLocalPath(RequireText(value, key)));
+        }
 
         if (request.CapabilityId is NIRACapabilityIds.ProcessStart or NIRACapabilityIds.ShellExecute)
         {
-            if (!args.TryGetValue("workingdirectory", out JsonElement cwd) || cwd.ValueKind == JsonValueKind.Null)
-                args["workingdirectory"] = JsonSerializer.SerializeToElement(NormalizeLocalPath(Environment.CurrentDirectory));
+            if (!args.TryGetValue("workingdirectory", out JsonElement cwd) ||
+                cwd.ValueKind == JsonValueKind.Null ||
+                (cwd.ValueKind == JsonValueKind.String &&
+                 string.IsNullOrWhiteSpace(cwd.GetString())))
+            {
+                args["workingdirectory"] = JsonSerializer.SerializeToElement(
+                    NormalizeLocalPath(Environment.CurrentDirectory));
+            }
             if (request.CapabilityId == NIRACapabilityIds.ProcessStart)
             {
                 args["filename"] = JsonSerializer.SerializeToElement(ResolveExecutable(

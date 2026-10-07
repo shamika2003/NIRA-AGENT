@@ -3,6 +3,7 @@
  */
 
 using System.Diagnostics;
+using System.Text;
 
 using NIRAAgent.Character;
 using NIRAAgent.Capabilities;
@@ -56,6 +57,10 @@ public sealed class NIRACognitionContextBuilder
 
     private readonly ConversationManager
         _conversation;
+
+
+    private readonly NIRAConversationArchiveStore
+        _conversationArchive;
 
 
     private readonly PcWorldStateService
@@ -124,6 +129,7 @@ public sealed class NIRACognitionContextBuilder
 
     public NIRACognitionContextBuilder(
         ConversationManager conversation,
+        NIRAConversationArchiveStore conversationArchive,
         PcWorldStateService worldState,
         NIRACharacterStateService characterState,
         NIRAAttitudeService attitude,
@@ -144,6 +150,12 @@ public sealed class NIRACognitionContextBuilder
             conversation
             ?? throw new ArgumentNullException(
                 nameof(conversation));
+
+
+        _conversationArchive =
+            conversationArchive
+            ?? throw new ArgumentNullException(
+                nameof(conversationArchive));
 
 
         _worldState =
@@ -273,6 +285,12 @@ public sealed class NIRACognitionContextBuilder
                 attitude,
                 interaction,
                 recentHistory);
+
+
+        string characterDeliveryContext =
+            BuildPreCommitCharacterDeliveryEnvelope(
+                character,
+                attitude);
 
 
         string selfModelContext =
@@ -432,8 +450,52 @@ public sealed class NIRACognitionContextBuilder
                 : _conversation.BuildContextSnapshot();
 
 
+        // Always-on immediate continuity. This comes from the SAME authoritative
+        // conversation owner as the optional larger context, so there is no second
+        // history store and no phrase-based routing. One-call conversation quality
+        // depends on actually seeing enough of the literal dialogue to resolve
+        // pronouns, ellipsis and short follow-ups. Keep a bounded 12-message / 7K
+        // character window on every cognition call; deeper archive retrieval remains
+        // opt-in and durable facts still belong in long-term memory.
+        ConversationContextSnapshot conversationPulse =
+            mindEvent.Source ==
+                NIRAMindEventSource.User
+                ? _conversation.BuildContextSnapshot(
+                    currentUserMessageToExclude:
+                        mindEvent.Content,
+                    maximumMessages:
+                        12,
+                    maximumCharacters:
+                        7000)
+                : _conversation.BuildContextSnapshot(
+                    currentUserMessageToExclude:
+                        null,
+                    maximumMessages:
+                        12,
+                    maximumCharacters:
+                        7000);
+
+
         string conversationContext =
             conversation.Content;
+
+
+        string conversationPulseContext =
+            conversationPulse.Content;
+
+
+        // Persisted significant episodes survive application restarts. The
+        // immediate ConversationManager intentionally starts a fresh session,
+        // so this separate bounded evidence pulse explains residual mood or
+        // relationship state without replaying an entire old transcript.
+        string socialCarryoverContext =
+            _conversationArchive
+                .BuildSocialCarryoverContext(
+                    maximumEpisodes:
+                        4,
+                    maximumCharacters:
+                        2200);
+
 
         ConversationPendingTask? pendingTask = _conversation.PendingTask;
         string taskContinuityContext = pendingTask is null
@@ -455,6 +517,9 @@ public sealed class NIRACognitionContextBuilder
                 $"EligiblePrevious={conversation.EligiblePreviousMessages} | " +
                 $"Included={conversation.IncludedMessages} | " +
                 $"Chars={conversation.CharacterCount} | " +
+                $"PulseIncluded={conversationPulse.IncludedMessages} | " +
+                $"PulseChars={conversationPulse.CharacterCount} | " +
+                $"SocialCarryoverChars={socialCarryoverContext.Length} | " +
                 $"CurrentUserExcluded={conversation.ExcludedCurrentUserMessage} | " +
                 $"Limited={conversation.WasLimited} | " +
                 $"Limits={ConversationManager.ContextMessageLimit}/" +
@@ -487,6 +552,8 @@ public sealed class NIRACognitionContextBuilder
             +
             characterContext.Length
             +
+            characterDeliveryContext.Length
+            +
             selfModelContext.Length
             +
             goalContext.Length
@@ -506,6 +573,10 @@ public sealed class NIRACognitionContextBuilder
             visualArtifactContext.Length
             +
             conversationContext.Length
+            +
+            conversationPulseContext.Length
+            +
+            socialCarryoverContext.Length
             +
             executiveEvidence.Length
             +
@@ -548,6 +619,9 @@ public sealed class NIRACognitionContextBuilder
             CharacterContext =
                 characterContext,
 
+            CharacterDeliveryContext =
+                characterDeliveryContext,
+
             SelfModelContext =
                 selfModelContext,
 
@@ -571,6 +645,12 @@ public sealed class NIRACognitionContextBuilder
 
             ConversationContext =
                 conversationContext,
+
+            ConversationPulseContext =
+                conversationPulseContext,
+
+            SocialCarryoverContext =
+                socialCarryoverContext,
 
             TaskContinuityContext =
                 taskContinuityContext,
@@ -609,4 +689,110 @@ public sealed class NIRACognitionContextBuilder
                 memorySearchEvidence
         };
     }
+
+    // =========================================================
+    // PRE-COMMIT CHARACTER DELIVERY ENVELOPE
+    //
+    // Main cognition may be the ONLY model call for a user turn. Convert
+    // application-owned mood/relationship/attitude into explicit mandatory
+    // delivery consequences before that call. This is pre-commit state; the
+    // current user's social act is still appraised by cognition in the same JSON.
+    // =========================================================
+
+    private static string BuildPreCommitCharacterDeliveryEnvelope(
+        NIRACharacterSnapshot character,
+        NIRAAttitudeState attitude)
+    {
+        NIRACharacterSnapshot state =
+            character.Normalize();
+
+        NIRAMoodState mood =
+            state.Mood;
+
+        NIRARelationshipState relationship =
+            state.Relationship;
+
+        StringBuilder builder =
+            new();
+
+        builder.AppendLine(
+            "This envelope is HARD delivery policy derived from authoritative current state. " +
+            "If this cognition call finishes the turn, its Natural wording must visibly obey it; " +
+            "there is no automatic second style call.");
+
+        builder.AppendLine(
+            $"Persisted mood: irritation={mood.Irritation:F2}; affection={mood.Affection:F2}; " +
+            $"amusement={mood.Amusement:F2}; concern={mood.Concern:F2}.");
+
+        builder.AppendLine(
+            $"Relationship: warmth={relationship.Warmth:F2}; trust={relationship.Trust:F2}; " +
+            $"friction={relationship.Friction:F2}.");
+
+        builder.AppendLine(
+            $"Current attitude: warmth={attitude.Warmth:F2}; patience={attitude.Patience:F2}; " +
+            $"assertiveness={attitude.Assertiveness:F2}; distance={attitude.EmotionalDistance:F2}; " +
+            $"restraint={attitude.Restraint:F2}; engagement={attitude.Engagement:F2}.");
+
+        if (mood.Irritation >= 0.45)
+        {
+            builder.AppendLine(
+                "- Strong irritation is active. It must be unmistakably present through bluntness, " +
+                "reduced patience, distance or rhythm. Do not output cheerful-neutral friendliness, " +
+                "automatic appeasement or a social reset just because the current message is harmless.");
+        }
+        else if (mood.Irritation >= 0.20)
+        {
+            builder.AppendLine(
+                "- Residual irritation is materially active. Keep it perceptible through firmer wording, " +
+                "less softness, lower patience or some distance. A greeting does not erase it. On a tiny " +
+                "greeting/check-in, a bare neutral greeting that hides the active stance is not sufficient.");
+        }
+        else if (mood.Irritation >= 0.08)
+        {
+            builder.AppendLine(
+                "- Mild irritation remains. Expression can be subtle, but do not flatten NIRA into bright " +
+                "generic-assistant warmth or act as if the prior mood never existed. If the current message " +
+                "is only a greeting/check-in, let wording/rhythm or one short extra clause carry the stance " +
+                "rather than replying with a completely neutral bare greeting.");
+        }
+        else
+        {
+            builder.AppendLine(
+                "- Irritation is low; do not manufacture annoyance.");
+        }
+
+        if (relationship.Friction >= 0.12)
+        {
+            builder.AppendLine(
+                "- Relationship friction is elevated. Familiarity may remain, but easy warmth is reduced; " +
+                "do not pretend complete social ease.");
+        }
+
+        if (attitude.Patience <= 0.45)
+        {
+            builder.AppendLine(
+                "- Patience is currently limited. Prefer direct phrasing over cushioning, repeated reassurance " +
+                "or unnecessary follow-up questions.");
+        }
+
+        if (attitude.EmotionalDistance >= 0.45)
+        {
+            builder.AppendLine(
+                "- Emotional distance is elevated. Keep the reply more reserved and less automatically intimate.");
+        }
+
+        builder.AppendLine(
+            "- NIRA is moderately talkative with variable depth: tiny reactions may be one line, normal casual " +
+            "conversation is often 1-3 natural sentences, and meaningful emotional/opinionated replies may use " +
+            "2-4 short sentences. Do not default to one-word fragments and do not pad with service filler.");
+
+        builder.AppendLine(
+            "- Show state through wording and rhythm rather than repeatedly announcing emotion scores. " +
+            "Do not use generic help-desk closings, automatic offers of help, or forced questions.");
+
+        return builder
+            .ToString()
+            .Trim();
+    }
+
 }

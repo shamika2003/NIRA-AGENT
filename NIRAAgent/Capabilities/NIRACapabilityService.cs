@@ -38,6 +38,72 @@ public sealed class NIRACapabilityService
         return text.ToString().Trim();
     }
 
+    // Model-generated capability calls are preflighted by the Executive before
+    // dispatch so malformed shadow requests can be rejected without creating audit
+    // noise or consuming a machine-action round trip. This performs ONLY structural
+    // schema normalization/validation. It does not prepare paths, authorize, bind
+    // browser state, or execute anything.
+    public bool TryNormalizeAndValidateSchema(
+        NIRACapabilityRequest raw,
+        out NIRACapabilityRequest normalized,
+        out string error)
+    {
+        ArgumentNullException.ThrowIfNull(
+            raw);
+
+        normalized =
+            raw;
+
+        error =
+            string.Empty;
+
+        try
+        {
+            normalized =
+                NormalizeCapabilityArgumentAliases(
+                    raw.Normalize());
+
+            if (!_registry.TryResolve(
+                    normalized.CapabilityId,
+                    out INIRACapabilityHandler? handler)
+                ||
+                handler ==
+                    null)
+            {
+                error =
+                    $"Capability '{normalized.CapabilityId}' is not registered.";
+
+                return false;
+            }
+
+            NIRACapabilityDescriptor descriptor =
+                handler.Descriptor.Normalize();
+
+            normalized =
+                NormalizeCapabilityArgumentsToDescriptor(
+                    normalized,
+                    descriptor,
+                    handler);
+
+            ValidateArguments(
+                normalized,
+                descriptor);
+
+            return true;
+        }
+        catch (Exception ex) when (
+            ex is InvalidOperationException
+            or ArgumentException
+            or JsonException)
+        {
+            error =
+                ex.Message;
+
+            return false;
+        }
+    }
+
+
     public async Task<IReadOnlyList<NIRACapabilityResult>> ExecuteAsync(
         IReadOnlyList<NIRACapabilityRequest> requests, CancellationToken cancellationToken = default)
     {
@@ -149,6 +215,12 @@ public sealed class NIRACapabilityService
             if (!_registry.TryResolve(request.CapabilityId, out INIRACapabilityHandler? handler) || handler == null)
                 throw new InvalidOperationException("The capability ID is not registered.");
             NIRACapabilityDescriptor descriptor = handler.Descriptor.Normalize();
+
+            request =
+                NormalizeCapabilityArgumentsToDescriptor(
+                    request,
+                    descriptor,
+                    handler);
 
             // Once the trusted handler is known, never leave a preflight failure
             // mislabeled as Observe merely because preparation failed before the
@@ -268,21 +340,37 @@ public sealed class NIRACapabilityService
         }
     }
 
-    // Canonicalize a very small set of capability-level argument aliases
-    // before validation/authorization. These are generic API vocabulary aliases,
-    // not user-intent phrase heuristics or website-specific behavior.
+    // Canonicalize a deliberately small set of capability-API vocabulary aliases
+    // before validation/authorization. These are schema compatibility aliases,
+    // not user-intent phrase heuristics, app-name tables, or website-specific routing.
     //
-    // Keeping normalization here means every direct browser handler, policy and
-    // audit path sees one canonical schema. If both an alias and its canonical
-    // name are supplied, reject the ambiguous request instead of guessing.
+    // Keeping normalization here means every handler, policy and audit path sees one
+    // canonical schema. If both an alias and its canonical name are supplied, reject
+    // the ambiguous request instead of guessing which value the model intended.
     private static NIRACapabilityRequest NormalizeCapabilityArgumentAliases(
         NIRACapabilityRequest request)
     {
-        if (request.Arguments.ValueKind != JsonValueKind.Object
-            ||
-            !request.CapabilityId.StartsWith(
+        if (request.Arguments.ValueKind != JsonValueKind.Object)
+        {
+            return request;
+        }
+
+        bool browserCapability =
+            request.CapabilityId.StartsWith(
                 "browser.",
-                StringComparison.OrdinalIgnoreCase))
+                StringComparison.OrdinalIgnoreCase);
+
+        bool applicationResolve =
+            request.CapabilityId ==
+            NIRACapabilityIds.ApplicationResolve;
+
+        bool processStart =
+            request.CapabilityId ==
+            NIRACapabilityIds.ProcessStart;
+
+        if (!browserCapability &&
+            !applicationResolve &&
+            !processStart)
         {
             return request;
         }
@@ -301,25 +389,58 @@ public sealed class NIRACapabilityService
                 property.Name;
 
             string mapped =
-                name.Equals(
-                    "elementRef",
-                    StringComparison.OrdinalIgnoreCase)
-                    ? "ref"
-                    : request.CapabilityId ==
-                          NIRACapabilityIds.BrowserFill
-                      &&
-                      name.Equals(
-                          "text",
-                          StringComparison.OrdinalIgnoreCase)
-                        ? "value"
-                        : name;
+                applicationResolve &&
+                (name.Equals(
+                     "applicationName",
+                     StringComparison.OrdinalIgnoreCase)
+                 ||
+                 name.Equals(
+                     "appName",
+                     StringComparison.OrdinalIgnoreCase)
+                 ||
+                 name.Equals(
+                     "name",
+                     StringComparison.OrdinalIgnoreCase))
+                    ? "query"
+                    : processStart &&
+                      (name.Equals(
+                           "executable",
+                           StringComparison.OrdinalIgnoreCase)
+                       ||
+                       name.Equals(
+                           "executablePath",
+                           StringComparison.OrdinalIgnoreCase)
+                       ||
+                       name.Equals(
+                           "program",
+                           StringComparison.OrdinalIgnoreCase))
+                        ? "fileName"
+                        : processStart &&
+                          name.Equals(
+                              "args",
+                              StringComparison.OrdinalIgnoreCase)
+                            ? "arguments"
+                            : browserCapability &&
+                              name.Equals(
+                                  "elementRef",
+                                  StringComparison.OrdinalIgnoreCase)
+                                ? "ref"
+                                : browserCapability &&
+                                  request.CapabilityId ==
+                                      NIRACapabilityIds.BrowserFill
+                                  &&
+                                  name.Equals(
+                                      "text",
+                                      StringComparison.OrdinalIgnoreCase)
+                                    ? "value"
+                                    : name;
 
             if (!canonical.TryAdd(
                     mapped,
                     property.Value.Clone()))
             {
                 throw new InvalidOperationException(
-                    $"Supply only one value for browser argument '{mapped}'.");
+                    $"Supply only one value for capability argument '{mapped}'.");
             }
 
             if (!string.Equals(
@@ -346,6 +467,199 @@ public sealed class NIRACapabilityService
     }
 
 
+    private static NIRACapabilityRequest NormalizeCapabilityArgumentsToDescriptor(
+        NIRACapabilityRequest request,
+        NIRACapabilityDescriptor descriptor,
+        INIRACapabilityHandler handler)
+    {
+        if (request.Arguments.ValueKind != JsonValueKind.Object)
+        {
+            return request;
+        }
+
+        Dictionary<string, NIRACapabilityParameterDescriptor> declared =
+            descriptor.Parameters.ToDictionary(
+                parameter => parameter.Name,
+                StringComparer.OrdinalIgnoreCase);
+
+        Dictionary<string, JsonElement> canonical =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        List<string> unknownNames =
+            new();
+
+        bool changed =
+            false;
+
+        foreach (JsonProperty property in request.Arguments.EnumerateObject())
+        {
+            if (!declared.TryGetValue(
+                    property.Name,
+                    out NIRACapabilityParameterDescriptor? parameter))
+            {
+                unknownNames.Add(
+                    property.Name);
+
+                if (!canonical.TryAdd(
+                        property.Name,
+                        property.Value.Clone()))
+                {
+                    throw new InvalidOperationException(
+                        $"Duplicate argument '{property.Name}'.");
+                }
+
+                continue;
+            }
+
+            JsonElement normalizedValue =
+                property.Value.Clone();
+
+            string parameterType =
+                parameter.Type.Trim().ToLowerInvariant();
+
+            if (parameterType == "integer")
+            {
+                if (property.Value.ValueKind == JsonValueKind.String &&
+                    int.TryParse(
+                        property.Value.GetString(),
+                        System.Globalization.NumberStyles.Integer,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        out int parsedInteger))
+                {
+                    normalizedValue =
+                        JsonSerializer.SerializeToElement(
+                            parsedInteger);
+
+                    changed =
+                        true;
+                }
+                else if (property.Value.ValueKind == JsonValueKind.Number &&
+                         !property.Value.TryGetInt32(out _) &&
+                         property.Value.TryGetDouble(out double numericInteger) &&
+                         double.IsFinite(numericInteger) &&
+                         numericInteger >= int.MinValue &&
+                         numericInteger <= int.MaxValue &&
+                         numericInteger == Math.Truncate(numericInteger))
+                {
+                    normalizedValue =
+                        JsonSerializer.SerializeToElement(
+                            (int)numericInteger);
+
+                    changed =
+                        true;
+                }
+            }
+            else if (parameterType == "boolean" &&
+                     property.Value.ValueKind == JsonValueKind.String &&
+                     bool.TryParse(
+                         property.Value.GetString(),
+                         out bool parsedBoolean))
+            {
+                normalizedValue =
+                    JsonSerializer.SerializeToElement(
+                        parsedBoolean);
+
+                changed =
+                    true;
+            }
+
+            if (!canonical.TryAdd(
+                    parameter.Name,
+                    normalizedValue))
+            {
+                throw new InvalidOperationException(
+                    $"Supply only one value for capability argument '{parameter.Name}'.");
+            }
+
+            if (!string.Equals(
+                    property.Name,
+                    parameter.Name,
+                    StringComparison.Ordinal))
+            {
+                changed =
+                    true;
+            }
+        }
+
+        NIRACapabilityRequest normalized =
+            changed
+                ? request with
+                {
+                    Arguments =
+                        JsonSerializer.SerializeToElement(
+                            canonical)
+                }
+                : request;
+
+        if (unknownNames.Count ==
+            0)
+        {
+            return normalized;
+        }
+
+        // Never silently repair browser actions or anything that can resolve
+        // above Observe risk. For a local read-only primitive, however, an
+        // undeclared model metadata field cannot grant extra authority. If the
+        // request is complete and valid WITHOUT those unknown fields and the
+        // trusted handler still classifies it as Observe, discard only the
+        // undeclared fields instead of burning another model cycle.
+        if (descriptor.Id.StartsWith(
+                "browser.",
+                StringComparison.OrdinalIgnoreCase) ||
+            descriptor.DefaultRisk !=
+                NIRACapabilityRisk.Observe)
+        {
+            return normalized;
+        }
+
+        Dictionary<string, JsonElement> declaredOnly =
+            canonical
+                .Where(pair =>
+                    declared.ContainsKey(
+                        pair.Key))
+                .ToDictionary(
+                    pair => pair.Key,
+                    pair => pair.Value.Clone(),
+                    StringComparer.OrdinalIgnoreCase);
+
+        NIRACapabilityRequest repaired =
+            request with
+            {
+                Arguments =
+                    JsonSerializer.SerializeToElement(
+                        declaredOnly)
+            };
+
+        try
+        {
+            ValidateArguments(
+                repaired,
+                descriptor);
+
+            if (handler.ResolveRisk(
+                    repaired) !=
+                NIRACapabilityRisk.Observe)
+            {
+                return normalized;
+            }
+        }
+        catch (Exception ex) when (
+            ex is InvalidOperationException
+            or ArgumentException
+            or JsonException)
+        {
+            return normalized;
+        }
+
+        Debug.WriteLine(
+            $"[CapabilitySchema] SAFE OBSERVE REPAIR | " +
+            $"Capability={descriptor.Id} | " +
+            $"DroppedUndeclared={string.Join(",", unknownNames.OrderBy(name => name, StringComparer.OrdinalIgnoreCase))}");
+
+        return repaired;
+    }
+
+
     private static void ValidateArguments(NIRACapabilityRequest request, NIRACapabilityDescriptor descriptor)
     {
         Dictionary<string, JsonElement> supplied = new(StringComparer.OrdinalIgnoreCase);
@@ -357,7 +671,14 @@ public sealed class NIRACapabilityService
                 property.Name.Equals("elementRef", StringComparison.OrdinalIgnoreCase) &&
                 descriptor.Parameters.Any(p => p.Name.Equals("ref", StringComparison.OrdinalIgnoreCase));
             if (!browserRefAlias && !descriptor.Parameters.Any(p => string.Equals(p.Name, property.Name, StringComparison.OrdinalIgnoreCase)))
-                throw new InvalidOperationException($"Unknown argument '{property.Name}' for {descriptor.Id}.");
+            {
+                string declared = descriptor.Parameters.Count == 0
+                    ? "(none)"
+                    : string.Join(", ", descriptor.Parameters.Select(parameter =>
+                        $"{parameter.Name}:{parameter.Type}{(parameter.Required ? " required" : " optional")}"));
+                throw new InvalidOperationException(
+                    $"Unknown argument '{property.Name}' for {descriptor.Id}. Declared arguments: {declared}.");
+            }
         }
         if (descriptor.Id.StartsWith("browser.", StringComparison.OrdinalIgnoreCase) &&
             supplied.ContainsKey("elementRef") && supplied.ContainsKey("ref"))
@@ -378,7 +699,12 @@ public sealed class NIRACapabilityService
                 bool runtimeBoundPage = parameter.Name.Equals("pageId", StringComparison.OrdinalIgnoreCase) &&
                     NIRACapabilityRequestPolicy.IsBrowserPageAction(descriptor.Id);
                 if (parameter.Required && !runtimeBoundPage)
-                    throw new InvalidOperationException($"Required argument '{parameter.Name}' is missing.");
+                {
+                    string declared = string.Join(", ", descriptor.Parameters.Select(item =>
+                        $"{item.Name}:{item.Type}{(item.Required ? " required" : " optional")}"));
+                    throw new InvalidOperationException(
+                        $"Required argument '{parameter.Name}' is missing for {descriptor.Id}. Declared arguments: {declared}.");
+                }
                 continue;
             }
             bool valid = parameter.Type.ToLowerInvariant() switch

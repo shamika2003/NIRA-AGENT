@@ -34,8 +34,8 @@ internal static class NIRABrowserCapabilityFormatting
             return "\nDestination requires a fresh browser.current/page selection.";
         try
         {
-            NIRABrowserInspection inspection = await browser.InspectAsync(
-                page.PageId, 100, 8000, cancellationToken);
+            NIRABrowserInspection inspection = await InspectSettledAsync(
+                browser, page.PageId, 100, 8000, cancellationToken);
             return "\nCURRENT_PAGE_INSPECTION (read-only, same work item):\n" +
                    Inspection(inspection);
         }
@@ -52,6 +52,113 @@ internal static class NIRABrowserCapabilityFormatting
                 ". Inspect a live task-owned page before claiming completion.";
         }
     }
+    // Client-rendered pages can expose their final URL before the useful DOM
+    // has finished hydrating. One bounded, observation-only settle check prevents
+    // cognition from treating a thin first snapshot as the real destination and
+    // wandering into unrelated routes. No click, submit, reload or guessed URL is
+    // performed here.
+    public static async Task<NIRABrowserInspection> InspectSettledAsync(
+        NIRABrowserService browser,
+        Guid pageId,
+        int maxElements,
+        int maxTextCharacters,
+        CancellationToken cancellationToken,
+        bool extendedSettle = false)
+    {
+        NIRABrowserInspection first = await browser.InspectAsync(
+            pageId,
+            maxElements,
+            maxTextCharacters,
+            cancellationToken);
+
+        // A visible credential form is already meaningful evidence; waiting for
+        // it to disappear without an authenticated action would be misleading.
+        // Rich documents also do not need the extra observation delay.
+        if (first.PasswordControlObserved ||
+            first.Text.Length >= 5000 ||
+            first.Elements.Count >= 90)
+        {
+            return first;
+        }
+
+        await Task.Delay(550, cancellationToken);
+
+        NIRABrowserInspection second = await browser.InspectAsync(
+            pageId,
+            maxElements,
+            maxTextCharacters,
+            cancellationToken);
+
+        bool materiallyRicher =
+            second.Text.Length >= first.Text.Length + 160 ||
+            second.Elements.Count >= first.Elements.Count + 3 ||
+            second.Forms.Count > first.Forms.Count ||
+            second.Tables.Count > first.Tables.Count;
+
+        NIRABrowserInspection settled =
+            second;
+
+        // Authentication commonly lands on a shell document whose client-side
+        // widgets populate after the first normal settle window. For that one
+        // boundary only, allow one additional bounded observation before
+        // cognition chooses a route. This is generic DOM stabilization: no URL,
+        // site name, menu label or task phrase is consulted, and no action is
+        // replayed.
+        bool stillThinAfterNormalSettle =
+            extendedSettle &&
+            !second.PasswordControlObserved &&
+            second.Text.Length < 5000 &&
+            second.Elements.Count < 90;
+
+        if (stillThinAfterNormalSettle)
+        {
+            await Task.Delay(
+                1500,
+                cancellationToken);
+
+            NIRABrowserInspection third =
+                await browser.InspectAsync(
+                    pageId,
+                    maxElements,
+                    maxTextCharacters,
+                    cancellationToken);
+
+            bool thirdMateriallyRicher =
+                third.Text.Length >= second.Text.Length + 160 ||
+                third.Elements.Count >= second.Elements.Count + 3 ||
+                third.Forms.Count > second.Forms.Count ||
+                third.Tables.Count > second.Tables.Count;
+
+            materiallyRicher =
+                materiallyRicher ||
+                thirdMateriallyRicher;
+
+            settled =
+                third;
+
+            if (thirdMateriallyRicher)
+            {
+                Debug.WriteLine(
+                    $"[BrowserFlow] EXTENDED DESTINATION STABILIZED | Page={pageId:D} | " +
+                    $"Text={second.Text.Length}->{third.Text.Length} | " +
+                    $"Elements={second.Elements.Count}->{third.Elements.Count}");
+            }
+        }
+
+        if (materiallyRicher)
+        {
+            Debug.WriteLine(
+                $"[BrowserFlow] DESTINATION STABILIZED | Page={pageId:D} | " +
+                $"Text={first.Text.Length}->{settled.Text.Length} | " +
+                $"Elements={first.Elements.Count}->{settled.Elements.Count}");
+        }
+
+        // InspectAsync refreshes the authoritative element-ref set. Return only
+        // the newest snapshot because earlier temporary refs are stale.
+        return settled;
+    }
+
+
     public static string Session(NIRABrowserSessionSnapshot snapshot)
     {
         StringBuilder text = new();
@@ -1007,7 +1114,9 @@ public sealed class NIRABrowserExploreCapabilityHandler
             BuildCurrentEvidenceKey(
                 runObjectiveKey,
                 startRawUrl,
-                startInspection.DocumentEvidenceSha256);
+                startInspection.DocumentChangedSincePreviousObservation
+                    ? startInspection.DocumentEvidenceSha256
+                    : "learned-current-route");
 
         bool learnedCurrentRoute =
             TryLearnedRoute(
@@ -1021,8 +1130,9 @@ public sealed class NIRABrowserExploreCapabilityHandler
         // The page can finish rendering between authentication/navigation and
         // this capability. If InspectAsync just discovered materially NEW
         // document evidence, return that evidence to cognition before wandering
-        // away. The exact same safeguard also lets a previously learned strong
-        // route get one direct look on a future run.
+        // away. A previously learned strong route also gets ONE direct look per
+        // trusted run/route; minor dynamic hash churn must not buy repeated
+        // evidence-first LLM cycles for the same unchanged learned page.
         bool currentPageDeservesReasoning =
             HasMeaningfulEvidence(
                 startInspection)
@@ -2995,33 +3105,14 @@ public sealed class NIRABrowserAuthenticateCapabilityHandler : INIRACapabilityHa
         string nextEvidence;
         try
         {
-            NIRABrowserInspection afterLogin = await _browser.InspectAsync(
-                pageId, 120, 12000, cancellationToken);
-
-            // A successful navigation can expose the new URL slightly before a
-            // client-rendered dashboard has produced meaningful DOM/text.
-            // When the login form is already gone but the first destination
-            // observation is empty, allow one short bounded settle and inspect
-            // the SAME authoritative page again. This is observation-only and
-            // never repeats credential submission.
-            if (!afterLogin.PasswordControlObserved &&
-                afterLogin.Elements.Count == 0 &&
-                string.IsNullOrWhiteSpace(afterLogin.Text))
-            {
-                Debug.WriteLine(
-                    $"[BrowserFlow] AUTH DESTINATION SETTLING | " +
-                    $"Page={pageId:D} | Url={afterLogin.Url}");
-
-                await Task.Delay(
-                    750,
-                    cancellationToken);
-
-                afterLogin = await _browser.InspectAsync(
+            NIRABrowserInspection afterLogin =
+                await NIRABrowserCapabilityFormatting.InspectSettledAsync(
+                    _browser,
                     pageId,
                     120,
                     12000,
-                    cancellationToken);
-            }
+                    cancellationToken,
+                    extendedSettle: true);
 
             nextEvidence = NIRABrowserCapabilityFormatting.Inspection(afterLogin);
             // Do not promote a rejected credential's route as this account's

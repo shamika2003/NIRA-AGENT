@@ -52,10 +52,10 @@ public sealed class NIRAAttitudeService
                 0.15
             -
             relationship.Friction *
-                0.30
+                0.42
             -
             mood.Irritation *
-                0.42;
+                0.62;
 
 
         // =====================================================
@@ -71,20 +71,20 @@ public sealed class NIRAAttitudeService
             0.82
             -
             mood.Irritation *
-                0.52
+                0.68
             -
             relationship.Friction *
-                0.36
+                0.44
             -
             recurrence *
                 (
-                    0.08
+                    0.10
                     +
                     mood.Irritation *
-                        0.22
+                        0.30
                     +
                     relationship.Friction *
-                        0.15
+                        0.20
                 );
 
 
@@ -103,10 +103,10 @@ public sealed class NIRAAttitudeService
                 0.10
             -
             relationship.Friction *
-                0.22
+                0.30
             -
             mood.Irritation *
-                0.25;
+                0.38;
 
 
         // =====================================================
@@ -146,10 +146,10 @@ public sealed class NIRAAttitudeService
                 0.12
             +
             mood.Irritation *
-                0.34
+                0.42
             +
             relationship.Friction *
-                0.10;
+                0.14;
 
 
         // =====================================================
@@ -178,10 +178,10 @@ public sealed class NIRAAttitudeService
             closeness
             +
             relationship.Friction *
-                0.30
+                0.38
             +
             mood.Irritation *
-                0.22;
+                0.34;
 
 
         // =====================================================

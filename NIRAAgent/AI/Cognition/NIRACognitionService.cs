@@ -30,6 +30,25 @@ public sealed class NIRACognitionService
         return clean.Length <= maximumLength ? clean : clean[..maximumLength].TrimEnd();
     }
 
+    private static string NormalizeAppraisalEvidenceQuote(
+        string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        const int maximumLength =
+            320;
+
+        string clean =
+            value.Trim();
+
+        return clean.Length <= maximumLength
+            ? clean
+            : clean[..maximumLength];
+    }
+
     private const string MainReasoningModel =
         "gpt-oss:120b-cloud";
 
@@ -192,7 +211,7 @@ public sealed class NIRACognitionService
                 "context and known limitations. Give a helpful PARTIAL answer " +
                 "when current details are absent; clearly label any gap. " +
                 "Return state=Complete, emitReply=true, replyReady=true, " +
-                "memorySearches=[], conversationSearches=[], contextRequests=[], reviewExperience=false. " +
+                "memorySearches=[], conversationSearches=[], contextRequests=[], reviewExperience=false, reviewCommitment=false. " +
                 "Never invent newer project updates or a successful action.";
         }
 
@@ -616,6 +635,8 @@ public sealed class NIRACognitionService
 
             {
               "state": "Complete|Continue|NeedUser|Wait|Blocked",
+              "appraisalEvidenceQuote": "exact contiguous excerpt from CURRENT user event or empty for non-user events",
+              "appraisal": null,
               "emitReply": true,
               "reply": "visible NIRA reply draft or empty string",
               "replyPresentation": "Natural|PreserveExact",
@@ -632,7 +653,6 @@ public sealed class NIRACognitionService
               "dynamicToolProposals": [],
               "dynamicToolInvocations": [],
               "visualPresentations": [],
-              "appraisal": null,
               "experienceAppraisal": null,
               "vocalIntent": {
                 "warmth": 0.0,
@@ -645,6 +665,14 @@ public sealed class NIRACognitionService
                 "pace": 1.0
               }
             }
+
+            For an actual user interaction, determine the source-grounded social
+            meaning BEFORE drafting reply/speech. Emit appraisalEvidenceQuote before
+            reply/speech and copy it exactly from the CURRENT user event. Never use
+            NIRA's generated reply, intended response strategy, or generic politeness
+            as evidence for the appraisal. If no exact current-event quote supports a
+            non-neutral appraisal, lower the unsupported dimensions rather than
+            manufacturing social meaning.
 
             appraisal, when present, must be:
 
@@ -1600,6 +1628,14 @@ public sealed class NIRACognitionService
                 "No unresolved conversational task is recorded.")}
 
             ==================================================
+            PERSISTED SOCIAL CARRYOVER FROM PRIOR SESSIONS
+            ==================================================
+
+            {NormalizeContext(
+                context.SocialCarryoverContext,
+                "No significant prior-session social episode is currently carried over.")}
+
+            ==================================================
             RECENT CONVERSATION
             ==================================================
 
@@ -2048,6 +2084,10 @@ public sealed class NIRACognitionService
                 parsed.DecisionSummary?.Trim()
                 ?? string.Empty,
 
+            AppraisalEvidenceQuote =
+                NormalizeAppraisalEvidenceQuote(
+                    parsed.AppraisalEvidenceQuote),
+
             MemorySearches =
                 searches,
 
@@ -2143,9 +2183,11 @@ public sealed class NIRACognitionService
             ContextRequests = ReadStringArrayItems(root, "contextRequests"),
             CapabilityIds = ReadStringArrayItems(root, "capabilityIds"),
             ReplyReady = ReadValue(root, "replyReady", false),
-            ReviewExperience = ReadValue(root, "reviewExperience", true),
+            CharacterReady = ReadValue(root, "characterReady", false),
+            ReviewExperience = ReadValue(root, "reviewExperience", false),
             NovelExperienceEvidence = ReadValue(root, "novelExperienceEvidence", string.Empty)
                 ?? string.Empty,
+            ReviewCommitment = ReadValue(root, "reviewCommitment", false),
 
             MemorySearches = ReadArrayItems<NIRAMemorySearchRequest>(
                 root,
@@ -2182,6 +2224,12 @@ public sealed class NIRACognitionService
             VisualPresentations = ReadArrayItems<NIRAVisualArtifactPresentationRequest>(
                 root,
                 "visualPresentations"),
+
+            AppraisalEvidenceQuote = ReadValue(
+                root,
+                "appraisalEvidenceQuote",
+                string.Empty)
+                ?? string.Empty,
 
             Appraisal = ReadOptional<NIRACognitionAppraisalProposal>(
                 root,

@@ -21,7 +21,7 @@ public sealed class NIRAProcessListCapabilityHandler
                 NIRACapabilityIds.ProcessList,
 
             Description =
-                "Inspect running processes, optionally filtered by process name.",
+                "Inspect running processes with PID, window title, working-set memory and private memory; optionally filter and sort without using a shell.",
 
             DefaultRisk =
                 NIRACapabilityRisk.Observe,
@@ -30,7 +30,8 @@ public sealed class NIRAProcessListCapabilityHandler
                 new[]
                 {
                     Parameter("name", "string", false, "Optional process-name substring filter."),
-                    Parameter("maxResults", "integer", false, "Maximum returned processes. Default 100, maximum 500.")
+                    Parameter("sortBy", "string", false, "Name, Pid, WorkingSet, or PrivateMemory. Memory sorts largest first; Name/Pid sort ascending. Default Name."),
+                    Parameter("maxResults", "integer", false, "Maximum returned processes after filtering/sorting. Default 100, maximum 500.")
                 }
         };
 
@@ -48,13 +49,18 @@ public sealed class NIRAProcessListCapabilityHandler
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-
         string? filter =
             NIRACapabilityArguments.GetOptionalString(
                 request,
                 "name",
                 256);
 
+        string sortBy =
+            NIRACapabilityArguments.GetOptionalString(
+                request,
+                "sortBy",
+                32)
+            ?? "Name";
 
         int maximum =
             NIRACapabilityArguments.GetInteger(
@@ -64,97 +70,95 @@ public sealed class NIRAProcessListCapabilityHandler
                 1,
                 500);
 
+        if (sortBy.Equals("Name", StringComparison.OrdinalIgnoreCase))
+            sortBy = "Name";
+        else if (sortBy.Equals("Pid", StringComparison.OrdinalIgnoreCase))
+            sortBy = "Pid";
+        else if (sortBy.Equals("WorkingSet", StringComparison.OrdinalIgnoreCase))
+            sortBy = "WorkingSet";
+        else if (sortBy.Equals("PrivateMemory", StringComparison.OrdinalIgnoreCase))
+            sortBy = "PrivateMemory";
+        else
+            throw new ArgumentException(
+                "sortBy must be Name, Pid, WorkingSet, or PrivateMemory.");
 
-        Process[] processes =
-            Process.GetProcesses();
+        List<ProcessSnapshot> snapshots = new();
 
-
-        StringBuilder output =
-            new();
-
-
-        int count =
-            0;
-
-
-        foreach (
-            Process process
-            in processes
-                .OrderBy(
-                    value =>
-                        SafeName(
-                            value),
-                    StringComparer.OrdinalIgnoreCase)
-                .ThenBy(
-                    value =>
-                        SafeId(
-                            value)))
+        foreach (Process process in Process.GetProcesses())
         {
-            try
+            using (process)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-
-                string name =
-                    process.ProcessName;
-
-
-                if (!string.IsNullOrWhiteSpace(
-                        filter)
-                    &&
-                    !name.Contains(
-                        filter,
-                        StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-
-                string title;
-
-
                 try
                 {
-                    title =
-                        process.MainWindowTitle;
+                    string name = process.ProcessName;
+
+                    if (!string.IsNullOrWhiteSpace(filter) &&
+                        !name.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    snapshots.Add(
+                        new ProcessSnapshot(
+                            process.Id,
+                            name,
+                            SafeText(() => process.MainWindowTitle),
+                            SafeLong(() => process.WorkingSet64),
+                            SafeLong(() => process.PrivateMemorySize64)));
                 }
                 catch
                 {
-                    title =
-                        string.Empty;
+                    // Processes can exit or deny inspection while enumerating.
+                    // A single inaccessible process must not invalidate the whole
+                    // observation result.
                 }
-
-
-                output.AppendLine(
-                    $"PID={process.Id}\tName={name}\tWindow={title}");
-
-
-                count++;
-
-
-                if (count >=
-                    maximum)
-                {
-                    break;
-                }
-            }
-            catch
-            {
-                // A process may terminate or deny inspection between
-                // enumeration and field access. Skip it.
-            }
-            finally
-            {
-                process.Dispose();
             }
         }
 
+        IEnumerable<ProcessSnapshot> ordered = sortBy switch
+        {
+            "WorkingSet" => snapshots
+                .OrderByDescending(snapshot => snapshot.WorkingSetBytes)
+                .ThenBy(snapshot => snapshot.Name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(snapshot => snapshot.Pid),
+
+            "PrivateMemory" => snapshots
+                .OrderByDescending(snapshot => snapshot.PrivateMemoryBytes)
+                .ThenBy(snapshot => snapshot.Name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(snapshot => snapshot.Pid),
+
+            "Pid" => snapshots
+                .OrderBy(snapshot => snapshot.Pid),
+
+            _ => snapshots
+                .OrderBy(snapshot => snapshot.Name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(snapshot => snapshot.Pid)
+        };
+
+        ProcessSnapshot[] selected =
+            ordered
+                .Take(maximum)
+                .ToArray();
+
+        StringBuilder output = new();
+        output.AppendLine(
+            "PID\tName\tWorkingSetBytes\tPrivateMemoryBytes\tWindow");
+
+        foreach (ProcessSnapshot snapshot in selected)
+        {
+            output.AppendLine(
+                $"{snapshot.Pid}\t{snapshot.Name}\t{snapshot.WorkingSetBytes}\t" +
+                $"{snapshot.PrivateMemoryBytes}\t{snapshot.WindowTitle}");
+        }
 
         return Task.FromResult(
             new NIRACapabilityHandlerResult
             {
                 Summary =
-                    $"Inspected {count} running process(es). Filter='{filter ?? "-"}'.",
+                    $"Inspected {snapshots.Count} matching running process(es); " +
+                    $"returned {selected.Length}. Filter='{filter ?? "-"}'. SortBy={sortBy}.",
 
                 Output =
                     output.ToString().TrimEnd(),
@@ -165,12 +169,26 @@ public sealed class NIRAProcessListCapabilityHandler
     }
 
 
-    private static string SafeName(
-        Process process)
+    private static long SafeLong(
+        Func<long> reader)
     {
         try
         {
-            return process.ProcessName;
+            return Math.Max(0L, reader());
+        }
+        catch
+        {
+            return 0L;
+        }
+    }
+
+
+    private static string SafeText(
+        Func<string> reader)
+    {
+        try
+        {
+            return reader() ?? string.Empty;
         }
         catch
         {
@@ -179,18 +197,12 @@ public sealed class NIRAProcessListCapabilityHandler
     }
 
 
-    private static int SafeId(
-        Process process)
-    {
-        try
-        {
-            return process.Id;
-        }
-        catch
-        {
-            return int.MaxValue;
-        }
-    }
+    private sealed record ProcessSnapshot(
+        int Pid,
+        string Name,
+        string WindowTitle,
+        long WorkingSetBytes,
+        long PrivateMemoryBytes);
 
 
     private static NIRACapabilityParameterDescriptor Parameter(
@@ -311,7 +323,41 @@ public sealed class NIRAProcessStartCapabilityHandler
             Arguments = arguments,
             WorkingDirectory = workingDirectory ?? string.Empty
         };
-        return await NIRACapabilityProcessRunner.RunAsync(startInfo, waitForExit, timeoutSeconds, cancellationToken);
+
+        NIRACapabilityHandlerResult execution =
+            await NIRACapabilityProcessRunner.RunAsync(
+                startInfo,
+                waitForExit,
+                timeoutSeconds,
+                cancellationToken);
+
+        // Bind the returned stdout/exit code to the executable that produced it
+        // without echoing arbitrary command-line arguments, which may contain
+        // secrets. This makes multi-part task evidence easier to reuse safely.
+        StringBuilder output =
+            new();
+
+        output.AppendLine(
+            $"RequestedExecutable={fileName}");
+
+        output.AppendLine(
+            $"WaitForExit={waitForExit}");
+
+        output.AppendLine(
+            $"CompletionObserved={waitForExit}");
+
+        if (!string.IsNullOrWhiteSpace(
+                execution.Output))
+        {
+            output.Append(
+                execution.Output.TrimEnd());
+        }
+
+        return execution with
+        {
+            Output =
+                output.ToString().TrimEnd()
+        };
     }
 
 
