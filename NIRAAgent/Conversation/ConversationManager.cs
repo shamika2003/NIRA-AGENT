@@ -14,28 +14,23 @@ namespace NIRAAgent.Conversation;
 //
 // NIRA's short-lived working conversation memory.
 //
-// This is intentionally different from:
+// The SAME conversation subsystem owns every NIRA surface, but
+// each embedded ELVARA application receives its own bounded
+// working thread.
 //
-// - NIRASocialHistoryService
-// - NIRASemanticMemoryService
-// - NIRALongTermMemoryService
+// Default scope:
+//     main
 //
-// The retained transcript and the cognition window are both
-// strictly bounded. Durable facts, project knowledge and shared
-// experiences belong in long-term memory instead of an infinite
-// chat transcript.
+// Example embedded scope:
+//     app:tradeai
+//
+// Long-term memory, character, mood, self-model and cognition are
+// NOT duplicated by these scopes. Only short-term conversational
+// continuity is separated.
 // =============================================================
 
 public sealed class ConversationManager
 {
-    // =========================================================
-    // RETENTION WINDOW
-    //
-    // This is what remains in process memory. It is deliberately
-    // larger than the context sent to cognition so NIRA preserves
-    // a little working margin without allowing unbounded growth.
-    // =========================================================
-
     private const int RetainedMessageLimit =
         48;
 
@@ -43,15 +38,6 @@ public sealed class ConversationManager
     private const int RetainedCharacterLimit =
         64000;
 
-
-    // =========================================================
-    // COGNITION WINDOW
-    //
-    // Only this recent subset is supplied to main cognition.
-    // The current user event is supplied separately by the mind
-    // runtime and is therefore excluded from this context when it
-    // is the newest matching user message.
-    // =========================================================
 
     public const int ContextMessageLimit =
         18;
@@ -61,62 +47,159 @@ public sealed class ConversationManager
         18000;
 
 
-    // =========================================================
-    // STATE
-    // =========================================================
+    private const string MainScopeId =
+        "main";
 
-    private readonly NIRAConversationArchiveStore _archive;
 
-    public ConversationManager(NIRAConversationArchiveStore archive)
-    {
-        _archive = archive ?? throw new ArgumentNullException(nameof(archive));
-    }
+    private readonly NIRAConversationArchiveStore
+        _archive;
+
 
     private readonly object
         _sync =
             new();
 
 
-    private readonly List<ConversationMessage>
-        _messages =
+    private readonly Dictionary<string, ConversationScopeState>
+        _scopes =
+            new(
+                StringComparer.OrdinalIgnoreCase);
+
+
+    private readonly AsyncLocal<ConversationScopeFrame?>
+        _ambientScope =
             new();
 
-    // Short-lived conversational handoff, never action authorization or
-    // evidence of task completion. Persistent goals retain their own state.
-    private ConversationPendingTask? _pendingTask;
+
+    public ConversationManager(
+        NIRAConversationArchiveStore archive)
+    {
+        _archive =
+            archive
+            ?? throw new ArgumentNullException(
+                nameof(archive));
+
+
+        _scopes[
+            MainScopeId] =
+                new ConversationScopeState(
+                    persistToArchive:
+                        true);
+    }
+
+
+    // =========================================================
+    // AMBIENT CONVERSATION SCOPE
+    //
+    // Scope flows with the current async cognition execution.
+    // Main desktop callers do not need to set one.
+    // =========================================================
+
+    public IDisposable PushScope(
+        string scopeId,
+        bool persistToArchive = false)
+    {
+        string normalized =
+            NormalizeScopeId(
+                scopeId);
+
+
+        lock (_sync)
+        {
+            if (!_scopes.ContainsKey(
+                    normalized))
+            {
+                _scopes[
+                    normalized] =
+                        new ConversationScopeState(
+                            persistToArchive);
+            }
+        }
+
+
+        ConversationScopeFrame? previous =
+            _ambientScope.Value;
+
+
+        _ambientScope.Value =
+            new ConversationScopeFrame(
+                normalized,
+                previous);
+
+
+        return new ConversationScopeLease(
+            this,
+            previous);
+    }
+
+
+    public string CurrentScopeId =>
+        _ambientScope.Value?.ScopeId
+        ??
+        MainScopeId;
+
+
+    // =========================================================
+    // PENDING TASK
+    // =========================================================
 
     public ConversationPendingTask? PendingTask
     {
         get
         {
             lock (_sync)
-                return _pendingTask;
+            {
+                return GetCurrentStateUnsafe()
+                    .PendingTask;
+            }
         }
     }
 
-    public void RememberUnresolvedTask(string objective, string question)
+
+    public void RememberUnresolvedTask(
+        string objective,
+        string question)
     {
-        if (string.IsNullOrWhiteSpace(objective) ||
-            string.IsNullOrWhiteSpace(question))
+        if (
+            string.IsNullOrWhiteSpace(
+                objective)
+            ||
+            string.IsNullOrWhiteSpace(
+                question))
+        {
             return;
+        }
+
 
         lock (_sync)
         {
-            // A follow-up clarification must not overwrite the actual request.
-            _pendingTask = new ConversationPendingTask(
-                _pendingTask?.Objective ?? objective.Trim(), question.Trim());
+            ConversationScopeState state =
+                GetCurrentStateUnsafe();
+
+
+            state.PendingTask =
+                new ConversationPendingTask(
+                    state.PendingTask?.Objective
+                        ??
+                        objective.Trim(),
+                    question.Trim());
         }
     }
+
 
     public void ResolvePendingTask()
     {
         lock (_sync)
-            _pendingTask = null;
+        {
+            GetCurrentStateUnsafe()
+                .PendingTask =
+                    null;
+        }
     }
 
 
     // =========================================================
-    // COUNT
+    // COUNT / SNAPSHOT
     // =========================================================
 
     public int Count
@@ -125,15 +208,13 @@ public sealed class ConversationManager
         {
             lock (_sync)
             {
-                return _messages.Count;
+                return GetCurrentStateUnsafe()
+                    .Messages
+                    .Count;
             }
         }
     }
 
-
-    // =========================================================
-    // SNAPSHOT
-    // =========================================================
 
     public IReadOnlyList<ConversationMessage> Messages =>
         GetMessages();
@@ -166,7 +247,8 @@ public sealed class ConversationManager
         return AddMessage(
             "assistant",
             content,
-            sourceEventId, presentation);
+            sourceEventId,
+            presentation);
     }
 
 
@@ -189,7 +271,8 @@ public sealed class ConversationManager
 
 
         string normalizedRole =
-            role.Trim()
+            role
+                .Trim()
                 .ToLowerInvariant();
 
 
@@ -197,30 +280,72 @@ public sealed class ConversationManager
             content.Trim();
 
 
-        // Store the actual utterance independently of the bounded prompt window.
-        // Do not add a second LLM call to persist conversation.
-        Guid? archivedMessageId = null;
-        try { archivedMessageId = _archive.Append(normalizedRole, normalizedContent, sourceEventId, presentation); }
-        catch (Exception ex)
+        string scopeId =
+            CurrentScopeId;
+
+
+        bool persistToArchive;
+
+
+        lock (_sync)
         {
-            // Chat remains usable under disk failure, but never claim the turn
-            // was durably saved. Leave an actionable diagnostic in output.
-            Debug.WriteLine($"[ConversationArchive] SAVE_FAILED | {ex.GetType().Name}: {ex.Message}");
+            persistToArchive =
+                GetOrCreateStateUnsafe(
+                    scopeId,
+                    persistToArchive:
+                        scopeId.Equals(
+                            MainScopeId,
+                            StringComparison.OrdinalIgnoreCase))
+                .PersistToArchive;
         }
+
+
+        // The existing desktop conversation keeps its durable archive.
+        // Embedded app working threads stay isolated from that archive.
+        Guid? archivedMessageId =
+            null;
+
+
+        if (persistToArchive)
+        {
+            try
+            {
+                archivedMessageId =
+                    _archive.Append(
+                        normalizedRole,
+                        normalizedContent,
+                        sourceEventId,
+                        presentation);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(
+                    $"[ConversationArchive] SAVE_FAILED | " +
+                    $"{ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
 
         int removed;
 
 
         lock (_sync)
         {
-            _messages.Add(
+            ConversationScopeState state =
+                GetOrCreateStateUnsafe(
+                    scopeId,
+                    persistToArchive);
+
+
+            state.Messages.Add(
                 new ConversationMessage(
                     normalizedRole,
                     normalizedContent));
 
 
             removed =
-                TrimRetentionWindow();
+                TrimRetentionWindow(
+                    state.Messages);
         }
 
 
@@ -229,9 +354,12 @@ public sealed class ConversationManager
         {
             Debug.WriteLine(
                 $"[Conversation] TRIM | " +
+                $"Scope={scopeId} | " +
                 $"Removed={removed} | " +
                 $"Retained={Count}");
         }
+
+
         return archivedMessageId;
     }
 
@@ -244,8 +372,15 @@ public sealed class ConversationManager
     {
         lock (_sync)
         {
-            _messages.Clear();
-            _pendingTask = null;
+            ConversationScopeState state =
+                GetCurrentStateUnsafe();
+
+
+            state.Messages.Clear();
+
+
+            state.PendingTask =
+                null;
         }
     }
 
@@ -259,19 +394,14 @@ public sealed class ConversationManager
         lock (_sync)
         {
             return new List<ConversationMessage>(
-                _messages);
+                GetCurrentStateUnsafe()
+                    .Messages);
         }
     }
 
 
     // =========================================================
     // RECENT COGNITION WINDOW
-    //
-    // Selection proceeds newest -> oldest and is then reversed
-    // so chronological order is preserved.
-    //
-    // The newest eligible previous message is always retained
-    // even if it alone exceeds the normal character budget.
     // =========================================================
 
     public ConversationContextSnapshot BuildContextSnapshot(
@@ -302,7 +432,12 @@ public sealed class ConversationManager
 
         lock (_sync)
         {
-            if (_messages.Count ==
+            List<ConversationMessage> messages =
+                GetCurrentStateUnsafe()
+                    .Messages;
+
+
+            if (messages.Count ==
                 0)
             {
                 return ConversationContextSnapshot.Empty;
@@ -310,7 +445,7 @@ public sealed class ConversationManager
 
 
             int endIndex =
-                _messages.Count -
+                messages.Count -
                 1;
 
 
@@ -326,7 +461,8 @@ public sealed class ConversationManager
                     0)
             {
                 ConversationMessage newest =
-                    _messages[endIndex];
+                    messages[
+                        endIndex];
 
 
                 if (
@@ -353,7 +489,7 @@ public sealed class ConversationManager
                 return new ConversationContextSnapshot
                 {
                     RetainedMessages =
-                        _messages.Count,
+                        messages.Count,
 
                     EligiblePreviousMessages =
                         0,
@@ -407,7 +543,8 @@ public sealed class ConversationManager
 
 
                 ConversationMessage message =
-                    _messages[index];
+                    messages[
+                        index];
 
 
                 int messageCharacters =
@@ -443,10 +580,6 @@ public sealed class ConversationManager
             selected.Reverse();
 
 
-            // If the window boundary cut into a normal
-            // user/assistant pair, discard the orphaned leading
-            // assistant message rather than starting context with
-            // a reply whose question is no longer present.
             if (
                 selected.Count >
                     1
@@ -477,7 +610,7 @@ public sealed class ConversationManager
             return new ConversationContextSnapshot
             {
                 RetainedMessages =
-                    _messages.Count,
+                    messages.Count,
 
                 EligiblePreviousMessages =
                     eligiblePreviousMessages,
@@ -503,9 +636,6 @@ public sealed class ConversationManager
 
     // =========================================================
     // BUILD CONTEXT
-    //
-    // Kept as a convenience/compatibility API for callers that
-    // only need the text.
     // =========================================================
 
     public string BuildContext(
@@ -515,7 +645,8 @@ public sealed class ConversationManager
             ContextCharacterLimit)
     {
         return BuildContextSnapshot(
-                currentUserMessageToExclude: null,
+                currentUserMessageToExclude:
+                    null,
                 maximumMessages,
                 maximumCharacters)
             .Content;
@@ -541,12 +672,15 @@ public sealed class ConversationManager
 
 
         for (
-            int index = 0;
-            index < messages.Count;
+            int index =
+                0;
+            index <
+                messages.Count;
             index++)
         {
             ConversationMessage message =
-                messages[index];
+                messages[
+                    index];
 
 
             if (index >
@@ -577,16 +711,17 @@ public sealed class ConversationManager
     // RETENTION TRIM
     // =========================================================
 
-    private int TrimRetentionWindow()
+    private static int TrimRetentionWindow(
+        List<ConversationMessage> messages)
     {
         int removed =
             0;
 
 
-        while (_messages.Count >
+        while (messages.Count >
             RetainedMessageLimit)
         {
-            _messages.RemoveAt(
+            messages.RemoveAt(
                 0);
 
 
@@ -599,20 +734,21 @@ public sealed class ConversationManager
 
 
         for (
-            int index = 0;
-            index < _messages.Count;
+            int index =
+                0;
+            index <
+                messages.Count;
             index++)
         {
             totalCharacters +=
                 CountCharacters(
-                    _messages[index]);
+                    messages[
+                        index]);
         }
 
 
-        // Always retain the newest message even if that one
-        // message alone is unusually large.
         while (
-            _messages.Count >
+            messages.Count >
                 1
             &&
             totalCharacters >
@@ -620,10 +756,11 @@ public sealed class ConversationManager
         {
             totalCharacters -=
                 CountCharacters(
-                    _messages[0]);
+                    messages[
+                        0]);
 
 
-            _messages.RemoveAt(
+            messages.RemoveAt(
                 0);
 
 
@@ -631,23 +768,19 @@ public sealed class ConversationManager
         }
 
 
-        // Conversation is normally stored as user/assistant
-        // pairs. If trimming leaves an orphaned old assistant at
-        // the front, remove it so the retained working history
-        // starts at a useful boundary.
         if (
-            _messages.Count >
+            messages.Count >
                 1
             &&
-            _messages[0].Role.Equals(
+            messages[0].Role.Equals(
                 "assistant",
                 StringComparison.OrdinalIgnoreCase)
             &&
-            _messages[1].Role.Equals(
+            messages[1].Role.Equals(
                 "user",
                 StringComparison.OrdinalIgnoreCase))
         {
-            _messages.RemoveAt(
+            messages.RemoveAt(
                 0);
 
 
@@ -658,10 +791,6 @@ public sealed class ConversationManager
         return removed;
     }
 
-
-    // =========================================================
-    // CHARACTER COST
-    // =========================================================
 
     private static int CountCharacters(
         ConversationMessage message)
@@ -674,6 +803,181 @@ public sealed class ConversationManager
             message.Content.Length
             +
             Environment.NewLine.Length;
+    }
+
+
+    // =========================================================
+    // SCOPE STATE
+    // =========================================================
+
+    private ConversationScopeState GetCurrentStateUnsafe()
+    {
+        string scopeId =
+            CurrentScopeId;
+
+
+        return GetOrCreateStateUnsafe(
+            scopeId,
+            persistToArchive:
+                scopeId.Equals(
+                    MainScopeId,
+                    StringComparison.OrdinalIgnoreCase));
+    }
+
+
+    private ConversationScopeState GetOrCreateStateUnsafe(
+        string scopeId,
+        bool persistToArchive)
+    {
+        if (_scopes.TryGetValue(
+                scopeId,
+                out ConversationScopeState? state))
+        {
+            return state;
+        }
+
+
+        state =
+            new ConversationScopeState(
+                persistToArchive);
+
+
+        _scopes[
+            scopeId] =
+                state;
+
+
+        return state;
+    }
+
+
+    private static string NormalizeScopeId(
+        string scopeId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(
+            scopeId);
+
+
+        string clean =
+            scopeId
+                .Trim()
+                .ToLowerInvariant();
+
+
+        if (clean.Length >
+            120)
+        {
+            throw new ArgumentException(
+                "Conversation scope ID is too long.",
+                nameof(scopeId));
+        }
+
+
+        foreach (char character in clean)
+        {
+            if (
+                char.IsLetterOrDigit(
+                    character)
+                ||
+                character is
+                    ':' or
+                    '-' or
+                    '_' or
+                    '.')
+            {
+                continue;
+            }
+
+
+            throw new ArgumentException(
+                "Conversation scope ID contains unsupported characters.",
+                nameof(scopeId));
+        }
+
+
+        return clean;
+    }
+
+
+    private void RestoreScope(
+        ConversationScopeFrame? previous)
+    {
+        _ambientScope.Value =
+            previous;
+    }
+
+
+    private sealed class ConversationScopeState
+    {
+        public ConversationScopeState(
+            bool persistToArchive)
+        {
+            PersistToArchive =
+                persistToArchive;
+        }
+
+
+        public List<ConversationMessage> Messages
+        {
+            get;
+        } =
+            new();
+
+
+        public ConversationPendingTask? PendingTask
+        {
+            get;
+            set;
+        }
+
+
+        public bool PersistToArchive
+        {
+            get;
+        }
+    }
+
+
+    private sealed record ConversationScopeFrame(
+        string ScopeId,
+        ConversationScopeFrame? Previous);
+
+
+    private sealed class ConversationScopeLease
+        : IDisposable
+    {
+        private ConversationManager?
+            _owner;
+
+
+        private readonly ConversationScopeFrame?
+            _previous;
+
+
+        public ConversationScopeLease(
+            ConversationManager owner,
+            ConversationScopeFrame? previous)
+        {
+            _owner =
+                owner;
+
+
+            _previous =
+                previous;
+        }
+
+
+        public void Dispose()
+        {
+            ConversationManager? owner =
+                Interlocked.Exchange(
+                    ref _owner,
+                    null);
+
+
+            owner?.RestoreScope(
+                _previous);
+        }
     }
 }
 
@@ -689,10 +993,6 @@ public sealed record ConversationMessage(
 
 // =============================================================
 // CONTEXT SNAPSHOT
-//
-// Gives cognition/debugging explicit visibility into how the
-// bounded working window was constructed without exposing the
-// mutable conversation list.
 // =============================================================
 
 public sealed record ConversationContextSnapshot
@@ -750,5 +1050,3 @@ public sealed record ConversationContextSnapshot
     } =
         string.Empty;
 }
-
-

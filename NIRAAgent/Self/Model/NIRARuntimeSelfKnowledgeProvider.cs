@@ -50,7 +50,9 @@ public sealed class NIRARuntimeSelfKnowledgeProvider
                     NIRASelfFactCategory.Identity,
 
                 Statement =
-                    "My current visible body is the living particle orb on the desktop."
+                    "My current visible body is the living particle orb on the desktop. " +
+                    "It is my own embodied presence inside this PC, not a separate avatar, widget, " +
+                    "decoration, interface cue, or visual effect that merely represents me."
             },
 
             new()
@@ -283,4 +285,3 @@ public sealed class NIRARuntimeSelfKnowledgeProvider
         };
     }
 }
-

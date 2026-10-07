@@ -26,6 +26,7 @@ using NIRAAgent.Artifacts;
 using NIRAAgent.Authorization;
 using NIRAAgent.Browser;
 using NIRAAgent.Presentation;
+using NIRAAgent.Integrations.Elvara.Apps.TradeAI;
 
 namespace NIRAAgent.Mind;
 
@@ -959,6 +960,13 @@ public sealed class NIRAExecutive
                     expandedSections,
                     expandedCapabilityIds,
                     synthesizeFromEvidence);
+
+
+            decision =
+                RestrictEmbeddedElvaraDecision(
+                    mindEvent,
+                    decision,
+                    executiveEvidence);
 
 
             // Internal result/timer cognition may have been overtaken while
@@ -4314,19 +4322,23 @@ public sealed class NIRAExecutive
                 //
                 // NIRA has an intentionally asymmetric model-call architecture:
                 //
-                //   * If the FIRST cognition call can answer the user, that call already
-                //     has NIRA's personality kernel, live character/mood/relationship pulse,
-                //     self pulse and immediate conversation continuity. Its Natural reply is
-                //     the final wording. DO NOT spend a second LLM call polishing it.
+                //   * If the FIRST cognition call can answer the user and the committed
+                //     character state remains materially compatible with that pre-commit
+                //     draft, the call is final. Ordinary conversation therefore remains
+                //     a one-model-call path.
                 //
-                //   * If the run needed ANY additional pre-response model reasoning
+                //   * If THIS user interaction materially changes authoritative character
+                //     delivery state (or cognition explicitly reports characterReady=false),
+                //     exactly ONE post-commit ResponseRealization call is allowed. This is not
+                //     cosmetic polishing: cognition had to appraise the user event before the
+                //     runtime could commit the new mood/relationship state, so the second call
+                //     lets final wording use the authoritative POST-interaction state.
+                //
+                //   * If the run already needed additional pre-response model reasoning
                 //     (another cognition cycle, an independent completion review, or a
-                //     pre-reply commitment-formation pass), then the terminal cognition
-                //     result is a grounded draft and exactly ONE final ResponseRealization
-                //     call builds the user-facing wording from the now-committed state.
+                //     pre-reply commitment-formation pass), it likewise gets exactly ONE final
+                //     ResponseRealization call after state/work updates are committed.
                 //
-                // This gives the intended response-path call counts:
-                //     1 call, or 3+ calls -- never a pointless 2-call Natural reply.
                 // PreserveExact still bypasses LLM rewriting because literal/verbatim
                 // output must remain exact.
 
@@ -4395,19 +4407,33 @@ public sealed class NIRAExecutive
                     &&
                     !hasOutstandingCognitionWork;
 
-                bool directCharacterDelivery =
+                bool postCommitCharacterRealization =
                     terminalNaturalReply
                     &&
-                    preResponseModelCalls == 1;
+                    (
+                        !decision.CharacterReady
+                        ||
+                        characterDelivery.RequiresRealization
+                    );
 
                 bool shouldRealize =
                     terminalNaturalReply
                     &&
-                    preResponseModelCalls > 1;
+                    (
+                        preResponseModelCalls > 1
+                        ||
+                        postCommitCharacterRealization
+                    );
+
+                bool directCharacterDelivery =
+                    terminalNaturalReply
+                    &&
+                    !shouldRealize;
 
                 Debug.WriteLine(
                     $"[ResponseRoute] Run={runId} | Realize={shouldRealize} | " +
                     $"DirectCharacter={directCharacterDelivery} | " +
+                    $"PostCommitCharacterRealization={postCommitCharacterRealization} | " +
                     $"PreResponseModelCalls={preResponseModelCalls} | " +
                     $"ReplyReady={decision.ReplyReady} | " +
                     $"CharacterReady={decision.CharacterReady} | " +
@@ -7253,6 +7279,246 @@ public sealed class NIRAExecutive
         return clean.Length <= maximumCharacters
             ? clean
             : clean[..maximumCharacters];
+    }
+
+
+    // =========================================================
+    // EMBEDDED ELVARA RUNTIME BOUNDARY
+    //
+    // An embedded product surface reaches the SAME NIRA mind,
+    // character and memory, but it does not inherit NIRA's broad
+    // desktop authority.
+    //
+    // TradeAI embedded turns may:
+    // - converse with NIRA
+    // - use NIRA's shared character / long-term memory
+    // - read authoritative TradeAI data through the fixed
+    //   read-only connector
+    //
+    // They may NOT:
+    // - use filesystem/process/shell/browser/general HTTP tools
+    // - create persistent goals/branches/work
+    // - invoke dynamic tools
+    // - alter global commitments
+    // - search unrelated archived desktop conversations
+    // =========================================================
+
+    private static NIRACognitionDecision RestrictEmbeddedElvaraDecision(
+        NIRAMindEvent mindEvent,
+        NIRACognitionDecision decision,
+        StringBuilder executiveEvidence)
+    {
+        if (
+            mindEvent.Source !=
+                NIRAMindEventSource.User
+            ||
+            !mindEvent.Metadata.TryGetValue(
+                "externalAppId",
+                out string? rawAppId)
+            ||
+            string.IsNullOrWhiteSpace(
+                rawAppId))
+        {
+            return decision;
+        }
+
+
+        string appId =
+            rawAppId
+                .Trim()
+                .ToLowerInvariant();
+
+
+        HashSet<string> allowedCapabilityIds =
+            new(
+                StringComparer.OrdinalIgnoreCase);
+
+
+        if (appId ==
+            "tradeai")
+        {
+            allowedCapabilityIds.Add(
+                TradeAICapabilityIds.Read);
+        }
+
+
+        NIRACapabilityRequest[] allowedCapabilityRequests =
+            decision.CapabilityRequests
+                .Where(
+                    request =>
+                        allowedCapabilityIds.Contains(
+                            request.CapabilityId))
+                .ToArray();
+
+
+        string[] allowedExpandedCapabilityIds =
+            decision.CapabilityIds
+                .Where(
+                    id =>
+                        allowedCapabilityIds.Contains(
+                            id))
+                .Distinct(
+                    StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+
+        HashSet<string> allowedContextSections =
+            new(
+                new[]
+                {
+                    "memory",
+                    "conversation",
+                    "self",
+                    "character",
+                    "capabilities"
+                },
+                StringComparer.OrdinalIgnoreCase);
+
+
+        string[] allowedContextRequests =
+            decision.ContextRequests
+                .Where(
+                    section =>
+                        allowedContextSections.Contains(
+                            section))
+                .Distinct(
+                    StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+
+        int blockedRequestCount =
+            decision.CapabilityRequests.Count
+            -
+            allowedCapabilityRequests.Length
+            +
+            decision.ControlRequests.Count
+            +
+            decision.GoalProposals.Count
+            +
+            decision.BranchProposals.Count
+            +
+            decision.BranchWorkProposals.Count
+            +
+            decision.DynamicToolProposals.Count
+            +
+            decision.DynamicToolInvocations.Count
+            +
+            decision.ConversationSearches.Count
+            +
+            decision.VisualPresentations.Count;
+
+
+        NIRACognitionDecision restricted =
+            decision with
+            {
+                ControlRequests =
+                    Array.Empty<NIRAControlRequest>(),
+
+                ContextRequests =
+                    allowedContextRequests,
+
+                CapabilityIds =
+                    allowedExpandedCapabilityIds,
+
+                ConversationSearches =
+                    Array.Empty<NIRAConversationSearchRequest>(),
+
+                GoalProposals =
+                    Array.Empty<NIRAGoalProposal>(),
+
+                BranchProposals =
+                    Array.Empty<NIRABranchProposal>(),
+
+                BranchWorkProposals =
+                    Array.Empty<NIRABranchWorkProposal>(),
+
+                CapabilityRequests =
+                    allowedCapabilityRequests,
+
+                DynamicToolProposals =
+                    Array.Empty<NIRADynamicToolProposal>(),
+
+                DynamicToolInvocations =
+                    Array.Empty<NIRADynamicToolInvocation>(),
+
+                VisualPresentations =
+                    Array.Empty<NIRAVisualArtifactPresentationRequest>(),
+
+                ReviewCommitment =
+                    false
+            };
+
+
+        if (blockedRequestCount >
+            0)
+        {
+            executiveEvidence.AppendLine();
+            executiveEvidence.AppendLine(
+                "ELVARA EMBEDDED SURFACE RUNTIME BOUNDARY");
+            executiveEvidence.AppendLine(
+                $"OriginApp={appId}");
+            executiveEvidence.AppendLine(
+                "The runtime removed one or more operations that are not allowed " +
+                "from this embedded application surface. Do not retry them through " +
+                "another tool, branch, dynamic tool, browser, shell, filesystem or HTTP path.");
+
+            if (appId ==
+                "tradeai")
+            {
+                executiveEvidence.AppendLine(
+                    $"The only executable primitive available from this embedded surface is " +
+                    $"'{TradeAICapabilityIds.Read}', which is fixed to TradeAI's localhost " +
+                    "read-only API. For unrelated/global PC work, tell the user to use main NIRA.");
+            }
+
+
+            bool hasAllowedWork =
+                allowedCapabilityRequests.Length >
+                    0;
+
+
+            bool hasUserReply =
+                decision.EmitReply
+                &&
+                !string.IsNullOrWhiteSpace(
+                    decision.Reply);
+
+
+            if (
+                !hasAllowedWork
+                &&
+                !hasUserReply
+                &&
+                decision.State ==
+                    NIRACognitionState.Continue)
+            {
+                restricted =
+                    restricted with
+                    {
+                        State =
+                            NIRACognitionState.Complete,
+
+                        EmitReply =
+                            true,
+
+                        Reply =
+                            "That operation isn't available from this embedded ELVARA app surface. " +
+                            "Use main NIRA for system-wide actions.",
+
+                        Speech =
+                            "That operation isn't available here. Use main NIRA for system-wide actions.",
+
+                        ReplyReady =
+                            true,
+
+                        CharacterReady =
+                            false
+                    };
+            }
+        }
+
+
+        return restricted;
     }
 
 }

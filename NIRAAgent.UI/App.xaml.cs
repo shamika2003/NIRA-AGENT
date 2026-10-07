@@ -40,6 +40,9 @@ using NIRAAgent.Embodiment.Body;
 using NIRAAgent.Tools;
 using NIRAAgent.Skills;
 using NIRAAgent.Temporal;
+using NIRAAgent.Integrations.Elvara;
+using NIRAAgent.Integrations.Elvara.Bridge;
+using NIRAAgent.Integrations.Elvara.Apps.TradeAI;
 using NIRAAgent.UI.Vision;
 using NIRAAgent.UI.Visuals;
 
@@ -78,6 +81,37 @@ public partial class App : WpfApplication
 
             builder.Services.AddSingleton<
                 HttpClient>();
+
+
+            // =================================================
+            // ELVARA APPLICATION INTEGRATION
+            //
+            // ELVARA is the product brand. NIRA remains the
+            // single intelligence/runtime shared by trusted
+            // ELVARA application surfaces.
+            // =================================================
+
+            builder.Services.AddSingleton<
+                ElvaraAppRegistry>();
+
+
+            builder.Services.AddSingleton<
+                TradeAIClient>();
+
+
+            builder.Services.AddSingleton<
+                INIRACapabilityHandler,
+                TradeAIReadCapabilityHandler>();
+
+
+            builder.Services.AddSingleton<
+                NIRALocalBridgeService>();
+
+
+            builder.Services.AddHostedService(
+                sp =>
+                    sp.GetRequiredService<
+                        NIRALocalBridgeService>());
 
 
             builder.Services.AddSingleton<
@@ -1161,8 +1195,3 @@ public partial class App : WpfApplication
             e);
     }
 }
-
-
-
-
-

@@ -7,6 +7,7 @@ using System.Runtime.CompilerServices;
 using NIRAAgent.Agent.State;
 using NIRAAgent.Character.History;
 using NIRAAgent.Conversation;
+using NIRAAgent.Integrations.Elvara;
 using NIRAAgent.Perception;
 
 namespace NIRAAgent.Mind;
@@ -31,6 +32,15 @@ public sealed class NIRAMindRuntime
 
     private readonly ConversationManager
         _conversation;
+
+
+    // One foreground user conversation at a time across NIRA's
+    // desktop UI and embedded ELVARA application surfaces.
+    private readonly SemaphoreSlim
+        _userCognitionGate =
+            new(
+                1,
+                1);
 
 
     private int
@@ -88,44 +98,260 @@ public sealed class NIRAMindRuntime
         }
 
 
-        string input =
-            userInput.Trim();
+        await _userCognitionGate
+            .WaitAsync(
+                cancellationToken);
 
 
-        _activity.RecordUserInteraction();
-
-
-        NIRASocialEvent socialEvent =
-            _socialHistory.Record(
-                NIRASocialEventSource.User,
-                NIRASocialEventKind.UserMessage,
-                "UserMessage",
-                NIRASocialTopicKeys.UserConversation,
-                input);
-
-        _conversation.AddUserMessage(input, socialEvent.Id);
-
-        NIRAMindEvent mindEvent =
-            NIRAMindEvent.UserMessage(
-                input,
-                socialEvent.Id,
-                socialEvent.TopicKey) with
-            {
-                Metadata = attachedPastChatSessionId is Guid sid && sid != Guid.Empty
-                    ? new Dictionary<string, string> { ["attachedPastChatSessionId"] = sid.ToString("D") }
-                    : new Dictionary<string, string>()
-            };
-
-
-        await foreach (
-            NIRAOutputChunk chunk
-            in RunTrackedAsync(
-                mindEvent,
-                autonomous: false,
-                cancellationToken))
+        try
         {
-            yield return chunk;
+            string input =
+                userInput.Trim();
+
+
+            _activity.RecordUserInteraction();
+
+
+            NIRASocialEvent socialEvent =
+                _socialHistory.Record(
+                    NIRASocialEventSource.User,
+                    NIRASocialEventKind.UserMessage,
+                    "UserMessage",
+                    NIRASocialTopicKeys.UserConversation,
+                    input);
+
+
+            _conversation.AddUserMessage(
+                input,
+                socialEvent.Id);
+
+
+            NIRAMindEvent mindEvent =
+                NIRAMindEvent.UserMessage(
+                    input,
+                    socialEvent.Id,
+                    socialEvent.TopicKey) with
+                {
+                    Metadata =
+                        attachedPastChatSessionId is Guid sid
+                        &&
+                        sid !=
+                            Guid.Empty
+                            ? new Dictionary<string, string>
+                            {
+                                ["attachedPastChatSessionId"] =
+                                    sid.ToString(
+                                        "D")
+                            }
+                            : new Dictionary<string, string>()
+                };
+
+
+            await foreach (
+                NIRAOutputChunk chunk
+                in RunTrackedAsync(
+                    mindEvent,
+                    autonomous:
+                        false,
+                    cancellationToken))
+            {
+                yield return chunk;
+            }
         }
+        finally
+        {
+            _userCognitionGate.Release();
+        }
+    }
+
+
+    // =========================================================
+    // ELVARA EMBEDDED APPLICATION USER MESSAGE
+    //
+    // This is still the SAME NIRA runtime. The only separation is
+    // the short-term conversation scope used for continuity.
+    // Personality, mood, memory, self-model, cognition and LLM
+    // remain NIRA's existing global systems.
+    // =========================================================
+
+    public async IAsyncEnumerable<NIRAOutputChunk> ProcessExternalAppMessageAsync(
+        string userInput,
+        NIRAExternalAppContext appContext,
+        [EnumeratorCancellation]
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(
+            appContext);
+
+
+        if (string.IsNullOrWhiteSpace(
+                userInput))
+        {
+            yield break;
+        }
+
+
+        string appId =
+            NormalizeExternalValue(
+                appContext.AppId,
+                80,
+                required:
+                    true);
+
+
+        string surface =
+            NormalizeExternalValue(
+                appContext.Surface,
+                120,
+                required:
+                    true);
+
+
+        string page =
+            NormalizeExternalValue(
+                appContext.Page,
+                160,
+                required:
+                    false);
+
+
+        string selectedEntity =
+            NormalizeExternalValue(
+                appContext.SelectedEntity,
+                160,
+                required:
+                    false);
+
+
+        await _userCognitionGate
+            .WaitAsync(
+                cancellationToken);
+
+
+        try
+        {
+            using IDisposable conversationScope =
+                _conversation.PushScope(
+                    $"app:{appId}",
+                    persistToArchive:
+                        false);
+
+
+            string input =
+                userInput.Trim();
+
+
+            _activity.RecordUserInteraction();
+
+
+            NIRASocialEvent socialEvent =
+                _socialHistory.Record(
+                    NIRASocialEventSource.User,
+                    NIRASocialEventKind.UserMessage,
+                    "ExternalAppUserMessage",
+                    $"elvara:{appId}",
+                    input);
+
+
+            _conversation.AddUserMessage(
+                input,
+                socialEvent.Id);
+
+
+            Dictionary<string, string> metadata =
+                new(
+                    StringComparer.OrdinalIgnoreCase)
+                {
+                    ["externalAppId"] =
+                        appId,
+
+                    ["externalAppSurface"] =
+                        surface
+                };
+
+
+            if (!string.IsNullOrWhiteSpace(
+                    page))
+            {
+                metadata[
+                    "externalAppPage"] =
+                        page;
+            }
+
+
+            if (!string.IsNullOrWhiteSpace(
+                    selectedEntity))
+            {
+                metadata[
+                    "externalAppSelectedEntity"] =
+                        selectedEntity;
+            }
+
+
+            NIRAMindEvent mindEvent =
+                NIRAMindEvent.UserMessage(
+                    input,
+                    socialEvent.Id,
+                    socialEvent.TopicKey) with
+                {
+                    Name =
+                        "ExternalAppUserMessage",
+
+                    Metadata =
+                        metadata
+                };
+
+
+            await foreach (
+                NIRAOutputChunk chunk
+                in RunTrackedAsync(
+                    mindEvent,
+                    autonomous:
+                        false,
+                    cancellationToken))
+            {
+                yield return chunk;
+            }
+        }
+        finally
+        {
+            _userCognitionGate.Release();
+        }
+    }
+
+
+    private static string NormalizeExternalValue(
+        string? value,
+        int maximumLength,
+        bool required)
+    {
+        string clean =
+            value?.Trim()
+            ??
+            string.Empty;
+
+
+        if (
+            required
+            &&
+            string.IsNullOrWhiteSpace(
+                clean))
+        {
+            throw new ArgumentException(
+                "Required ELVARA application context is missing.");
+        }
+
+
+        if (clean.Length >
+            maximumLength)
+        {
+            clean =
+                clean[
+                    ..maximumLength];
+        }
+
+
+        return clean;
     }
 
 

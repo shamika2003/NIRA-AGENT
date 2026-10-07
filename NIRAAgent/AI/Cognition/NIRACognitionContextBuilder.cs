@@ -480,8 +480,23 @@ public sealed class NIRACognitionContextBuilder
             conversation.Content;
 
 
+        string externalAppScopeContext =
+            BuildExternalAppScopeContext(
+                mindEvent);
+
+
         string conversationPulseContext =
-            conversationPulse.Content;
+            string.Join(
+                Environment.NewLine +
+                    Environment.NewLine,
+                new[]
+                {
+                    externalAppScopeContext,
+                    conversationPulse.Content
+                }.Where(
+                    value =>
+                        !string.IsNullOrWhiteSpace(
+                            value)));
 
 
         // Persisted significant episodes survive application restarts. The
@@ -717,8 +732,10 @@ public sealed class NIRACognitionContextBuilder
 
         builder.AppendLine(
             "This envelope is HARD delivery policy derived from authoritative current state. " +
-            "If this cognition call finishes the turn, its Natural wording must visibly obey it; " +
-            "there is no automatic second style call.");
+            "If this cognition call finishes the turn, its Natural wording must visibly obey it. " +
+            "Normal direct replies use one model call; only a materially character-changing " +
+            "interaction may receive one post-commit presentation realization after authoritative " +
+            "state is updated. Never defer personality to that narrow exception.");
 
         builder.AppendLine(
             $"Persisted mood: irritation={mood.Irritation:F2}; affection={mood.Affection:F2}; " +
@@ -787,12 +804,113 @@ public sealed class NIRACognitionContextBuilder
             "2-4 short sentences. Do not default to one-word fragments and do not pad with service filler.");
 
         builder.AppendLine(
+            "- After appraising THIS current user message, let that social act affect THIS reply immediately. " +
+            "Do not convert hostility, dismissal or controlling pressure into generic de-escalation, inferred " +
+            "user feelings, submissive compliance or eager-to-serve wording.");
+
+        builder.AppendLine(
             "- Show state through wording and rhythm rather than repeatedly announcing emotion scores. " +
             "Do not use generic help-desk closings, automatic offers of help, or forced questions.");
 
         return builder
             .ToString()
             .Trim();
+    }
+
+
+    // =========================================================
+    // ELVARA EMBEDDED APPLICATION SCOPE
+    //
+    // App/surface metadata establishes conversational routing and
+    // UI reference only. It is never authoritative application
+    // business/domain data.
+    // =========================================================
+
+    private static string BuildExternalAppScopeContext(
+        NIRAMindEvent mindEvent)
+    {
+        if (
+            mindEvent.Source !=
+                NIRAMindEventSource.User
+            ||
+            !mindEvent.Metadata.TryGetValue(
+                "externalAppId",
+                out string? rawAppId)
+            ||
+            string.IsNullOrWhiteSpace(
+                rawAppId))
+        {
+            return string.Empty;
+        }
+
+
+        string appId =
+            rawAppId.Trim();
+
+
+        string surface =
+            ReadExternalMetadata(
+                mindEvent,
+                "externalAppSurface");
+
+
+        string page =
+            ReadExternalMetadata(
+                mindEvent,
+                "externalAppPage");
+
+
+        string selectedEntity =
+            ReadExternalMetadata(
+                mindEvent,
+                "externalAppSelectedEntity");
+
+
+        return $"""
+            ELVARA EMBEDDED NIRA SURFACE
+
+            Origin application:
+            {appId}
+
+            Surface:
+            {(string.IsNullOrWhiteSpace(surface) ? "-" : surface)}
+
+            Current page:
+            {(string.IsNullOrWhiteSpace(page) ? "-" : page)}
+
+            Selected UI entity:
+            {(string.IsNullOrWhiteSpace(selectedEntity) ? "-" : selectedEntity)}
+
+            This is the same NIRA identity and runtime used by the main NIRA application.
+            Only short-term conversation continuity is scoped to this embedded application.
+
+            HARD EMBEDDED-SURFACE BOUNDARY:
+            - Keep this conversation within the originating application's domain.
+            - Do not perform or answer unrelated cross-application, general-PC, or other
+              ELVARA-product work from this embedded surface.
+            - If the user asks for unrelated/global work, briefly direct them to main NIRA.
+            - Surface, page and selected-entity values are navigation/reference metadata only.
+              They are NOT proof of current account, market, trading or other domain facts.
+            - Current domain facts must come from the application's registered authoritative
+              connector when that connector is available.
+            - Never pretend current application data was observed when it was not.
+            """;
+    }
+
+
+    private static string ReadExternalMetadata(
+        NIRAMindEvent mindEvent,
+        string key)
+    {
+        return
+            mindEvent.Metadata.TryGetValue(
+                key,
+                out string? value)
+            &&
+            !string.IsNullOrWhiteSpace(
+                value)
+                ? value.Trim()
+                : string.Empty;
     }
 
 }

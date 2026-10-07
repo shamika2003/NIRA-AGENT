@@ -15,10 +15,11 @@ namespace NIRAAgent.AI.Cognition;
 // authoritative PRE-INTERACTION and POST-INTERACTION snapshots produced by
 // NIRACharacterDynamicsService, so passive runtime decay can never masquerade as
 // a reaction to the current user message.
-// Response-realization routing is intentionally NOT based on these deltas. A first-call
-// terminal Natural reply is emitted directly; multi-model-call runs get one final response
-// build. This assessment remains diagnostic evidence for logs/tests showing whether the
-// current social act materially changed NIRA's authoritative delivery state.
+// Normal first-call terminal Natural replies are still emitted directly. This assessment
+// is also the narrow deterministic gate for a post-commit realization when the CURRENT
+// interaction materially changed NIRA's authoritative delivery state. That keeps ordinary
+// replies at one model call while preventing a pre-commit draft from hiding a real social
+// transition such as hostility, repair, affection, concern or a material mood/attitude shift.
 internal static class NIRACharacterDeliveryPolicy
 {
     public static NIRACharacterDeliveryAssessment Assess(
@@ -58,21 +59,17 @@ internal static class NIRACharacterDeliveryPolicy
             }
         }
 
-        // A situation-mode change is categorical, not merely numeric. A response
-        // drafted in Casual mode should not be treated as final after the interaction
-        // moved NIRA into Serious, Sensitive or FocusedWork (or vice versa).
-        if (before.Situation.Mode !=
-            after.Situation.Mode)
-        {
-            reasons.Add(
-                $"SituationMode:{before.Situation.Mode}->{after.Situation.Mode}");
-        }
-
-        Check(
-            "SituationIntensity",
-            before.Situation.Intensity,
-            after.Situation.Intensity,
-            0.16);
+        // Situation mode/intensity are already proposed by cognition from THIS
+        // current event, so a Casual<->FocusedWork transition alone must not turn
+        // ordinary work into a two-model-call path. Post-commit realization is reserved
+        // for delivery state cognition could not authoritatively know until after commit
+        // (mood/relationship/derived attitude) or for strong structured social acts.
+        maximumDelta =
+            Math.Max(
+                maximumDelta,
+                Math.Abs(
+                    after.Situation.Intensity -
+                    before.Situation.Intensity));
 
         // Immediate mood shifts can materially change wording even when the durable
         // relationship barely moves. Irritation/concern/affection use a lower bar than
