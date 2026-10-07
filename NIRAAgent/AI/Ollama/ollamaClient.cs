@@ -42,27 +42,36 @@ public sealed class OllamaClient : IDisposable
         string ModelName,
         string systemPrompt,
         string userMessage,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool jsonMode = false)
     {
         ThrowIfDisposed();
 
-        var request = new
-        {
-            model = ModelName,
-            messages = new[]
+        Dictionary<string, object?> request =
+            new()
             {
-                new { role = "system", content = systemPrompt },
-                new { role = "user", content = userMessage }
-            },
-            stream = false
-        };
+                ["model"] = ModelName,
+                ["messages"] = new[]
+                {
+                    new { role = "system", content = systemPrompt },
+                    new { role = "user", content = userMessage }
+                },
+                ["stream"] = false
+            };
+
+        // Structured callers can opt into Ollama JSON mode without changing
+        // ordinary chat callers. Runtime parsing/validation remains authoritative.
+        if (jsonMode)
+        {
+            request["format"] = "json";
+        }
 
         string json = JsonSerializer.Serialize(request);
 
         Guid callId = Guid.NewGuid();
         Stopwatch timer = Stopwatch.StartNew();
         Debug.WriteLine($"[LLM] START | Call={callId:D} | Model={ModelName} | " +
-            $"SystemChars={systemPrompt.Length} | UserChars={userMessage.Length}");
+            $"JsonMode={jsonMode} | SystemChars={systemPrompt.Length} | UserChars={userMessage.Length}");
         try
         {
             string answer = await SendNonStreamingChatJsonAsync(json, cancellationToken);

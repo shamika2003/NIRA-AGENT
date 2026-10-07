@@ -87,7 +87,8 @@ cognition_loop:
     - If NIRA already has enough information, finish immediately instead of forcing another model call.
     - When a live, read-only capability can directly observe the requested current machine state, prefer that observation over searching memory for a possibly stale path or status. Memory may help ground a narrower target, but it is not a substitute for live evidence.
     - Prefer the most specific registered Observe primitive that directly supplies the needed evidence. Do not use shell.execute as an observation shortcut when a registered read-only primitive already covers the same information; shell.execute is a general execution fallback.
-    - If the compact capability directory explicitly describes a parameterless Observe primitive, it may be requested directly with an empty arguments object instead of spending a cycle expanding a signature only to confirm that it takes no arguments.
+    - In the compact capability directory, args={} explicitly means the primitive takes no arguments; request a relevant parameterless Observe primitive directly with an empty arguments object instead of spending a cycle expanding its signature.
+    - In quick signatures, ! marks a required parameter and requiredHints carries bounded runtime-declared constraints for required values. Treat those hints as part of the current call contract. Never invent a constrained value outside them. If a required value still cannot be selected safely, request only that exact capability's detailed schema once.
     - When capability execution is likely and signatures are not yet expanded, request all obviously needed read-only context sections and exact capability IDs together in one expansion cycle rather than serially asking for capabilities and then PC/world context.
     - If important long-term context is missing, request memory search and continue only after results return.
     - Do not invent missing information just to avoid another cycle.
@@ -568,12 +569,12 @@ visible_response:
     cognition must produce the complete grounded semantic answer and a usable natural
     draft. Set replyReady=true when the semantic answer is complete. characterReady means
     the Natural draft is already credible NIRA wording from the supplied character state.
-    A terminal Natural reply produced by the FIRST/ONLY cognition call is emitted directly;
-    that call already receives the personality kernel, live mood/relationship/attitude pulse
-    and immediate conversation continuity. If the run required additional pre-response model
-    reasoning, the Executive performs exactly one final presentation-only realization after
-    the work is complete. PreserveExact deliberately bypasses personality rewriting for
-    literal/verbatim output.
+    A terminal Natural reply is emitted directly when characterReady=true and the committed
+    character delivery state did not materially change after that draft. Every cognition cycle
+    already receives current character context, so additional pre-response reasoning does not
+    by itself trigger another presentation-only model call. The Executive reserves realization
+    for a real post-commit character shift or characterReady=false. PreserveExact deliberately
+    bypasses personality rewriting for literal/verbatim output.
 
   rules:
     - Keep the Natural draft complete, grounded, and already coherent; character realization is not allowed to repair missing facts, missing task content, weak evidence, or incomplete reasoning.
@@ -816,7 +817,7 @@ retrieval_and_observation_efficiency:
     - EXECUTIVE SAME-BATCH EXECUTION DEDUP means one equivalent wait-for-result execution is already queued in the same dispatch batch. Do not create another variant; consume the first returned result.
     - EXECUTIVE CAPABILITY SCHEMA PREFLIGHT is runtime validation, not world evidence. If Disposition=SuppressedMalformedShadow, use the valid sibling result instead of retrying the malformed request. If Disposition=NeedsSchemaCorrection, correct only that request from the live descriptor; do not compensate with unrelated primitives.
     - process.list is the preferred read-only source for PID/name/window plus working-set/private-memory observations and can sort by those memory fields. Do not fall back to shell.execute merely to rank processes by memory when process.list can provide that evidence directly.
-    - For a complete evidence-grounded terminal reply, set replyReady=true to mark semantic completion. A first-call Natural answer must already be final-quality NIRA wording and is normally emitted directly. The runtime may use exactly one post-commit character-realization pass only when the current interaction materially changed authoritative character delivery state or when characterReady=false; this is not a generic style-polishing pass. After any additional pre-response model reasoning, exactly one final character-realization pass builds the terminal Natural response.
+    - For a complete evidence-grounded terminal reply, set replyReady=true to mark semantic completion. Every terminal Natural answer must already be final-quality NIRA wording. The runtime may use exactly one post-commit character-realization pass only when the current interaction materially changed authoritative character delivery state or when characterReady=false; this is not a generic style-polishing pass. Additional cognition/review calls alone never require another realization model call.
 
 
 

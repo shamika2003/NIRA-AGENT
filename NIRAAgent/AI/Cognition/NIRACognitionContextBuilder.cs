@@ -890,9 +890,19 @@ public sealed class NIRACognitionContextBuilder
               ELVARA-product work from this embedded surface.
             - If the user asks for unrelated/global work, briefly direct them to main NIRA.
             - Surface, page and selected-entity values are navigation/reference metadata only.
-              They are NOT proof of current account, market, trading or other domain facts.
+              They are NOT proof of current application, business, account or other domain facts.
             - Current domain facts must come from the application's registered authoritative
               connector when that connector is available.
+            - Registered product capabilities appear in LIVE CAPABILITY QUICK SIGNATURES.
+              When a relevant signature already shows every required argument and its
+              constraints, request that capability directly in this cognition cycle rather
+              than spending a separate cycle expanding its schema.
+            - Never invent a constrained capability argument value. If the quick signature
+              does not expose enough information to choose a required value safely, request
+              only that exact capability's detailed schema once.
+            - This rule is product-generic: future ELVARA applications should become usable
+              through their registered capabilities without adding product names or domain
+              phrase tables to NIRA cognition.
             - Never pretend current application data was observed when it was not.
             """;
     }

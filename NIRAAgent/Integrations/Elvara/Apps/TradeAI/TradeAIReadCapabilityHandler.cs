@@ -160,10 +160,61 @@ public sealed class TradeAIReadCapabilityHandler
                 cancellationToken);
 
 
+        TradeAIReadResult? health =
+            null;
+
+
+        if (!resource.Equals(
+                "health",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            health =
+                await _client.ReadAsync(
+                    "health",
+                    cancellationToken:
+                        cancellationToken);
+        }
+
+
+        string freshness =
+            BuildFreshnessContext(
+                resource,
+                result,
+                health);
+
+
         string summary =
             result.Succeeded
-                ? $"TradeAI read-only resource '{result.Resource}' returned authoritative localhost data."
+                ? $"TradeAI read-only resource '{result.Resource}' returned authoritative localhost data. {freshness}"
                 : $"TradeAI read-only resource '{result.Resource}' could not be read: {result.Error}";
+
+
+        string output =
+            result.Succeeded
+                ? string.Join(
+                    Environment.NewLine,
+                    new[]
+                    {
+                        "TRADEAI AUTHORITATIVE READ-ONLY DATA",
+                        freshness,
+                        "",
+                        "IMPORTANT INTERPRETATION RULE:",
+                        "Broker/MT5 connectivity and broker account fields may still be live even when TradeAI engine telemetry is stale. " +
+                        "Signals, engine decisions, forward-audit state and telemetry-derived trading state must NOT be described as current when telemetry_fresh=false.",
+                        "",
+                        $"RequestedResource={result.Resource}",
+                        result.Body
+                    })
+                : string.Join(
+                    Environment.NewLine,
+                    new[]
+                    {
+                        result.Error,
+                        result.Body
+                    }.Where(
+                        value =>
+                            !string.IsNullOrWhiteSpace(
+                                value)));
 
 
         return new NIRACapabilityHandlerResult
@@ -178,21 +229,142 @@ public sealed class TradeAIReadCapabilityHandler
                 summary,
 
             Output =
-                result.Succeeded
-                    ? result.Body
-                    : string.Join(
-                        Environment.NewLine,
-                        new[]
-                        {
-                            result.Error,
-                            result.Body
-                        }.Where(
-                            value =>
-                                !string.IsNullOrWhiteSpace(
-                                    value))),
+                output,
 
             ChangedSystemState =
                 false
+        };
+    }
+
+
+    private static string BuildFreshnessContext(
+        string requestedResource,
+        TradeAIReadResult requested,
+        TradeAIReadResult? health)
+    {
+        string healthJson =
+            requestedResource.Equals(
+                "health",
+                StringComparison.OrdinalIgnoreCase)
+                ? requested.Body
+                : health?.Body
+                    ??
+                    string.Empty;
+
+
+        if (string.IsNullOrWhiteSpace(
+                healthJson))
+        {
+            return
+                "TradeAI telemetry freshness could not be independently verified for this read.";
+        }
+
+
+        try
+        {
+            using JsonDocument document =
+                JsonDocument.Parse(
+                    healthJson);
+
+
+            JsonElement root =
+                document.RootElement;
+
+
+            if (
+                !root.TryGetProperty(
+                    "tradeai",
+                    out JsonElement tradeai)
+                ||
+                tradeai.ValueKind !=
+                    JsonValueKind.Object)
+            {
+                return
+                    "TradeAI telemetry freshness metadata was not present in /health.";
+            }
+
+
+            bool fresh =
+                tradeai.TryGetProperty(
+                    "telemetry_fresh",
+                    out JsonElement freshElement)
+                &&
+                freshElement.ValueKind is
+                    JsonValueKind.True or
+                    JsonValueKind.False
+                &&
+                freshElement.GetBoolean();
+
+
+            string state =
+                ReadJsonText(
+                    tradeai,
+                    "state");
+
+
+            string lastTelemetry =
+                ReadJsonText(
+                    tradeai,
+                    "last_telemetry_utc");
+
+
+            string age =
+                tradeai.TryGetProperty(
+                    "telemetry_age_seconds",
+                    out JsonElement ageElement)
+                &&
+                ageElement.ValueKind ==
+                    JsonValueKind.Number
+                    ? ageElement
+                        .GetRawText()
+                    : "-";
+
+
+            if (fresh)
+            {
+                return
+                    $"TradeAI engine telemetry is FRESH. " +
+                    $"State={state}; LastTelemetryUtc={lastTelemetry}; AgeSeconds={age}.";
+            }
+
+
+            return
+                $"WARNING: TradeAI engine telemetry is STALE. " +
+                $"State={state}; LastTelemetryUtc={lastTelemetry}; AgeSeconds={age}. " +
+                "Do not describe telemetry-derived signals/decisions as current.";
+        }
+        catch (JsonException)
+        {
+            return
+                "TradeAI telemetry freshness metadata could not be parsed.";
+        }
+    }
+
+
+    private static string ReadJsonText(
+        JsonElement parent,
+        string propertyName)
+    {
+        if (!parent.TryGetProperty(
+                propertyName,
+                out JsonElement value))
+        {
+            return "-";
+        }
+
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.String =>
+                value.GetString()
+                ??
+                "-",
+
+            JsonValueKind.Null =>
+                "-",
+
+            _ =>
+                value.GetRawText()
         };
     }
 

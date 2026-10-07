@@ -26,7 +26,6 @@ using NIRAAgent.Artifacts;
 using NIRAAgent.Authorization;
 using NIRAAgent.Browser;
 using NIRAAgent.Presentation;
-using NIRAAgent.Integrations.Elvara.Apps.TradeAI;
 
 namespace NIRAAgent.Mind;
 
@@ -811,6 +810,20 @@ public sealed class NIRAExecutive
         int noProgressCycles =
             0;
 
+        // Malformed model capability objects are never executed. Give cognition
+        // one bounded structured correction cycle, then fail closed instead of
+        // burning repeated LLM calls on the same invalid decision shape.
+        int modelContractCorrectionCount =
+            0;
+
+        // Capability objects can be syntactically valid JSON while still
+        // violating a registered runtime schema (for example a missing required
+        // argument). Suppress those before dispatch, expose the exact registered
+        // schema once, and allow one bounded cognition repair rather than paying
+        // for a failed machine round-trip plus repeated guesses.
+        int capabilitySchemaCorrectionCount =
+            0;
+
         // At most two independent reviews of an action-based user's final
         // answer. A review is a reconsideration signal, never world evidence.
         int taskCompletionReviewCount = 0;
@@ -967,6 +980,66 @@ public sealed class NIRAExecutive
                     mindEvent,
                     decision,
                     executiveEvidence);
+
+
+            bool modelContractCorrectionThisCycle =
+                false;
+
+            if (decision.RuntimeContractDiagnostics.Count > 0)
+            {
+                foreach (string diagnostic in decision.RuntimeContractDiagnostics.Take(4))
+                {
+                    executiveEvidence.AppendLine();
+                    executiveEvidence.AppendLine(
+                        "MODEL DECISION CONTRACT REJECTION (runtime validation; no action was dispatched): " +
+                        diagnostic);
+                }
+
+                // Force a repair only when every capability proposal from this
+                // decision was invalid. A valid sibling remains usable.
+                if (decision.CapabilityRequests.Count == 0)
+                {
+                    if (modelContractCorrectionCount == 0)
+                    {
+                        modelContractCorrectionCount++;
+                        modelContractCorrectionThisCycle = true;
+
+                        decision = decision with
+                        {
+                            State = NIRACognitionState.Continue,
+                            EmitReply = false,
+                            Reply = string.Empty,
+                            Speech = string.Empty,
+                            ReplyReady = false,
+                            CharacterReady = false
+                        };
+
+                        Debug.WriteLine(
+                            $"[Executive] MODEL CONTRACT CORRECTION | Run={runId:D} | " +
+                            $"Cycle={cycle} | Diagnostics={decision.RuntimeContractDiagnostics.Count}");
+                    }
+                    else
+                    {
+                        decision = decision with
+                        {
+                            State = NIRACognitionState.Blocked,
+                            EmitReply = mindEvent.Source == NIRAMindEventSource.User,
+                            Reply =
+                                "I couldn't dispatch that live check correctly, so I haven't " +
+                                "claimed a result I didn't observe.",
+                            Speech = string.Empty,
+                            ReplyReady = true,
+                            CharacterReady = true,
+                            DecisionSummary =
+                                "Repeated malformed capability decision was stopped by the runtime."
+                        };
+
+                        Debug.WriteLine(
+                            $"[Executive] MODEL CONTRACT REPEATED -> BLOCKED | " +
+                            $"Run={runId:D} | Cycle={cycle}");
+                    }
+                }
+            }
 
 
             // Internal result/timer cognition may have been overtaken while
@@ -2948,11 +3021,129 @@ public sealed class NIRAExecutive
             int suppressedTopLevelCapabilities =
                 0;
 
+            // Validate model-generated capability arguments against the exact
+            // CURRENT registered runtime descriptor before dispatch. This is a
+            // generic capability boundary: it knows nothing about any specific product,
+            // storage provider, browser, or future ELVARA app. A malformed request
+            // is evidence for cognition to repair, never a machine action to try.
+            List<NIRACapabilityRequest> schemaValidCapabilities =
+                new();
+
+            List<(string CapabilityId, string Error)> capabilitySchemaRejections =
+                new();
+
+            foreach (NIRACapabilityRequest candidate in decision.CapabilityRequests)
+            {
+                if (_capabilities.TryNormalizeAndValidateSchema(
+                        candidate,
+                        out NIRACapabilityRequest normalized,
+                        out string schemaError))
+                {
+                    schemaValidCapabilities.Add(
+                        normalized);
+                    continue;
+                }
+
+                capabilitySchemaRejections.Add(
+                    (
+                        candidate.CapabilityId?.Trim() ?? string.Empty,
+                        schemaError
+                    ));
+            }
+
+            int capabilitySchemaRejectionsThisCycle =
+                capabilitySchemaRejections.Count;
+
+            foreach ((string rejectedCapabilityId, string schemaError) in
+                     capabilitySchemaRejections)
+            {
+                bool hasValidSibling =
+                    !string.IsNullOrWhiteSpace(rejectedCapabilityId) &&
+                    schemaValidCapabilities.Any(valid =>
+                        string.Equals(
+                            valid.CapabilityId,
+                            rejectedCapabilityId,
+                            StringComparison.OrdinalIgnoreCase));
+
+                string disposition =
+                    hasValidSibling
+                        ? "SuppressedMalformedShadow"
+                        : "NeedsSchemaCorrection";
+
+                executiveEvidence.AppendLine();
+                executiveEvidence.AppendLine(
+                    "EXECUTIVE CAPABILITY SCHEMA PREFLIGHT " +
+                    $"| Disposition={disposition} | " +
+                    (string.IsNullOrWhiteSpace(rejectedCapabilityId)
+                        ? "CapabilityId=(missing)"
+                        : $"CapabilityId={rejectedCapabilityId}") +
+                    $" | Error={schemaError} | NoActionDispatched=True");
+
+                // If the model at least selected a real ID and no valid sibling
+                // already covers that exact primitive, expose its exact registered
+                // descriptor on the repair cycle. Never invent or infer an ID from
+                // user wording, summaries, or integration names.
+                if (!hasValidSibling &&
+                    !string.IsNullOrWhiteSpace(rejectedCapabilityId) &&
+                    rejectedCapabilityId.Length <= 120)
+                {
+                    expandedSections.Add(
+                        "capabilities");
+                    expandedCapabilityIds.Add(
+                        rejectedCapabilityId);
+                }
+            }
+
+            bool capabilitySchemaCorrectionThisCycle =
+                false;
+
+            if (capabilitySchemaRejectionsThisCycle > 0 &&
+                schemaValidCapabilities.Count == 0)
+            {
+                if (capabilitySchemaCorrectionCount == 0)
+                {
+                    capabilitySchemaCorrectionCount++;
+                    capabilitySchemaCorrectionThisCycle = true;
+
+                    decision = decision with
+                    {
+                        State = NIRACognitionState.Continue,
+                        EmitReply = false,
+                        Reply = string.Empty,
+                        Speech = string.Empty,
+                        ReplyReady = false,
+                        CharacterReady = false
+                    };
+
+                    Debug.WriteLine(
+                        $"[Executive] CAPABILITY SCHEMA CORRECTION | Run={runId:D} | " +
+                        $"Cycle={cycle} | Rejected={capabilitySchemaRejectionsThisCycle}");
+                }
+                else
+                {
+                    decision = decision with
+                    {
+                        State = NIRACognitionState.Blocked,
+                        EmitReply = mindEvent.Source == NIRAMindEventSource.User,
+                        Reply = mindEvent.Source == NIRAMindEventSource.User
+                            ? "I couldn't form a valid request for that live check, so I didn't run anything."
+                            : string.Empty,
+                        Speech = string.Empty,
+                        ReplyReady = true,
+                        CharacterReady = false,
+                        CapabilityRequests = Array.Empty<NIRACapabilityRequest>(),
+                        DecisionSummary =
+                            "Repeated capability-schema failure was stopped before dispatch."
+                    };
+
+                    Debug.WriteLine(
+                        $"[Executive] CAPABILITY SCHEMA BLOCKED | Run={runId:D} | " +
+                        $"Cycle={cycle} | Rejected={capabilitySchemaRejectionsThisCycle}");
+                }
+            }
+
             NIRACapabilityRequest[] requestedCapabilities =
-                decision.CapabilityRequests
-                    .Select(
-                        request =>
-                            request.Normalize())
+                schemaValidCapabilities
                     .Where(
                         request =>
                         {
@@ -3587,6 +3778,10 @@ public sealed class NIRAExecutive
 
             int newExecutiveEvidenceCount =
                 newBranchWorkEvidenceCount
+                +
+                (modelContractCorrectionThisCycle ? 1 : 0)
+                +
+                (capabilitySchemaCorrectionThisCycle ? 1 : 0)
                 +
                 AppendExecutiveMutationEvidence(
                     executiveEvidence,
@@ -4416,14 +4611,13 @@ public sealed class NIRAExecutive
                         characterDelivery.RequiresRealization
                     );
 
+                // The terminal cognition cycle already receives current character
+                // state and owns final NIRA wording. Extra cognition/review calls do
+                // not, by themselves, justify another LLM pass.
                 bool shouldRealize =
                     terminalNaturalReply
                     &&
-                    (
-                        preResponseModelCalls > 1
-                        ||
-                        postCommitCharacterRealization
-                    );
+                    postCommitCharacterRealization;
 
                 bool directCharacterDelivery =
                     terminalNaturalReply
@@ -7289,11 +7483,11 @@ public sealed class NIRAExecutive
     // character and memory, but it does not inherit NIRA's broad
     // desktop authority.
     //
-    // TradeAI embedded turns may:
-    // - converse with NIRA
+    // Embedded ELVARA turns may:
+    // - converse with the same NIRA identity
     // - use NIRA's shared character / long-term memory
-    // - read authoritative TradeAI data through the fixed
-    //   read-only connector
+    // - call registered capabilities owned by the originating
+    //   product namespace: elvara.<appId>.*
     //
     // They may NOT:
     // - use filesystem/process/shell/browser/general HTTP tools
@@ -7329,16 +7523,28 @@ public sealed class NIRAExecutive
                 .ToLowerInvariant();
 
 
-        HashSet<string> allowedCapabilityIds =
-            new(
-                StringComparer.OrdinalIgnoreCase);
+        // Embedded ELVARA products are isolated by capability namespace, not
+        // by product-specific conditionals in NIRA core. A registered product
+        // integration owns primitives under: elvara.<appId>.*
+        //
+        // The ordinary capability registry/service still performs the exact
+        // registration, schema, authority and execution checks. This prefix is
+        // only the embedded-surface boundary that prevents cross-product/system
+        // primitives from being proposed through an app-scoped Ask-NIRA surface.
+        string allowedCapabilityPrefix =
+            $"elvara.{appId}.";
 
 
-        if (appId ==
-            "tradeai")
+        bool IsAllowedEmbeddedCapability(
+            string? capabilityId)
         {
-            allowedCapabilityIds.Add(
-                TradeAICapabilityIds.Read);
+            return
+                !string.IsNullOrWhiteSpace(
+                    capabilityId)
+                &&
+                capabilityId.StartsWith(
+                    allowedCapabilityPrefix,
+                    StringComparison.OrdinalIgnoreCase);
         }
 
 
@@ -7346,7 +7552,7 @@ public sealed class NIRAExecutive
             decision.CapabilityRequests
                 .Where(
                     request =>
-                        allowedCapabilityIds.Contains(
+                        IsAllowedEmbeddedCapability(
                             request.CapabilityId))
                 .ToArray();
 
@@ -7354,9 +7560,7 @@ public sealed class NIRAExecutive
         string[] allowedExpandedCapabilityIds =
             decision.CapabilityIds
                 .Where(
-                    id =>
-                        allowedCapabilityIds.Contains(
-                            id))
+                    IsAllowedEmbeddedCapability)
                 .Distinct(
                     StringComparer.OrdinalIgnoreCase)
                 .ToArray();
@@ -7462,14 +7666,11 @@ public sealed class NIRAExecutive
                 "from this embedded application surface. Do not retry them through " +
                 "another tool, branch, dynamic tool, browser, shell, filesystem or HTTP path.");
 
-            if (appId ==
-                "tradeai")
-            {
-                executiveEvidence.AppendLine(
-                    $"The only executable primitive available from this embedded surface is " +
-                    $"'{TradeAICapabilityIds.Read}', which is fixed to TradeAI's localhost " +
-                    "read-only API. For unrelated/global PC work, tell the user to use main NIRA.");
-            }
+            executiveEvidence.AppendLine(
+                $"Executable primitives from this embedded surface must be registered " +
+                $"under '{allowedCapabilityPrefix}*'. The normal capability runtime still " +
+                "validates the exact primitive and its schema. For unrelated/global PC " +
+                "work, tell the user to use main NIRA.");
 
 
             bool hasAllowedWork =

@@ -233,7 +233,8 @@ public sealed class NIRACognitionService
                 MainReasoningModel,
                 systemPrompt,
                 userPrompt,
-                cancellationToken);
+                cancellationToken,
+                jsonMode: true);
 
 
         stopwatch.Stop();
@@ -1966,6 +1967,10 @@ public sealed class NIRACognitionService
             new();
 
 
+        List<string> runtimeContractDiagnostics =
+            new();
+
+
         HashSet<string> capabilitySignatures =
             new(
                 StringComparer.OrdinalIgnoreCase);
@@ -2003,10 +2008,20 @@ public sealed class NIRACognitionService
                 capabilityRequests.Add(
                     normalized);
             }
-            catch
+            catch (Exception ex)
             {
-                // A malformed capability request is ignored here.
-                // Authoritative validation also occurs in NIRACapabilityService.
+                // Never execute malformed work, but do not erase the reason it
+                // was dropped. One bounded correction cycle can use this exact
+                // runtime contract failure instead of blindly repeating the turn.
+                if (runtimeContractDiagnostics.Count < 4)
+                {
+                    runtimeContractDiagnostics.Add(
+                        "Malformed capability request rejected before dispatch: " +
+                        ex.Message);
+                }
+
+                Debug.WriteLine(
+                    $"[Cognition] CAPABILITY CONTRACT REJECTED | Reason={ex.Message}");
             }
         }
 
@@ -2106,6 +2121,9 @@ public sealed class NIRACognitionService
 
             CapabilityRequests =
                 capabilityRequests,
+
+            RuntimeContractDiagnostics =
+                runtimeContractDiagnostics,
 
             DynamicToolProposals =
                 dynamicToolProposals,

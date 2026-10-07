@@ -4,11 +4,11 @@
 
 **Project:** `NIRA-AGENT`
 
-**Source/code files:** 250
+**Source/code files:** 259
 
 **Resource files shown in tree:** 16
 
-**Total clean project files:** 266
+**Total clean project files:** 275
 
 ---
 
@@ -213,6 +213,20 @@ NIRA-AGENT/
     │   ├── NIRAGoalSchedulerService.cs
     │   ├── NIRAGoalService.cs
     │   └── NIRAGoalStore.cs
+    ├── Integrations
+    │   └── Elvara
+    │       ├── Apps
+    │       │   └── TradeAI
+    │       │       ├── TradeAIClient.cs
+    │       │       └── TradeAIReadCapabilityHandler.cs
+    │       ├── Bridge
+    │       │   ├── NIRABridgeContracts.cs
+    │       │   ├── NIRABridgeCredentialStore.cs
+    │       │   ├── NIRABridgeOptions.cs
+    │       │   └── NIRALocalBridgeService.cs
+    │       ├── ElvaraAppDescriptor.cs
+    │       ├── ElvaraAppRegistry.cs
+    │       └── NIRAExternalAppContext.cs
     ├── Memory
     │   └── LongTerm
     │       ├── NIRACognitionMemoryFormatter.cs
@@ -483,6 +497,9 @@ using NIRAAgent.Embodiment.Body;
 using NIRAAgent.Tools;
 using NIRAAgent.Skills;
 using NIRAAgent.Temporal;
+using NIRAAgent.Integrations.Elvara;
+using NIRAAgent.Integrations.Elvara.Bridge;
+using NIRAAgent.Integrations.Elvara.Apps.TradeAI;
 using NIRAAgent.UI.Vision;
 using NIRAAgent.UI.Visuals;
 
@@ -521,6 +538,41 @@ public partial class App : WpfApplication
 
             builder.Services.AddSingleton<
                 HttpClient>();
+
+
+            // =================================================
+            // ELVARA APPLICATION INTEGRATION
+            //
+            // ELVARA is the product brand. NIRA remains the
+            // single intelligence/runtime shared by trusted
+            // ELVARA application surfaces.
+            // =================================================
+
+            builder.Services.AddSingleton<
+                ElvaraAppRegistry>();
+
+
+            builder.Services.AddSingleton<
+                TradeAIClient>();
+
+
+            builder.Services.AddSingleton<
+                NIRABridgeCredentialStore>();
+
+
+            builder.Services.AddSingleton<
+                INIRACapabilityHandler,
+                TradeAIReadCapabilityHandler>();
+
+
+            builder.Services.AddSingleton<
+                NIRALocalBridgeService>();
+
+
+            builder.Services.AddHostedService(
+                sp =>
+                    sp.GetRequiredService<
+                        NIRALocalBridgeService>());
 
 
             builder.Services.AddSingleton<
@@ -26537,8 +26589,23 @@ public sealed class NIRACognitionContextBuilder
             conversation.Content;
 
 
+        string externalAppScopeContext =
+            BuildExternalAppScopeContext(
+                mindEvent);
+
+
         string conversationPulseContext =
-            conversationPulse.Content;
+            string.Join(
+                Environment.NewLine +
+                    Environment.NewLine,
+                new[]
+                {
+                    externalAppScopeContext,
+                    conversationPulse.Content
+                }.Where(
+                    value =>
+                        !string.IsNullOrWhiteSpace(
+                            value)));
 
 
         // Persisted significant episodes survive application restarts. The
@@ -26857,6 +26924,102 @@ public sealed class NIRACognitionContextBuilder
         return builder
             .ToString()
             .Trim();
+    }
+
+
+    // =========================================================
+    // ELVARA EMBEDDED APPLICATION SCOPE
+    //
+    // App/surface metadata establishes conversational routing and
+    // UI reference only. It is never authoritative application
+    // business/domain data.
+    // =========================================================
+
+    private static string BuildExternalAppScopeContext(
+        NIRAMindEvent mindEvent)
+    {
+        if (
+            mindEvent.Source !=
+                NIRAMindEventSource.User
+            ||
+            !mindEvent.Metadata.TryGetValue(
+                "externalAppId",
+                out string? rawAppId)
+            ||
+            string.IsNullOrWhiteSpace(
+                rawAppId))
+        {
+            return string.Empty;
+        }
+
+
+        string appId =
+            rawAppId.Trim();
+
+
+        string surface =
+            ReadExternalMetadata(
+                mindEvent,
+                "externalAppSurface");
+
+
+        string page =
+            ReadExternalMetadata(
+                mindEvent,
+                "externalAppPage");
+
+
+        string selectedEntity =
+            ReadExternalMetadata(
+                mindEvent,
+                "externalAppSelectedEntity");
+
+
+        return $"""
+            ELVARA EMBEDDED NIRA SURFACE
+
+            Origin application:
+            {appId}
+
+            Surface:
+            {(string.IsNullOrWhiteSpace(surface) ? "-" : surface)}
+
+            Current page:
+            {(string.IsNullOrWhiteSpace(page) ? "-" : page)}
+
+            Selected UI entity:
+            {(string.IsNullOrWhiteSpace(selectedEntity) ? "-" : selectedEntity)}
+
+            This is the same NIRA identity and runtime used by the main NIRA application.
+            Only short-term conversation continuity is scoped to this embedded application.
+
+            HARD EMBEDDED-SURFACE BOUNDARY:
+            - Keep this conversation within the originating application's domain.
+            - Do not perform or answer unrelated cross-application, general-PC, or other
+              ELVARA-product work from this embedded surface.
+            - If the user asks for unrelated/global work, briefly direct them to main NIRA.
+            - Surface, page and selected-entity values are navigation/reference metadata only.
+              They are NOT proof of current account, market, trading or other domain facts.
+            - Current domain facts must come from the application's registered authoritative
+              connector when that connector is available.
+            - Never pretend current application data was observed when it was not.
+            """;
+    }
+
+
+    private static string ReadExternalMetadata(
+        NIRAMindEvent mindEvent,
+        string key)
+    {
+        return
+            mindEvent.Metadata.TryGetValue(
+                key,
+                out string? value)
+            &&
+            !string.IsNullOrWhiteSpace(
+                value)
+                ? value.Trim()
+                : string.Empty;
     }
 
 }
@@ -69757,28 +69920,23 @@ namespace NIRAAgent.Conversation;
 //
 // NIRA's short-lived working conversation memory.
 //
-// This is intentionally different from:
+// The SAME conversation subsystem owns every NIRA surface, but
+// each embedded ELVARA application receives its own bounded
+// working thread.
 //
-// - NIRASocialHistoryService
-// - NIRASemanticMemoryService
-// - NIRALongTermMemoryService
+// Default scope:
+//     main
 //
-// The retained transcript and the cognition window are both
-// strictly bounded. Durable facts, project knowledge and shared
-// experiences belong in long-term memory instead of an infinite
-// chat transcript.
+// Example embedded scope:
+//     app:tradeai
+//
+// Long-term memory, character, mood, self-model and cognition are
+// NOT duplicated by these scopes. Only short-term conversational
+// continuity is separated.
 // =============================================================
 
 public sealed class ConversationManager
 {
-    // =========================================================
-    // RETENTION WINDOW
-    //
-    // This is what remains in process memory. It is deliberately
-    // larger than the context sent to cognition so NIRA preserves
-    // a little working margin without allowing unbounded growth.
-    // =========================================================
-
     private const int RetainedMessageLimit =
         48;
 
@@ -69786,15 +69944,6 @@ public sealed class ConversationManager
     private const int RetainedCharacterLimit =
         64000;
 
-
-    // =========================================================
-    // COGNITION WINDOW
-    //
-    // Only this recent subset is supplied to main cognition.
-    // The current user event is supplied separately by the mind
-    // runtime and is therefore excluded from this context when it
-    // is the newest matching user message.
-    // =========================================================
 
     public const int ContextMessageLimit =
         18;
@@ -69804,62 +69953,159 @@ public sealed class ConversationManager
         18000;
 
 
-    // =========================================================
-    // STATE
-    // =========================================================
+    private const string MainScopeId =
+        "main";
 
-    private readonly NIRAConversationArchiveStore _archive;
 
-    public ConversationManager(NIRAConversationArchiveStore archive)
-    {
-        _archive = archive ?? throw new ArgumentNullException(nameof(archive));
-    }
+    private readonly NIRAConversationArchiveStore
+        _archive;
+
 
     private readonly object
         _sync =
             new();
 
 
-    private readonly List<ConversationMessage>
-        _messages =
+    private readonly Dictionary<string, ConversationScopeState>
+        _scopes =
+            new(
+                StringComparer.OrdinalIgnoreCase);
+
+
+    private readonly AsyncLocal<ConversationScopeFrame?>
+        _ambientScope =
             new();
 
-    // Short-lived conversational handoff, never action authorization or
-    // evidence of task completion. Persistent goals retain their own state.
-    private ConversationPendingTask? _pendingTask;
+
+    public ConversationManager(
+        NIRAConversationArchiveStore archive)
+    {
+        _archive =
+            archive
+            ?? throw new ArgumentNullException(
+                nameof(archive));
+
+
+        _scopes[
+            MainScopeId] =
+                new ConversationScopeState(
+                    persistToArchive:
+                        true);
+    }
+
+
+    // =========================================================
+    // AMBIENT CONVERSATION SCOPE
+    //
+    // Scope flows with the current async cognition execution.
+    // Main desktop callers do not need to set one.
+    // =========================================================
+
+    public IDisposable PushScope(
+        string scopeId,
+        bool persistToArchive = false)
+    {
+        string normalized =
+            NormalizeScopeId(
+                scopeId);
+
+
+        lock (_sync)
+        {
+            if (!_scopes.ContainsKey(
+                    normalized))
+            {
+                _scopes[
+                    normalized] =
+                        new ConversationScopeState(
+                            persistToArchive);
+            }
+        }
+
+
+        ConversationScopeFrame? previous =
+            _ambientScope.Value;
+
+
+        _ambientScope.Value =
+            new ConversationScopeFrame(
+                normalized,
+                previous);
+
+
+        return new ConversationScopeLease(
+            this,
+            previous);
+    }
+
+
+    public string CurrentScopeId =>
+        _ambientScope.Value?.ScopeId
+        ??
+        MainScopeId;
+
+
+    // =========================================================
+    // PENDING TASK
+    // =========================================================
 
     public ConversationPendingTask? PendingTask
     {
         get
         {
             lock (_sync)
-                return _pendingTask;
+            {
+                return GetCurrentStateUnsafe()
+                    .PendingTask;
+            }
         }
     }
 
-    public void RememberUnresolvedTask(string objective, string question)
+
+    public void RememberUnresolvedTask(
+        string objective,
+        string question)
     {
-        if (string.IsNullOrWhiteSpace(objective) ||
-            string.IsNullOrWhiteSpace(question))
+        if (
+            string.IsNullOrWhiteSpace(
+                objective)
+            ||
+            string.IsNullOrWhiteSpace(
+                question))
+        {
             return;
+        }
+
 
         lock (_sync)
         {
-            // A follow-up clarification must not overwrite the actual request.
-            _pendingTask = new ConversationPendingTask(
-                _pendingTask?.Objective ?? objective.Trim(), question.Trim());
+            ConversationScopeState state =
+                GetCurrentStateUnsafe();
+
+
+            state.PendingTask =
+                new ConversationPendingTask(
+                    state.PendingTask?.Objective
+                        ??
+                        objective.Trim(),
+                    question.Trim());
         }
     }
+
 
     public void ResolvePendingTask()
     {
         lock (_sync)
-            _pendingTask = null;
+        {
+            GetCurrentStateUnsafe()
+                .PendingTask =
+                    null;
+        }
     }
 
 
     // =========================================================
-    // COUNT
+    // COUNT / SNAPSHOT
     // =========================================================
 
     public int Count
@@ -69868,15 +70114,13 @@ public sealed class ConversationManager
         {
             lock (_sync)
             {
-                return _messages.Count;
+                return GetCurrentStateUnsafe()
+                    .Messages
+                    .Count;
             }
         }
     }
 
-
-    // =========================================================
-    // SNAPSHOT
-    // =========================================================
 
     public IReadOnlyList<ConversationMessage> Messages =>
         GetMessages();
@@ -69909,7 +70153,8 @@ public sealed class ConversationManager
         return AddMessage(
             "assistant",
             content,
-            sourceEventId, presentation);
+            sourceEventId,
+            presentation);
     }
 
 
@@ -69932,7 +70177,8 @@ public sealed class ConversationManager
 
 
         string normalizedRole =
-            role.Trim()
+            role
+                .Trim()
                 .ToLowerInvariant();
 
 
@@ -69940,30 +70186,72 @@ public sealed class ConversationManager
             content.Trim();
 
 
-        // Store the actual utterance independently of the bounded prompt window.
-        // Do not add a second LLM call to persist conversation.
-        Guid? archivedMessageId = null;
-        try { archivedMessageId = _archive.Append(normalizedRole, normalizedContent, sourceEventId, presentation); }
-        catch (Exception ex)
+        string scopeId =
+            CurrentScopeId;
+
+
+        bool persistToArchive;
+
+
+        lock (_sync)
         {
-            // Chat remains usable under disk failure, but never claim the turn
-            // was durably saved. Leave an actionable diagnostic in output.
-            Debug.WriteLine($"[ConversationArchive] SAVE_FAILED | {ex.GetType().Name}: {ex.Message}");
+            persistToArchive =
+                GetOrCreateStateUnsafe(
+                    scopeId,
+                    persistToArchive:
+                        scopeId.Equals(
+                            MainScopeId,
+                            StringComparison.OrdinalIgnoreCase))
+                .PersistToArchive;
         }
+
+
+        // The existing desktop conversation keeps its durable archive.
+        // Embedded app working threads stay isolated from that archive.
+        Guid? archivedMessageId =
+            null;
+
+
+        if (persistToArchive)
+        {
+            try
+            {
+                archivedMessageId =
+                    _archive.Append(
+                        normalizedRole,
+                        normalizedContent,
+                        sourceEventId,
+                        presentation);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(
+                    $"[ConversationArchive] SAVE_FAILED | " +
+                    $"{ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
 
         int removed;
 
 
         lock (_sync)
         {
-            _messages.Add(
+            ConversationScopeState state =
+                GetOrCreateStateUnsafe(
+                    scopeId,
+                    persistToArchive);
+
+
+            state.Messages.Add(
                 new ConversationMessage(
                     normalizedRole,
                     normalizedContent));
 
 
             removed =
-                TrimRetentionWindow();
+                TrimRetentionWindow(
+                    state.Messages);
         }
 
 
@@ -69972,9 +70260,12 @@ public sealed class ConversationManager
         {
             Debug.WriteLine(
                 $"[Conversation] TRIM | " +
+                $"Scope={scopeId} | " +
                 $"Removed={removed} | " +
                 $"Retained={Count}");
         }
+
+
         return archivedMessageId;
     }
 
@@ -69987,8 +70278,15 @@ public sealed class ConversationManager
     {
         lock (_sync)
         {
-            _messages.Clear();
-            _pendingTask = null;
+            ConversationScopeState state =
+                GetCurrentStateUnsafe();
+
+
+            state.Messages.Clear();
+
+
+            state.PendingTask =
+                null;
         }
     }
 
@@ -70002,19 +70300,14 @@ public sealed class ConversationManager
         lock (_sync)
         {
             return new List<ConversationMessage>(
-                _messages);
+                GetCurrentStateUnsafe()
+                    .Messages);
         }
     }
 
 
     // =========================================================
     // RECENT COGNITION WINDOW
-    //
-    // Selection proceeds newest -> oldest and is then reversed
-    // so chronological order is preserved.
-    //
-    // The newest eligible previous message is always retained
-    // even if it alone exceeds the normal character budget.
     // =========================================================
 
     public ConversationContextSnapshot BuildContextSnapshot(
@@ -70045,7 +70338,12 @@ public sealed class ConversationManager
 
         lock (_sync)
         {
-            if (_messages.Count ==
+            List<ConversationMessage> messages =
+                GetCurrentStateUnsafe()
+                    .Messages;
+
+
+            if (messages.Count ==
                 0)
             {
                 return ConversationContextSnapshot.Empty;
@@ -70053,7 +70351,7 @@ public sealed class ConversationManager
 
 
             int endIndex =
-                _messages.Count -
+                messages.Count -
                 1;
 
 
@@ -70069,7 +70367,8 @@ public sealed class ConversationManager
                     0)
             {
                 ConversationMessage newest =
-                    _messages[endIndex];
+                    messages[
+                        endIndex];
 
 
                 if (
@@ -70096,7 +70395,7 @@ public sealed class ConversationManager
                 return new ConversationContextSnapshot
                 {
                     RetainedMessages =
-                        _messages.Count,
+                        messages.Count,
 
                     EligiblePreviousMessages =
                         0,
@@ -70150,7 +70449,8 @@ public sealed class ConversationManager
 
 
                 ConversationMessage message =
-                    _messages[index];
+                    messages[
+                        index];
 
 
                 int messageCharacters =
@@ -70186,10 +70486,6 @@ public sealed class ConversationManager
             selected.Reverse();
 
 
-            // If the window boundary cut into a normal
-            // user/assistant pair, discard the orphaned leading
-            // assistant message rather than starting context with
-            // a reply whose question is no longer present.
             if (
                 selected.Count >
                     1
@@ -70220,7 +70516,7 @@ public sealed class ConversationManager
             return new ConversationContextSnapshot
             {
                 RetainedMessages =
-                    _messages.Count,
+                    messages.Count,
 
                 EligiblePreviousMessages =
                     eligiblePreviousMessages,
@@ -70246,9 +70542,6 @@ public sealed class ConversationManager
 
     // =========================================================
     // BUILD CONTEXT
-    //
-    // Kept as a convenience/compatibility API for callers that
-    // only need the text.
     // =========================================================
 
     public string BuildContext(
@@ -70258,7 +70551,8 @@ public sealed class ConversationManager
             ContextCharacterLimit)
     {
         return BuildContextSnapshot(
-                currentUserMessageToExclude: null,
+                currentUserMessageToExclude:
+                    null,
                 maximumMessages,
                 maximumCharacters)
             .Content;
@@ -70284,12 +70578,15 @@ public sealed class ConversationManager
 
 
         for (
-            int index = 0;
-            index < messages.Count;
+            int index =
+                0;
+            index <
+                messages.Count;
             index++)
         {
             ConversationMessage message =
-                messages[index];
+                messages[
+                    index];
 
 
             if (index >
@@ -70320,16 +70617,17 @@ public sealed class ConversationManager
     // RETENTION TRIM
     // =========================================================
 
-    private int TrimRetentionWindow()
+    private static int TrimRetentionWindow(
+        List<ConversationMessage> messages)
     {
         int removed =
             0;
 
 
-        while (_messages.Count >
+        while (messages.Count >
             RetainedMessageLimit)
         {
-            _messages.RemoveAt(
+            messages.RemoveAt(
                 0);
 
 
@@ -70342,20 +70640,21 @@ public sealed class ConversationManager
 
 
         for (
-            int index = 0;
-            index < _messages.Count;
+            int index =
+                0;
+            index <
+                messages.Count;
             index++)
         {
             totalCharacters +=
                 CountCharacters(
-                    _messages[index]);
+                    messages[
+                        index]);
         }
 
 
-        // Always retain the newest message even if that one
-        // message alone is unusually large.
         while (
-            _messages.Count >
+            messages.Count >
                 1
             &&
             totalCharacters >
@@ -70363,10 +70662,11 @@ public sealed class ConversationManager
         {
             totalCharacters -=
                 CountCharacters(
-                    _messages[0]);
+                    messages[
+                        0]);
 
 
-            _messages.RemoveAt(
+            messages.RemoveAt(
                 0);
 
 
@@ -70374,23 +70674,19 @@ public sealed class ConversationManager
         }
 
 
-        // Conversation is normally stored as user/assistant
-        // pairs. If trimming leaves an orphaned old assistant at
-        // the front, remove it so the retained working history
-        // starts at a useful boundary.
         if (
-            _messages.Count >
+            messages.Count >
                 1
             &&
-            _messages[0].Role.Equals(
+            messages[0].Role.Equals(
                 "assistant",
                 StringComparison.OrdinalIgnoreCase)
             &&
-            _messages[1].Role.Equals(
+            messages[1].Role.Equals(
                 "user",
                 StringComparison.OrdinalIgnoreCase))
         {
-            _messages.RemoveAt(
+            messages.RemoveAt(
                 0);
 
 
@@ -70401,10 +70697,6 @@ public sealed class ConversationManager
         return removed;
     }
 
-
-    // =========================================================
-    // CHARACTER COST
-    // =========================================================
 
     private static int CountCharacters(
         ConversationMessage message)
@@ -70417,6 +70709,181 @@ public sealed class ConversationManager
             message.Content.Length
             +
             Environment.NewLine.Length;
+    }
+
+
+    // =========================================================
+    // SCOPE STATE
+    // =========================================================
+
+    private ConversationScopeState GetCurrentStateUnsafe()
+    {
+        string scopeId =
+            CurrentScopeId;
+
+
+        return GetOrCreateStateUnsafe(
+            scopeId,
+            persistToArchive:
+                scopeId.Equals(
+                    MainScopeId,
+                    StringComparison.OrdinalIgnoreCase));
+    }
+
+
+    private ConversationScopeState GetOrCreateStateUnsafe(
+        string scopeId,
+        bool persistToArchive)
+    {
+        if (_scopes.TryGetValue(
+                scopeId,
+                out ConversationScopeState? state))
+        {
+            return state;
+        }
+
+
+        state =
+            new ConversationScopeState(
+                persistToArchive);
+
+
+        _scopes[
+            scopeId] =
+                state;
+
+
+        return state;
+    }
+
+
+    private static string NormalizeScopeId(
+        string scopeId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(
+            scopeId);
+
+
+        string clean =
+            scopeId
+                .Trim()
+                .ToLowerInvariant();
+
+
+        if (clean.Length >
+            120)
+        {
+            throw new ArgumentException(
+                "Conversation scope ID is too long.",
+                nameof(scopeId));
+        }
+
+
+        foreach (char character in clean)
+        {
+            if (
+                char.IsLetterOrDigit(
+                    character)
+                ||
+                character is
+                    ':' or
+                    '-' or
+                    '_' or
+                    '.')
+            {
+                continue;
+            }
+
+
+            throw new ArgumentException(
+                "Conversation scope ID contains unsupported characters.",
+                nameof(scopeId));
+        }
+
+
+        return clean;
+    }
+
+
+    private void RestoreScope(
+        ConversationScopeFrame? previous)
+    {
+        _ambientScope.Value =
+            previous;
+    }
+
+
+    private sealed class ConversationScopeState
+    {
+        public ConversationScopeState(
+            bool persistToArchive)
+        {
+            PersistToArchive =
+                persistToArchive;
+        }
+
+
+        public List<ConversationMessage> Messages
+        {
+            get;
+        } =
+            new();
+
+
+        public ConversationPendingTask? PendingTask
+        {
+            get;
+            set;
+        }
+
+
+        public bool PersistToArchive
+        {
+            get;
+        }
+    }
+
+
+    private sealed record ConversationScopeFrame(
+        string ScopeId,
+        ConversationScopeFrame? Previous);
+
+
+    private sealed class ConversationScopeLease
+        : IDisposable
+    {
+        private ConversationManager?
+            _owner;
+
+
+        private readonly ConversationScopeFrame?
+            _previous;
+
+
+        public ConversationScopeLease(
+            ConversationManager owner,
+            ConversationScopeFrame? previous)
+        {
+            _owner =
+                owner;
+
+
+            _previous =
+                previous;
+        }
+
+
+        public void Dispose()
+        {
+            ConversationManager? owner =
+                Interlocked.Exchange(
+                    ref _owner,
+                    null);
+
+
+            owner?.RestoreScope(
+                _previous);
+        }
     }
 }
 
@@ -70432,10 +70899,6 @@ public sealed record ConversationMessage(
 
 // =============================================================
 // CONTEXT SNAPSHOT
-//
-// Gives cognition/debugging explicit visibility into how the
-// bounded working window was constructed without exposing the
-// mutable conversation list.
 // =============================================================
 
 public sealed record ConversationContextSnapshot
@@ -77539,7 +78002,3109 @@ public sealed class NIRAGoalStore
 
 ---
 
-## 152. `NIRAAgent\Memory\LongTerm\NIRACognitionMemoryFormatter.cs`
+## 152. `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIClient.cs`
+
+**File:** `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIClient.cs`
+
+```csharp
+/*
+ * filename: TradeAIClient.cs
+ */
+
+using System.Net;
+using System.Net.Http.Headers;
+using System.Text.Json;
+
+namespace NIRAAgent.Integrations.Elvara.Apps.TradeAI;
+
+
+// =============================================================
+// TRADEAI READ-ONLY CLIENT
+//
+// NIRA talks only to TradeAI's localhost read-only API.
+//
+// TradeAI remains the sole owner of:
+// - trading decisions
+// - MT5 / broker access
+// - execution
+// - positions
+// - risk controls
+//
+// This client cannot place, modify or close trades.
+// =============================================================
+
+public sealed class TradeAIClient
+{
+    public const string BaseUrl =
+        "http://127.0.0.1:8765";
+
+
+    private const int MaximumResponseCharacters =
+        22000;
+
+
+    private static readonly TimeSpan RequestTimeout =
+        TimeSpan.FromSeconds(
+            8);
+
+
+    private readonly HttpClient
+        _http;
+
+
+    public TradeAIClient(
+        HttpClient http)
+    {
+        _http =
+            http
+            ?? throw new ArgumentNullException(
+                nameof(http));
+    }
+
+
+    public async Task<TradeAIReadResult> ReadAsync(
+        string resource,
+        string? symbol = null,
+        int limit = 50,
+        bool includeOpen = true,
+        CancellationToken cancellationToken = default)
+    {
+        string normalizedResource =
+            NormalizeResource(
+                resource);
+
+
+        string normalizedSymbol =
+            NormalizeSymbol(
+                symbol);
+
+
+        limit =
+            Math.Clamp(
+                limit,
+                1,
+                500);
+
+
+        string relativePath =
+            BuildRelativePath(
+                normalizedResource,
+                normalizedSymbol,
+                limit,
+                includeOpen);
+
+
+        Uri uri =
+            new(
+                BaseUrl +
+                relativePath,
+                UriKind.Absolute);
+
+
+        using HttpRequestMessage request =
+            new(
+                HttpMethod.Get,
+                uri);
+
+
+        request.Headers.Accept.Add(
+            new MediaTypeWithQualityHeaderValue(
+                "application/json"));
+
+
+        using CancellationTokenSource timeout =
+            CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken);
+
+
+        timeout.CancelAfter(
+            RequestTimeout);
+
+
+        try
+        {
+            using HttpResponseMessage response =
+                await _http.SendAsync(
+                    request,
+                    HttpCompletionOption.ResponseHeadersRead,
+                    timeout.Token);
+
+
+            string body =
+                await response.Content.ReadAsStringAsync(
+                    timeout.Token);
+
+
+            body =
+                ValidateAndBoundJson(
+                    body);
+
+
+            return new TradeAIReadResult
+            {
+                Resource =
+                    normalizedResource,
+
+                RequestUri =
+                    uri.AbsoluteUri,
+
+                StatusCode =
+                    (int)response.StatusCode,
+
+                Succeeded =
+                    response.IsSuccessStatusCode,
+
+                Body =
+                    body,
+
+                Error =
+                    response.IsSuccessStatusCode
+                        ? string.Empty
+                        : $"TradeAI returned HTTP {(int)response.StatusCode} ({response.StatusCode})."
+            };
+        }
+        catch (OperationCanceledException)
+            when (!cancellationToken.IsCancellationRequested)
+        {
+            return new TradeAIReadResult
+            {
+                Resource =
+                    normalizedResource,
+
+                RequestUri =
+                    uri.AbsoluteUri,
+
+                StatusCode =
+                    null,
+
+                Succeeded =
+                    false,
+
+                Body =
+                    string.Empty,
+
+                Error =
+                    "TradeAI did not respond before the local connector timeout."
+            };
+        }
+        catch (HttpRequestException ex)
+        {
+            return new TradeAIReadResult
+            {
+                Resource =
+                    normalizedResource,
+
+                RequestUri =
+                    uri.AbsoluteUri,
+
+                StatusCode =
+                    ex.StatusCode is HttpStatusCode status
+                        ? (int)status
+                        : null,
+
+                Succeeded =
+                    false,
+
+                Body =
+                    string.Empty,
+
+                Error =
+                    "TradeAI localhost API is unavailable: " +
+                    ex.Message
+            };
+        }
+    }
+
+
+    private static string BuildRelativePath(
+        string resource,
+        string symbol,
+        int limit,
+        bool includeOpen)
+    {
+        return resource switch
+        {
+            "health" =>
+                "/health",
+
+            "status" =>
+                "/status",
+
+            "account" =>
+                "/account",
+
+            "positions" =>
+                "/positions",
+
+            "signals" =>
+                string.IsNullOrWhiteSpace(
+                    symbol)
+                    ? "/signals"
+                    : "/signals?symbol=" +
+                      Uri.EscapeDataString(
+                          symbol),
+
+            "symbols" =>
+                "/symbols",
+
+            "trades" =>
+                BuildTradesPath(
+                    symbol,
+                    limit,
+                    includeOpen),
+
+            "performance" =>
+                "/performance",
+
+            _ =>
+                throw new InvalidOperationException(
+                    $"Unsupported TradeAI resource '{resource}'.")
+        };
+    }
+
+
+    private static string BuildTradesPath(
+        string symbol,
+        int limit,
+        bool includeOpen)
+    {
+        string path =
+            "/trades?limit=" +
+            limit.ToString(
+                System.Globalization.CultureInfo.InvariantCulture)
+            +
+            "&include_open=" +
+            (
+                includeOpen
+                    ? "true"
+                    : "false"
+            );
+
+
+        if (!string.IsNullOrWhiteSpace(
+                symbol))
+        {
+            path +=
+                "&symbol=" +
+                Uri.EscapeDataString(
+                    symbol);
+        }
+
+
+        return path;
+    }
+
+
+    private static string NormalizeResource(
+        string resource)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(
+            resource);
+
+
+        string value =
+            resource
+                .Trim()
+                .ToLowerInvariant();
+
+
+        return value switch
+        {
+            "health" or
+            "status" or
+            "account" or
+            "positions" or
+            "signals" or
+            "symbols" or
+            "trades" or
+            "performance" =>
+                value,
+
+            _ =>
+                throw new InvalidOperationException(
+                    "TradeAI resource must be one of: " +
+                    "health, status, account, positions, signals, " +
+                    "symbols, trades, performance.")
+        };
+    }
+
+
+    private static string NormalizeSymbol(
+        string? symbol)
+    {
+        string value =
+            symbol?
+                .Trim()
+                .ToUpperInvariant()
+            ??
+            string.Empty;
+
+
+        if (value.Length ==
+            0)
+        {
+            return string.Empty;
+        }
+
+
+        if (value.Length >
+            32)
+        {
+            throw new InvalidOperationException(
+                "TradeAI symbol is too long.");
+        }
+
+
+        foreach (char character in value)
+        {
+            if (
+                char.IsLetterOrDigit(
+                    character)
+                ||
+                character is
+                    '.' or
+                    '_' or
+                    '-')
+            {
+                continue;
+            }
+
+
+            throw new InvalidOperationException(
+                "TradeAI symbol contains unsupported characters.");
+        }
+
+
+        return value;
+    }
+
+
+    private static string ValidateAndBoundJson(
+        string? body)
+    {
+        string value =
+            body?.Trim()
+            ??
+            string.Empty;
+
+
+        if (value.Length ==
+            0)
+        {
+            return string.Empty;
+        }
+
+
+        try
+        {
+            using JsonDocument document =
+                JsonDocument.Parse(
+                    value);
+        }
+        catch (JsonException)
+        {
+            throw new InvalidOperationException(
+                "TradeAI returned a non-JSON response.");
+        }
+
+
+        if (value.Length <=
+            MaximumResponseCharacters)
+        {
+            return value;
+        }
+
+
+        return value[
+            ..MaximumResponseCharacters]
+            +
+            "\n...[TradeAI response truncated by NIRA]";
+    }
+}
+
+
+public sealed record TradeAIReadResult
+{
+    public required string Resource
+    {
+        get;
+        init;
+    }
+
+
+    public required string RequestUri
+    {
+        get;
+        init;
+    }
+
+
+    public int? StatusCode
+    {
+        get;
+        init;
+    }
+
+
+    public bool Succeeded
+    {
+        get;
+        init;
+    }
+
+
+    public string Body
+    {
+        get;
+        init;
+    } =
+        string.Empty;
+
+
+    public string Error
+    {
+        get;
+        init;
+    } =
+        string.Empty;
+}
+```
+
+---
+
+## 153. `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIReadCapabilityHandler.cs`
+
+**File:** `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIReadCapabilityHandler.cs`
+
+```csharp
+/*
+ * filename: TradeAIReadCapabilityHandler.cs
+ */
+
+using System.Text.Json;
+
+using NIRAAgent.Capabilities;
+
+namespace NIRAAgent.Integrations.Elvara.Apps.TradeAI;
+
+
+// =============================================================
+// TRADEAI CAPABILITY IDS
+// =============================================================
+
+public static class TradeAICapabilityIds
+{
+    public const string Read =
+        "elvara.tradeai.read";
+}
+
+
+// =============================================================
+// TRADEAI READ CAPABILITY
+//
+// One fixed read-only capability covers the public TradeAI
+// localhost API resources. The model cannot provide an arbitrary
+// URL or HTTP method.
+//
+// Allowed resources:
+// health
+// status
+// account
+// positions
+// signals
+// symbols
+// trades
+// performance
+// =============================================================
+
+public sealed class TradeAIReadCapabilityHandler
+    : INIRACapabilityHandler
+{
+    private readonly TradeAIClient
+        _client;
+
+
+    public TradeAIReadCapabilityHandler(
+        TradeAIClient client)
+    {
+        _client =
+            client
+            ?? throw new ArgumentNullException(
+                nameof(client));
+    }
+
+
+    public NIRACapabilityDescriptor Descriptor
+    {
+        get;
+    } =
+        new NIRACapabilityDescriptor
+        {
+            Id =
+                TradeAICapabilityIds.Read,
+
+            Description =
+                "Read authoritative current data from the local ELVARA TradeAI API. " +
+                "This capability is observation-only and cannot place, modify or close trades. " +
+                "resource must be one of health, status, account, positions, signals, symbols, trades, performance. " +
+                "Use symbol with signals or trades when the user asks about one symbol.",
+
+            DefaultRisk =
+                NIRACapabilityRisk.Observe,
+
+            Parameters =
+                new[]
+                {
+                    Parameter(
+                        "resource",
+                        "string",
+                        true,
+                        "TradeAI resource: health, status, account, positions, signals, symbols, trades, or performance."),
+
+                    Parameter(
+                        "symbol",
+                        "string",
+                        false,
+                        "Optional symbol filter such as EURUSD. Used by signals and trades."),
+
+                    Parameter(
+                        "limit",
+                        "integer",
+                        false,
+                        "Trades result limit from 1 to 500. Default 50."),
+
+                    Parameter(
+                        "includeOpen",
+                        "boolean",
+                        false,
+                        "For trades, include currently open trade records. Default true.")
+                }
+        };
+
+
+    public NIRACapabilityRisk ResolveRisk(
+        NIRACapabilityRequest request)
+    {
+        return NIRACapabilityRisk.Observe;
+    }
+
+
+    public async Task<NIRACapabilityHandlerResult> ExecuteAsync(
+        NIRACapabilityRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+
+        string resource =
+            NIRACapabilityArguments.RequireString(
+                request,
+                "resource",
+                40);
+
+
+        string? symbol =
+            NIRACapabilityArguments.GetOptionalString(
+                request,
+                "symbol",
+                32);
+
+
+        int limit =
+            ReadOptionalInteger(
+                request,
+                "limit",
+                defaultValue:
+                    50,
+                minimum:
+                    1,
+                maximum:
+                    500);
+
+
+        bool includeOpen =
+            ReadOptionalBoolean(
+                request,
+                "includeOpen",
+                defaultValue:
+                    true);
+
+
+        TradeAIReadResult result =
+            await _client.ReadAsync(
+                resource,
+                symbol,
+                limit,
+                includeOpen,
+                cancellationToken);
+
+
+        TradeAIReadResult? health =
+            null;
+
+
+        if (!resource.Equals(
+                "health",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            health =
+                await _client.ReadAsync(
+                    "health",
+                    cancellationToken:
+                        cancellationToken);
+        }
+
+
+        string freshness =
+            BuildFreshnessContext(
+                resource,
+                result,
+                health);
+
+
+        string summary =
+            result.Succeeded
+                ? $"TradeAI read-only resource '{result.Resource}' returned authoritative localhost data. {freshness}"
+                : $"TradeAI read-only resource '{result.Resource}' could not be read: {result.Error}";
+
+
+        string output =
+            result.Succeeded
+                ? string.Join(
+                    Environment.NewLine,
+                    new[]
+                    {
+                        "TRADEAI AUTHORITATIVE READ-ONLY DATA",
+                        freshness,
+                        "",
+                        "IMPORTANT INTERPRETATION RULE:",
+                        "Broker/MT5 connectivity and broker account fields may still be live even when TradeAI engine telemetry is stale. " +
+                        "Signals, engine decisions, forward-audit state and telemetry-derived trading state must NOT be described as current when telemetry_fresh=false.",
+                        "",
+                        $"RequestedResource={result.Resource}",
+                        result.Body
+                    })
+                : string.Join(
+                    Environment.NewLine,
+                    new[]
+                    {
+                        result.Error,
+                        result.Body
+                    }.Where(
+                        value =>
+                            !string.IsNullOrWhiteSpace(
+                                value)));
+
+
+        return new NIRACapabilityHandlerResult
+        {
+            Succeeded =
+                result.Succeeded,
+
+            HttpStatusCode =
+                result.StatusCode,
+
+            Summary =
+                summary,
+
+            Output =
+                output,
+
+            ChangedSystemState =
+                false
+        };
+    }
+
+
+    private static string BuildFreshnessContext(
+        string requestedResource,
+        TradeAIReadResult requested,
+        TradeAIReadResult? health)
+    {
+        string healthJson =
+            requestedResource.Equals(
+                "health",
+                StringComparison.OrdinalIgnoreCase)
+                ? requested.Body
+                : health?.Body
+                    ??
+                    string.Empty;
+
+
+        if (string.IsNullOrWhiteSpace(
+                healthJson))
+        {
+            return
+                "TradeAI telemetry freshness could not be independently verified for this read.";
+        }
+
+
+        try
+        {
+            using JsonDocument document =
+                JsonDocument.Parse(
+                    healthJson);
+
+
+            JsonElement root =
+                document.RootElement;
+
+
+            if (
+                !root.TryGetProperty(
+                    "tradeai",
+                    out JsonElement tradeai)
+                ||
+                tradeai.ValueKind !=
+                    JsonValueKind.Object)
+            {
+                return
+                    "TradeAI telemetry freshness metadata was not present in /health.";
+            }
+
+
+            bool fresh =
+                tradeai.TryGetProperty(
+                    "telemetry_fresh",
+                    out JsonElement freshElement)
+                &&
+                freshElement.ValueKind is
+                    JsonValueKind.True or
+                    JsonValueKind.False
+                &&
+                freshElement.GetBoolean();
+
+
+            string state =
+                ReadJsonText(
+                    tradeai,
+                    "state");
+
+
+            string lastTelemetry =
+                ReadJsonText(
+                    tradeai,
+                    "last_telemetry_utc");
+
+
+            string age =
+                tradeai.TryGetProperty(
+                    "telemetry_age_seconds",
+                    out JsonElement ageElement)
+                &&
+                ageElement.ValueKind ==
+                    JsonValueKind.Number
+                    ? ageElement
+                        .GetRawText()
+                    : "-";
+
+
+            if (fresh)
+            {
+                return
+                    $"TradeAI engine telemetry is FRESH. " +
+                    $"State={state}; LastTelemetryUtc={lastTelemetry}; AgeSeconds={age}.";
+            }
+
+
+            return
+                $"WARNING: TradeAI engine telemetry is STALE. " +
+                $"State={state}; LastTelemetryUtc={lastTelemetry}; AgeSeconds={age}. " +
+                "Do not describe telemetry-derived signals/decisions as current.";
+        }
+        catch (JsonException)
+        {
+            return
+                "TradeAI telemetry freshness metadata could not be parsed.";
+        }
+    }
+
+
+    private static string ReadJsonText(
+        JsonElement parent,
+        string propertyName)
+    {
+        if (!parent.TryGetProperty(
+                propertyName,
+                out JsonElement value))
+        {
+            return "-";
+        }
+
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.String =>
+                value.GetString()
+                ??
+                "-",
+
+            JsonValueKind.Null =>
+                "-",
+
+            _ =>
+                value.GetRawText()
+        };
+    }
+
+
+    private static int ReadOptionalInteger(
+        NIRACapabilityRequest request,
+        string name,
+        int defaultValue,
+        int minimum,
+        int maximum)
+    {
+        if (!TryGetProperty(
+                request,
+                name,
+                out JsonElement value))
+        {
+            return defaultValue;
+        }
+
+
+        int parsed;
+
+
+        if (
+            value.ValueKind ==
+                JsonValueKind.Number
+            &&
+            value.TryGetInt32(
+                out parsed))
+        {
+            return Math.Clamp(
+                parsed,
+                minimum,
+                maximum);
+        }
+
+
+        if (
+            value.ValueKind ==
+                JsonValueKind.String
+            &&
+            int.TryParse(
+                value.GetString(),
+                out parsed))
+        {
+            return Math.Clamp(
+                parsed,
+                minimum,
+                maximum);
+        }
+
+
+        throw new InvalidOperationException(
+            $"Capability argument '{name}' must be an integer.");
+    }
+
+
+    private static bool ReadOptionalBoolean(
+        NIRACapabilityRequest request,
+        string name,
+        bool defaultValue)
+    {
+        if (!TryGetProperty(
+                request,
+                name,
+                out JsonElement value))
+        {
+            return defaultValue;
+        }
+
+
+        if (value.ValueKind ==
+            JsonValueKind.True)
+        {
+            return true;
+        }
+
+
+        if (value.ValueKind ==
+            JsonValueKind.False)
+        {
+            return false;
+        }
+
+
+        if (
+            value.ValueKind ==
+                JsonValueKind.String
+            &&
+            bool.TryParse(
+                value.GetString(),
+                out bool parsed))
+        {
+            return parsed;
+        }
+
+
+        throw new InvalidOperationException(
+            $"Capability argument '{name}' must be a boolean.");
+    }
+
+
+    private static bool TryGetProperty(
+        NIRACapabilityRequest request,
+        string name,
+        out JsonElement value)
+    {
+        if (request.Arguments.ValueKind !=
+            JsonValueKind.Object)
+        {
+            value =
+                default;
+
+            return false;
+        }
+
+
+        foreach (
+            JsonProperty property
+            in request.Arguments.EnumerateObject())
+        {
+            if (string.Equals(
+                    property.Name,
+                    name,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                value =
+                    property.Value;
+
+                return true;
+            }
+        }
+
+
+        value =
+            default;
+
+        return false;
+    }
+
+
+    private static NIRACapabilityParameterDescriptor Parameter(
+        string name,
+        string type,
+        bool required,
+        string description)
+    {
+        return new NIRACapabilityParameterDescriptor
+        {
+            Name =
+                name,
+
+            Type =
+                type,
+
+            Required =
+                required,
+
+            Description =
+                description
+        };
+    }
+}
+```
+
+---
+
+## 154. `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeContracts.cs`
+
+**File:** `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeContracts.cs`
+
+```csharp
+/*
+ * filename: NIRABridgeContracts.cs
+ */
+
+namespace NIRAAgent.Integrations.Elvara.Bridge;
+
+
+// =============================================================
+// PUBLIC NIRA LOCAL BRIDGE CONTRACTS
+// =============================================================
+
+public sealed record NIRABridgeHealthResponse
+{
+    public string Service
+    {
+        get;
+        init;
+    } =
+        "NIRA Local Bridge";
+
+
+    public string Version
+    {
+        get;
+        init;
+    } =
+        NIRABridgeOptions.Version;
+
+
+    public string Brand
+    {
+        get;
+        init;
+    } =
+        "ELVARA";
+
+
+    public string Agent
+    {
+        get;
+        init;
+    } =
+        "NIRA";
+
+
+    public string Status
+    {
+        get;
+        init;
+    } =
+        "ok";
+
+
+    public string Address
+    {
+        get;
+        init;
+    } =
+        NIRABridgeOptions.BaseUrl;
+
+
+    public bool LocalhostOnly
+    {
+        get;
+        init;
+    } =
+        true;
+
+
+    public bool ChatEnabled
+    {
+        get;
+        init;
+    } =
+        true;
+
+
+    public bool ChatAuthenticationRequired
+    {
+        get;
+        init;
+    } =
+        true;
+
+
+    public string ChatAuthentication
+    {
+        get;
+        init;
+    } =
+        "bearer_token";
+}
+
+
+public sealed record NIRABridgeAppResponse
+{
+    public required string AppId
+    {
+        get;
+        init;
+    }
+
+
+    public required string DisplayName
+    {
+        get;
+        init;
+    }
+
+
+    public required string ProductName
+    {
+        get;
+        init;
+    }
+
+
+    public bool AllowEmbeddedNIRA
+    {
+        get;
+        init;
+    }
+
+
+    public bool AllowNIRAQuery
+    {
+        get;
+        init;
+    }
+
+
+    public string Description
+    {
+        get;
+        init;
+    } =
+        string.Empty;
+}
+
+
+public sealed record NIRABridgeAppsResponse
+{
+    public required IReadOnlyList<NIRABridgeAppResponse> Apps
+    {
+        get;
+        init;
+    }
+}
+
+
+// =============================================================
+// EMBEDDED ASK-NIRA CHAT
+//
+// The application sends only the user's message plus UI context.
+// The application does not call an LLM and does not provide
+// authoritative domain facts through this contract.
+// =============================================================
+
+public sealed record NIRABridgeChatRequest
+{
+    public required string Message
+    {
+        get;
+        init;
+    }
+
+
+    public string Surface
+    {
+        get;
+        init;
+    } =
+        "embedded";
+
+
+    public string Page
+    {
+        get;
+        init;
+    } =
+        string.Empty;
+
+
+    public string SelectedEntity
+    {
+        get;
+        init;
+    } =
+        string.Empty;
+}
+
+
+public sealed record NIRABridgeChatResponse
+{
+    public required string AppId
+    {
+        get;
+        init;
+    }
+
+
+    public required string Reply
+    {
+        get;
+        init;
+    }
+
+
+    public Guid? RunId
+    {
+        get;
+        init;
+    }
+
+
+    public string Scope
+    {
+        get;
+        init;
+    } =
+        string.Empty;
+}
+
+
+public sealed record NIRABridgeErrorResponse
+{
+    public required string Error
+    {
+        get;
+        init;
+    }
+
+
+    public required string Message
+    {
+        get;
+        init;
+    }
+}
+```
+
+---
+
+## 155. `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeCredentialStore.cs`
+
+**File:** `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeCredentialStore.cs`
+
+```csharp
+/*
+ * filename: NIRABridgeCredentialStore.cs
+ */
+
+using System.Security.Cryptography;
+using System.Text;
+
+namespace NIRAAgent.Integrations.Elvara.Bridge;
+
+
+// =============================================================
+// NIRA BRIDGE APP CREDENTIAL STORE
+//
+// A registered ELVARA app receives a randomly generated,
+// per-install bearer credential stored only in the current
+// Windows user's LocalApplicationData.
+//
+// This is intentionally NOT a hardcoded source secret.
+//
+// Security boundary:
+// - bridge still binds to 127.0.0.1 only
+// - chat requires both a registered app route and its bearer token
+// - token is never returned by bridge HTTP endpoints
+//
+// Like other same-user desktop IPC credentials, this does not
+// claim to protect against malware already executing as the same
+// Windows user. It does prevent unauthenticated localhost callers
+// and other user profiles from simply claiming an app identity.
+// =============================================================
+
+public sealed class NIRABridgeCredentialStore
+{
+    private const int TokenBytes =
+        48;
+
+
+    private readonly object
+        _sync =
+            new();
+
+
+    private readonly Dictionary<string, string>
+        _tokens =
+            new(
+                StringComparer.OrdinalIgnoreCase);
+
+
+    private readonly string
+        _credentialDirectory;
+
+
+    public NIRABridgeCredentialStore(
+        ElvaraAppRegistry apps)
+    {
+        ArgumentNullException.ThrowIfNull(
+            apps);
+
+
+        _credentialDirectory =
+            Path.Combine(
+                Environment.GetFolderPath(
+                    Environment.SpecialFolder.LocalApplicationData),
+                "ELVARA",
+                "NIRA",
+                "bridge",
+                "credentials");
+
+
+        Directory.CreateDirectory(
+            _credentialDirectory);
+
+
+        foreach (
+            ElvaraAppDescriptor app
+            in apps.GetAll())
+        {
+            if (!app.AllowEmbeddedNIRA)
+            {
+                continue;
+            }
+
+
+            _ =
+                GetOrCreateToken(
+                    app.AppId);
+        }
+    }
+
+
+    public string GetCredentialPath(
+        string appId)
+    {
+        string normalized =
+            NormalizeAppId(
+                appId);
+
+
+        return Path.Combine(
+            _credentialDirectory,
+            normalized +
+            ".token");
+    }
+
+
+    public bool ValidateBearer(
+        string appId,
+        string? authorizationHeader)
+    {
+        if (string.IsNullOrWhiteSpace(
+                authorizationHeader))
+        {
+            return false;
+        }
+
+
+        const string prefix =
+            "Bearer ";
+
+
+        if (!authorizationHeader.StartsWith(
+                prefix,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+
+        string presented =
+            authorizationHeader[
+                prefix.Length..
+            ]
+            .Trim();
+
+
+        if (presented.Length ==
+            0)
+        {
+            return false;
+        }
+
+
+        string expected =
+            GetOrCreateToken(
+                appId);
+
+
+        byte[] presentedHash =
+            SHA256.HashData(
+                Encoding.UTF8.GetBytes(
+                    presented));
+
+
+        byte[] expectedHash =
+            SHA256.HashData(
+                Encoding.UTF8.GetBytes(
+                    expected));
+
+
+        return CryptographicOperations.FixedTimeEquals(
+            presentedHash,
+            expectedHash);
+    }
+
+
+    private string GetOrCreateToken(
+        string appId)
+    {
+        string normalized =
+            NormalizeAppId(
+                appId);
+
+
+        lock (_sync)
+        {
+            if (_tokens.TryGetValue(
+                    normalized,
+                    out string? cached)
+                &&
+                !string.IsNullOrWhiteSpace(
+                    cached))
+            {
+                return cached;
+            }
+
+
+            string path =
+                GetCredentialPath(
+                    normalized);
+
+
+            string token =
+                ReadExistingToken(
+                    path);
+
+
+            if (string.IsNullOrWhiteSpace(
+                    token))
+            {
+                token =
+                    CreateToken();
+
+
+                WriteTokenAtomically(
+                    path,
+                    token);
+            }
+
+
+            _tokens[normalized] =
+                token;
+
+
+            System.Diagnostics.Debug.WriteLine(
+                $"[NIRABridgeAuth] READY | App={normalized} | CredentialPath='{path}'");
+
+
+            return token;
+        }
+    }
+
+
+    private static string ReadExistingToken(
+        string path)
+    {
+        try
+        {
+            if (!File.Exists(
+                    path))
+            {
+                return string.Empty;
+            }
+
+
+            string token =
+                File.ReadAllText(
+                    path,
+                    Encoding.UTF8)
+                .Trim();
+
+
+            return token.Length >=
+                40
+                ? token
+                : string.Empty;
+        }
+        catch (
+            IOException)
+        {
+            return string.Empty;
+        }
+        catch (
+            UnauthorizedAccessException)
+        {
+            return string.Empty;
+        }
+    }
+
+
+    private static string CreateToken()
+    {
+        byte[] bytes =
+            RandomNumberGenerator.GetBytes(
+                TokenBytes);
+
+
+        return Convert
+            .ToBase64String(
+                bytes)
+            .TrimEnd(
+                '=')
+            .Replace(
+                '+',
+                '-')
+            .Replace(
+                '/',
+                '_');
+    }
+
+
+    private static void WriteTokenAtomically(
+        string path,
+        string token)
+    {
+        string? directory =
+            Path.GetDirectoryName(
+                path);
+
+
+        if (string.IsNullOrWhiteSpace(
+                directory))
+        {
+            throw new InvalidOperationException(
+                "NIRA bridge credential directory is invalid.");
+        }
+
+
+        Directory.CreateDirectory(
+            directory);
+
+
+        string temporary =
+            path +
+            "." +
+            Guid.NewGuid().ToString(
+                "N")
+            +
+            ".tmp";
+
+
+        File.WriteAllText(
+            temporary,
+            token +
+            Environment.NewLine,
+            new UTF8Encoding(
+                encoderShouldEmitUTF8Identifier:
+                    false));
+
+
+        try
+        {
+            if (File.Exists(
+                    path))
+            {
+                File.Delete(
+                    temporary);
+
+                return;
+            }
+
+
+            File.Move(
+                temporary,
+                path);
+        }
+        finally
+        {
+            if (File.Exists(
+                    temporary))
+            {
+                try
+                {
+                    File.Delete(
+                        temporary);
+                }
+                catch
+                {
+                }
+            }
+        }
+    }
+
+
+    private static string NormalizeAppId(
+        string appId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(
+            appId);
+
+
+        string normalized =
+            appId
+                .Trim()
+                .ToLowerInvariant();
+
+
+        foreach (
+            char character
+            in normalized)
+        {
+            if (
+                char.IsLetterOrDigit(
+                    character)
+                ||
+                character is
+                    '-' or
+                    '_' or
+                    '.')
+            {
+                continue;
+            }
+
+
+            throw new InvalidOperationException(
+                "ELVARA application ID contains unsupported characters.");
+        }
+
+
+        return normalized;
+    }
+}
+```
+
+---
+
+## 156. `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeOptions.cs`
+
+**File:** `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeOptions.cs`
+
+```csharp
+/*
+ * filename: NIRABridgeOptions.cs
+ */
+
+namespace NIRAAgent.Integrations.Elvara.Bridge;
+
+
+// =============================================================
+// NIRA LOCAL BRIDGE OPTIONS
+//
+// The bridge is intentionally bound only to IPv4 loopback.
+// It is not a LAN service and must not be exposed externally.
+// =============================================================
+
+public static class NIRABridgeOptions
+{
+    public const string Version =
+        "1.0.0";
+
+
+    public const string Host =
+        "127.0.0.1";
+
+
+    public const int Port =
+        8766;
+
+
+    public const string BaseUrl =
+        "http://127.0.0.1:8766";
+
+
+    public const string ListenerPrefix =
+        "http://127.0.0.1:8766/";
+}
+```
+
+---
+
+## 157. `NIRAAgent\Integrations\Elvara\Bridge\NIRALocalBridgeService.cs`
+
+**File:** `NIRAAgent\Integrations\Elvara\Bridge\NIRALocalBridgeService.cs`
+
+```csharp
+/*
+ * filename: NIRALocalBridgeService.cs
+ */
+
+using System.Net;
+using System.Text;
+using System.Text.Json;
+
+using Microsoft.Extensions.Hosting;
+
+using NIRAAgent.Mind;
+
+namespace NIRAAgent.Integrations.Elvara.Bridge;
+
+
+// =============================================================
+// NIRA LOCAL BRIDGE SERVICE
+//
+// Localhost entry point for trusted registered ELVARA products.
+//
+// Applications do not own an LLM connection. Their Ask-NIRA
+// surfaces send the user utterance + UI reference context here,
+// and this service routes the request into the existing NIRA
+// mind runtime.
+// =============================================================
+
+public sealed class NIRALocalBridgeService
+    : BackgroundService
+{
+    private const int MaximumRequestBodyBytes =
+        64 * 1024;
+
+
+    private const int MaximumMessageCharacters =
+        12000;
+
+
+    private readonly ElvaraAppRegistry
+        _apps;
+
+
+    private readonly NIRAMindRuntime
+        _mind;
+
+
+    private readonly NIRABridgeCredentialStore
+        _credentials;
+
+
+    private readonly HttpListener
+        _listener =
+            new();
+
+
+    private readonly JsonSerializerOptions
+        _jsonOptions =
+            new()
+            {
+                PropertyNamingPolicy =
+                    JsonNamingPolicy.CamelCase,
+
+                PropertyNameCaseInsensitive =
+                    true,
+
+                WriteIndented =
+                    false
+            };
+
+
+    private volatile bool
+        _started;
+
+
+    public NIRALocalBridgeService(
+        ElvaraAppRegistry apps,
+        NIRAMindRuntime mind,
+        NIRABridgeCredentialStore credentials)
+    {
+        _apps =
+            apps
+            ?? throw new ArgumentNullException(
+                nameof(apps));
+
+
+        _mind =
+            mind
+            ?? throw new ArgumentNullException(
+                nameof(mind));
+
+
+        _credentials =
+            credentials
+            ?? throw new ArgumentNullException(
+                nameof(credentials));
+
+
+        _listener.Prefixes.Add(
+            NIRABridgeOptions.ListenerPrefix);
+    }
+
+
+    public bool IsRunning =>
+        _started
+        &&
+        _listener.IsListening;
+
+
+    // =========================================================
+    // HOSTED SERVICE
+    // =========================================================
+
+    protected override async Task ExecuteAsync(
+        CancellationToken stoppingToken)
+    {
+        try
+        {
+            _listener.Start();
+
+
+            _started =
+                true;
+
+
+            System.Diagnostics.Debug.WriteLine(
+                $"[NIRABridge] LISTENING | {NIRABridgeOptions.BaseUrl}");
+
+
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                HttpListenerContext context;
+
+
+                try
+                {
+                    context =
+                        await _listener
+                            .GetContextAsync()
+                            .WaitAsync(
+                                stoppingToken);
+                }
+                catch (OperationCanceledException)
+                    when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (HttpListenerException)
+                    when (
+                        stoppingToken.IsCancellationRequested
+                        ||
+                        !_listener.IsListening)
+                {
+                    break;
+                }
+                catch (ObjectDisposedException)
+                    when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+
+
+                _ =
+                    HandleContextSafelyAsync(
+                        context,
+                        stoppingToken);
+            }
+        }
+        finally
+        {
+            _started =
+                false;
+
+
+            if (_listener.IsListening)
+            {
+                try
+                {
+                    _listener.Stop();
+                }
+                catch (HttpListenerException)
+                {
+                }
+                catch (ObjectDisposedException)
+                {
+                }
+            }
+
+
+            System.Diagnostics.Debug.WriteLine(
+                "[NIRABridge] STOPPED");
+        }
+    }
+
+
+    public override async Task StopAsync(
+        CancellationToken cancellationToken)
+    {
+        _started =
+            false;
+
+
+        if (_listener.IsListening)
+        {
+            try
+            {
+                _listener.Stop();
+            }
+            catch (HttpListenerException)
+            {
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+
+
+        await base.StopAsync(
+            cancellationToken);
+    }
+
+
+    public override void Dispose()
+    {
+        try
+        {
+            _listener.Close();
+        }
+        catch
+        {
+        }
+
+
+        base.Dispose();
+    }
+
+
+    // =========================================================
+    // REQUEST HANDLING
+    // =========================================================
+
+    private async Task HandleContextSafelyAsync(
+        HttpListenerContext context,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await HandleContextAsync(
+                context,
+                cancellationToken);
+        }
+        catch (OperationCanceledException)
+            when (cancellationToken.IsCancellationRequested)
+        {
+            TryClose(
+                context.Response);
+        }
+        catch (JsonException)
+        {
+            await WriteJsonAsync(
+                context.Response,
+                HttpStatusCode.BadRequest,
+                new NIRABridgeErrorResponse
+                {
+                    Error =
+                        "invalid_json",
+
+                    Message =
+                        "The NIRA bridge request body is not valid JSON."
+                },
+                CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"[NIRABridge] REQUEST_FAILED | {ex.GetType().Name}: {ex.Message}");
+
+
+            await WriteJsonAsync(
+                context.Response,
+                HttpStatusCode.InternalServerError,
+                new NIRABridgeErrorResponse
+                {
+                    Error =
+                        "bridge_error",
+
+                    Message =
+                        "The NIRA local bridge could not process the request."
+                },
+                CancellationToken.None);
+        }
+    }
+
+
+    private async Task HandleContextAsync(
+        HttpListenerContext context,
+        CancellationToken cancellationToken)
+    {
+        HttpListenerRequest request =
+            context.Request;
+
+
+        HttpListenerResponse response =
+            context.Response;
+
+
+        ApplySecurityHeaders(
+            response);
+
+
+        if (!IsLoopbackRequest(
+                request))
+        {
+            await WriteJsonAsync(
+                response,
+                HttpStatusCode.Forbidden,
+                new NIRABridgeErrorResponse
+                {
+                    Error =
+                        "loopback_required",
+
+                    Message =
+                        "NIRA's ELVARA bridge accepts localhost requests only."
+                },
+                cancellationToken);
+
+            return;
+        }
+
+
+        string method =
+            request.HttpMethod
+                .Trim()
+                .ToUpperInvariant();
+
+
+        string path =
+            NormalizePath(
+                request.Url?.AbsolutePath);
+
+
+        if (
+            method ==
+                "GET"
+            &&
+            path ==
+                "/health")
+        {
+            await WriteJsonAsync(
+                response,
+                HttpStatusCode.OK,
+                new NIRABridgeHealthResponse(),
+                cancellationToken);
+
+            return;
+        }
+
+
+        if (
+            method ==
+                "GET"
+            &&
+            path ==
+                "/v1/apps")
+        {
+            NIRABridgeAppResponse[] apps =
+                _apps
+                    .GetAll()
+                    .Select(
+                        ToBridgeApp)
+                    .ToArray();
+
+
+            await WriteJsonAsync(
+                response,
+                HttpStatusCode.OK,
+                new NIRABridgeAppsResponse
+                {
+                    Apps =
+                        apps
+                },
+                cancellationToken);
+
+            return;
+        }
+
+
+        if (
+            method ==
+                "POST"
+            &&
+            TryParseChatPath(
+                path,
+                out string chatAppId))
+        {
+            await HandleChatAsync(
+                request,
+                response,
+                chatAppId,
+                cancellationToken);
+
+            return;
+        }
+
+
+        if (
+            method ==
+                "GET"
+            &&
+            path.StartsWith(
+                "/v1/apps/",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            string encodedAppId =
+                path[
+                    "/v1/apps/".Length..
+                ];
+
+
+            if (
+                string.IsNullOrWhiteSpace(
+                    encodedAppId)
+                ||
+                encodedAppId.Contains(
+                    '/'))
+            {
+                await WriteNotFoundAsync(
+                    response,
+                    cancellationToken);
+
+                return;
+            }
+
+
+            string appId =
+                Uri.UnescapeDataString(
+                    encodedAppId);
+
+
+            if (!_apps.TryGet(
+                    appId,
+                    out ElvaraAppDescriptor? app)
+                ||
+                app ==
+                    null)
+            {
+                await WriteJsonAsync(
+                    response,
+                    HttpStatusCode.NotFound,
+                    new NIRABridgeErrorResponse
+                    {
+                        Error =
+                            "unknown_app",
+
+                        Message =
+                            $"'{appId}' is not a registered ELVARA application."
+                    },
+                    cancellationToken);
+
+                return;
+            }
+
+
+            await WriteJsonAsync(
+                response,
+                HttpStatusCode.OK,
+                ToBridgeApp(
+                    app),
+                cancellationToken);
+
+            return;
+        }
+
+
+        await WriteNotFoundAsync(
+            response,
+            cancellationToken);
+    }
+
+
+    // =========================================================
+    // CHAT
+    // =========================================================
+
+    private async Task HandleChatAsync(
+        HttpListenerRequest request,
+        HttpListenerResponse response,
+        string appId,
+        CancellationToken cancellationToken)
+    {
+        if (!_apps.TryGet(
+                appId,
+                out ElvaraAppDescriptor? app)
+            ||
+            app ==
+                null)
+        {
+            await WriteJsonAsync(
+                response,
+                HttpStatusCode.NotFound,
+                new NIRABridgeErrorResponse
+                {
+                    Error =
+                        "unknown_app",
+
+                    Message =
+                        $"'{appId}' is not a registered ELVARA application."
+                },
+                cancellationToken);
+
+            return;
+        }
+
+
+        if (!app.AllowEmbeddedNIRA)
+        {
+            await WriteJsonAsync(
+                response,
+                HttpStatusCode.Forbidden,
+                new NIRABridgeErrorResponse
+                {
+                    Error =
+                        "embedded_nira_disabled",
+
+                    Message =
+                        $"Embedded NIRA access is disabled for '{app.AppId}'."
+                },
+                cancellationToken);
+
+            return;
+        }
+
+
+        if (!_credentials.ValidateBearer(
+                app.AppId,
+                request.Headers[
+                    "Authorization"]))
+        {
+            response.Headers[
+                "WWW-Authenticate"] =
+                    "Bearer realm=\"NIRA Local Bridge\"";
+
+
+            await WriteJsonAsync(
+                response,
+                HttpStatusCode.Unauthorized,
+                new NIRABridgeErrorResponse
+                {
+                    Error =
+                        "app_authentication_required",
+
+                    Message =
+                        "A valid registered ELVARA application credential is required."
+                },
+                cancellationToken);
+
+            return;
+        }
+
+
+        if (
+            request.ContentLength64 >
+                MaximumRequestBodyBytes)
+        {
+            await WriteJsonAsync(
+                response,
+                HttpStatusCode.RequestEntityTooLarge,
+                new NIRABridgeErrorResponse
+                {
+                    Error =
+                        "request_too_large",
+
+                    Message =
+                        "The NIRA bridge request body is too large."
+                },
+                cancellationToken);
+
+            return;
+        }
+
+
+        using StreamReader reader =
+            new(
+                request.InputStream,
+                request.ContentEncoding
+                    ??
+                    Encoding.UTF8,
+                detectEncodingFromByteOrderMarks:
+                    true,
+                leaveOpen:
+                    false);
+
+
+        string body =
+            await reader.ReadToEndAsync(
+                cancellationToken);
+
+
+        if (Encoding.UTF8.GetByteCount(
+                body) >
+            MaximumRequestBodyBytes)
+        {
+            await WriteJsonAsync(
+                response,
+                HttpStatusCode.RequestEntityTooLarge,
+                new NIRABridgeErrorResponse
+                {
+                    Error =
+                        "request_too_large",
+
+                    Message =
+                        "The NIRA bridge request body is too large."
+                },
+                cancellationToken);
+
+            return;
+        }
+
+
+        NIRABridgeChatRequest? chatRequest =
+            JsonSerializer.Deserialize<NIRABridgeChatRequest>(
+                body,
+                _jsonOptions);
+
+
+        if (
+            chatRequest ==
+                null
+            ||
+            string.IsNullOrWhiteSpace(
+                chatRequest.Message))
+        {
+            await WriteJsonAsync(
+                response,
+                HttpStatusCode.BadRequest,
+                new NIRABridgeErrorResponse
+                {
+                    Error =
+                        "message_required",
+
+                    Message =
+                        "A non-empty message is required."
+                },
+                cancellationToken);
+
+            return;
+        }
+
+
+        string message =
+            chatRequest.Message.Trim();
+
+
+        if (message.Length >
+            MaximumMessageCharacters)
+        {
+            await WriteJsonAsync(
+                response,
+                HttpStatusCode.BadRequest,
+                new NIRABridgeErrorResponse
+                {
+                    Error =
+                        "message_too_long",
+
+                    Message =
+                        $"Message exceeds the {MaximumMessageCharacters} character limit."
+                },
+                cancellationToken);
+
+            return;
+        }
+
+
+        NIRAExternalAppContext appContext =
+            new()
+            {
+                AppId =
+                    app.AppId,
+
+                Surface =
+                    NormalizeContextValue(
+                        chatRequest.Surface,
+                        "embedded",
+                        120),
+
+                Page =
+                    NormalizeContextValue(
+                        chatRequest.Page,
+                        string.Empty,
+                        160),
+
+                SelectedEntity =
+                    NormalizeContextValue(
+                        chatRequest.SelectedEntity,
+                        string.Empty,
+                        160)
+            };
+
+
+        StringBuilder reply =
+            new();
+
+
+        string speechFallback =
+            string.Empty;
+
+
+        Guid? runId =
+            null;
+
+
+        await foreach (
+            NIRAOutputChunk chunk
+            in _mind.ProcessExternalAppMessageAsync(
+                message,
+                appContext,
+                cancellationToken))
+        {
+            if (chunk.RunId !=
+                Guid.Empty)
+            {
+                runId =
+                    chunk.RunId;
+            }
+
+
+            if (
+                chunk.Type ==
+                    NIRAOutputChunkType.Text
+                &&
+                !string.IsNullOrWhiteSpace(
+                    chunk.Content))
+            {
+                reply.Append(
+                    chunk.Content);
+            }
+
+
+            if (
+                chunk.Type ==
+                    NIRAOutputChunkType.Text
+                &&
+                !string.IsNullOrWhiteSpace(
+                    chunk.SpeechContent))
+            {
+                speechFallback =
+                    chunk.SpeechContent.Trim();
+            }
+        }
+
+
+        string finalReply =
+            reply
+                .ToString()
+                .Trim();
+
+
+        if (
+            string.IsNullOrWhiteSpace(
+                finalReply)
+            &&
+            !string.IsNullOrWhiteSpace(
+                speechFallback))
+        {
+            finalReply =
+                speechFallback;
+        }
+
+
+        await WriteJsonAsync(
+            response,
+            HttpStatusCode.OK,
+            new NIRABridgeChatResponse
+            {
+                AppId =
+                    app.AppId,
+
+                Reply =
+                    finalReply,
+
+                RunId =
+                    runId,
+
+                Scope =
+                    $"app:{app.AppId}"
+            },
+            cancellationToken);
+    }
+
+
+    // =========================================================
+    // RESPONSE HELPERS
+    // =========================================================
+
+    private async Task WriteNotFoundAsync(
+        HttpListenerResponse response,
+        CancellationToken cancellationToken)
+    {
+        await WriteJsonAsync(
+            response,
+            HttpStatusCode.NotFound,
+            new NIRABridgeErrorResponse
+            {
+                Error =
+                    "not_found",
+
+                Message =
+                    "The requested NIRA bridge route does not exist."
+            },
+            cancellationToken);
+    }
+
+
+    private async Task WriteJsonAsync<T>(
+        HttpListenerResponse response,
+        HttpStatusCode statusCode,
+        T value,
+        CancellationToken cancellationToken)
+    {
+        byte[] body =
+            JsonSerializer.SerializeToUtf8Bytes(
+                value,
+                _jsonOptions);
+
+
+        response.StatusCode =
+            (int)statusCode;
+
+
+        response.ContentType =
+            "application/json; charset=utf-8";
+
+
+        response.ContentEncoding =
+            Encoding.UTF8;
+
+
+        response.ContentLength64 =
+            body.LongLength;
+
+
+        try
+        {
+            await response
+                .OutputStream
+                .WriteAsync(
+                    body,
+                    cancellationToken);
+        }
+        finally
+        {
+            TryClose(
+                response);
+        }
+    }
+
+
+    private static void ApplySecurityHeaders(
+        HttpListenerResponse response)
+    {
+        response.Headers[
+            "Cache-Control"] =
+                "no-store";
+
+
+        response.Headers[
+            "X-Content-Type-Options"] =
+                "nosniff";
+    }
+
+
+    private static void TryClose(
+        HttpListenerResponse response)
+    {
+        try
+        {
+            response.OutputStream.Close();
+        }
+        catch
+        {
+        }
+
+
+        try
+        {
+            response.Close();
+        }
+        catch
+        {
+        }
+    }
+
+
+    // =========================================================
+    // REQUEST VALIDATION
+    // =========================================================
+
+    private static bool IsLoopbackRequest(
+        HttpListenerRequest request)
+    {
+        IPEndPoint? remote =
+            request.RemoteEndPoint;
+
+
+        return remote !=
+                null
+            &&
+            IPAddress.IsLoopback(
+                remote.Address);
+    }
+
+
+    private static bool TryParseChatPath(
+        string path,
+        out string appId)
+    {
+        appId =
+            string.Empty;
+
+
+        const string prefix =
+            "/v1/apps/";
+
+
+        const string suffix =
+            "/chat";
+
+
+        if (
+            !path.StartsWith(
+                prefix,
+                StringComparison.OrdinalIgnoreCase)
+            ||
+            !path.EndsWith(
+                suffix,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+
+        int appLength =
+            path.Length
+            -
+            prefix.Length
+            -
+            suffix.Length;
+
+
+        if (appLength <=
+            0)
+        {
+            return false;
+        }
+
+
+        string encoded =
+            path.Substring(
+                prefix.Length,
+                appLength);
+
+
+        if (
+            string.IsNullOrWhiteSpace(
+                encoded)
+            ||
+            encoded.Contains(
+                '/'))
+        {
+            return false;
+        }
+
+
+        appId =
+            Uri.UnescapeDataString(
+                encoded)
+                .Trim();
+
+
+        return !string.IsNullOrWhiteSpace(
+            appId);
+    }
+
+
+    private static string NormalizeContextValue(
+        string? value,
+        string fallback,
+        int maximumLength)
+    {
+        string clean =
+            string.IsNullOrWhiteSpace(
+                value)
+                ? fallback
+                : value.Trim();
+
+
+        return clean.Length <=
+                maximumLength
+            ? clean
+            : clean[
+                ..maximumLength];
+    }
+
+
+    private static string NormalizePath(
+        string? value)
+    {
+        string path =
+            string.IsNullOrWhiteSpace(
+                value)
+                ? "/"
+                : value.Trim();
+
+
+        if (!path.StartsWith(
+                '/'))
+        {
+            path =
+                "/" +
+                path;
+        }
+
+
+        if (
+            path.Length >
+                1
+            &&
+            path.EndsWith(
+                '/'))
+        {
+            path =
+                path.TrimEnd(
+                    '/');
+        }
+
+
+        return path;
+    }
+
+
+    private static NIRABridgeAppResponse ToBridgeApp(
+        ElvaraAppDescriptor app)
+    {
+        return new NIRABridgeAppResponse
+        {
+            AppId =
+                app.AppId,
+
+            DisplayName =
+                app.DisplayName,
+
+            ProductName =
+                app.ProductName,
+
+            AllowEmbeddedNIRA =
+                app.AllowEmbeddedNIRA,
+
+            AllowNIRAQuery =
+                app.AllowNIRAQuery,
+
+            Description =
+                app.Description
+        };
+    }
+}
+```
+
+---
+
+## 158. `NIRAAgent\Integrations\Elvara\ElvaraAppDescriptor.cs`
+
+**File:** `NIRAAgent\Integrations\Elvara\ElvaraAppDescriptor.cs`
+
+```csharp
+/*
+ * filename: ElvaraAppDescriptor.cs
+ */
+
+namespace NIRAAgent.Integrations.Elvara;
+
+
+// =============================================================
+// ELVARA APPLICATION DESCRIPTOR
+//
+// ELVARA is the product brand.
+//
+// NIRA is the single intelligence/runtime. Other trusted ELVARA
+// products may expose an "Ask NIRA" surface without creating
+// another NIRA instance or owning their own LLM connection.
+// =============================================================
+
+public sealed record ElvaraAppDescriptor
+{
+    public required string AppId
+    {
+        get;
+        init;
+    }
+
+
+    public required string DisplayName
+    {
+        get;
+        init;
+    }
+
+
+    public required string ProductName
+    {
+        get;
+        init;
+    }
+
+
+    // Whether this application may expose an embedded Ask NIRA
+    // surface. That surface remains scoped to this application.
+    public bool AllowEmbeddedNIRA
+    {
+        get;
+        init;
+    } =
+        true;
+
+
+    // Whether NIRA may request current authoritative information
+    // from this application's registered connector.
+    public bool AllowNIRAQuery
+    {
+        get;
+        init;
+    } =
+        true;
+
+
+    public string Description
+    {
+        get;
+        init;
+    } =
+        string.Empty;
+}
+```
+
+---
+
+## 159. `NIRAAgent\Integrations\Elvara\ElvaraAppRegistry.cs`
+
+**File:** `NIRAAgent\Integrations\Elvara\ElvaraAppRegistry.cs`
+
+```csharp
+/*
+ * filename: ElvaraAppRegistry.cs
+ */
+
+namespace NIRAAgent.Integrations.Elvara;
+
+
+// =============================================================
+// TRUSTED ELVARA APPLICATION REGISTRY
+//
+// This registry is owned by NIRA.
+//
+// Incoming bridge requests may reference an AppId, but they do
+// not define trust or permissions. Only applications registered
+// here are recognized as ELVARA integration peers.
+// =============================================================
+
+public sealed class ElvaraAppRegistry
+{
+    private readonly Dictionary<string, ElvaraAppDescriptor>
+        _apps =
+            new(
+                StringComparer.OrdinalIgnoreCase);
+
+
+    public ElvaraAppRegistry()
+    {
+        RegisterBuiltInApps();
+    }
+
+
+    // =========================================================
+    // BUILT-IN ELVARA APPLICATIONS
+    // =========================================================
+
+    private void RegisterBuiltInApps()
+    {
+        Register(
+            new ElvaraAppDescriptor
+            {
+                AppId =
+                    "tradeai",
+
+                DisplayName =
+                    "TradeAI",
+
+                ProductName =
+                    "ELVARA TradeAI",
+
+                AllowEmbeddedNIRA =
+                    true,
+
+                AllowNIRAQuery =
+                    true,
+
+                Description =
+                    "ELVARA trading intelligence application. " +
+                    "Embedded NIRA access is restricted to TradeAI context."
+            });
+    }
+
+
+    // =========================================================
+    // REGISTER
+    // =========================================================
+
+    private void Register(
+        ElvaraAppDescriptor app)
+    {
+        ArgumentNullException.ThrowIfNull(
+            app);
+
+
+        string appId =
+            NormalizeAppId(
+                app.AppId);
+
+
+        if (_apps.ContainsKey(
+                appId))
+        {
+            throw new InvalidOperationException(
+                $"ELVARA application '{appId}' is already registered.");
+        }
+
+
+        _apps.Add(
+            appId,
+            app with
+            {
+                AppId =
+                    appId
+            });
+    }
+
+
+    // =========================================================
+    // LOOKUP
+    // =========================================================
+
+    public bool TryGet(
+        string? appId,
+        out ElvaraAppDescriptor? app)
+    {
+        app =
+            null;
+
+
+        if (string.IsNullOrWhiteSpace(
+                appId))
+        {
+            return false;
+        }
+
+
+        return _apps.TryGetValue(
+            NormalizeAppId(
+                appId),
+            out app);
+    }
+
+
+    public ElvaraAppDescriptor GetRequired(
+        string appId)
+    {
+        if (!TryGet(
+                appId,
+                out ElvaraAppDescriptor? app)
+            ||
+            app ==
+            null)
+        {
+            throw new InvalidOperationException(
+                $"Unknown or untrusted ELVARA application '{appId}'.");
+        }
+
+
+        return app;
+    }
+
+
+    public IReadOnlyCollection<ElvaraAppDescriptor>
+        GetAll()
+    {
+        return _apps
+            .Values
+            .OrderBy(
+                app =>
+                    app.DisplayName,
+                StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+
+    // =========================================================
+    // NORMALIZATION
+    // =========================================================
+
+    private static string NormalizeAppId(
+        string appId)
+    {
+        string value =
+            appId
+                .Trim()
+                .ToLowerInvariant();
+
+
+        if (string.IsNullOrWhiteSpace(
+                value))
+        {
+            throw new ArgumentException(
+                "ELVARA AppId cannot be empty.",
+                nameof(appId));
+        }
+
+
+        return value;
+    }
+}
+```
+
+---
+
+## 160. `NIRAAgent\Integrations\Elvara\NIRAExternalAppContext.cs`
+
+**File:** `NIRAAgent\Integrations\Elvara\NIRAExternalAppContext.cs`
+
+```csharp
+/*
+ * filename: NIRAExternalAppContext.cs
+ */
+
+namespace NIRAAgent.Integrations.Elvara;
+
+
+// =============================================================
+// EXTERNAL ELVARA APPLICATION CONTEXT
+//
+// Describes WHERE the user is currently talking to NIRA.
+//
+// This is surface/context metadata only. Application-supplied
+// values must not be treated as authoritative account, trading,
+// system or domain facts. NIRA retrieves authoritative current
+// data through the registered application connector when needed.
+// =============================================================
+
+public sealed record NIRAExternalAppContext
+{
+    public required string AppId
+    {
+        get;
+        init;
+    }
+
+
+    public required string Surface
+    {
+        get;
+        init;
+    }
+
+
+    public string Page
+    {
+        get;
+        init;
+    } =
+        string.Empty;
+
+
+    public string SelectedEntity
+    {
+        get;
+        init;
+    } =
+        string.Empty;
+
+
+    public IReadOnlyDictionary<string, string> Metadata
+    {
+        get;
+        init;
+    } =
+        new Dictionary<string, string>();
+}
+```
+
+---
+
+## 161. `NIRAAgent\Memory\LongTerm\NIRACognitionMemoryFormatter.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRACognitionMemoryFormatter.cs`
 
@@ -78257,7 +81822,7 @@ public static class NIRACognitionMemoryFormatter
 
 ---
 
-## 153. `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryService.cs`
+## 162. `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryService.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryService.cs`
 
@@ -79699,7 +83264,7 @@ public sealed class NIRALongTermMemoryService
 
 ---
 
-## 154. `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryStore.cs`
+## 163. `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryStore.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryStore.cs`
 
@@ -82468,7 +86033,7 @@ internal sealed record NIRAStoredMemory(
 
 ---
 
-## 155. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociation.cs`
+## 164. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociation.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociation.cs`
 
@@ -82542,7 +86107,7 @@ internal sealed record NIRAStoredMemoryAssociationProfile(
 
 ---
 
-## 156. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationProfile.cs`
+## 165. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationProfile.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationProfile.cs`
 
@@ -82957,7 +86522,7 @@ public sealed record NIRAMemoryAssociationProfile
 
 ---
 
-## 157. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationService.cs`
+## 166. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationService.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationService.cs`
 
@@ -83729,7 +87294,7 @@ public sealed class NIRAMemoryAssociationService
 
 ---
 
-## 158. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociativeIndexStore.cs`
+## 167. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociativeIndexStore.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociativeIndexStore.cs`
 
@@ -85396,7 +88961,7 @@ public sealed class NIRAMemoryAssociativeIndexStore
 
 ---
 
-## 159. `NIRAAgent\Memory\LongTerm\NIRAMemoryCandidate.cs`
+## 168. `NIRAAgent\Memory\LongTerm\NIRAMemoryCandidate.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryCandidate.cs`
 
@@ -85576,7 +89141,7 @@ public sealed record NIRAMemoryCandidate
 
 ---
 
-## 160. `NIRAAgent\Memory\LongTerm\NIRAMemoryConfidencePolicy.cs`
+## 169. `NIRAAgent\Memory\LongTerm\NIRAMemoryConfidencePolicy.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryConfidencePolicy.cs`
 
@@ -85788,7 +89353,7 @@ public static class NIRAMemoryConfidencePolicy
 
 ---
 
-## 161. `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidation.cs`
+## 170. `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidation.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidation.cs`
 
@@ -85871,7 +89436,7 @@ public sealed record NIRAMemoryConsolidationResult
 
 ---
 
-## 162. `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidator.cs`
+## 171. `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidator.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidator.cs`
 
@@ -87129,7 +90694,7 @@ public sealed class NIRAMemoryConsolidator
 
 ---
 
-## 163. `NIRAAgent\Memory\LongTerm\NIRAMemoryContextService.cs`
+## 172. `NIRAAgent\Memory\LongTerm\NIRAMemoryContextService.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryContextService.cs`
 
@@ -87342,7 +90907,7 @@ public sealed class NIRAMemoryContextService
 
 ---
 
-## 164. `NIRAAgent\Memory\LongTerm\NIRAMemoryContextSnapshot.cs`
+## 173. `NIRAAgent\Memory\LongTerm\NIRAMemoryContextSnapshot.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryContextSnapshot.cs`
 
@@ -87417,7 +90982,7 @@ public sealed record NIRAMemoryContextSnapshot
 
 ---
 
-## 165. `NIRAAgent\Memory\LongTerm\NIRAMemoryEvidence.cs`
+## 174. `NIRAAgent\Memory\LongTerm\NIRAMemoryEvidence.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryEvidence.cs`
 
@@ -87500,7 +91065,7 @@ public sealed record NIRAMemoryEvidence
 
 ---
 
-## 166. `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationContext.cs`
+## 175. `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationContext.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationContext.cs`
 
@@ -87962,7 +91527,7 @@ public sealed record NIRAMemoryFormationResult
 
 ---
 
-## 167. `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationService.cs`
+## 176. `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationService.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationService.cs`
 
@@ -88937,7 +92502,7 @@ public sealed class NIRAMemoryFormationService
 
 ---
 
-## 168. `NIRAAgent\Memory\LongTerm\NIRAMemoryKind.cs`
+## 177. `NIRAAgent\Memory\LongTerm\NIRAMemoryKind.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryKind.cs`
 
@@ -89017,7 +92582,7 @@ public enum NIRAMemorySourceType
 
 ---
 
-## 169. `NIRAAgent\Memory\LongTerm\NIRAMemoryKnowledgeEntry.cs`
+## 178. `NIRAAgent\Memory\LongTerm\NIRAMemoryKnowledgeEntry.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryKnowledgeEntry.cs`
 
@@ -89049,7 +92614,7 @@ public sealed record NIRAMemoryKnowledgeEntry
 
 ---
 
-## 170. `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceReport.cs`
+## 179. `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceReport.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceReport.cs`
 
@@ -89194,7 +92759,7 @@ public sealed record NIRAMemoryMaintenanceReport
 
 ---
 
-## 171. `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceService.cs`
+## 180. `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceService.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceService.cs`
 
@@ -89803,7 +93368,7 @@ public sealed class NIRAMemoryMaintenanceService
 
 ---
 
-## 172. `NIRAAgent\Memory\LongTerm\NIRAMemoryRecord.cs`
+## 181. `NIRAAgent\Memory\LongTerm\NIRAMemoryRecord.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryRecord.cs`
 
@@ -90119,7 +93684,7 @@ public sealed record NIRAMemoryRecord
 
 ---
 
-## 173. `NIRAAgent\Memory\LongTerm\NIRAMemorySearchRequest.cs`
+## 182. `NIRAAgent\Memory\LongTerm\NIRAMemorySearchRequest.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemorySearchRequest.cs`
 
@@ -90344,7 +93909,7 @@ public sealed record NIRAMemorySearchRequest
 
 ---
 
-## 174. `NIRAAgent\Memory\LongTerm\NIRAMemorySearchResult.cs`
+## 183. `NIRAAgent\Memory\LongTerm\NIRAMemorySearchResult.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemorySearchResult.cs`
 
@@ -90450,7 +94015,7 @@ public sealed record NIRAMemorySearchResult
 
 ---
 
-## 175. `NIRAAgent\Memory\LongTerm\NIRASensitiveMemoryPolicy.cs`
+## 184. `NIRAAgent\Memory\LongTerm\NIRASensitiveMemoryPolicy.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRASensitiveMemoryPolicy.cs`
 
@@ -90620,7 +94185,7 @@ public static class NIRASensitiveMemoryPolicy
 
 ---
 
-## 176. `NIRAAgent\Mind\NIRABackgroundProcessor.cs`
+## 185. `NIRAAgent\Mind\NIRABackgroundProcessor.cs`
 
 **File:** `NIRAAgent\Mind\NIRABackgroundProcessor.cs`
 
@@ -90748,7 +94313,7 @@ public sealed class NIRABackgroundProcessor
 
 ---
 
-## 177. `NIRAAgent\Mind\NIRAExecutive.cs`
+## 186. `NIRAAgent\Mind\NIRAExecutive.cs`
 
 **File:** `NIRAAgent\Mind\NIRAExecutive.cs`
 
@@ -90781,6 +94346,7 @@ using NIRAAgent.Artifacts;
 using NIRAAgent.Authorization;
 using NIRAAgent.Browser;
 using NIRAAgent.Presentation;
+using NIRAAgent.Integrations.Elvara.Apps.TradeAI;
 
 namespace NIRAAgent.Mind;
 
@@ -91714,6 +95280,13 @@ public sealed class NIRAExecutive
                     expandedSections,
                     expandedCapabilityIds,
                     synthesizeFromEvidence);
+
+
+            decision =
+                RestrictEmbeddedElvaraDecision(
+                    mindEvent,
+                    decision,
+                    executiveEvidence);
 
 
             // Internal result/timer cognition may have been overtaken while
@@ -98028,12 +101601,252 @@ public sealed class NIRAExecutive
             : clean[..maximumCharacters];
     }
 
+
+    // =========================================================
+    // EMBEDDED ELVARA RUNTIME BOUNDARY
+    //
+    // An embedded product surface reaches the SAME NIRA mind,
+    // character and memory, but it does not inherit NIRA's broad
+    // desktop authority.
+    //
+    // TradeAI embedded turns may:
+    // - converse with NIRA
+    // - use NIRA's shared character / long-term memory
+    // - read authoritative TradeAI data through the fixed
+    //   read-only connector
+    //
+    // They may NOT:
+    // - use filesystem/process/shell/browser/general HTTP tools
+    // - create persistent goals/branches/work
+    // - invoke dynamic tools
+    // - alter global commitments
+    // - search unrelated archived desktop conversations
+    // =========================================================
+
+    private static NIRACognitionDecision RestrictEmbeddedElvaraDecision(
+        NIRAMindEvent mindEvent,
+        NIRACognitionDecision decision,
+        StringBuilder executiveEvidence)
+    {
+        if (
+            mindEvent.Source !=
+                NIRAMindEventSource.User
+            ||
+            !mindEvent.Metadata.TryGetValue(
+                "externalAppId",
+                out string? rawAppId)
+            ||
+            string.IsNullOrWhiteSpace(
+                rawAppId))
+        {
+            return decision;
+        }
+
+
+        string appId =
+            rawAppId
+                .Trim()
+                .ToLowerInvariant();
+
+
+        HashSet<string> allowedCapabilityIds =
+            new(
+                StringComparer.OrdinalIgnoreCase);
+
+
+        if (appId ==
+            "tradeai")
+        {
+            allowedCapabilityIds.Add(
+                TradeAICapabilityIds.Read);
+        }
+
+
+        NIRACapabilityRequest[] allowedCapabilityRequests =
+            decision.CapabilityRequests
+                .Where(
+                    request =>
+                        allowedCapabilityIds.Contains(
+                            request.CapabilityId))
+                .ToArray();
+
+
+        string[] allowedExpandedCapabilityIds =
+            decision.CapabilityIds
+                .Where(
+                    id =>
+                        allowedCapabilityIds.Contains(
+                            id))
+                .Distinct(
+                    StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+
+        HashSet<string> allowedContextSections =
+            new(
+                new[]
+                {
+                    "memory",
+                    "conversation",
+                    "self",
+                    "character",
+                    "capabilities"
+                },
+                StringComparer.OrdinalIgnoreCase);
+
+
+        string[] allowedContextRequests =
+            decision.ContextRequests
+                .Where(
+                    section =>
+                        allowedContextSections.Contains(
+                            section))
+                .Distinct(
+                    StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+
+        int blockedRequestCount =
+            decision.CapabilityRequests.Count
+            -
+            allowedCapabilityRequests.Length
+            +
+            decision.ControlRequests.Count
+            +
+            decision.GoalProposals.Count
+            +
+            decision.BranchProposals.Count
+            +
+            decision.BranchWorkProposals.Count
+            +
+            decision.DynamicToolProposals.Count
+            +
+            decision.DynamicToolInvocations.Count
+            +
+            decision.ConversationSearches.Count
+            +
+            decision.VisualPresentations.Count;
+
+
+        NIRACognitionDecision restricted =
+            decision with
+            {
+                ControlRequests =
+                    Array.Empty<NIRAControlRequest>(),
+
+                ContextRequests =
+                    allowedContextRequests,
+
+                CapabilityIds =
+                    allowedExpandedCapabilityIds,
+
+                ConversationSearches =
+                    Array.Empty<NIRAConversationSearchRequest>(),
+
+                GoalProposals =
+                    Array.Empty<NIRAGoalProposal>(),
+
+                BranchProposals =
+                    Array.Empty<NIRABranchProposal>(),
+
+                BranchWorkProposals =
+                    Array.Empty<NIRABranchWorkProposal>(),
+
+                CapabilityRequests =
+                    allowedCapabilityRequests,
+
+                DynamicToolProposals =
+                    Array.Empty<NIRADynamicToolProposal>(),
+
+                DynamicToolInvocations =
+                    Array.Empty<NIRADynamicToolInvocation>(),
+
+                VisualPresentations =
+                    Array.Empty<NIRAVisualArtifactPresentationRequest>(),
+
+                ReviewCommitment =
+                    false
+            };
+
+
+        if (blockedRequestCount >
+            0)
+        {
+            executiveEvidence.AppendLine();
+            executiveEvidence.AppendLine(
+                "ELVARA EMBEDDED SURFACE RUNTIME BOUNDARY");
+            executiveEvidence.AppendLine(
+                $"OriginApp={appId}");
+            executiveEvidence.AppendLine(
+                "The runtime removed one or more operations that are not allowed " +
+                "from this embedded application surface. Do not retry them through " +
+                "another tool, branch, dynamic tool, browser, shell, filesystem or HTTP path.");
+
+            if (appId ==
+                "tradeai")
+            {
+                executiveEvidence.AppendLine(
+                    $"The only executable primitive available from this embedded surface is " +
+                    $"'{TradeAICapabilityIds.Read}', which is fixed to TradeAI's localhost " +
+                    "read-only API. For unrelated/global PC work, tell the user to use main NIRA.");
+            }
+
+
+            bool hasAllowedWork =
+                allowedCapabilityRequests.Length >
+                    0;
+
+
+            bool hasUserReply =
+                decision.EmitReply
+                &&
+                !string.IsNullOrWhiteSpace(
+                    decision.Reply);
+
+
+            if (
+                !hasAllowedWork
+                &&
+                !hasUserReply
+                &&
+                decision.State ==
+                    NIRACognitionState.Continue)
+            {
+                restricted =
+                    restricted with
+                    {
+                        State =
+                            NIRACognitionState.Complete,
+
+                        EmitReply =
+                            true,
+
+                        Reply =
+                            "That operation isn't available from this embedded ELVARA app surface. " +
+                            "Use main NIRA for system-wide actions.",
+
+                        Speech =
+                            "That operation isn't available here. Use main NIRA for system-wide actions.",
+
+                        ReplyReady =
+                            true,
+
+                        CharacterReady =
+                            false
+                    };
+            }
+        }
+
+
+        return restricted;
+    }
+
 }
 ```
 
 ---
 
-## 178. `NIRAAgent\Mind\NIRAMindActivityTracker.cs`
+## 187. `NIRAAgent\Mind\NIRAMindActivityTracker.cs`
 
 **File:** `NIRAAgent\Mind\NIRAMindActivityTracker.cs`
 
@@ -98181,7 +101994,7 @@ public sealed class NIRAMindActivityTracker
 
 ---
 
-## 179. `NIRAAgent\Mind\NIRAMindEvent.cs`
+## 188. `NIRAAgent\Mind\NIRAMindEvent.cs`
 
 **File:** `NIRAAgent\Mind\NIRAMindEvent.cs`
 
@@ -98903,7 +102716,7 @@ public sealed record NIRAMindEvent
 
 ---
 
-## 180. `NIRAAgent\Mind\NIRAMindRuntime.cs`
+## 189. `NIRAAgent\Mind\NIRAMindRuntime.cs`
 
 **File:** `NIRAAgent\Mind\NIRAMindRuntime.cs`
 
@@ -98917,6 +102730,7 @@ using System.Runtime.CompilerServices;
 using NIRAAgent.Agent.State;
 using NIRAAgent.Character.History;
 using NIRAAgent.Conversation;
+using NIRAAgent.Integrations.Elvara;
 using NIRAAgent.Perception;
 
 namespace NIRAAgent.Mind;
@@ -98941,6 +102755,15 @@ public sealed class NIRAMindRuntime
 
     private readonly ConversationManager
         _conversation;
+
+
+    // One foreground user conversation at a time across NIRA's
+    // desktop UI and embedded ELVARA application surfaces.
+    private readonly SemaphoreSlim
+        _userCognitionGate =
+            new(
+                1,
+                1);
 
 
     private int
@@ -98998,44 +102821,260 @@ public sealed class NIRAMindRuntime
         }
 
 
-        string input =
-            userInput.Trim();
+        await _userCognitionGate
+            .WaitAsync(
+                cancellationToken);
 
 
-        _activity.RecordUserInteraction();
-
-
-        NIRASocialEvent socialEvent =
-            _socialHistory.Record(
-                NIRASocialEventSource.User,
-                NIRASocialEventKind.UserMessage,
-                "UserMessage",
-                NIRASocialTopicKeys.UserConversation,
-                input);
-
-        _conversation.AddUserMessage(input, socialEvent.Id);
-
-        NIRAMindEvent mindEvent =
-            NIRAMindEvent.UserMessage(
-                input,
-                socialEvent.Id,
-                socialEvent.TopicKey) with
-            {
-                Metadata = attachedPastChatSessionId is Guid sid && sid != Guid.Empty
-                    ? new Dictionary<string, string> { ["attachedPastChatSessionId"] = sid.ToString("D") }
-                    : new Dictionary<string, string>()
-            };
-
-
-        await foreach (
-            NIRAOutputChunk chunk
-            in RunTrackedAsync(
-                mindEvent,
-                autonomous: false,
-                cancellationToken))
+        try
         {
-            yield return chunk;
+            string input =
+                userInput.Trim();
+
+
+            _activity.RecordUserInteraction();
+
+
+            NIRASocialEvent socialEvent =
+                _socialHistory.Record(
+                    NIRASocialEventSource.User,
+                    NIRASocialEventKind.UserMessage,
+                    "UserMessage",
+                    NIRASocialTopicKeys.UserConversation,
+                    input);
+
+
+            _conversation.AddUserMessage(
+                input,
+                socialEvent.Id);
+
+
+            NIRAMindEvent mindEvent =
+                NIRAMindEvent.UserMessage(
+                    input,
+                    socialEvent.Id,
+                    socialEvent.TopicKey) with
+                {
+                    Metadata =
+                        attachedPastChatSessionId is Guid sid
+                        &&
+                        sid !=
+                            Guid.Empty
+                            ? new Dictionary<string, string>
+                            {
+                                ["attachedPastChatSessionId"] =
+                                    sid.ToString(
+                                        "D")
+                            }
+                            : new Dictionary<string, string>()
+                };
+
+
+            await foreach (
+                NIRAOutputChunk chunk
+                in RunTrackedAsync(
+                    mindEvent,
+                    autonomous:
+                        false,
+                    cancellationToken))
+            {
+                yield return chunk;
+            }
         }
+        finally
+        {
+            _userCognitionGate.Release();
+        }
+    }
+
+
+    // =========================================================
+    // ELVARA EMBEDDED APPLICATION USER MESSAGE
+    //
+    // This is still the SAME NIRA runtime. The only separation is
+    // the short-term conversation scope used for continuity.
+    // Personality, mood, memory, self-model, cognition and LLM
+    // remain NIRA's existing global systems.
+    // =========================================================
+
+    public async IAsyncEnumerable<NIRAOutputChunk> ProcessExternalAppMessageAsync(
+        string userInput,
+        NIRAExternalAppContext appContext,
+        [EnumeratorCancellation]
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(
+            appContext);
+
+
+        if (string.IsNullOrWhiteSpace(
+                userInput))
+        {
+            yield break;
+        }
+
+
+        string appId =
+            NormalizeExternalValue(
+                appContext.AppId,
+                80,
+                required:
+                    true);
+
+
+        string surface =
+            NormalizeExternalValue(
+                appContext.Surface,
+                120,
+                required:
+                    true);
+
+
+        string page =
+            NormalizeExternalValue(
+                appContext.Page,
+                160,
+                required:
+                    false);
+
+
+        string selectedEntity =
+            NormalizeExternalValue(
+                appContext.SelectedEntity,
+                160,
+                required:
+                    false);
+
+
+        await _userCognitionGate
+            .WaitAsync(
+                cancellationToken);
+
+
+        try
+        {
+            using IDisposable conversationScope =
+                _conversation.PushScope(
+                    $"app:{appId}",
+                    persistToArchive:
+                        false);
+
+
+            string input =
+                userInput.Trim();
+
+
+            _activity.RecordUserInteraction();
+
+
+            NIRASocialEvent socialEvent =
+                _socialHistory.Record(
+                    NIRASocialEventSource.User,
+                    NIRASocialEventKind.UserMessage,
+                    "ExternalAppUserMessage",
+                    $"elvara:{appId}",
+                    input);
+
+
+            _conversation.AddUserMessage(
+                input,
+                socialEvent.Id);
+
+
+            Dictionary<string, string> metadata =
+                new(
+                    StringComparer.OrdinalIgnoreCase)
+                {
+                    ["externalAppId"] =
+                        appId,
+
+                    ["externalAppSurface"] =
+                        surface
+                };
+
+
+            if (!string.IsNullOrWhiteSpace(
+                    page))
+            {
+                metadata[
+                    "externalAppPage"] =
+                        page;
+            }
+
+
+            if (!string.IsNullOrWhiteSpace(
+                    selectedEntity))
+            {
+                metadata[
+                    "externalAppSelectedEntity"] =
+                        selectedEntity;
+            }
+
+
+            NIRAMindEvent mindEvent =
+                NIRAMindEvent.UserMessage(
+                    input,
+                    socialEvent.Id,
+                    socialEvent.TopicKey) with
+                {
+                    Name =
+                        "ExternalAppUserMessage",
+
+                    Metadata =
+                        metadata
+                };
+
+
+            await foreach (
+                NIRAOutputChunk chunk
+                in RunTrackedAsync(
+                    mindEvent,
+                    autonomous:
+                        false,
+                    cancellationToken))
+            {
+                yield return chunk;
+            }
+        }
+        finally
+        {
+            _userCognitionGate.Release();
+        }
+    }
+
+
+    private static string NormalizeExternalValue(
+        string? value,
+        int maximumLength,
+        bool required)
+    {
+        string clean =
+            value?.Trim()
+            ??
+            string.Empty;
+
+
+        if (
+            required
+            &&
+            string.IsNullOrWhiteSpace(
+                clean))
+        {
+            throw new ArgumentException(
+                "Required ELVARA application context is missing.");
+        }
+
+
+        if (clean.Length >
+            maximumLength)
+        {
+            clean =
+                clean[
+                    ..maximumLength];
+        }
+
+
+        return clean;
     }
 
 
@@ -99191,7 +103230,7 @@ public sealed class NIRAMindRuntime
 
 ---
 
-## 181. `NIRAAgent\Mind\NIRAOutputChunk.cs`
+## 190. `NIRAAgent\Mind\NIRAOutputChunk.cs`
 
 **File:** `NIRAAgent\Mind\NIRAOutputChunk.cs`
 
@@ -99272,7 +103311,7 @@ public sealed record NIRAOutputChunk
 
 ---
 
-## 182. `NIRAAgent\Mind\NIRAOutputDispatcher.cs`
+## 191. `NIRAAgent\Mind\NIRAOutputDispatcher.cs`
 
 **File:** `NIRAAgent\Mind\NIRAOutputDispatcher.cs`
 
@@ -99379,7 +103418,7 @@ public sealed class NIRAOutputDispatcher
 
 ---
 
-## 183. `NIRAAgent\NIRAAgent.csproj`
+## 192. `NIRAAgent\NIRAAgent.csproj`
 
 **File:** `NIRAAgent\NIRAAgent.csproj`
 
@@ -99497,7 +103536,7 @@ public sealed class NIRAOutputDispatcher
 
 ---
 
-## 184. `NIRAAgent\PC\Awareness\NIRAPresenceService.cs`
+## 193. `NIRAAgent\PC\Awareness\NIRAPresenceService.cs`
 
 **File:** `NIRAAgent\PC\Awareness\NIRAPresenceService.cs`
 
@@ -99909,7 +103948,7 @@ public sealed class NIRAPresenceService
 
 ---
 
-## 185. `NIRAAgent\PC\Awareness\PcAwarenessService.cs`
+## 194. `NIRAAgent\PC\Awareness\PcAwarenessService.cs`
 
 **File:** `NIRAAgent\PC\Awareness\PcAwarenessService.cs`
 
@@ -100711,7 +104750,7 @@ public sealed class PcAwarenessService
 
 ---
 
-## 186. `NIRAAgent\PC\Awareness\PcContextFormatter.cs`
+## 195. `NIRAAgent\PC\Awareness\PcContextFormatter.cs`
 
 **File:** `NIRAAgent\PC\Awareness\PcContextFormatter.cs`
 
@@ -100913,7 +104952,7 @@ public static class PcContextFormatter
 
 ---
 
-## 187. `NIRAAgent\PC\Awareness\PcWorldState.cs`
+## 196. `NIRAAgent\PC\Awareness\PcWorldState.cs`
 
 **File:** `NIRAAgent\PC\Awareness\PcWorldState.cs`
 
@@ -101490,7 +105529,7 @@ public readonly record struct PcRectangle(
 
 ---
 
-## 188. `NIRAAgent\PC\Awareness\PcWorldStateService.cs`
+## 197. `NIRAAgent\PC\Awareness\PcWorldStateService.cs`
 
 **File:** `NIRAAgent\PC\Awareness\PcWorldStateService.cs`
 
@@ -101930,7 +105969,7 @@ public sealed class PcWorldStateService
 
 ---
 
-## 189. `NIRAAgent\Perception\AttentionManager.cs`
+## 198. `NIRAAgent\Perception\AttentionManager.cs`
 
 **File:** `NIRAAgent\Perception\AttentionManager.cs`
 
@@ -102675,7 +106714,7 @@ public sealed class AttentionManager
 
 ---
 
-## 190. `NIRAAgent\Perception\CompanionTimerService.cs`
+## 199. `NIRAAgent\Perception\CompanionTimerService.cs`
 
 **File:** `NIRAAgent\Perception\CompanionTimerService.cs`
 
@@ -102848,7 +106887,7 @@ public sealed class CompanionTimerService
 
 ---
 
-## 191. `NIRAAgent\Perception\PcMonitorService.cs`
+## 200. `NIRAAgent\Perception\PcMonitorService.cs`
 
 **File:** `NIRAAgent\Perception\PcMonitorService.cs`
 
@@ -103046,7 +107085,7 @@ public sealed class PcMonitorService
 
 ---
 
-## 192. `NIRAAgent\Perception\PerceptionAnalyzer.cs`
+## 201. `NIRAAgent\Perception\PerceptionAnalyzer.cs`
 
 **File:** `NIRAAgent\Perception\PerceptionAnalyzer.cs`
 
@@ -103440,7 +107479,7 @@ public sealed class PerceptionAnalyzer
 
 ---
 
-## 193. `NIRAAgent\Perception\PerceptionEvent.cs`
+## 202. `NIRAAgent\Perception\PerceptionEvent.cs`
 
 **File:** `NIRAAgent\Perception\PerceptionEvent.cs`
 
@@ -103515,7 +107554,7 @@ public sealed class PerceptionEvent
 
 ---
 
-## 194. `NIRAAgent\Piper\Models\en_US-hfc_female-medium.onnx.json`
+## 203. `NIRAAgent\Piper\Models\en_US-hfc_female-medium.onnx.json`
 
 **File:** `NIRAAgent\Piper\Models\en_US-hfc_female-medium.onnx.json`
 
@@ -104032,7 +108071,7 @@ public sealed class PerceptionEvent
 
 ---
 
-## 195. `NIRAAgent\Presentation\NIRADualChannelResponse.cs`
+## 204. `NIRAAgent\Presentation\NIRADualChannelResponse.cs`
 
 **File:** `NIRAAgent\Presentation\NIRADualChannelResponse.cs`
 
@@ -104240,7 +108279,7 @@ public static class NIRAPresentationPolicy
 
 ---
 
-## 196. `NIRAAgent\Presentation\NIRARichBlockJsonReader.cs`
+## 205. `NIRAAgent\Presentation\NIRARichBlockJsonReader.cs`
 
 **File:** `NIRAAgent\Presentation\NIRARichBlockJsonReader.cs`
 
@@ -104654,7 +108693,7 @@ public static class NIRARichBlockJsonReader
 
 ---
 
-## 197. `NIRAAgent\Prompt\cognition.yaml`
+## 206. `NIRAAgent\Prompt\cognition.yaml`
 
 **File:** `NIRAAgent\Prompt\cognition.yaml`
 
@@ -105491,7 +109530,7 @@ first_call_grounding_and_continuity:
 
 ---
 
-## 198. `NIRAAgent\Prompt\cognition_contract.yaml`
+## 207. `NIRAAgent\Prompt\cognition_contract.yaml`
 
 **File:** `NIRAAgent\Prompt\cognition_contract.yaml`
 
@@ -105968,7 +110007,7 @@ one_call_tool_routing:
 
 ---
 
-## 199. `NIRAAgent\Prompt\memory_formation.yaml`
+## 208. `NIRAAgent\Prompt\memory_formation.yaml`
 
 **File:** `NIRAAgent\Prompt\memory_formation.yaml`
 
@@ -106310,7 +110349,7 @@ learned_procedural_skills:
 
 ---
 
-## 200. `NIRAAgent\Prompt\memory_recall.yaml`
+## 209. `NIRAAgent\Prompt\memory_recall.yaml`
 
 **File:** `NIRAAgent\Prompt\memory_recall.yaml`
 
@@ -106373,7 +110412,7 @@ full_mode_search_bound:
 
 ---
 
-## 201. `NIRAAgent\Prompt\nira_personality.yaml`
+## 210. `NIRAAgent\Prompt\nira_personality.yaml`
 
 **File:** `NIRAAgent\Prompt\nira_personality.yaml`
 
@@ -106772,7 +110811,7 @@ truth:
 
 ---
 
-## 202. `NIRAAgent\Prompt\response_realization.yaml`
+## 211. `NIRAAgent\Prompt\response_realization.yaml`
 
 **File:** `NIRAAgent\Prompt\response_realization.yaml`
 
@@ -106884,7 +110923,7 @@ output:
 
 ---
 
-## 203. `NIRAAgent\Self\Model\NIRARuntimeSelfKnowledgeProvider.cs`
+## 212. `NIRAAgent\Self\Model\NIRARuntimeSelfKnowledgeProvider.cs`
 
 **File:** `NIRAAgent\Self\Model\NIRARuntimeSelfKnowledgeProvider.cs`
 
@@ -107180,7 +111219,7 @@ public sealed class NIRARuntimeSelfKnowledgeProvider
 
 ---
 
-## 204. `NIRAAgent\Self\Model\NIRASelfModelContracts.cs`
+## 213. `NIRAAgent\Self\Model\NIRASelfModelContracts.cs`
 
 **File:** `NIRAAgent\Self\Model\NIRASelfModelContracts.cs`
 
@@ -107874,7 +111913,7 @@ public sealed record NIRACommitmentApplyResult
 
 ---
 
-## 205. `NIRAAgent\Self\Model\NIRASelfModelService.cs`
+## 214. `NIRAAgent\Self\Model\NIRASelfModelService.cs`
 
 **File:** `NIRAAgent\Self\Model\NIRASelfModelService.cs`
 
@@ -109837,7 +113876,7 @@ public sealed class NIRASelfModelService
 
 ---
 
-## 206. `NIRAAgent\Self\Model\NIRASelfModelStore.cs`
+## 215. `NIRAAgent\Self\Model\NIRASelfModelStore.cs`
 
 **File:** `NIRAAgent\Self\Model\NIRASelfModelStore.cs`
 
@@ -111608,7 +115647,7 @@ public sealed class NIRASelfModelStore
 
 ---
 
-## 207. `NIRAAgent\Self\Preferences\NIRASelfPreferenceMemorySyncService.cs`
+## 216. `NIRAAgent\Self\Preferences\NIRASelfPreferenceMemorySyncService.cs`
 
 **File:** `NIRAAgent\Self\Preferences\NIRASelfPreferenceMemorySyncService.cs`
 
@@ -112188,7 +116227,7 @@ public enum NIRASelfPreferenceMemorySyncAction
 
 ---
 
-## 208. `NIRAAgent\Self\Preferences\NIRASelfPreferenceService.cs`
+## 217. `NIRAAgent\Self\Preferences\NIRASelfPreferenceService.cs`
 
 **File:** `NIRAAgent\Self\Preferences\NIRASelfPreferenceService.cs`
 
@@ -113371,7 +117410,7 @@ public sealed class NIRASelfPreferenceService
 
 ---
 
-## 209. `NIRAAgent\Self\Preferences\NIRASelfPreferenceState.cs`
+## 218. `NIRAAgent\Self\Preferences\NIRASelfPreferenceState.cs`
 
 **File:** `NIRAAgent\Self\Preferences\NIRASelfPreferenceState.cs`
 
@@ -113772,7 +117811,7 @@ public sealed record NIRASelfPreferenceApplyResult
 
 ---
 
-## 210. `NIRAAgent\Self\Preferences\NIRASelfPreferenceStore.cs`
+## 219. `NIRAAgent\Self\Preferences\NIRASelfPreferenceStore.cs`
 
 **File:** `NIRAAgent\Self\Preferences\NIRASelfPreferenceStore.cs`
 
@@ -114993,7 +119032,7 @@ public sealed class NIRASelfPreferenceStore
 
 ---
 
-## 211. `NIRAAgent\Self\Preferences\NIRATemporaryOpinionState.cs`
+## 220. `NIRAAgent\Self\Preferences\NIRATemporaryOpinionState.cs`
 
 **File:** `NIRAAgent\Self\Preferences\NIRATemporaryOpinionState.cs`
 
@@ -115267,7 +119306,7 @@ public readonly record struct NIRATemporaryOpinionSnapshot(
 
 ---
 
-## 212. `NIRAAgent\Semantic\INIRASemanticEncoder.cs`
+## 221. `NIRAAgent\Semantic\INIRASemanticEncoder.cs`
 
 **File:** `NIRAAgent\Semantic\INIRASemanticEncoder.cs`
 
@@ -115287,7 +119326,7 @@ public interface INIRASemanticEncoder
 
 ---
 
-## 213. `NIRAAgent\Semantic\MiniLmSemanticEncoder.cs`
+## 222. `NIRAAgent\Semantic\MiniLmSemanticEncoder.cs`
 
 **File:** `NIRAAgent\Semantic\MiniLmSemanticEncoder.cs`
 
@@ -116026,7 +120065,7 @@ public sealed class MiniLmSemanticEncoder
 
 ---
 
-## 214. `NIRAAgent\Semantic\Models\all-MiniLM-L6-v2\vocab.txt`
+## 223. `NIRAAgent\Semantic\Models\all-MiniLM-L6-v2\vocab.txt`
 
 **File:** `NIRAAgent\Semantic\Models\all-MiniLM-L6-v2\vocab.txt`
 
@@ -146557,7 +150596,7 @@ necessitated
 
 ---
 
-## 215. `NIRAAgent\Semantic\NIRASemanticMemoryService.cs`
+## 224. `NIRAAgent\Semantic\NIRASemanticMemoryService.cs`
 
 **File:** `NIRAAgent\Semantic\NIRASemanticMemoryService.cs`
 
@@ -146891,7 +150930,7 @@ public sealed class NIRASemanticMemoryService
 
 ---
 
-## 216. `NIRAAgent\Semantic\NIRASemanticObservation.cs`
+## 225. `NIRAAgent\Semantic\NIRASemanticObservation.cs`
 
 **File:** `NIRAAgent\Semantic\NIRASemanticObservation.cs`
 
@@ -147019,7 +151058,7 @@ public sealed record NIRASemanticObservation
 
 ---
 
-## 217. `NIRAAgent\Semantic\NIRASemanticSimilarity.cs`
+## 226. `NIRAAgent\Semantic\NIRASemanticSimilarity.cs`
 
 **File:** `NIRAAgent\Semantic\NIRASemanticSimilarity.cs`
 
@@ -147128,7 +151167,7 @@ public static class NIRASemanticSimilarity
 
 ---
 
-## 218. `NIRAAgent\Semantic\NIRAWordPieceTokenizer.cs`
+## 227. `NIRAAgent\Semantic\NIRAWordPieceTokenizer.cs`
 
 **File:** `NIRAAgent\Semantic\NIRAWordPieceTokenizer.cs`
 
@@ -147631,7 +151670,7 @@ internal readonly record struct NIRATokenizedInput(
 
 ---
 
-## 219. `NIRAAgent\Semantic\SemanticEmbedding.cs`
+## 228. `NIRAAgent\Semantic\SemanticEmbedding.cs`
 
 **File:** `NIRAAgent\Semantic\SemanticEmbedding.cs`
 
@@ -147682,7 +151721,7 @@ public sealed class SemanticEmbedding
 
 ---
 
-## 220. `NIRAAgent\Settings\NIRARuntimeSettingsService.cs`
+## 229. `NIRAAgent\Settings\NIRARuntimeSettingsService.cs`
 
 **File:** `NIRAAgent\Settings\NIRARuntimeSettingsService.cs`
 
@@ -147942,7 +151981,7 @@ public sealed class NIRARuntimeSettingsService
 
 ---
 
-## 221. `NIRAAgent\Skills\NIRALearnedSkillContracts.cs`
+## 230. `NIRAAgent\Skills\NIRALearnedSkillContracts.cs`
 
 **File:** `NIRAAgent\Skills\NIRALearnedSkillContracts.cs`
 
@@ -148273,7 +152312,7 @@ public sealed record NIRALearnedSkillMutationResult
 
 ---
 
-## 222. `NIRAAgent\Skills\NIRALearnedSkillService.cs`
+## 231. `NIRAAgent\Skills\NIRALearnedSkillService.cs`
 
 **File:** `NIRAAgent\Skills\NIRALearnedSkillService.cs`
 
@@ -149841,7 +153880,7 @@ public sealed class NIRALearnedSkillService
 
 ---
 
-## 223. `NIRAAgent\Skills\NIRALearnedSkillStore.cs`
+## 232. `NIRAAgent\Skills\NIRALearnedSkillStore.cs`
 
 **File:** `NIRAAgent\Skills\NIRALearnedSkillStore.cs`
 
@@ -150442,7 +154481,7 @@ public sealed class NIRALearnedSkillStore
 
 ---
 
-## 224. `NIRAAgent\Temporal\NIRATemporalCommitmentReasoner.cs`
+## 233. `NIRAAgent\Temporal\NIRATemporalCommitmentReasoner.cs`
 
 **File:** `NIRAAgent\Temporal\NIRATemporalCommitmentReasoner.cs`
 
@@ -150669,7 +154708,7 @@ public sealed class NIRATemporalCommitmentReasoner
 
 ---
 
-## 225. `NIRAAgent\Temporal\NIRATemporalCommitmentReconciliationService.cs`
+## 234. `NIRAAgent\Temporal\NIRATemporalCommitmentReconciliationService.cs`
 
 **File:** `NIRAAgent\Temporal\NIRATemporalCommitmentReconciliationService.cs`
 
@@ -150850,7 +154889,7 @@ public sealed class NIRATemporalCommitmentReconciliationService
 
 ---
 
-## 226. `NIRAAgent\Temporal\NIRATemporalCommitmentSchedulerService.cs`
+## 235. `NIRAAgent\Temporal\NIRATemporalCommitmentSchedulerService.cs`
 
 **File:** `NIRAAgent\Temporal\NIRATemporalCommitmentSchedulerService.cs`
 
@@ -151045,7 +155084,7 @@ public sealed class NIRATemporalCommitmentSchedulerService
 
 ---
 
-## 227. `NIRAAgent\Temporal\NIRATemporalContracts.cs`
+## 236. `NIRAAgent\Temporal\NIRATemporalContracts.cs`
 
 **File:** `NIRAAgent\Temporal\NIRATemporalContracts.cs`
 
@@ -152352,7 +156391,7 @@ public sealed class NIRATemporalContextService
 
 ---
 
-## 228. `NIRAAgent\Tools\NIRADynamicToolContracts.cs`
+## 237. `NIRAAgent\Tools\NIRADynamicToolContracts.cs`
 
 **File:** `NIRAAgent\Tools\NIRADynamicToolContracts.cs`
 
@@ -152838,7 +156877,7 @@ public sealed record NIRADynamicToolExecutionResult
 
 ---
 
-## 229. `NIRAAgent\Tools\NIRADynamicToolExecutor.cs`
+## 238. `NIRAAgent\Tools\NIRADynamicToolExecutor.cs`
 
 **File:** `NIRAAgent\Tools\NIRADynamicToolExecutor.cs`
 
@@ -153720,7 +157759,7 @@ public sealed class NIRADynamicToolExecutor
 
 ---
 
-## 230. `NIRAAgent\Tools\NIRADynamicToolService.cs`
+## 239. `NIRAAgent\Tools\NIRADynamicToolService.cs`
 
 **File:** `NIRAAgent\Tools\NIRADynamicToolService.cs`
 
@@ -154373,7 +158412,7 @@ public sealed class NIRADynamicToolService
 
 ---
 
-## 231. `NIRAAgent\Tools\NIRADynamicToolStore.cs`
+## 240. `NIRAAgent\Tools\NIRADynamicToolStore.cs`
 
 **File:** `NIRAAgent\Tools\NIRADynamicToolStore.cs`
 
@@ -155663,7 +159702,7 @@ public sealed class NIRADynamicToolStore
 
 ---
 
-## 232. `NIRAAgent\Tools\NIRADynamicToolValidator.cs`
+## 241. `NIRAAgent\Tools\NIRADynamicToolValidator.cs`
 
 **File:** `NIRAAgent\Tools\NIRADynamicToolValidator.cs`
 
@@ -156057,7 +160096,7 @@ public sealed class NIRADynamicToolValidator
 
 ---
 
-## 233. `NIRAAgent\Vision\NIRAVisualEvidenceContracts.cs`
+## 242. `NIRAAgent\Vision\NIRAVisualEvidenceContracts.cs`
 
 **File:** `NIRAAgent\Vision\NIRAVisualEvidenceContracts.cs`
 
@@ -156573,7 +160612,7 @@ public interface INIRAScreenCaptureBackend
 
 ---
 
-## 234. `NIRAAgent\Vision\NIRAVisualEvidenceService.cs`
+## 243. `NIRAAgent\Vision\NIRAVisualEvidenceService.cs`
 
 **File:** `NIRAAgent\Vision\NIRAVisualEvidenceService.cs`
 
@@ -158269,7 +162308,7 @@ public sealed class NIRAVisualEvidenceService
 
 ---
 
-## 235. `NIRAAgent\Vision\NIRAVisualObservationContracts.cs`
+## 244. `NIRAAgent\Vision\NIRAVisualObservationContracts.cs`
 
 **File:** `NIRAAgent\Vision\NIRAVisualObservationContracts.cs`
 
@@ -158356,7 +162395,7 @@ public sealed record NIRAVisualObservation
 
 ---
 
-## 236. `NIRAAgent\Vision\NIRAVisualUnderstandingService.cs`
+## 245. `NIRAAgent\Vision\NIRAVisualUnderstandingService.cs`
 
 **File:** `NIRAAgent\Vision\NIRAVisualUnderstandingService.cs`
 
@@ -159076,7 +163115,7 @@ public sealed class NIRAVisualUnderstandingService
 
 ---
 
-## 237. `NIRAAgent\Voice\AdaptiveVoiceService.cs`
+## 246. `NIRAAgent\Voice\AdaptiveVoiceService.cs`
 
 **File:** `NIRAAgent\Voice\AdaptiveVoiceService.cs`
 
@@ -159191,7 +163230,7 @@ public sealed class AdaptiveVoiceService
 
 ---
 
-## 238. `NIRAAgent\Voice\Groq\GroqOrpheusVoiceService.cs`
+## 247. `NIRAAgent\Voice\Groq\GroqOrpheusVoiceService.cs`
 
 **File:** `NIRAAgent\Voice\Groq\GroqOrpheusVoiceService.cs`
 
@@ -160240,7 +164279,7 @@ public sealed class GroqOrpheusVoiceService
 
 ---
 
-## 239. `NIRAAgent\Voice\Groq\GroqVocalDirectionMapper.cs`
+## 248. `NIRAAgent\Voice\Groq\GroqVocalDirectionMapper.cs`
 
 **File:** `NIRAAgent\Voice\Groq\GroqVocalDirectionMapper.cs`
 
@@ -160516,7 +164555,7 @@ public static class GroqVocalDirectionMapper
 
 ---
 
-## 240. `NIRAAgent\Voice\IVoiceService.cs`
+## 249. `NIRAAgent\Voice\IVoiceService.cs`
 
 **File:** `NIRAAgent\Voice\IVoiceService.cs`
 
@@ -160550,7 +164589,7 @@ public interface IVoiceService
 
 ---
 
-## 241. `NIRAAgent\Voice\NIRAVocalIntent.cs`
+## 250. `NIRAAgent\Voice\NIRAVocalIntent.cs`
 
 **File:** `NIRAAgent\Voice\NIRAVocalIntent.cs`
 
@@ -160637,7 +164676,7 @@ public readonly record struct NIRAVocalIntent(
 
 ---
 
-## 242. `NIRAAgent\Voice\NIRAVoiceExpression.cs`
+## 251. `NIRAAgent\Voice\NIRAVoiceExpression.cs`
 
 **File:** `NIRAAgent\Voice\NIRAVoiceExpression.cs`
 
@@ -160750,7 +164789,7 @@ public readonly record struct NIRAVoiceExpression(
 
 ---
 
-## 243. `NIRAAgent\Voice\NIRAVoiceExpressionService.cs`
+## 252. `NIRAAgent\Voice\NIRAVoiceExpressionService.cs`
 
 **File:** `NIRAAgent\Voice\NIRAVoiceExpressionService.cs`
 
@@ -161058,7 +165097,7 @@ public sealed class NIRAVoiceExpressionService
 
 ---
 
-## 244. `NIRAAgent\Voice\PiperVoiceService.cs`
+## 253. `NIRAAgent\Voice\PiperVoiceService.cs`
 
 **File:** `NIRAAgent\Voice\PiperVoiceService.cs`
 
@@ -161595,7 +165634,7 @@ public sealed class PiperVoiceService
 
 ---
 
-## 245. `NIRAAgent\Voice\PreparedVoiceAudio.cs`
+## 254. `NIRAAgent\Voice\PreparedVoiceAudio.cs`
 
 **File:** `NIRAAgent\Voice\PreparedVoiceAudio.cs`
 
@@ -161762,7 +165801,7 @@ public sealed class PreparedVoiceAudio
 
 ---
 
-## 246. `NIRAAgent\Voice\SpeechChunker.cs`
+## 255. `NIRAAgent\Voice\SpeechChunker.cs`
 
 **File:** `NIRAAgent\Voice\SpeechChunker.cs`
 
@@ -162575,7 +166614,7 @@ public sealed class SpeechChunker
 
 ---
 
-## 247. `NIRAAgent\Voice\SpeechTextSanitizer.cs`
+## 256. `NIRAAgent\Voice\SpeechTextSanitizer.cs`
 
 **File:** `NIRAAgent\Voice\SpeechTextSanitizer.cs`
 
@@ -162831,7 +166870,7 @@ public static partial class SpeechTextSanitizer
 
 ---
 
-## 248. `NIRAAgent\Voice\VoiceAudioPlayer.cs`
+## 257. `NIRAAgent\Voice\VoiceAudioPlayer.cs`
 
 **File:** `NIRAAgent\Voice\VoiceAudioPlayer.cs`
 
@@ -162945,7 +166984,7 @@ public sealed class VoiceAudioPlayer
 
 ---
 
-## 249. `NIRAAgent\Voice\VoiceQueue.cs`
+## 258. `NIRAAgent\Voice\VoiceQueue.cs`
 
 **File:** `NIRAAgent\Voice\VoiceQueue.cs`
 
@@ -164045,7 +168084,7 @@ public sealed class VoiceQueue
 
 ---
 
-## 250. `NIRAAgent\Voice\VoiceUtterance.cs`
+## 259. `NIRAAgent\Voice\VoiceUtterance.cs`
 
 **File:** `NIRAAgent\Voice\VoiceUtterance.cs`
 

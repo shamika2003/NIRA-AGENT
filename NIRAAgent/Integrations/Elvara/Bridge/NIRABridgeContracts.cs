@@ -73,6 +73,22 @@ public sealed record NIRABridgeHealthResponse
         init;
     } =
         true;
+
+
+    public bool ChatAuthenticationRequired
+    {
+        get;
+        init;
+    } =
+        true;
+
+
+    public string ChatAuthentication
+    {
+        get;
+        init;
+    } =
+        "bearer_token";
 }
 
 

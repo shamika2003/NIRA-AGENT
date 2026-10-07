@@ -100,6 +100,10 @@ public partial class App : WpfApplication
 
 
             builder.Services.AddSingleton<
+                NIRABridgeCredentialStore>();
+
+
+            builder.Services.AddSingleton<
                 INIRACapabilityHandler,
                 TradeAIReadCapabilityHandler>();
 

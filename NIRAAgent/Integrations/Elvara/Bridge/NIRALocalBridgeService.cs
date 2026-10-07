@@ -43,6 +43,10 @@ public sealed class NIRALocalBridgeService
         _mind;
 
 
+    private readonly NIRABridgeCredentialStore
+        _credentials;
+
+
     private readonly HttpListener
         _listener =
             new();
@@ -69,7 +73,8 @@ public sealed class NIRALocalBridgeService
 
     public NIRALocalBridgeService(
         ElvaraAppRegistry apps,
-        NIRAMindRuntime mind)
+        NIRAMindRuntime mind,
+        NIRABridgeCredentialStore credentials)
     {
         _apps =
             apps
@@ -81,6 +86,12 @@ public sealed class NIRALocalBridgeService
             mind
             ?? throw new ArgumentNullException(
                 nameof(mind));
+
+
+        _credentials =
+            credentials
+            ?? throw new ArgumentNullException(
+                nameof(credentials));
 
 
         _listener.Prefixes.Add(
@@ -511,6 +522,33 @@ public sealed class NIRALocalBridgeService
 
                     Message =
                         $"Embedded NIRA access is disabled for '{app.AppId}'."
+                },
+                cancellationToken);
+
+            return;
+        }
+
+
+        if (!_credentials.ValidateBearer(
+                app.AppId,
+                request.Headers[
+                    "Authorization"]))
+        {
+            response.Headers[
+                "WWW-Authenticate"] =
+                    "Bearer realm=\"NIRA Local Bridge\"";
+
+
+            await WriteJsonAsync(
+                response,
+                HttpStatusCode.Unauthorized,
+                new NIRABridgeErrorResponse
+                {
+                    Error =
+                        "app_authentication_required",
+
+                    Message =
+                        "A valid registered ELVARA application credential is required."
                 },
                 cancellationToken);
 

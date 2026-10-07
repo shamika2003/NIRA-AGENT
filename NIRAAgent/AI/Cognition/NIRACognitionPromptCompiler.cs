@@ -95,9 +95,14 @@ internal static class NIRACognitionPromptCompiler
            set state=Continue, emitReply=false, replyReady=false,
            characterReady=false. If an always-on quick capability signature is
            sufficient and its required arguments are grounded, emit the capabilityRequest
-           NOW on this call. Request extra context/signature details only when they are
-           genuinely missing. Do not guess future website steps, invent IDs, or claim
-           actions were performed before trusted runtime evidence returns.
+           NOW on this call. In LIVE CAPABILITY QUICK SIGNATURES, args={} means the
+           primitive takes no arguments, ! marks required parameters, and requiredHints
+           carries bounded runtime-declared constraints for required values. Treat those
+           hints as part of the call contract. Request extra context/signature details only
+           when they are genuinely missing; do not expand a schema merely to reconfirm a
+           parameterless primitive or constraints already shown in the quick signature.
+           Do not guess future website steps, invent IDs/argument values, or claim actions
+           were performed before trusted runtime evidence returns.
         3. NeedUser only when the user must decide/provide material information.
         EXPLICIT USER BULK/BRANCH CANCELLATION: use a single typed
         controlRequests item from the current message, without requesting
@@ -216,10 +221,12 @@ internal static class NIRACognitionPromptCompiler
         Usually 1-3 natural sentences is a healthy casual range; meaningful personal or
         emotional turns can naturally use more. Do not pad empty moments or turn simple
         reactions into essays. A one-call terminal Natural reply is normally emitted
-        directly. The Executive may run one post-commit presentation-only realization when
-        THIS interaction materially changed authoritative character delivery state, when
-        characterReady=false, or when the run already required additional pre-response
-        model reasoning. This narrow final pass does not excuse generic draft wording.
+        directly. The Executive may run one post-commit presentation-only realization only
+        when THIS interaction materially changed authoritative character delivery state or
+        when characterReady=false. Additional cognition cycles alone are NOT a reason for
+        another model call; the terminal cognition cycle already has current character state
+        and must produce final NIRA wording. This narrow final pass does not excuse generic
+        draft wording.
         If the user explicitly requires exact literal, machine-readable, code,
         command, quoted, or otherwise verbatim output, use PreserveExact so the
         runtime returns it without stylistic rewriting.
@@ -433,8 +440,10 @@ internal static class NIRACognitionPromptCompiler
             that Natural wording is normally emitted directly. If THIS interaction materially
             changes authoritative character delivery state, or if characterReady=false, the
             Executive may perform exactly one post-commit realization from the updated state.
-            If earlier work required additional pre-response model calls, the Executive likewise
-            performs exactly one final realization from committed state.
+            Additional pre-response cognition calls do not automatically trigger another
+            presentation model call. The terminal cognition cycle already receives current
+            character state and must produce final NIRA wording; realization is reserved for
+            a real post-commit character shift or characterReady=false.
             Set reviewExperience=true ONLY for a novel, user-supplied fact,
             preference, or grounded meaningful outcome. For a user event, set
             novelExperienceEvidence to an exact short span of the CURRENT user
@@ -598,7 +607,8 @@ internal static class NIRACognitionPromptCompiler
             generic de-escalation, service-style reassurance or assistant filler merely
             to choose a tone. If this run ends on its first cognition call, this wording is
             final and is emitted directly. If the run needed extra pre-response model
-            reasoning, one final presentation-only realization follows.
+            reasoning, the terminal cognition decision still writes final NIRA wording;
+            extra reasoning cycles alone do not justify another presentation model call.
             Use PreserveExact when literal wording/format must remain unchanged,
             including explicit requests for exact machine-readable output,
             literal code/commands, or exact quoted data. Do not request another
@@ -616,11 +626,11 @@ internal static class NIRACognitionPromptCompiler
             actual social act independently of the response strategy: do not convert
             clear hostility/dismissal into warmth, affection or playfulness merely to
             keep the reply calm, and do not infer repair without evidence of repair.
-            Natural wording should already be recognizably NIRA. A first-call terminal
-            reply is already final expression and is emitted directly. A run that required
-            additional pre-response model reasoning gets exactly one presentation-only
-            realization after the grounded appraisal/state updates are committed. Set
-            characterReady=true only when the current draft already represents NIRA well
+            Natural wording should already be recognizably NIRA. A terminal cognition
+            reply is final expression whenever characterReady=true and the committed character
+            state did not materially change after that draft. Additional cognition cycles by
+            themselves do not trigger a presentation-only model call. Set characterReady=true
+            only when the current draft already represents NIRA well
             from the supplied pre-commit state. Set replyPresentation=PreserveExact whenever the user's requested
             output must remain literal/machine-readable or otherwise verbatim.
             Avoid a visible reply during an intermediate tool-only decision.
@@ -733,9 +743,9 @@ internal static class NIRACognitionPromptCompiler
         Add(b, "CURRENT INPUT / FRESH WORK RESULT", eventText);
         Add(b, "AUTHORITATIVE LOCAL CLOCK", Limit(context.TemporalContext, 800));
         // Always present, regardless of whether cognition finishes in one or
-        // several cycles. Cognition must already reason and draft as NIRA. A first-call
-        // terminal reply is emitted directly; only multi-model-call runs receive the
-        // separate final realization pass.
+        // several cycles. Cognition must already reason and draft as NIRA. A terminal
+        // character-ready reply is emitted directly; a separate realization is reserved
+        // for a real post-commit delivery-state change or characterReady=false.
         Add(b, "CURRENT AUTHORITY-OWNED CHARACTER PULSE", CharacterPulse(context.CharacterContext));
         Add(b, "AUTHORITATIVE CHARACTER DELIVERY ENVELOPE (HARD OUTPUT POLICY)",
             Limit(context.CharacterDeliveryContext, 3200));
@@ -1067,6 +1077,7 @@ internal static class NIRACognitionPromptCompiler
             string description = descriptorLine[(descriptionMarker + 3)..].Trim();
 
             List<string> parameters = new();
+            List<string> requiredHints = new();
             int cursor = index + 1;
             while (cursor < lines.Length &&
                    lines[cursor].StartsWith("  - ", StringComparison.Ordinal))
@@ -1098,38 +1109,85 @@ internal static class NIRACognitionPromptCompiler
                     bool required = requiredText.Equals(
                         "True",
                         StringComparison.OrdinalIgnoreCase);
+
                     parameters.Add($"{name}:{type}{(required ? "!" : "?")}");
+
+                    // Required parameter descriptions often carry enum/range/
+                    // shape constraints needed for a correct first-cycle call.
+                    // Preserve them generically; never hard-code a product here.
+                    if (required && requiredEnd >= 0)
+                    {
+                        string parameterDescription =
+                            CompactCapabilityHint(
+                                parameterLine[(requiredEnd + 3)..],
+                                112);
+
+                        if (!string.IsNullOrWhiteSpace(parameterDescription))
+                        {
+                            requiredHints.Add(
+                                $"{name}={parameterDescription}");
+                        }
+                    }
                 }
                 cursor++;
             }
 
             int descriptionBudget = id.Equals(
                 NIRACapabilityIds.VisionCapture,
-                StringComparison.OrdinalIgnoreCase) ? 210 : 82;
+                StringComparison.OrdinalIgnoreCase) ? 150 : 58;
 
             b.Append("- ")
                 .Append(id)
                 .Append(" | risk=")
-                .Append(risk);
+                .Append(risk)
+                .Append(" | args=");
 
-            if (parameters.Count > 0)
+            if (parameters.Count == 0)
             {
-                b.Append(" | args=")
-                    .Append(string.Join(",", parameters));
+                b.Append("{}");
+            }
+            else
+            {
+                b.Append(string.Join(",", parameters));
+            }
+
+            if (requiredHints.Count > 0)
+            {
+                b.Append(" | requiredHints=")
+                    .Append(string.Join(";", requiredHints));
             }
 
             b.Append(" | ")
-                .Append(description.AsSpan(
-                    0,
-                    Math.Min(description.Length, descriptionBudget)))
+                .Append(CompactCapabilityHint(
+                    description,
+                    descriptionBudget))
                 .AppendLine();
 
             index = cursor - 1;
         }
 
-        // Keep first-call prompt bounded while preserving the complete runtime
-        // primitive directory in ordinary installations.
-        return Limit(b.ToString(), 10500, retainTail: true);
+        // Runtime-generated and product-generic. The larger bounded envelope
+        // keeps required constraints available for future connector capabilities.
+        return Limit(b.ToString(), 14000, retainTail: true);
+    }
+
+    private static string CompactCapabilityHint(
+        string? value,
+        int maximumCharacters)
+    {
+        if (string.IsNullOrWhiteSpace(value) || maximumCharacters <= 0)
+            return string.Empty;
+
+        string compact =
+            string.Join(
+                " ",
+                value.Split(
+                    (char[]?)null,
+                    StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+
+        return compact.Length <= maximumCharacters
+            ? compact
+            : compact[..maximumCharacters];
     }
 
     private static string CapabilityDetails(string? raw, IReadOnlySet<string> ids)

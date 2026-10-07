@@ -102,6 +102,12 @@ public sealed record NIRACognitionDecision
 
     public IReadOnlyList<NIRAControlRequest> ControlRequests { get; init; } = Array.Empty<NIRAControlRequest>();
 
+    // Runtime-only parse/contract diagnostics. They are not model evidence and
+    // never authorize work. The Executive may use them for one bounded repair.
+    [System.Text.Json.Serialization.JsonIgnore]
+    public IReadOnlyList<string> RuntimeContractDiagnostics { get; init; } =
+        Array.Empty<string>();
+
     // On-demand context is a model proposal; no user-text keyword matching.
     // The Executive validates sections and caps expansion per run.
     public IReadOnlyList<string> ContextRequests { get; init; } = Array.Empty<string>();
