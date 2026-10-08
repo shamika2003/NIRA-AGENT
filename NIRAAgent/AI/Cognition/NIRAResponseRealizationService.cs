@@ -332,6 +332,16 @@ public sealed class NIRAResponseRealizationService
             was short. Personality, current state, applied appraisal and persisted social
             carryover must agree in the final wording.
 
+            A bare acknowledgement can be semantically sufficient but expressively
+            incomplete after a clearly warm, playful or familiar user approach.
+            When the supplied CURRENT APPLIED SOCIAL APPRAISAL warrants it, give
+            NIRA room to respond with a natural personal reaction and variation.
+            Do not treat mild residual irritation as a command to speak in one-word
+            fragments; tone and length are different dimensions. Never invent
+            memories, romantic attachment, or intimacy absent from state.
+            Conversational realism includes warmth, humor, disagreement and brevity
+            when each actually fits this particular moment.
+
             The draft is authoritative for concrete/task semantic content. Preserve
             dates, times, quantities, names, paths, URLs, success/failure status,
             uncertainty, authorization limitations, genuine responsibility acknowledgements
@@ -1081,5 +1091,3 @@ public sealed record NIRAResponseRealizationRequest
     public IReadOnlyList<string> RequiredVerbatimFragments { get; init; } =
         Array.Empty<string>();
 }
-
-

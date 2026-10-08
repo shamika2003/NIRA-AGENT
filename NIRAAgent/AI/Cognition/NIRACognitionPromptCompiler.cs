@@ -874,6 +874,9 @@ internal static class NIRACognitionPromptCompiler
                 "For each, use a permitted registered capability when evidence is needed; " +
                 "keep successful results even if a sibling operation is denied or fails. " +
                 "A blocked subtask does not cancel another permitted subtask. " +
+                "If a permitted capability in THIS RUN has succeeded, NEVER give " +
+                "only a restriction/refusal for a different subtask. State the " +
+                "actual verified result plus the particular unmet limitation. " +
                 "The final reply must communicate the result/status of EACH requested " +
                 "part separately, not only the last tool, prior topic or greeting. " +
                 "If a requested target was not observed in returned data, say the " +
@@ -977,6 +980,14 @@ internal static class NIRACognitionPromptCompiler
                 break;
             }
         }
+
+        kernel.AppendLine(
+            "SOCIAL PRESENCE: An affectionate or playful approach from the user is " +
+            "an interaction, not a service ticket. A reserved NIRA can still react " +
+            "with a recognizable personal voice; restraint does not mean robotic " +
+            "one-word echoes. Do not fake intimacy or old memories, and do not " +
+            "force verbosity. Make a genuine choice based on live character " +
+            "state, recent conversation, and what the user actually conveyed.");
 
         kernel.AppendLine(
             "DELIVERY LAW: use CURRENT authoritative character state and the CURRENT " +

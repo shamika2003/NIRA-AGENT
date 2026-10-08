@@ -4304,6 +4304,15 @@ public sealed class NIRAExecutive
             // request before releasing it. The reviewer is a separate model
             // assessment, not world evidence or an authority to invoke tools.
             // This policy is domain-agnostic; it has no phrase or app routing.
+            // Visible instrumentation: this checkpoint must execute on every
+            // user-source terminal decision. If it is absent from a running log,
+            // the compiled application is not using this patched Executive.
+            Debug.WriteLine(
+                $"[NIRA-Fidelity-V3] TERMINAL_CHECK | Run={runId:D} | " +
+                $"Cycle={cycle} | State={decision.State} | " +
+                $"EmitReply={decision.EmitReply} | ReplyChars={decision.Reply?.Length ?? 0} | " +
+                $"ObservedCapabilities={capabilityResultsBySignature.Count}");
+
             bool userTerminalDraft =
                 mindEvent.Source == NIRAMindEventSource.User &&
                 (decision.State == NIRACognitionState.Complete ||
@@ -4349,6 +4358,11 @@ public sealed class NIRAExecutive
                             string.Join(Environment.NewLine + Environment.NewLine,
                                 surfaceEvidence,
                                 executiveEvidence.ToString(),
+                                "CAPABILITY RESULTS ARE INDEPENDENT OUTCOMES: " +
+                                "if any registered permitted read returned useful data " +
+                                "for a requested part, a refusal-only draft cannot " +
+                                "satisfy the full request. Explain restricted parts " +
+                                "separately while reporting already obtained results.",
                                 capabilityEvidence.ToString(),
                                 dynamicToolEvidence.ToString()),
                             latestContext?.ConversationContext ?? string.Empty,
@@ -4696,13 +4710,30 @@ public sealed class NIRAExecutive
                         characterDelivery.RequiresRealization
                     );
 
-                // The terminal cognition cycle already receives current character
-                // state and owns final NIRA wording. Extra cognition/review calls do
-                // not, by themselves, justify another LLM pass.
+                // Character expressiveness is separate from factual completion.
+                // A source-grounded warm/playful social act can warrant a richer
+                // presentation when cognition produced an extremely thin draft.
+                // This uses structured social appraisal, not greeting words,
+                // phrase tables, or any application-specific routing.
+                bool sociallyThinReply =
+                    terminalNaturalReply &&
+                    mindEvent.Source == NIRAMindEventSource.User &&
+                    appliedSocialAppraisal != null &&
+                    reply.Length > 0 && reply.Length <= 18 &&
+                    (appliedSocialAppraisal.Meaning.Warmth >= 0.30 ||
+                     appliedSocialAppraisal.Meaning.Affection >= 0.30 ||
+                     appliedSocialAppraisal.Meaning.Playfulness >= 0.40);
+
+                // Work-related extra calls alone are not a reason to rewrite.
+                // A truly thin SOCIAL reply may receive one naturalization pass;
+                // all factual claims in a tool-backed answer stay reviewable.
                 bool shouldRealize =
-                    terminalNaturalReply
-                    &&
-                    postCommitCharacterRealization;
+                    terminalNaturalReply &&
+                    (postCommitCharacterRealization || sociallyThinReply);
+
+                if (sociallyThinReply)
+                    Debug.WriteLine($"[NIRA-Fidelity-V3] SOCIAL_DEPTH | " +
+                        $"Run={runId:D} | ReplyChars={reply.Length}");
 
                 bool directCharacterDelivery =
                     terminalNaturalReply
@@ -4723,6 +4754,8 @@ public sealed class NIRAExecutive
 
                 if (shouldRealize)
                 {
+                    string groundedDraftBeforeRealization = reply;
+                    string groundedSpeechBeforeRealization = decision.Speech;
                     responseRealizationCalls++;
 
                     IReadOnlyList<string> requiredReplyFragments =
@@ -4776,6 +4809,43 @@ public sealed class NIRAExecutive
                                     requiredReplyFragments
                             },
                             cancellationToken);
+
+                    // Independent reviewer approved the cognition draft earlier.
+                    // Realization is only expression: if it drops a verified
+                    // sub-result or authorization qualifier, restore that draft.
+                    if (mindEvent.Source == NIRAMindEventSource.User &&
+                        completionReviewConfirmedComplete &&
+                        !string.Equals(realized.Reply,
+                            groundedDraftBeforeRealization, StringComparison.Ordinal) &&
+                        capabilityResultsBySignature.Count > 0)
+                    {
+                        completionReviewCalls++;
+                        NIRATaskCompletionReview? presentationReview =
+                            await _taskCompletionReview.ReviewAsync(
+                                new NIRATaskCompletionReviewRequest(
+                                    mindEvent.Content,
+                                    realized.Reply,
+                                    string.Join(Environment.NewLine + Environment.NewLine,
+                                        executiveEvidence.ToString(),
+                                        capabilityEvidence.ToString(),
+                                        dynamicToolEvidence.ToString()),
+                                    latestContext?.ConversationContext ?? string.Empty,
+                                    GetPendingTaskForEvent(mindEvent)?.Objective ?? string.Empty,
+                                    mindEvent.Metadata.TryGetValue("externalAppId", out string? reviewApp)
+                                        ? reviewApp : null),
+                                cancellationToken);
+                        if (presentationReview?.Verdict != "Complete")
+                        {
+                            Debug.WriteLine(
+                                $"[NIRA-Fidelity-V3] REALIZATION_REVERT | " +
+                                $"Run={runId:D} | Verdict={presentationReview?.Verdict ?? "Unavailable"}");
+                            realized = realized with
+                            {
+                                Reply = groundedDraftBeforeRealization,
+                                Speech = groundedSpeechBeforeRealization
+                            };
+                        }
+                    }
 
                     reply =
                         realized.Reply;

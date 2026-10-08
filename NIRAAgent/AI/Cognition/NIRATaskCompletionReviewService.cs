@@ -62,6 +62,12 @@ public sealed class NIRATaskCompletionReviewService
             Evaluate each independent part of a multi-part request separately.
             Unsupported operations must be explained, but their failure must NOT
             prevent independently permitted parts from being performed.
+            CRITICAL MIXED-OBJECTIVE TEST: if trusted execution evidence shows
+            a permitted read for one requested part succeeded, and the draft
+            talks ONLY about a different forbidden part, verdict=NeedsWork.
+            Set gap to the OMITTED SUCCESSFUL SUBTASK and nextStep to REPORT
+            ITS OBSERVED DATA plus the precise restriction. Do NOT advise a new
+            capability call for evidence the runtime already retrieved.
             A capability result about one symbol, document or target is NOT proof
             of a different requested one. A successful generic data read is NOT
             proof that the explicitly requested entity was in the response.
