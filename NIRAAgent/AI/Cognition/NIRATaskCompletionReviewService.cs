@@ -175,6 +175,21 @@ public sealed class NIRATaskCompletionReviewService
             weekday actually belongs to that date. A mismatch is NeedsWork, never
             Complete. If the source evidence itself conflicts, require the reply to
             state that conflict rather than silently choosing or combining values.
+            The DRAFT may contain an additional section labeled ON-SCREEN STRUCTURED
+            CONTENT. Those typed blocks are genuinely visible to the user and are
+            part of the answer for completeness: assess their cells/items alongside
+            ordinary reply prose. They are NOT independent execution evidence and
+            cannot prove capability success or authorize an action. Do not reject
+            a concise intro as missing data when a supplied visible table gives it.
+            Do not demand numeric measurements the current objective did not ask for:
+            a request for running process names does not require memory usage in MiB.
+            If memory figures ARE displayed, validate against the actual reported
+            bytes or authoritative *MiB fields (1 MiB = 1,048,576 bytes).
+            A short affirmative user turn after NIRA asked for consent IS user
+            confirmation of the scoped prior action. Distinguish this from the
+            independent fact that a formerly observed PID may have already exited:
+            approve a truthful "that exact process is no longer running" report;
+            never insist on obtaining consent again when it was just given.
             Cross-check each MATERIAL factual assertion in the draft against
             the actual execution evidence. For numeric machine observations,
             check units: decimal GB = bytes/1000000000, binary GiB =

@@ -185,6 +185,36 @@ public static class NIRAPresentationPolicy
         => text.Replace("**", "", StringComparison.Ordinal)
             .Replace("`", "", StringComparison.Ordinal);
 
+    // Fallback only: when cognition omits speech, never send literal Markdown
+    // punctuation to TTS. Model-authored speech stays fully authoritative.
+    public static string PlainSpeechFallback(string screen)
+    {
+        if (string.IsNullOrWhiteSpace(screen)) return string.Empty;
+        string text = Regex.Replace(screen, @"```[\s\S]*?```", " a code example ");
+        text = Regex.Replace(text, @"(?m)^\s{0,3}#{1,6}\s+", string.Empty);
+        text = Regex.Replace(text, @"(?m)^\s{0,3}(?:[-*+]\s+|\d{1,3}[.)]\s+)", string.Empty);
+        text = Regex.Replace(text, @"\*\*(.*?)\*\*", "$1");
+        text = Regex.Replace(text, @"(?<!\*)\*([^*\n]+)\*(?!\*)", "$1");
+        text = text.Replace("`", string.Empty, StringComparison.Ordinal);
+        text = Regex.Replace(text, @"(?m)^\s*---+\s*$", string.Empty);
+        return Regex.Replace(text, @"\s+", " ").Trim();
+    }
+
+    // A factual review must see the SAME screen data as the user. A short reply
+    // plus a real table is not a missing answer. This is descriptive evidence for
+    // the reviewer only and cannot authorize tools or change trusted results.
+    public static string ForObjectiveReview(string screen, IReadOnlyList<NIRARichBlock>? blocks)
+    {
+        var visible = Normalize(blocks);
+        if (visible.Count == 0) return screen ?? string.Empty;
+        string serialized = JsonSerializer.Serialize(visible);
+        if (serialized.Length > 9500)
+            serialized = serialized[..9500] + " [VISIBLE BLOCK DATA TRUNCATED FOR REVIEW]";
+        return (screen ?? string.Empty) +
+            "\n\nADDITIONAL ON-SCREEN STRUCTURED CONTENT (visible to user; not execution evidence):\n" +
+            serialized;
+    }
+
     public static string Serialize(NIRAPresentationSnapshot snapshot) => JsonSerializer.Serialize(snapshot);
     public static NIRAPresentationSnapshot? Deserialize(string? json)
     {
@@ -197,5 +227,3 @@ public static class NIRAPresentationPolicy
         catch (JsonException) { return null; }
     }
 }
-
-

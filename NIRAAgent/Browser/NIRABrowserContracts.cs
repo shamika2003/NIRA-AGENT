@@ -168,6 +168,8 @@ public sealed record NIRABrowserInspection
     public string Url { get; init; } = string.Empty;
     public string CanonicalUrl { get; init; } = string.Empty;
     public string Title { get; init; } = string.Empty;
+    // Actual bounded h1/h2/h3 DOM text; never inferred from document title.
+    public IReadOnlyList<string> Headings { get; init; } = Array.Empty<string>();
     public string SiteName { get; init; } = string.Empty;
     public string Language { get; init; } = string.Empty;
     public string TextSource { get; init; } = "body";
@@ -258,10 +260,3 @@ public sealed record NIRABrowserDownloadResult
     public string Sha256 { get; init; } = string.Empty;
     public DateTimeOffset VerifiedAtUtc { get; init; } = DateTimeOffset.UtcNow;
 }
-
-
-
-
-
-
-

@@ -36,7 +36,7 @@ public sealed class NIRAFileLocationCapabilityHandler : INIRACapabilityHandler
             {
                 Parameter("root", "string", false, "Optional grounded absolute directory. Omit only for a whole-PC search across ready fixed local drives."),
                 Parameter("name", "string", true, "Exact file or folder name, not a wildcard or path."),
-                Parameter("kind", "string", false, "Directory, File or Either. Default Either."),
+                Parameter("kind", "string", false, "Directory (folder), File or Either (both). Default Either. Use these values, not arbitrary kinds."),
                 Parameter("maxDepth", "integer", false, "Child-directory depth, 0-6; default 3 for a known root, 6 for whole-PC search."),
                 Parameter("maxEntries", "integer", false, "Maximum entries examined per search root, 1-12000; default 1000 for a known root, 8000 for whole-PC search."),
                 Parameter("maxMatches", "integer", false, "Maximum returned matches, 1-50; default 20.")
@@ -54,8 +54,19 @@ public sealed class NIRAFileLocationCapabilityHandler : INIRACapabilityHandler
         string? requestedRoot =
             NIRACapabilityArguments.GetOptionalString(request, "root", 32760);
         string name = NIRACapabilityArguments.RequireString(request, "name", 255).Trim();
-        string kind = NIRACapabilityArguments.GetOptionalString(request, "kind", 32)
-            ?? "Either";
+        string kind = (NIRACapabilityArguments.GetOptionalString(request, "kind", 32)
+            ?? "Either").Trim();
+        // Canonicalize common *meaning-equivalent* labels without broadening the
+        // allowed search kind or guessing a different target.
+        if (kind.Equals("Folder", StringComparison.OrdinalIgnoreCase) ||
+            kind.Equals("Dir", StringComparison.OrdinalIgnoreCase) ||
+            kind.Equals("Directories", StringComparison.OrdinalIgnoreCase))
+            kind = "Directory";
+        else if (kind.Equals("Files", StringComparison.OrdinalIgnoreCase))
+            kind = "File";
+        else if (kind.Equals("Both", StringComparison.OrdinalIgnoreCase) ||
+            kind.Equals("Any", StringComparison.OrdinalIgnoreCase))
+            kind = "Either";
         int maxDepth = NIRACapabilityArguments.GetInteger(
             request, "maxDepth", string.IsNullOrWhiteSpace(requestedRoot) ? 6 : 3, 0, 6);
         int maxEntries = NIRACapabilityArguments.GetInteger(

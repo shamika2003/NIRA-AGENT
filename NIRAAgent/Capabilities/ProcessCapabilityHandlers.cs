@@ -3,6 +3,7 @@
  */
 
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 
 namespace NIRAAgent.Capabilities;
@@ -144,13 +145,16 @@ public sealed class NIRAProcessListCapabilityHandler
 
         StringBuilder output = new();
         output.AppendLine(
-            "PID\tName\tWorkingSetBytes\tPrivateMemoryBytes\tWindow");
+            "PID\tName\tWorkingSetBytes\tWorkingSetMiB\tPrivateMemoryBytes\tPrivateMemoryMiB\tWindow");
 
         foreach (ProcessSnapshot snapshot in selected)
         {
             output.AppendLine(
                 $"{snapshot.Pid}\t{snapshot.Name}\t{snapshot.WorkingSetBytes}\t" +
-                $"{snapshot.PrivateMemoryBytes}\t{snapshot.WindowTitle}");
+                $"{(snapshot.WorkingSetBytes / 1048576d).ToString("0.00", CultureInfo.InvariantCulture)}\t" +
+                $"{snapshot.PrivateMemoryBytes}\t" +
+                $"{(snapshot.PrivateMemoryBytes / 1048576d).ToString("0.00", CultureInfo.InvariantCulture)}\t" +
+                $"{snapshot.WindowTitle}");
         }
 
         return Task.FromResult(
@@ -475,4 +479,3 @@ public sealed class NIRAProcessStopCapabilityHandler
         };
     }
 }
-

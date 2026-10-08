@@ -41,38 +41,32 @@ public partial class NIRABlobStyleShowcaseWindow
         _animatedControls.Add(
             CreateBlob(
                 EclipseHost,
-                NIRABlobStyleId.EclipseGlass,
-                NIRABlobPresetId.Core));
+                NIRABlobStyleId.EclipseGlass));
 
         _animatedControls.Add(
             CreateBlob(
                 HaloHost,
-                NIRABlobStyleId.HaloBloom,
-                NIRABlobPresetId.Warm));
+                NIRABlobStyleId.HaloBloom));
 
         _animatedControls.Add(
             CreateBlob(
                 OrbitHost,
-                NIRABlobStyleId.OrbitFlow,
-                NIRABlobPresetId.Flow));
+                NIRABlobStyleId.OrbitFlow));
 
         _animatedControls.Add(
             CreateBlob(
                 LatticeHost,
-                NIRABlobStyleId.LatticeCore,
-                NIRABlobPresetId.Focus));
+                NIRABlobStyleId.LatticeCore));
 
         _animatedControls.Add(
             CreateBlob(
                 NebulaHost,
-                NIRABlobStyleId.NebulaPulse,
-                NIRABlobPresetId.Speak));
+                NIRABlobStyleId.NebulaPulse));
 
         _animatedControls.Add(
             CreateBlob(
                 MinimalHost,
-                NIRABlobStyleId.QuietMinimal,
-                NIRABlobPresetId.Calm));
+                NIRABlobStyleId.QuietMinimal));
 
         _demoTimer.Start();
     }
@@ -87,8 +81,7 @@ public partial class NIRABlobStyleShowcaseWindow
 
     private ParticleEntityControl CreateBlob(
         ContentControl host,
-        NIRABlobStyleId styleId,
-        NIRABlobPresetId presetId)
+        NIRABlobStyleId styleId)
     {
         ParticleEntityControl control =
             new ParticleEntityControl()
@@ -99,10 +92,10 @@ public partial class NIRABlobStyleShowcaseWindow
                 VerticalAlignment = VerticalAlignment.Center
             };
 
-        _ = styleId;
-
+        // The catalog is the single source of truth for style -> preview preset.
         control.SetIntent(
-            NIRABlobPresetLibrary.Get(presetId));
+            NIRABlobPresetLibrary.Get(
+                NIRABlobStyleCatalog.Get(styleId).PreviewPreset));
 
         host.Content = control;
         return control;
@@ -116,38 +109,38 @@ public partial class NIRABlobStyleShowcaseWindow
 
         Apply(
             _animatedControls.ElementAtOrDefault(0),
-            NIRABlobPresetId.Core,
+            NIRABlobStyleId.EclipseGlass,
             0.01);
 
         Apply(
             _animatedControls.ElementAtOrDefault(1),
-            NIRABlobPresetId.Warm,
+            NIRABlobStyleId.HaloBloom,
             0.03);
 
         Apply(
             _animatedControls.ElementAtOrDefault(2),
-            NIRABlobPresetId.Flow,
+            NIRABlobStyleId.OrbitFlow,
             0.05);
 
         Apply(
             _animatedControls.ElementAtOrDefault(3),
-            NIRABlobPresetId.Focus,
+            NIRABlobStyleId.LatticeCore,
             0.02);
 
         Apply(
             _animatedControls.ElementAtOrDefault(4),
-            NIRABlobPresetId.Speak,
+            NIRABlobStyleId.NebulaPulse,
             0.08);
 
         Apply(
             _animatedControls.ElementAtOrDefault(5),
-            NIRABlobPresetId.Calm,
+            NIRABlobStyleId.QuietMinimal,
             0.01);
     }
 
     private void Apply(
         ParticleEntityControl? control,
-        NIRABlobPresetId presetId,
+        NIRABlobStyleId styleId,
         double extraPulse)
     {
         if (control == null)
@@ -156,7 +149,8 @@ public partial class NIRABlobStyleShowcaseWindow
         }
 
         NIRAVisualIntent intent =
-            NIRABlobPresetLibrary.Get(presetId);
+            NIRABlobPresetLibrary.Get(
+                NIRABlobStyleCatalog.Get(styleId).PreviewPreset);
 
         double t =
             _frame * 0.24;
@@ -205,4 +199,3 @@ public partial class NIRABlobStyleShowcaseWindow
         Close();
     }
 }
-

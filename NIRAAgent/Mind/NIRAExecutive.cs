@@ -4245,6 +4245,28 @@ public sealed class NIRAExecutive
                     decision.DynamicToolProposals.Count == 0 &&
                     decision.DynamicToolInvocations.Count == 0;
 
+                // Diagnostic-only repeat-guard trace. Never write raw arguments,
+                // paths, tokens or result data into the log. This lets us
+                // distinguish a changed request signature from a guard whose
+                // other conditions were not met, without changing the policy.
+                if (cycle > 1 &&
+                    mindEvent.Source == NIRAMindEventSource.User &&
+                    decision.State == NIRACognitionState.Continue &&
+                    requestedCapabilities.Length > 0 &&
+                    newCapabilityRequests.Length == 0)
+                {
+                    Debug.WriteLine(
+                        $"[Executive] REPEAT GUARD TRACE | Run={runId:D} | " +
+                        $"Cycle={cycle} | Requests={requestedCapabilities.Length} | " +
+                        $"ExactPriorSucceededObserve={exactPreviouslyObservedRead} | " +
+                        $"MadeProgress={madeProgress} | " +
+                        $"MemorySearches={decision.MemorySearches.Count} | " +
+                        $"ConversationSearches={decision.ConversationSearches.Count} | " +
+                        $"OtherWork={decision.GoalProposals.Count + decision.BranchProposals.Count + decision.BranchWorkProposals.Count + decision.DynamicToolProposals.Count + decision.DynamicToolInvocations.Count} | " +
+                        $"NoProgressCycles={noProgressCycles} | " +
+                        $"Saturated={saturatedSingleObservation}");
+                }
+
                 if (saturatedSingleObservation)
                     Debug.WriteLine(
                         $"[Executive] REPEATED OBSERVATION SATURATED | Run={runId:D} | " +
@@ -4392,7 +4414,7 @@ public sealed class NIRAExecutive
                     await _taskCompletionReview.ReviewAsync(
                         new NIRATaskCompletionReviewRequest(
                             mindEvent.Content,
-                            decision.Reply,
+                            NIRAPresentationPolicy.ForObjectiveReview(decision.Reply, decision.DisplayBlocks),
                             string.Join(Environment.NewLine + Environment.NewLine,
                                 surfaceEvidence,
                                 executiveEvidence.ToString(),
@@ -4887,7 +4909,7 @@ public sealed class NIRAExecutive
                             await _taskCompletionReview.ReviewAsync(
                                 new NIRATaskCompletionReviewRequest(
                                     mindEvent.Content,
-                                    realized.Reply,
+                                    NIRAPresentationPolicy.ForObjectiveReview(realized.Reply, decision.DisplayBlocks),
                                     string.Join(Environment.NewLine + Environment.NewLine,
                                         executiveEvidence.ToString(),
                                         capabilityEvidence.ToString(),
@@ -4942,7 +4964,8 @@ public sealed class NIRAExecutive
                 // on multi-call runs, so voice never creates another model round by itself.
 
                 string spoken = string.IsNullOrWhiteSpace(decision.Speech)
-                    ? reply : decision.Speech.Trim();
+                    ? NIRAPresentationPolicy.PlainSpeechFallback(reply)
+                    : decision.Speech.Trim();
                 IReadOnlyList<NIRARichBlock> blocks = decision.DisplayBlocks;
                 (reply, spoken, blocks) = NIRAPresentationPolicy.RecoverCode(reply, spoken, blocks);
                 spoken = NIRAPresentationPolicy.EnsureInformativeSpeech(spoken, blocks);

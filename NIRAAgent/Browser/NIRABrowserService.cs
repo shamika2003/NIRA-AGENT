@@ -745,6 +745,7 @@ public sealed class NIRABrowserService : IAsyncDisposable
                         maxElementTextCharacters = MaximumElementTextCharacters
                     });
 
+            IReadOnlyList<string> headings = ReadStringArray(raw, "headings", 12, 380);
             string bodyText = ReadString(raw, "text");
             string textSource = ReadString(raw, "textSource");
             string canonicalUrl = RedactUrlForCognition(ReadString(raw, "canonicalUrl"));
@@ -905,6 +906,7 @@ public sealed class NIRABrowserService : IAsyncDisposable
                     canonicalUrl,
                     title,
                     siteName,
+                    string.Join("|", headings),
                     language,
                     textSource,
                     publishedAt,
@@ -926,6 +928,7 @@ public sealed class NIRABrowserService : IAsyncDisposable
                     canonicalUrl,
                     title,
                     siteName,
+                    string.Join("|", headings),
                     language,
                     textSource,
                     publishedAt,
@@ -1003,6 +1006,7 @@ public sealed class NIRABrowserService : IAsyncDisposable
                     Url = visibleUrl,
                     CanonicalUrl = canonicalUrl,
                     Title = title,
+                    Headings = headings,
                     SiteName = siteName,
                     Language = language,
                     TextSource = string.IsNullOrWhiteSpace(textSource) ? "body" : textSource,
@@ -4477,6 +4481,11 @@ public sealed class NIRABrowserService : IAsyncDisposable
           const article = document.querySelector('article');
           const main = document.querySelector('main, [role="main"]');
           const articleText = clean(article?.innerText || '', maxTextCharacters);
+          const headings = Array.from(document.querySelectorAll('h1,h2,h3'))
+            .filter(visible)
+            .slice(0, 12)
+            .map(el => el.tagName.toUpperCase() + ': ' + clean(el.innerText || el.textContent || '', 340))
+            .filter(value => value.length > 5);
           const mainText = clean(main?.innerText || '', maxTextCharacters);
           const bodyText = clean(document.body?.innerText || '', maxTextCharacters);
 
@@ -4509,6 +4518,7 @@ public sealed class NIRABrowserService : IAsyncDisposable
           return {
             text,
             textSource,
+            headings,
             canonicalUrl: clean(canonicalUrl, 1200),
             siteName,
             language,
@@ -4523,6 +4533,3 @@ public sealed class NIRABrowserService : IAsyncDisposable
         }
         """;
 }
-
-
-

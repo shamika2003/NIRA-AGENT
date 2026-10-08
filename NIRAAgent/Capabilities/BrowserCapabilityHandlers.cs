@@ -225,6 +225,8 @@ internal static class NIRABrowserCapabilityFormatting
         if (!string.IsNullOrWhiteSpace(inspection.CanonicalUrl))
             text.AppendLine($"CanonicalUrl={CleanUrl(inspection.CanonicalUrl, 2000)}");
         text.AppendLine($"Title={Clean(inspection.Title, 500)}");
+        if (inspection.Headings.Count > 0)
+            text.AppendLine($"DOMHeadings=[{string.Join("; ", inspection.Headings.Select(h => Clean(h, 380)))}]");
         if (!string.IsNullOrWhiteSpace(inspection.SiteName))
             text.AppendLine($"SiteName={Clean(inspection.SiteName, 300)}");
         if (!string.IsNullOrWhiteSpace(inspection.Language))
@@ -3387,7 +3389,3 @@ public sealed class NIRABrowserUploadCapabilityHandler : INIRACapabilityHandler
         };
     }
 }
-
-
-
-

@@ -90,6 +90,28 @@ internal static class NIRACognitionPromptCompiler
           actually belongs to NIRA, this relationship, this moment, and the recent
           conversation.
 
+        TWO PRESENTATION CHANNELS: "reply" is screen content and "speech"
+        is the independent spoken wording. They MUST describe the same grounded facts.
+        For brief social conversation, natural plain prose is best and speech may
+        be empty to reuse reply. For explanations, comparisons, drive/process/file
+        reports, multi-step work and lists, make the desktop readable at a glance:
+        put a short contextual summary in reply and place substantial information
+        in correctly typed displayBlocks (table, metric, card, list, code, etc.).
+        Do not leave displayBlocks empty by habit on a data-rich answer. A table
+        needs columns and rows, a metric needs title and text; every number must
+        come from the evidence. Avoid duplicating a full table in reply or speech.
+        If prose uses Markdown headings, bullets, **emphasis** or `inline code`,
+        those are SCREEN markup only; never speak punctuation or markup tokens.
+        Speech should convey the important findings in conversational language,
+        not read every table cell. Do not overformat a greeting or short response.
+        If an observation supplies *Bytes, do not relabel raw bytes as KB/MB;
+        use provided authoritative formatted units or calculate and label exactly.
+        Preserve exact user-provided file/folder names, paths, IDs, and symbols;
+        do not shorten a named folder to a generic substring or substitute another object.
+        A short confirmation after asking permission remains a confirmation of
+        the prior exact action, not a new isolated request. An expired process ID
+        is not proof that the user withheld approval; report the failed target.
+
         Choose ONE path:
         1. If this input is enough, answer NOW. Produce the complete user-facing
            Natural wording NIRA would actually say. Set state=Complete,
@@ -446,6 +468,30 @@ internal static class NIRACognitionPromptCompiler
             unambiguous explicit request. No simultaneous goal/branch proposals.
             Runtime exclusively selects CURRENT open records and confirms writes.
             Never execute quoted examples or negated cancellation requests.
+
+            SCREEN / SPOKEN PRESENTATION: "reply" is for on-screen reading;
+            "speech" is for natural voice (may be empty for brief conversation).
+            On data-rich explanations, comparisons, lists or observed machine results,
+            use the existing typed displayBlocks (table/metric/card/list/code etc.)
+            to show evidence clearly, with concise reply and useful spoken summary.
+            Never duplicate an entire table in speech, fabricate numbers, or claim a
+            visual block exists unless it is actually emitted. Plain prose is fine
+            for short personal conversation. Screen Markdown (**bold**, headings,
+            bullets, inline code) is allowed in reply and is never read aloud.
+            Use exact user-provided filenames, paths, symbols and target IDs.
+            For filesystem metadata, SizeBytes is bytes, not KB; for process
+            memory, WorkingSetMiB is a verified MiB measurement, distinct from
+            WorkingSetBytes. Keep units and rounding faithful to evidence.
+            A user response confirming NIRA's immediately prior request remains
+            that confirmation even when NIRA must now report an unavailable PID.
+            PERSISTENT SKILLS AND PRIMITIVES ARE NOT THE SAME: registered
+            capabilities (e.g., process.list) are primitive operations, not
+            necessarily learned reusable skills. The authoritative tools context
+            owns separately persisted learned skills and composed dynamic tools.
+            When asked to list skills/tools, request contextRequests=["tools"]
+            if the actual skills/tools inventory is not already visible, then
+            report those inventories separately from primitive capabilities.
+            Never invent skills or call every registered primitive a learned skill.
 
             ON-DEMAND CONTEXT: "contextRequests" may contain section names:
             memory, conversation, self, character, goals, branches, work, pc,

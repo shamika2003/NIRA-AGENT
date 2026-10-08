@@ -4,11 +4,11 @@
 
 **Project:** `NIRA-AGENT`
 
-**Source/code files:** 261
+**Source/code files:** 263
 
 **Resource files shown in tree:** 16
 
-**Total clean project files:** 277
+**Total clean project files:** 279
 
 ---
 
@@ -19,6 +19,9 @@ Generated build folders such as `bin/` and `obj/` are intentionally excluded.
 ```text
 NIRA-AGENT/
 ├── .gitignore
+├── NIRAAgent.RegressionChecks
+│   ├── NIRAAgent.RegressionChecks.csproj
+│   └── Program.cs
 ├── NIRAAgent.UI
 │   ├── App.xaml
 │   ├── App.xaml.cs
@@ -410,15 +413,14 @@ TestResults/
 Thumbs.db
 .DS_Store
 
-# Build
-bin/
-obj/
-
 # Visual Studio temporary files
 *.csproj.user
-*.suo
-*.user
 *_wpftmp.csproj
+
+# Local credentials and environment configuration
+.env
+.env.*
+!.env.example
 
 # Piper runtime
 NIRAAgent/Piper/output.wav
@@ -432,7 +434,166 @@ NIRAAgent/Piper/espeak-ng-data/
 
 ---
 
-## 2. `NIRAAgent.UI\App.xaml`
+## 2. `NIRAAgent.RegressionChecks\NIRAAgent.RegressionChecks.csproj`
+
+**File:** `NIRAAgent.RegressionChecks\NIRAAgent.RegressionChecks.csproj`
+
+```xml
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\NIRAAgent\NIRAAgent.csproj" />
+  </ItemGroup>
+</Project>
+```
+
+---
+
+## 3. `NIRAAgent.RegressionChecks\Program.cs`
+
+**File:** `NIRAAgent.RegressionChecks\Program.cs`
+
+```csharp
+using System.Text.Json;
+using System.Reflection;
+using NIRAAgent.Capabilities;
+using NIRAAgent.Embodiment;
+
+// Run with: dotnet run --project NIRAAgent.RegressionChecks
+// These are offline contract checks, not simulated live model/Bridge tests.
+int passed = 0;
+int failed = 0;
+
+Check("Capability identity ignores transient request IDs and explanations", () =>
+{
+    var first = Request("elvara.tradeai.read", """{"resource":"signals","symbol":"EURUSD"}""");
+    var second = Request("ELVARA.TRADEAI.READ", """{"symbol":"EURUSD","resource":"signals"}""")
+        with { Reason = "Different wording", RequestId = Guid.NewGuid() };
+    Equal(first.BuildSignature(), second.BuildSignature());
+});
+
+Check("Different observed targets are different work", () =>
+{
+    var eurusd = Request("elvara.tradeai.read", """{"resource":"signals","symbol":"EURUSD"}""");
+    var gbpusd = Request("elvara.tradeai.read", """{"resource":"signals","symbol":"GBPUSD"}""");
+    NotEqual(eurusd.BuildSignature(), gbpusd.BuildSignature());
+});
+
+Check("Different resources are different work", () =>
+{
+    var positions = Request("elvara.tradeai.read", """{"resource":"positions"}""");
+    var signals = Request("elvara.tradeai.read", """{"resource":"signals"}""");
+    NotEqual(positions.BuildSignature(), signals.BuildSignature());
+});
+
+Check("Missing capability ID cannot be normalized", () =>
+{
+    Throws<InvalidOperationException>(() =>
+        Request("", "{}").Normalize());
+});
+
+Check("Capability arguments must be a JSON object", () =>
+{
+    Throws<InvalidOperationException>(() =>
+        Request("system.storage.list", "[1,2]").Normalize());
+});
+
+Check("Known style IDs have unique catalog entries and valid preview mappings", () =>
+{
+    var styles = NIRABlobStyleCatalog.All;
+    Equal(Enum.GetValues<NIRABlobStyleId>().Length, styles.Count);
+    Equal(styles.Count, styles.Select(style => style.Id).Distinct().Count());
+    foreach (var style in styles)
+    {
+        Equal(style.Id, NIRABlobStyleCatalog.Get(style.Id).Id);
+        if (!Enum.IsDefined(style.PreviewPreset))
+            throw new Exception($"Undefined preview preset for {style.Id}");
+    }
+});
+
+Check("All app guidance fits NIRA's current 3000-character loader budget", () =>
+{
+    string? promptPath = LocatePromptFolder();
+    if (promptPath is null)
+        throw new Exception("Could not locate NIRAAgent/Prompt directory");
+    var files = Directory.GetFiles(promptPath, "elvara_*.yaml");
+    if (files.Length == 0)
+        throw new Exception("No embedded-app prompts were found to validate");
+    // Read the actual catalog constant, so the check stays in sync if the
+    // loader budget changes. The runtime's non-authorizing loader remains private.
+    Type catalog = typeof(NIRACapabilityRequest).Assembly.GetType(
+        "NIRAAgent.AI.Cognition.NIRAScopedApplicationPromptCatalog", throwOnError: true)!;
+    FieldInfo limitField = catalog.GetField(
+        "MaximumPromptCharacters", BindingFlags.Static | BindingFlags.NonPublic)
+        ?? throw new Exception("Scoped prompt limit field is missing");
+    int limit = (int)(limitField.GetRawConstantValue()
+        ?? throw new Exception("Scoped prompt limit has no value"));
+    foreach (var file in files)
+    {
+        int length = File.ReadAllText(file).Trim().Length;
+        if (length > limit)
+            throw new Exception($"{Path.GetFileName(file)} has {length} characters; runtime limit is {limit}");
+    }
+});
+
+Console.WriteLine($"REGRESSION CHECKS: {passed} passed, {failed} failed");
+return failed == 0 ? 0 : 1;
+
+static NIRACapabilityRequest Request(string id, string json) => new()
+{
+    CapabilityId = id,
+    Arguments = JsonDocument.Parse(json).RootElement.Clone()
+};
+
+void Check(string name, Action test)
+{
+    try { test(); passed++; Console.WriteLine($"PASS: {name}"); }
+    catch (Exception ex) { failed++; Console.Error.WriteLine($"FAIL: {name} - {ex.Message}"); }
+}
+
+static void Equal<T>(T expected, T actual)
+{
+    if (!EqualityComparer<T>.Default.Equals(expected, actual))
+        throw new Exception($"Expected {expected}, got {actual}");
+}
+
+static void NotEqual<T>(T left, T right)
+{
+    if (EqualityComparer<T>.Default.Equals(left, right))
+        throw new Exception($"Values should differ: {left}");
+}
+
+static void Throws<T>(Action action) where T : Exception
+{
+    try { action(); }
+    catch (T) { return; }
+    throw new Exception($"Expected {typeof(T).Name}");
+}
+
+static string? LocatePromptFolder()
+{
+    string[] origins = { Directory.GetCurrentDirectory(), AppContext.BaseDirectory };
+    foreach (string origin in origins)
+    {
+        var directory = new DirectoryInfo(origin);
+        for (int i = 0; directory != null && i < 8; directory = directory.Parent, i++)
+        {
+            string candidate = Path.Combine(directory.FullName, "NIRAAgent", "Prompt");
+            if (Directory.Exists(candidate)) return candidate;
+        }
+    }
+    return null;
+}
+```
+
+---
+
+## 4. `NIRAAgent.UI\App.xaml`
 
 **File:** `NIRAAgent.UI\App.xaml`
 
@@ -452,7 +613,7 @@ NIRAAgent/Piper/espeak-ng-data/
 
 ---
 
-## 3. `NIRAAgent.UI\App.xaml.cs`
+## 5. `NIRAAgent.UI\App.xaml.cs`
 
 **File:** `NIRAAgent.UI\App.xaml.cs`
 
@@ -1662,7 +1823,7 @@ public partial class App : WpfApplication
 
 ---
 
-## 4. `NIRAAgent.UI\AssemblyInfo.cs`
+## 6. `NIRAAgent.UI\AssemblyInfo.cs`
 
 **File:** `NIRAAgent.UI\AssemblyInfo.cs`
 
@@ -1686,7 +1847,7 @@ using System.Windows;
 
 ---
 
-## 5. `NIRAAgent.UI\Companion\CompanionWindow.xaml`
+## 7. `NIRAAgent.UI\Companion\CompanionWindow.xaml`
 
 **File:** `NIRAAgent.UI\Companion\CompanionWindow.xaml`
 
@@ -1726,7 +1887,7 @@ using System.Windows;
 
 ---
 
-## 6. `NIRAAgent.UI\Companion\CompanionWindow.xaml.cs`
+## 8. `NIRAAgent.UI\Companion\CompanionWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\Companion\CompanionWindow.xaml.cs`
 
@@ -4088,7 +4249,7 @@ public partial class CompanionWindow
 
 ---
 
-## 7. `NIRAAgent.UI\Companion\NIRABlobShowcaseWindow.xaml`
+## 9. `NIRAAgent.UI\Companion\NIRABlobShowcaseWindow.xaml`
 
 **File:** `NIRAAgent.UI\Companion\NIRABlobShowcaseWindow.xaml`
 
@@ -4225,7 +4386,7 @@ public partial class CompanionWindow
 
 ---
 
-## 8. `NIRAAgent.UI\Companion\NIRABlobShowcaseWindow.xaml.cs`
+## 10. `NIRAAgent.UI\Companion\NIRABlobShowcaseWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\Companion\NIRABlobShowcaseWindow.xaml.cs`
 
@@ -4378,7 +4539,7 @@ public partial class NIRABlobShowcaseWindow : Window
 
 ---
 
-## 9. `NIRAAgent.UI\Companion\NIRABlobStyleShowcaseWindow.xaml`
+## 11. `NIRAAgent.UI\Companion\NIRABlobStyleShowcaseWindow.xaml`
 
 **File:** `NIRAAgent.UI\Companion\NIRABlobStyleShowcaseWindow.xaml`
 
@@ -4514,7 +4675,7 @@ public partial class NIRABlobShowcaseWindow : Window
 
 ---
 
-## 10. `NIRAAgent.UI\Companion\NIRABlobStyleShowcaseWindow.xaml.cs`
+## 12. `NIRAAgent.UI\Companion\NIRABlobStyleShowcaseWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\Companion\NIRABlobStyleShowcaseWindow.xaml.cs`
 
@@ -4562,38 +4723,32 @@ public partial class NIRABlobStyleShowcaseWindow
         _animatedControls.Add(
             CreateBlob(
                 EclipseHost,
-                NIRABlobStyleId.EclipseGlass,
-                NIRABlobPresetId.Core));
+                NIRABlobStyleId.EclipseGlass));
 
         _animatedControls.Add(
             CreateBlob(
                 HaloHost,
-                NIRABlobStyleId.HaloBloom,
-                NIRABlobPresetId.Warm));
+                NIRABlobStyleId.HaloBloom));
 
         _animatedControls.Add(
             CreateBlob(
                 OrbitHost,
-                NIRABlobStyleId.OrbitFlow,
-                NIRABlobPresetId.Flow));
+                NIRABlobStyleId.OrbitFlow));
 
         _animatedControls.Add(
             CreateBlob(
                 LatticeHost,
-                NIRABlobStyleId.LatticeCore,
-                NIRABlobPresetId.Focus));
+                NIRABlobStyleId.LatticeCore));
 
         _animatedControls.Add(
             CreateBlob(
                 NebulaHost,
-                NIRABlobStyleId.NebulaPulse,
-                NIRABlobPresetId.Speak));
+                NIRABlobStyleId.NebulaPulse));
 
         _animatedControls.Add(
             CreateBlob(
                 MinimalHost,
-                NIRABlobStyleId.QuietMinimal,
-                NIRABlobPresetId.Calm));
+                NIRABlobStyleId.QuietMinimal));
 
         _demoTimer.Start();
     }
@@ -4608,8 +4763,7 @@ public partial class NIRABlobStyleShowcaseWindow
 
     private ParticleEntityControl CreateBlob(
         ContentControl host,
-        NIRABlobStyleId styleId,
-        NIRABlobPresetId presetId)
+        NIRABlobStyleId styleId)
     {
         ParticleEntityControl control =
             new ParticleEntityControl()
@@ -4620,10 +4774,10 @@ public partial class NIRABlobStyleShowcaseWindow
                 VerticalAlignment = VerticalAlignment.Center
             };
 
-        _ = styleId;
-
+        // The catalog is the single source of truth for style -> preview preset.
         control.SetIntent(
-            NIRABlobPresetLibrary.Get(presetId));
+            NIRABlobPresetLibrary.Get(
+                NIRABlobStyleCatalog.Get(styleId).PreviewPreset));
 
         host.Content = control;
         return control;
@@ -4637,38 +4791,38 @@ public partial class NIRABlobStyleShowcaseWindow
 
         Apply(
             _animatedControls.ElementAtOrDefault(0),
-            NIRABlobPresetId.Core,
+            NIRABlobStyleId.EclipseGlass,
             0.01);
 
         Apply(
             _animatedControls.ElementAtOrDefault(1),
-            NIRABlobPresetId.Warm,
+            NIRABlobStyleId.HaloBloom,
             0.03);
 
         Apply(
             _animatedControls.ElementAtOrDefault(2),
-            NIRABlobPresetId.Flow,
+            NIRABlobStyleId.OrbitFlow,
             0.05);
 
         Apply(
             _animatedControls.ElementAtOrDefault(3),
-            NIRABlobPresetId.Focus,
+            NIRABlobStyleId.LatticeCore,
             0.02);
 
         Apply(
             _animatedControls.ElementAtOrDefault(4),
-            NIRABlobPresetId.Speak,
+            NIRABlobStyleId.NebulaPulse,
             0.08);
 
         Apply(
             _animatedControls.ElementAtOrDefault(5),
-            NIRABlobPresetId.Calm,
+            NIRABlobStyleId.QuietMinimal,
             0.01);
     }
 
     private void Apply(
         ParticleEntityControl? control,
-        NIRABlobPresetId presetId,
+        NIRABlobStyleId styleId,
         double extraPulse)
     {
         if (control == null)
@@ -4677,7 +4831,8 @@ public partial class NIRABlobStyleShowcaseWindow
         }
 
         NIRAVisualIntent intent =
-            NIRABlobPresetLibrary.Get(presetId);
+            NIRABlobPresetLibrary.Get(
+                NIRABlobStyleCatalog.Get(styleId).PreviewPreset);
 
         double t =
             _frame * 0.24;
@@ -4730,7 +4885,7 @@ public partial class NIRABlobStyleShowcaseWindow
 
 ---
 
-## 11. `NIRAAgent.UI\Companion\Particles\IParticleFormProvider.cs`
+## 13. `NIRAAgent.UI\Companion\Particles\IParticleFormProvider.cs`
 
 **File:** `NIRAAgent.UI\Companion\Particles\IParticleFormProvider.cs`
 
@@ -4760,7 +4915,7 @@ public interface IParticleFormProvider
 
 ---
 
-## 12. `NIRAAgent.UI\Companion\Particles\OrbParticleFormProvider.cs`
+## 14. `NIRAAgent.UI\Companion\Particles\OrbParticleFormProvider.cs`
 
 **File:** `NIRAAgent.UI\Companion\Particles\OrbParticleFormProvider.cs`
 
@@ -6236,7 +6391,7 @@ public sealed class OrbParticleFormProvider
 
 ---
 
-## 13. `NIRAAgent.UI\Companion\Particles\ParticleDensityProfile.cs`
+## 15. `NIRAAgent.UI\Companion\Particles\ParticleDensityProfile.cs`
 
 **File:** `NIRAAgent.UI\Companion\Particles\ParticleDensityProfile.cs`
 
@@ -6309,7 +6464,7 @@ public sealed record ParticleDensityProfile(
 
 ---
 
-## 14. `NIRAAgent.UI\Companion\Particles\ParticleEntityControl.cs`
+## 16. `NIRAAgent.UI\Companion\Particles\ParticleEntityControl.cs`
 
 **File:** `NIRAAgent.UI\Companion\Particles\ParticleEntityControl.cs`
 
@@ -7360,7 +7515,7 @@ public sealed class ParticleEntityControl
 
 ---
 
-## 15. `NIRAAgent.UI\Companion\Particles\ParticleFormRegistry.cs`
+## 17. `NIRAAgent.UI\Companion\Particles\ParticleFormRegistry.cs`
 
 **File:** `NIRAAgent.UI\Companion\Particles\ParticleFormRegistry.cs`
 
@@ -7469,7 +7624,7 @@ public sealed class ParticleFormRegistry
 
 ---
 
-## 16. `NIRAAgent.UI\Companion\Particles\ParticleMorphEngine.cs`
+## 18. `NIRAAgent.UI\Companion\Particles\ParticleMorphEngine.cs`
 
 **File:** `NIRAAgent.UI\Companion\Particles\ParticleMorphEngine.cs`
 
@@ -8738,7 +8893,7 @@ public readonly record struct ParticleRenderState(
 
 ---
 
-## 17. `NIRAAgent.UI\Companion\Particles\ParticleSizeBand.cs`
+## 19. `NIRAAgent.UI\Companion\Particles\ParticleSizeBand.cs`
 
 **File:** `NIRAAgent.UI\Companion\Particles\ParticleSizeBand.cs`
 
@@ -8773,7 +8928,7 @@ public enum ParticleSizeBand
 
 ---
 
-## 18. `NIRAAgent.UI\Companion\Particles\ParticleTarget.cs`
+## 20. `NIRAAgent.UI\Companion\Particles\ParticleTarget.cs`
 
 **File:** `NIRAAgent.UI\Companion\Particles\ParticleTarget.cs`
 
@@ -8838,7 +8993,7 @@ public readonly record struct ParticleTarget(
 
 ---
 
-## 19. `NIRAAgent.UI\CredentialPromptWindow.xaml`
+## 21. `NIRAAgent.UI\CredentialPromptWindow.xaml`
 
 **File:** `NIRAAgent.UI\CredentialPromptWindow.xaml`
 
@@ -8963,7 +9118,7 @@ public readonly record struct ParticleTarget(
 
 ---
 
-## 20. `NIRAAgent.UI\CredentialPromptWindow.xaml.cs`
+## 22. `NIRAAgent.UI\CredentialPromptWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\CredentialPromptWindow.xaml.cs`
 
@@ -9145,7 +9300,7 @@ public partial class CredentialPromptWindow : Window
 
 ---
 
-## 21. `NIRAAgent.UI\MainWindow.xaml`
+## 23. `NIRAAgent.UI\MainWindow.xaml`
 
 **File:** `NIRAAgent.UI\MainWindow.xaml`
 
@@ -11066,7 +11221,7 @@ public partial class CredentialPromptWindow : Window
 
 ---
 
-## 22. `NIRAAgent.UI\MainWindow.xaml.cs`
+## 24. `NIRAAgent.UI\MainWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\MainWindow.xaml.cs`
 
@@ -14261,7 +14416,7 @@ public partial class MainWindow : Window
 
 ---
 
-## 23. `NIRAAgent.UI\Models\ChatMessage.cs`
+## 25. `NIRAAgent.UI\Models\ChatMessage.cs`
 
 **File:** `NIRAAgent.UI\Models\ChatMessage.cs`
 
@@ -14310,7 +14465,7 @@ public sealed class ChatMessage
 
 ---
 
-## 24. `NIRAAgent.UI\NIRAAgent.UI.csproj`
+## 26. `NIRAAgent.UI\NIRAAgent.UI.csproj`
 
 **File:** `NIRAAgent.UI\NIRAAgent.UI.csproj`
 
@@ -14491,7 +14646,7 @@ public sealed class ChatMessage
 
 ---
 
-## 25. `NIRAAgent.UI\NIRABackdropBorder.cs`
+## 27. `NIRAAgent.UI\NIRABackdropBorder.cs`
 
 **File:** `NIRAAgent.UI\NIRABackdropBorder.cs`
 
@@ -14775,7 +14930,7 @@ public sealed class NIRABackdropBorder : Border
 
 ---
 
-## 26. `NIRAAgent.UI\NIRAUiParticleTransition.cs`
+## 28. `NIRAAgent.UI\NIRAUiParticleTransition.cs`
 
 **File:** `NIRAAgent.UI\NIRAUiParticleTransition.cs`
 
@@ -15094,7 +15249,7 @@ internal static class NIRAUiParticleTransition
 
 ---
 
-## 27. `NIRAAgent.UI\NIRAUtilityBackdropBorder.cs`
+## 29. `NIRAAgent.UI\NIRAUtilityBackdropBorder.cs`
 
 **File:** `NIRAAgent.UI\NIRAUtilityBackdropBorder.cs`
 
@@ -15354,7 +15509,7 @@ public sealed class NIRAUtilityBackdropBorder : Border
 
 ---
 
-## 28. `NIRAAgent.UI\NIRAWorkAreaWindowGuard.cs`
+## 30. `NIRAAgent.UI\NIRAWorkAreaWindowGuard.cs`
 
 **File:** `NIRAAgent.UI\NIRAWorkAreaWindowGuard.cs`
 
@@ -15495,7 +15650,7 @@ internal sealed class NIRAWorkAreaWindowGuard : IDisposable
 
 ---
 
-## 29. `NIRAAgent.UI\OllamaApiKeyWindow.xaml`
+## 31. `NIRAAgent.UI\OllamaApiKeyWindow.xaml`
 
 **File:** `NIRAAgent.UI\OllamaApiKeyWindow.xaml`
 
@@ -15678,7 +15833,7 @@ internal sealed class NIRAWorkAreaWindowGuard : IDisposable
 
 ---
 
-## 30. `NIRAAgent.UI\OllamaApiKeyWindow.xaml.cs`
+## 32. `NIRAAgent.UI\OllamaApiKeyWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\OllamaApiKeyWindow.xaml.cs`
 
@@ -15834,7 +15989,7 @@ public partial class OllamaApiKeyWindow : Window
 
 ---
 
-## 31. `NIRAAgent.UI\PastChatWindow.cs`
+## 33. `NIRAAgent.UI\PastChatWindow.cs`
 
 **File:** `NIRAAgent.UI\PastChatWindow.cs`
 
@@ -16444,7 +16599,7 @@ public sealed class PastChatWindow : Window
 
 ---
 
-## 32. `NIRAAgent.UI\PermissionsWindow.xaml`
+## 34. `NIRAAgent.UI\PermissionsWindow.xaml`
 
 **File:** `NIRAAgent.UI\PermissionsWindow.xaml`
 
@@ -16849,7 +17004,7 @@ public sealed class PastChatWindow : Window
 
 ---
 
-## 33. `NIRAAgent.UI\PermissionsWindow.xaml.cs`
+## 35. `NIRAAgent.UI\PermissionsWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\PermissionsWindow.xaml.cs`
 
@@ -17437,7 +17592,7 @@ public partial class PermissionsWindow : Window
 
 ---
 
-## 34. `NIRAAgent.UI\PermissionToastWindow.xaml`
+## 36. `NIRAAgent.UI\PermissionToastWindow.xaml`
 
 **File:** `NIRAAgent.UI\PermissionToastWindow.xaml`
 
@@ -17705,7 +17860,7 @@ public partial class PermissionsWindow : Window
 
 ---
 
-## 35. `NIRAAgent.UI\PermissionToastWindow.xaml.cs`
+## 37. `NIRAAgent.UI\PermissionToastWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\PermissionToastWindow.xaml.cs`
 
@@ -18664,7 +18819,7 @@ public partial class PermissionToastWindow : Window
 
 ---
 
-## 36. `NIRAAgent.UI\Presentation\NIRARichBlockRenderer.cs`
+## 38. `NIRAAgent.UI\Presentation\NIRARichBlockRenderer.cs`
 
 **File:** `NIRAAgent.UI\Presentation\NIRARichBlockRenderer.cs`
 
@@ -19532,7 +19687,7 @@ public static class NIRARichBlockRenderer
 
 ---
 
-## 37. `NIRAAgent.UI\SettingsWindow.xaml`
+## 39. `NIRAAgent.UI\SettingsWindow.xaml`
 
 **File:** `NIRAAgent.UI\SettingsWindow.xaml`
 
@@ -19914,7 +20069,7 @@ public static class NIRARichBlockRenderer
 
 ---
 
-## 38. `NIRAAgent.UI\SettingsWindow.xaml.cs`
+## 40. `NIRAAgent.UI\SettingsWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\SettingsWindow.xaml.cs`
 
@@ -20210,7 +20365,7 @@ public partial class SettingsWindow : Window
 
 ---
 
-## 39. `NIRAAgent.UI\Themes\NIRATheme.xaml`
+## 41. `NIRAAgent.UI\Themes\NIRATheme.xaml`
 
 **File:** `NIRAAgent.UI\Themes\NIRATheme.xaml`
 
@@ -20654,7 +20809,7 @@ public partial class SettingsWindow : Window
 
 ---
 
-## 40. `NIRAAgent.UI\Theming\NIRAMotion.cs`
+## 42. `NIRAAgent.UI\Theming\NIRAMotion.cs`
 
 **File:** `NIRAAgent.UI\Theming\NIRAMotion.cs`
 
@@ -20774,7 +20929,7 @@ public static class NIRAMotion
 
 ---
 
-## 41. `NIRAAgent.UI\Theming\NIRAThemeManager.cs`
+## 43. `NIRAAgent.UI\Theming\NIRAThemeManager.cs`
 
 **File:** `NIRAAgent.UI\Theming\NIRAThemeManager.cs`
 
@@ -21036,7 +21191,7 @@ public static class NIRAThemeManager
 
 ---
 
-## 42. `NIRAAgent.UI\Typing\NIRATypingIndicator.cs`
+## 44. `NIRAAgent.UI\Typing\NIRATypingIndicator.cs`
 
 **File:** `NIRAAgent.UI\Typing\NIRATypingIndicator.cs`
 
@@ -21396,7 +21551,7 @@ public sealed class NIRATypingIndicator : FrameworkElement
 
 ---
 
-## 43. `NIRAAgent.UI\Typing\TypingStyle.cs`
+## 45. `NIRAAgent.UI\Typing\TypingStyle.cs`
 
 **File:** `NIRAAgent.UI\Typing\TypingStyle.cs`
 
@@ -21411,7 +21566,7 @@ public enum TypingStyle
 
 ---
 
-## 44. `NIRAAgent.UI\ViewModels\AsyncRelayCommand.cs`
+## 46. `NIRAAgent.UI\ViewModels\AsyncRelayCommand.cs`
 
 **File:** `NIRAAgent.UI\ViewModels\AsyncRelayCommand.cs`
 
@@ -21471,7 +21626,7 @@ public sealed class AsyncRelayCommand : ICommand
 
 ---
 
-## 45. `NIRAAgent.UI\ViewModels\ChatMessageTemplateSelector.cs`
+## 47. `NIRAAgent.UI\ViewModels\ChatMessageTemplateSelector.cs`
 
 **File:** `NIRAAgent.UI\ViewModels\ChatMessageTemplateSelector.cs`
 
@@ -21512,7 +21667,7 @@ public sealed class ChatMessageTemplateSelector : DataTemplateSelector
 
 ---
 
-## 46. `NIRAAgent.UI\ViewModels\ChatMessageViewModel.cs`
+## 48. `NIRAAgent.UI\ViewModels\ChatMessageViewModel.cs`
 
 **File:** `NIRAAgent.UI\ViewModels\ChatMessageViewModel.cs`
 
@@ -21865,7 +22020,7 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
 
 ---
 
-## 47. `NIRAAgent.UI\ViewModels\MainWindowViewModel.cs`
+## 49. `NIRAAgent.UI\ViewModels\MainWindowViewModel.cs`
 
 **File:** `NIRAAgent.UI\ViewModels\MainWindowViewModel.cs`
 
@@ -22795,7 +22950,7 @@ public sealed class MainWindowViewModel
 
 ---
 
-## 48. `NIRAAgent.UI\ViewModels\NIRAVisualAnnotationRenderer.cs`
+## 50. `NIRAAgent.UI\ViewModels\NIRAVisualAnnotationRenderer.cs`
 
 **File:** `NIRAAgent.UI\ViewModels\NIRAVisualAnnotationRenderer.cs`
 
@@ -22862,7 +23017,7 @@ public static class NIRAVisualAnnotationRenderer
 
 ---
 
-## 49. `NIRAAgent.UI\ViewModels\VisualArtifactViewModel.cs`
+## 51. `NIRAAgent.UI\ViewModels\VisualArtifactViewModel.cs`
 
 **File:** `NIRAAgent.UI\ViewModels\VisualArtifactViewModel.cs`
 
@@ -22976,7 +23131,7 @@ public sealed class VisualArtifactViewModel
 
 ---
 
-## 50. `NIRAAgent.UI\Vision\WindowsScreenCaptureBackend.cs`
+## 52. `NIRAAgent.UI\Vision\WindowsScreenCaptureBackend.cs`
 
 **File:** `NIRAAgent.UI\Vision\WindowsScreenCaptureBackend.cs`
 
@@ -24025,7 +24180,7 @@ public sealed class WindowsScreenCaptureBackend
 
 ---
 
-## 51. `NIRAAgent.UI\Visuals\NIRAVisualArtifactToastWindow.xaml`
+## 53. `NIRAAgent.UI\Visuals\NIRAVisualArtifactToastWindow.xaml`
 
 **File:** `NIRAAgent.UI\Visuals\NIRAVisualArtifactToastWindow.xaml`
 
@@ -24239,7 +24394,7 @@ public sealed class WindowsScreenCaptureBackend
 
 ---
 
-## 52. `NIRAAgent.UI\Visuals\NIRAVisualArtifactToastWindow.xaml.cs`
+## 54. `NIRAAgent.UI\Visuals\NIRAVisualArtifactToastWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\Visuals\NIRAVisualArtifactToastWindow.xaml.cs`
 
@@ -24683,7 +24838,7 @@ public partial class NIRAVisualArtifactToastWindow : Window
 
 ---
 
-## 53. `NIRAAgent.UI\Visuals\NIRAVisualArtifactViewerWindow.xaml`
+## 55. `NIRAAgent.UI\Visuals\NIRAVisualArtifactViewerWindow.xaml`
 
 **File:** `NIRAAgent.UI\Visuals\NIRAVisualArtifactViewerWindow.xaml`
 
@@ -24759,7 +24914,7 @@ public partial class NIRAVisualArtifactToastWindow : Window
 
 ---
 
-## 54. `NIRAAgent.UI\Visuals\NIRAVisualArtifactViewerWindow.xaml.cs`
+## 56. `NIRAAgent.UI\Visuals\NIRAVisualArtifactViewerWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\Visuals\NIRAVisualArtifactViewerWindow.xaml.cs`
 
@@ -24814,7 +24969,7 @@ public partial class NIRAVisualArtifactViewerWindow : Window
 
 ---
 
-## 55. `NIRAAgent.UI\Visuals\NIRAVisualToastPlacementService.cs`
+## 57. `NIRAAgent.UI\Visuals\NIRAVisualToastPlacementService.cs`
 
 **File:** `NIRAAgent.UI\Visuals\NIRAVisualToastPlacementService.cs`
 
@@ -25231,7 +25386,7 @@ public sealed class NIRAVisualToastPlacementService
 
 ---
 
-## 56. `NIRAAgent\Agent\State\NIRAStateService.cs`
+## 58. `NIRAAgent\Agent\State\NIRAStateService.cs`
 
 **File:** `NIRAAgent\Agent\State\NIRAStateService.cs`
 
@@ -25558,7 +25713,7 @@ public sealed class NIRAStateService
 
 ---
 
-## 57. `NIRAAgent\AI\Cognition\NIRACharacterDeliveryPolicy.cs`
+## 59. `NIRAAgent\AI\Cognition\NIRACharacterDeliveryPolicy.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRACharacterDeliveryPolicy.cs`
 
@@ -25874,7 +26029,7 @@ internal readonly record struct NIRACharacterDeliveryAssessment(
 
 ---
 
-## 58. `NIRAAgent\AI\Cognition\NIRACognitionContext.cs`
+## 60. `NIRAAgent\AI\Cognition\NIRACognitionContext.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRACognitionContext.cs`
 
@@ -26118,7 +26273,7 @@ public sealed record NIRACognitionContext
 
 ---
 
-## 59. `NIRAAgent\AI\Cognition\NIRACognitionContextBuilder.cs`
+## 61. `NIRAAgent\AI\Cognition\NIRACognitionContextBuilder.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRACognitionContextBuilder.cs`
 
@@ -27062,7 +27217,7 @@ public sealed class NIRACognitionContextBuilder
 
 ---
 
-## 60. `NIRAAgent\AI\Cognition\NIRACognitionContracts.cs`
+## 62. `NIRAAgent\AI\Cognition\NIRACognitionContracts.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRACognitionContracts.cs`
 
@@ -27431,7 +27586,7 @@ public sealed record NIRACognitionAppraisalProposal
 
 ---
 
-## 61. `NIRAAgent\AI\Cognition\NIRACognitionPromptCompiler.cs`
+## 63. `NIRAAgent\AI\Cognition\NIRACognitionPromptCompiler.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRACognitionPromptCompiler.cs`
 
@@ -28940,7 +29095,7 @@ internal static class NIRACognitionPromptCompiler
 
 ---
 
-## 62. `NIRAAgent\AI\Cognition\NIRACognitionService.cs`
+## 64. `NIRAAgent\AI\Cognition\NIRACognitionService.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRACognitionService.cs`
 
@@ -31720,7 +31875,7 @@ internal sealed class NIRABranchEvidenceSourceJsonConverter
 
 ---
 
-## 63. `NIRAAgent\AI\Cognition\NIRAResponseRealizationService.cs`
+## 65. `NIRAAgent\AI\Cognition\NIRAResponseRealizationService.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRAResponseRealizationService.cs`
 
@@ -32822,11 +32977,12 @@ public sealed record NIRAResponseRealizationRequest
 
 ---
 
-## 64. `NIRAAgent\AI\Cognition\NIRAScopedApplicationPromptCatalog.cs`
+## 66. `NIRAAgent\AI\Cognition\NIRAScopedApplicationPromptCatalog.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRAScopedApplicationPromptCatalog.cs`
 
 ```csharp
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using NIRAAgent.Mind;
@@ -32839,6 +32995,8 @@ internal static class NIRAScopedApplicationPromptCatalog
 {
     private const int MaximumAppsPerCall = 2;
     private const int MaximumPromptCharacters = 3000;
+    private static readonly ConcurrentDictionary<string, byte> CapacityWarnings =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public static NIRAScopedPromptSelection Select(
         NIRACognitionContext context,
@@ -32912,6 +33070,16 @@ internal static class NIRAScopedApplicationPromptCatalog
                     continue;
                 }
 
+                // Warn while still valid, so a future product-prompt update
+                // does not unexpectedly cross the fixed runtime budget.
+                if (content.Length > MaximumPromptCharacters * 9 / 10 &&
+                    CapacityWarnings.TryAdd(appId, 0))
+                {
+                    Debug.WriteLine(
+                        $"[ScopedPrompt] NEAR_CAPACITY | App={appId} | " +
+                        $"Chars={content.Length} | Limit={MaximumPromptCharacters}");
+                }
+
                 guidance.AppendLine($"APP={appId} (domain guidance only; not runtime permissions)");
                 guidance.AppendLine(content);
                 guidance.AppendLine();
@@ -32982,7 +33150,7 @@ internal readonly record struct NIRAScopedPromptSelection(
 
 ---
 
-## 65. `NIRAAgent\AI\Cognition\NIRATaskCompletionReviewService.cs`
+## 67. `NIRAAgent\AI\Cognition\NIRATaskCompletionReviewService.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRATaskCompletionReviewService.cs`
 
@@ -33333,7 +33501,7 @@ public sealed record NIRATaskCompletionReview(
 
 ---
 
-## 66. `NIRAAgent\AI\Ollama\NIRAOllamaApiKeyService.cs`
+## 68. `NIRAAgent\AI\Ollama\NIRAOllamaApiKeyService.cs`
 
 **File:** `NIRAAgent\AI\Ollama\NIRAOllamaApiKeyService.cs`
 
@@ -34192,7 +34360,7 @@ public sealed class NIRAOllamaApiKeyService : IDisposable
 
 ---
 
-## 67. `NIRAAgent\AI\Ollama\ollamaClient.cs`
+## 69. `NIRAAgent\AI\Ollama\ollamaClient.cs`
 
 **File:** `NIRAAgent\AI\Ollama\ollamaClient.cs`
 
@@ -34729,7 +34897,7 @@ public sealed class OllamaClient : IDisposable
 
 ---
 
-## 68. `NIRAAgent\Artifacts\NIRAVisualArtifactContracts.cs`
+## 70. `NIRAAgent\Artifacts\NIRAVisualArtifactContracts.cs`
 
 **File:** `NIRAAgent\Artifacts\NIRAVisualArtifactContracts.cs`
 
@@ -35031,7 +35199,7 @@ public sealed record NIRAVisualArtifact
 
 ---
 
-## 69. `NIRAAgent\Artifacts\NIRAVisualArtifactService.cs`
+## 71. `NIRAAgent\Artifacts\NIRAVisualArtifactService.cs`
 
 **File:** `NIRAAgent\Artifacts\NIRAVisualArtifactService.cs`
 
@@ -35631,7 +35799,7 @@ public sealed class NIRAVisualArtifactService
 
 ---
 
-## 70. `NIRAAgent\Authorization\NIRAAuthorityContracts.cs`
+## 72. `NIRAAgent\Authorization\NIRAAuthorityContracts.cs`
 
 **File:** `NIRAAgent\Authorization\NIRAAuthorityContracts.cs`
 
@@ -35770,7 +35938,7 @@ public sealed record NIRAAuthorityAuditRow
 
 ---
 
-## 71. `NIRAAgent\Authorization\NIRAAuthorityExecutionContext.cs`
+## 73. `NIRAAgent\Authorization\NIRAAuthorityExecutionContext.cs`
 
 **File:** `NIRAAgent\Authorization\NIRAAuthorityExecutionContext.cs`
 
@@ -35844,7 +36012,7 @@ public sealed class NIRAAuthorityExecutionContextAccessor
 
 ---
 
-## 72. `NIRAAgent\Authorization\NIRAAuthorityExecutionProfiles.cs`
+## 74. `NIRAAgent\Authorization\NIRAAuthorityExecutionProfiles.cs`
 
 **File:** `NIRAAgent\Authorization\NIRAAuthorityExecutionProfiles.cs`
 
@@ -36323,7 +36491,7 @@ public static class NIRAAuthorityExecutionProfiles
 
 ---
 
-## 73. `NIRAAgent\Authorization\NIRAAuthorityStore.cs`
+## 75. `NIRAAgent\Authorization\NIRAAuthorityStore.cs`
 
 **File:** `NIRAAgent\Authorization\NIRAAuthorityStore.cs`
 
@@ -36621,7 +36789,7 @@ public sealed class NIRAAuthorityStore
 
 ---
 
-## 74. `NIRAAgent\Authorization\NIRACapabilityApprovalBroker.cs`
+## 76. `NIRAAgent\Authorization\NIRACapabilityApprovalBroker.cs`
 
 **File:** `NIRAAgent\Authorization\NIRACapabilityApprovalBroker.cs`
 
@@ -36691,7 +36859,7 @@ public sealed class NIRACapabilityApprovalBroker
 
 ---
 
-## 75. `NIRAAgent\Authorization\NIRACapabilityRequestPolicy.cs`
+## 77. `NIRAAgent\Authorization\NIRACapabilityRequestPolicy.cs`
 
 **File:** `NIRAAgent\Authorization\NIRACapabilityRequestPolicy.cs`
 
@@ -37436,7 +37604,7 @@ public sealed class NIRACapabilityRequestPolicy
 
 ---
 
-## 76. `NIRAAgent\Authorization\NIRACredentialBroker.cs`
+## 78. `NIRAAgent\Authorization\NIRACredentialBroker.cs`
 
 **File:** `NIRAAgent\Authorization\NIRACredentialBroker.cs`
 
@@ -37732,7 +37900,7 @@ public sealed class NIRACredentialBroker
 
 ---
 
-## 77. `NIRAAgent\Authorization\NIRACredentialContracts.cs`
+## 79. `NIRAAgent\Authorization\NIRACredentialContracts.cs`
 
 **File:** `NIRAAgent\Authorization\NIRACredentialContracts.cs`
 
@@ -37793,7 +37961,7 @@ public sealed record NIRACredentialPromptResponse
 
 ---
 
-## 78. `NIRAAgent\Authorization\NIRACredentialStore.cs`
+## 80. `NIRAAgent\Authorization\NIRACredentialStore.cs`
 
 **File:** `NIRAAgent\Authorization\NIRACredentialStore.cs`
 
@@ -38392,7 +38560,7 @@ public sealed class NIRACredentialStore
 
 ---
 
-## 79. `NIRAAgent\Authorization\NIRARiskAdaptiveAuthority.cs`
+## 81. `NIRAAgent\Authorization\NIRARiskAdaptiveAuthority.cs`
 
 **File:** `NIRAAgent\Authorization\NIRARiskAdaptiveAuthority.cs`
 
@@ -38612,7 +38780,7 @@ public static class NIRARiskAdaptiveAuthority
 
 ---
 
-## 80. `NIRAAgent\Authorization\NIRAScopedCapabilityAuthorizer.cs`
+## 82. `NIRAAgent\Authorization\NIRAScopedCapabilityAuthorizer.cs`
 
 **File:** `NIRAAgent\Authorization\NIRAScopedCapabilityAuthorizer.cs`
 
@@ -39510,7 +39678,7 @@ public sealed class NIRAScopedCapabilityAuthorizer : INIRACapabilityAuthorizer
 
 ---
 
-## 81. `NIRAAgent\Branches\NIRABranchContracts.cs`
+## 83. `NIRAAgent\Branches\NIRABranchContracts.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchContracts.cs`
 
@@ -40008,7 +40176,7 @@ public sealed record NIRABranchResultEvent
 
 ---
 
-## 82. `NIRAAgent\Branches\NIRABranchRunnerService.cs`
+## 84. `NIRAAgent\Branches\NIRABranchRunnerService.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchRunnerService.cs`
 
@@ -41253,7 +41421,7 @@ public sealed class NIRABranchRunnerService
 
 ---
 
-## 83. `NIRAAgent\Branches\NIRABranchService.cs`
+## 85. `NIRAAgent\Branches\NIRABranchService.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchService.cs`
 
@@ -43382,7 +43550,7 @@ public sealed class NIRABranchService
 
 ---
 
-## 84. `NIRAAgent\Branches\NIRABranchStore.cs`
+## 86. `NIRAAgent\Branches\NIRABranchStore.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchStore.cs`
 
@@ -44362,7 +44530,7 @@ public sealed class NIRABranchStore
 
 ---
 
-## 85. `NIRAAgent\Branches\NIRABranchWorkContracts.cs`
+## 87. `NIRAAgent\Branches\NIRABranchWorkContracts.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchWorkContracts.cs`
 
@@ -44797,7 +44965,7 @@ public sealed record NIRABranchWorkResultEvent
 
 ---
 
-## 86. `NIRAAgent\Branches\NIRABranchWorkLoopGuard.cs`
+## 88. `NIRAAgent\Branches\NIRABranchWorkLoopGuard.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchWorkLoopGuard.cs`
 
@@ -45001,7 +45169,7 @@ internal static class NIRABranchWorkLoopGuard
 
 ---
 
-## 87. `NIRAAgent\Branches\NIRABranchWorkReconsiderationService.cs`
+## 89. `NIRAAgent\Branches\NIRABranchWorkReconsiderationService.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchWorkReconsiderationService.cs`
 
@@ -45405,7 +45573,7 @@ public sealed class NIRABranchWorkReconsiderationService
 
 ---
 
-## 88. `NIRAAgent\Branches\NIRABranchWorkService.cs`
+## 90. `NIRAAgent\Branches\NIRABranchWorkService.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchWorkService.cs`
 
@@ -46752,7 +46920,7 @@ public sealed class NIRABranchWorkService
 
 ---
 
-## 89. `NIRAAgent\Branches\NIRABranchWorkStore.cs`
+## 91. `NIRAAgent\Branches\NIRABranchWorkStore.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchWorkStore.cs`
 
@@ -47305,7 +47473,7 @@ public sealed class NIRABranchWorkStore
 
 ---
 
-## 90. `NIRAAgent\Browser\NIRABrowserActionJournal.cs`
+## 92. `NIRAAgent\Browser\NIRABrowserActionJournal.cs`
 
 **File:** `NIRAAgent\Browser\NIRABrowserActionJournal.cs`
 
@@ -47423,7 +47591,7 @@ internal sealed class NIRABrowserActionJournal
 
 ---
 
-## 91. `NIRAAgent\Browser\NIRABrowserContracts.cs`
+## 93. `NIRAAgent\Browser\NIRABrowserContracts.cs`
 
 **File:** `NIRAAgent\Browser\NIRABrowserContracts.cs`
 
@@ -47692,7 +47860,7 @@ public sealed record NIRABrowserDownloadResult
 
 ---
 
-## 92. `NIRAAgent\Browser\NIRABrowserService.cs`
+## 94. `NIRAAgent\Browser\NIRABrowserService.cs`
 
 **File:** `NIRAAgent\Browser\NIRABrowserService.cs`
 
@@ -52226,7 +52394,7 @@ public sealed class NIRABrowserService : IAsyncDisposable
 
 ---
 
-## 93. `NIRAAgent\Browser\NIRABrowserSiteKnowledgeStore.cs`
+## 95. `NIRAAgent\Browser\NIRABrowserSiteKnowledgeStore.cs`
 
 **File:** `NIRAAgent\Browser\NIRABrowserSiteKnowledgeStore.cs`
 
@@ -52670,7 +52838,7 @@ internal sealed class NIRABrowserSiteKnowledgeStore
 
 ---
 
-## 94. `NIRAAgent\Capabilities\ApplicationCapabilityHandlers.cs`
+## 96. `NIRAAgent\Capabilities\ApplicationCapabilityHandlers.cs`
 
 **File:** `NIRAAgent\Capabilities\ApplicationCapabilityHandlers.cs`
 
@@ -55102,7 +55270,7 @@ public sealed class NIRAApplicationResolveCapabilityHandler
 
 ---
 
-## 95. `NIRAAgent\Capabilities\BrowserCapabilityHandlers.cs`
+## 97. `NIRAAgent\Capabilities\BrowserCapabilityHandlers.cs`
 
 **File:** `NIRAAgent\Capabilities\BrowserCapabilityHandlers.cs`
 
@@ -58500,7 +58668,7 @@ public sealed class NIRABrowserUploadCapabilityHandler : INIRACapabilityHandler
 
 ---
 
-## 96. `NIRAAgent\Capabilities\FilesystemCapabilityHandlers.cs`
+## 98. `NIRAAgent\Capabilities\FilesystemCapabilityHandlers.cs`
 
 **File:** `NIRAAgent\Capabilities\FilesystemCapabilityHandlers.cs`
 
@@ -59719,7 +59887,7 @@ public sealed class NIRADirectoryCreateCapabilityHandler
 
 ---
 
-## 97. `NIRAAgent\Capabilities\HttpCapabilityHandlers.cs`
+## 99. `NIRAAgent\Capabilities\HttpCapabilityHandlers.cs`
 
 **File:** `NIRAAgent\Capabilities\HttpCapabilityHandlers.cs`
 
@@ -60496,7 +60664,7 @@ public sealed class NIRAHttpDownloadCapabilityHandler
 
 ---
 
-## 98. `NIRAAgent\Capabilities\NIRACapabilityArguments.cs`
+## 100. `NIRAAgent\Capabilities\NIRACapabilityArguments.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRACapabilityArguments.cs`
 
@@ -60946,7 +61114,7 @@ internal static class NIRACapabilityArguments
 
 ---
 
-## 99. `NIRAAgent\Capabilities\NIRACapabilityContracts.cs`
+## 101. `NIRAAgent\Capabilities\NIRACapabilityContracts.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRACapabilityContracts.cs`
 
@@ -61809,7 +61977,7 @@ public interface INIRACapabilityAuthorizer
 
 ---
 
-## 100. `NIRAAgent\Capabilities\NIRACapabilityProcessRunner.cs`
+## 102. `NIRAAgent\Capabilities\NIRACapabilityProcessRunner.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRACapabilityProcessRunner.cs`
 
@@ -61890,7 +62058,7 @@ internal static class NIRACapabilityProcessRunner
 
 ---
 
-## 101. `NIRAAgent\Capabilities\NIRACapabilityRegistry.cs`
+## 103. `NIRAAgent\Capabilities\NIRACapabilityRegistry.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRACapabilityRegistry.cs`
 
@@ -61984,7 +62152,7 @@ public sealed class NIRACapabilityRegistry
 
 ---
 
-## 102. `NIRAAgent\Capabilities\NIRACapabilityService.cs`
+## 104. `NIRAAgent\Capabilities\NIRACapabilityService.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRACapabilityService.cs`
 
@@ -62714,7 +62882,7 @@ public sealed class NIRACapabilityService
 
 ---
 
-## 103. `NIRAAgent\Capabilities\NIRAFileLocationCapabilityHandler.cs`
+## 105. `NIRAAgent\Capabilities\NIRAFileLocationCapabilityHandler.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRAFileLocationCapabilityHandler.cs`
 
@@ -62978,7 +63146,7 @@ public sealed class NIRAFileLocationCapabilityHandler : INIRACapabilityHandler
 
 ---
 
-## 104. `NIRAAgent\Capabilities\NIRAStage9CapabilityAuthorizer.cs`
+## 106. `NIRAAgent\Capabilities\NIRAStage9CapabilityAuthorizer.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRAStage9CapabilityAuthorizer.cs`
 
@@ -63019,7 +63187,7 @@ public sealed class NIRAStage9CapabilityAuthorizer
 
 ---
 
-## 105. `NIRAAgent\Capabilities\NIRATemporalRelationCapabilityHandler.cs`
+## 107. `NIRAAgent\Capabilities\NIRATemporalRelationCapabilityHandler.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRATemporalRelationCapabilityHandler.cs`
 
@@ -63114,7 +63282,7 @@ public sealed class NIRATemporalRelationCapabilityHandler : INIRACapabilityHandl
 
 ---
 
-## 106. `NIRAAgent\Capabilities\ProcessCapabilityHandlers.cs`
+## 108. `NIRAAgent\Capabilities\ProcessCapabilityHandlers.cs`
 
 **File:** `NIRAAgent\Capabilities\ProcessCapabilityHandlers.cs`
 
@@ -63600,7 +63768,7 @@ public sealed class NIRAProcessStopCapabilityHandler
 
 ---
 
-## 107. `NIRAAgent\Capabilities\ShellCapabilityHandler.cs`
+## 109. `NIRAAgent\Capabilities\ShellCapabilityHandler.cs`
 
 **File:** `NIRAAgent\Capabilities\ShellCapabilityHandler.cs`
 
@@ -63778,7 +63946,7 @@ public sealed class NIRAShellExecuteCapabilityHandler
 
 ---
 
-## 108. `NIRAAgent\Capabilities\SystemStorageCapabilityHandler.cs`
+## 110. `NIRAAgent\Capabilities\SystemStorageCapabilityHandler.cs`
 
 **File:** `NIRAAgent\Capabilities\SystemStorageCapabilityHandler.cs`
 
@@ -64001,7 +64169,7 @@ public sealed class NIRASystemStorageListCapabilityHandler
 
 ---
 
-## 109. `NIRAAgent\Capabilities\VisionCapabilityHandlers.cs`
+## 111. `NIRAAgent\Capabilities\VisionCapabilityHandlers.cs`
 
 **File:** `NIRAAgent\Capabilities\VisionCapabilityHandlers.cs`
 
@@ -64782,7 +64950,7 @@ public sealed class NIRAVisualInspectCapabilityHandler
 
 ---
 
-## 110. `NIRAAgent\Character\Appraisal\NIRACharacterExperienceAppraisal.cs`
+## 112. `NIRAAgent\Character\Appraisal\NIRACharacterExperienceAppraisal.cs`
 
 **File:** `NIRAAgent\Character\Appraisal\NIRACharacterExperienceAppraisal.cs`
 
@@ -64879,7 +65047,7 @@ public sealed record NIRACharacterExperienceAppraisal
 
 ---
 
-## 111. `NIRAAgent\Character\Appraisal\NIRAInteractionAppraisal.cs`
+## 113. `NIRAAgent\Character\Appraisal\NIRAInteractionAppraisal.cs`
 
 **File:** `NIRAAgent\Character\Appraisal\NIRAInteractionAppraisal.cs`
 
@@ -65039,7 +65207,7 @@ public sealed record NIRAInteractionAppraisal
 
 ---
 
-## 112. `NIRAAgent\Character\Appraisal\NIRASocialMeaning.cs`
+## 114. `NIRAAgent\Character\Appraisal\NIRASocialMeaning.cs`
 
 **File:** `NIRAAgent\Character\Appraisal\NIRASocialMeaning.cs`
 
@@ -65217,7 +65385,7 @@ public readonly record struct NIRASocialMeaning(
 
 ---
 
-## 113. `NIRAAgent\Character\Dynamics\NIRACharacterDynamicsService.cs`
+## 115. `NIRAAgent\Character\Dynamics\NIRACharacterDynamicsService.cs`
 
 **File:** `NIRAAgent\Character\Dynamics\NIRACharacterDynamicsService.cs`
 
@@ -66796,7 +66964,7 @@ public sealed class NIRACharacterDynamicsService
 
 ---
 
-## 114. `NIRAAgent\Character\History\NIRASocialEvent.cs`
+## 116. `NIRAAgent\Character\History\NIRASocialEvent.cs`
 
 **File:** `NIRAAgent\Character\History\NIRASocialEvent.cs`
 
@@ -67004,7 +67172,7 @@ public sealed record NIRASocialEvent
 
 ---
 
-## 115. `NIRAAgent\Character\History\NIRASocialHistoryService.cs`
+## 117. `NIRAAgent\Character\History\NIRASocialHistoryService.cs`
 
 **File:** `NIRAAgent\Character\History\NIRASocialHistoryService.cs`
 
@@ -67657,7 +67825,7 @@ public sealed class NIRASocialHistoryService
 
 ---
 
-## 116. `NIRAAgent\Character\History\NIRASocialHistorySnapshot.cs`
+## 118. `NIRAAgent\Character\History\NIRASocialHistorySnapshot.cs`
 
 **File:** `NIRAAgent\Character\History\NIRASocialHistorySnapshot.cs`
 
@@ -67702,7 +67870,7 @@ public sealed record NIRASocialHistorySnapshot
 
 ---
 
-## 117. `NIRAAgent\Character\History\NIRASocialTopicKeys.cs`
+## 119. `NIRAAgent\Character\History\NIRASocialTopicKeys.cs`
 
 **File:** `NIRAAgent\Character\History\NIRASocialTopicKeys.cs`
 
@@ -67879,7 +68047,7 @@ public static class NIRASocialTopicKeys
 
 ---
 
-## 118. `NIRAAgent\Character\Interaction\NIRAInteractionContext.cs`
+## 120. `NIRAAgent\Character\Interaction\NIRAInteractionContext.cs`
 
 **File:** `NIRAAgent\Character\Interaction\NIRAInteractionContext.cs`
 
@@ -67976,7 +68144,7 @@ public sealed record NIRAInteractionContext
 
 ---
 
-## 119. `NIRAAgent\Character\Interaction\NIRAInteractionContextBuilder.cs`
+## 121. `NIRAAgent\Character\Interaction\NIRAInteractionContextBuilder.cs`
 
 **File:** `NIRAAgent\Character\Interaction\NIRAInteractionContextBuilder.cs`
 
@@ -68209,7 +68377,7 @@ public sealed class NIRAInteractionContextBuilder
 
 ---
 
-## 120. `NIRAAgent\Character\Interaction\NIRAInteractionObservationService.cs`
+## 122. `NIRAAgent\Character\Interaction\NIRAInteractionObservationService.cs`
 
 **File:** `NIRAAgent\Character\Interaction\NIRAInteractionObservationService.cs`
 
@@ -68465,7 +68633,7 @@ public sealed class NIRAInteractionObservationService
 
 ---
 
-## 121. `NIRAAgent\Character\NIRACharacterContextFormatter.cs`
+## 123. `NIRAAgent\Character\NIRACharacterContextFormatter.cs`
 
 **File:** `NIRAAgent\Character\NIRACharacterContextFormatter.cs`
 
@@ -68853,7 +69021,7 @@ public static class NIRACharacterContextFormatter
 
 ---
 
-## 122. `NIRAAgent\Character\State\NIRAAttitudeService.cs`
+## 124. `NIRAAgent\Character\State\NIRAAttitudeService.cs`
 
 **File:** `NIRAAgent\Character\State\NIRAAttitudeService.cs`
 
@@ -69103,7 +69271,7 @@ public sealed class NIRAAttitudeService
 
 ---
 
-## 123. `NIRAAgent\Character\State\NIRAAttitudeState.cs`
+## 125. `NIRAAgent\Character\State\NIRAAttitudeState.cs`
 
 **File:** `NIRAAgent\Character\State\NIRAAttitudeState.cs`
 
@@ -69174,7 +69342,7 @@ public readonly record struct NIRAAttitudeState(
 
 ---
 
-## 124. `NIRAAgent\Character\State\NIRACharacterPersistenceService.cs`
+## 126. `NIRAAgent\Character\State\NIRACharacterPersistenceService.cs`
 
 **File:** `NIRAAgent\Character\State\NIRACharacterPersistenceService.cs`
 
@@ -69359,7 +69527,7 @@ public sealed class NIRACharacterPersistenceService
 
 ---
 
-## 125. `NIRAAgent\Character\State\NIRACharacterSnapshot.cs`
+## 127. `NIRAAgent\Character\State\NIRACharacterSnapshot.cs`
 
 **File:** `NIRAAgent\Character\State\NIRACharacterSnapshot.cs`
 
@@ -69417,7 +69585,7 @@ public readonly record struct NIRACharacterSnapshot(
 
 ---
 
-## 126. `NIRAAgent\Character\State\NIRACharacterStateService.cs`
+## 128. `NIRAAgent\Character\State\NIRACharacterStateService.cs`
 
 **File:** `NIRAAgent\Character\State\NIRACharacterStateService.cs`
 
@@ -69687,7 +69855,7 @@ public sealed class NIRACharacterStateService
 
 ---
 
-## 127. `NIRAAgent\Character\State\NIRACharacterStateStore.cs`
+## 129. `NIRAAgent\Character\State\NIRACharacterStateStore.cs`
 
 **File:** `NIRAAgent\Character\State\NIRACharacterStateStore.cs`
 
@@ -70243,7 +70411,7 @@ public sealed class NIRACharacterStateStore
 
 ---
 
-## 128. `NIRAAgent\Character\State\NIRAMoodState.cs`
+## 130. `NIRAAgent\Character\State\NIRAMoodState.cs`
 
 **File:** `NIRAAgent\Character\State\NIRAMoodState.cs`
 
@@ -70336,7 +70504,7 @@ public readonly record struct NIRAMoodState(
 
 ---
 
-## 129. `NIRAAgent\Character\State\NIRARelationshipState.cs`
+## 131. `NIRAAgent\Character\State\NIRARelationshipState.cs`
 
 **File:** `NIRAAgent\Character\State\NIRARelationshipState.cs`
 
@@ -70441,7 +70609,7 @@ public readonly record struct NIRARelationshipState(
 
 ---
 
-## 130. `NIRAAgent\Character\State\NIRASituationState.cs`
+## 132. `NIRAAgent\Character\State\NIRASituationState.cs`
 
 **File:** `NIRAAgent\Character\State\NIRASituationState.cs`
 
@@ -70499,7 +70667,7 @@ public readonly record struct NIRASituationState(
 
 ---
 
-## 131. `NIRAAgent\Conversation\ConversationManager.cs`
+## 133. `NIRAAgent\Conversation\ConversationManager.cs`
 
 **File:** `NIRAAgent\Conversation\ConversationManager.cs`
 
@@ -71560,7 +71728,7 @@ public sealed record ConversationContextSnapshot
 
 ---
 
-## 132. `NIRAAgent\Conversation\ConversationPendingTask.cs`
+## 134. `NIRAAgent\Conversation\ConversationPendingTask.cs`
 
 **File:** `NIRAAgent\Conversation\ConversationPendingTask.cs`
 
@@ -71576,7 +71744,7 @@ public sealed record ConversationPendingTask(
 
 ---
 
-## 133. `NIRAAgent\Conversation\NIRAConversationArchiveStore.cs`
+## 135. `NIRAAgent\Conversation\NIRAConversationArchiveStore.cs`
 
 **File:** `NIRAAgent\Conversation\NIRAConversationArchiveStore.cs`
 
@@ -72870,7 +73038,7 @@ public sealed record NIRAArchivedChatTurn(Guid MessageId, string Role, string Co
 
 ---
 
-## 134. `NIRAAgent\Conversation\NIRAConversationSearchRequest.cs`
+## 136. `NIRAAgent\Conversation\NIRAConversationSearchRequest.cs`
 
 **File:** `NIRAAgent\Conversation\NIRAConversationSearchRequest.cs`
 
@@ -72917,7 +73085,7 @@ public sealed record NIRAArchivedConversationHit(
 
 ---
 
-## 135. `NIRAAgent\Embodiment\Body\NIRABodyCommand.cs`
+## 137. `NIRAAgent\Embodiment\Body\NIRABodyCommand.cs`
 
 **File:** `NIRAAgent\Embodiment\Body\NIRABodyCommand.cs`
 
@@ -73105,7 +73273,7 @@ public sealed record NIRABodyCommand
 
 ---
 
-## 136. `NIRAAgent\Embodiment\Body\NIRABodyCommandService.cs`
+## 138. `NIRAAgent\Embodiment\Body\NIRABodyCommandService.cs`
 
 **File:** `NIRAAgent\Embodiment\Body\NIRABodyCommandService.cs`
 
@@ -73253,7 +73421,7 @@ public sealed class NIRABodyCommandService
 
 ---
 
-## 137. `NIRAAgent\Embodiment\Body\NIRABodyControllerService.cs`
+## 139. `NIRAAgent\Embodiment\Body\NIRABodyControllerService.cs`
 
 **File:** `NIRAAgent\Embodiment\Body\NIRABodyControllerService.cs`
 
@@ -73485,7 +73653,7 @@ public sealed class NIRABodyControllerService
 
 ---
 
-## 138. `NIRAAgent\Embodiment\Body\NIRABodyPlacementService.cs`
+## 140. `NIRAAgent\Embodiment\Body\NIRABodyPlacementService.cs`
 
 **File:** `NIRAAgent\Embodiment\Body\NIRABodyPlacementService.cs`
 
@@ -73764,7 +73932,7 @@ public sealed class NIRABodyPlacementService
 
 ---
 
-## 139. `NIRAAgent\Embodiment\Body\NIRABodyPlacementStore.cs`
+## 141. `NIRAAgent\Embodiment\Body\NIRABodyPlacementStore.cs`
 
 **File:** `NIRAAgent\Embodiment\Body\NIRABodyPlacementStore.cs`
 
@@ -74031,7 +74199,7 @@ public sealed class NIRABodyPlacementStore
 
 ---
 
-## 140. `NIRAAgent\Embodiment\NIRABlobPresetId.cs`
+## 142. `NIRAAgent\Embodiment\NIRABlobPresetId.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRABlobPresetId.cs`
 
@@ -74057,7 +74225,7 @@ public enum NIRABlobPresetId
 
 ---
 
-## 141. `NIRAAgent\Embodiment\NIRABlobPresetLibrary.cs`
+## 143. `NIRAAgent\Embodiment\NIRABlobPresetLibrary.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRABlobPresetLibrary.cs`
 
@@ -74251,7 +74419,7 @@ public static class NIRABlobPresetLibrary
 
 ---
 
-## 142. `NIRAAgent\Embodiment\NIRABlobStyleCatalog.cs`
+## 144. `NIRAAgent\Embodiment\NIRABlobStyleCatalog.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRABlobStyleCatalog.cs`
 
@@ -74331,7 +74499,7 @@ public static class NIRABlobStyleCatalog
 
 ---
 
-## 143. `NIRAAgent\Embodiment\NIRABlobStyleId.cs`
+## 145. `NIRAAgent\Embodiment\NIRABlobStyleId.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRABlobStyleId.cs`
 
@@ -74355,7 +74523,7 @@ public enum NIRABlobStyleId
 
 ---
 
-## 144. `NIRAAgent\Embodiment\NIRABlobStyleOption.cs`
+## 146. `NIRAAgent\Embodiment\NIRABlobStyleOption.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRABlobStyleOption.cs`
 
@@ -74376,7 +74544,7 @@ public sealed record NIRABlobStyleOption(
 
 ---
 
-## 145. `NIRAAgent\Embodiment\NIRAVisualExpressionIds.cs`
+## 147. `NIRAAgent\Embodiment\NIRAVisualExpressionIds.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRAVisualExpressionIds.cs`
 
@@ -74411,7 +74579,7 @@ public static class NIRAVisualExpressionIds
 
 ---
 
-## 146. `NIRAAgent\Embodiment\NIRAVisualFormIds.cs`
+## 148. `NIRAAgent\Embodiment\NIRAVisualFormIds.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRAVisualFormIds.cs`
 
@@ -74453,7 +74621,7 @@ public static class NIRAVisualFormIds
 
 ---
 
-## 147. `NIRAAgent\Embodiment\NIRAVisualIntent.cs`
+## 149. `NIRAAgent\Embodiment\NIRAVisualIntent.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRAVisualIntent.cs`
 
@@ -74812,7 +74980,7 @@ public sealed record NIRAVisualIntent
 
 ---
 
-## 148. `NIRAAgent\Embodiment\NIRAVisualIntentService.cs`
+## 150. `NIRAAgent\Embodiment\NIRAVisualIntentService.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRAVisualIntentService.cs`
 
@@ -76331,7 +76499,7 @@ public sealed class NIRAVisualIntentService
 
 ---
 
-## 149. `NIRAAgent\Goals\NIRAGoalContracts.cs`
+## 151. `NIRAAgent\Goals\NIRAGoalContracts.cs`
 
 **File:** `NIRAAgent\Goals\NIRAGoalContracts.cs`
 
@@ -76694,7 +76862,7 @@ public sealed record NIRAGoalApplyResult
 
 ---
 
-## 150. `NIRAAgent\Goals\NIRAGoalSchedulerService.cs`
+## 152. `NIRAAgent\Goals\NIRAGoalSchedulerService.cs`
 
 **File:** `NIRAAgent\Goals\NIRAGoalSchedulerService.cs`
 
@@ -76788,7 +76956,7 @@ public sealed class NIRAGoalSchedulerService : BackgroundService
 
 ---
 
-## 151. `NIRAAgent\Goals\NIRAGoalService.cs`
+## 153. `NIRAAgent\Goals\NIRAGoalService.cs`
 
 **File:** `NIRAAgent\Goals\NIRAGoalService.cs`
 
@@ -78072,7 +78240,7 @@ public sealed class NIRAGoalService : IHostedService
 
 ---
 
-## 152. `NIRAAgent\Goals\NIRAGoalStore.cs`
+## 154. `NIRAAgent\Goals\NIRAGoalStore.cs`
 
 **File:** `NIRAAgent\Goals\NIRAGoalStore.cs`
 
@@ -78602,7 +78770,7 @@ public sealed class NIRAGoalStore
 
 ---
 
-## 153. `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIClient.cs`
+## 155. `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIClient.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIClient.cs`
 
@@ -79072,7 +79240,7 @@ public sealed record TradeAIReadResult
 
 ---
 
-## 154. `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIReadCapabilityHandler.cs`
+## 156. `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIReadCapabilityHandler.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIReadCapabilityHandler.cs`
 
@@ -79611,7 +79779,7 @@ public sealed class TradeAIReadCapabilityHandler
 
 ---
 
-## 155. `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeContracts.cs`
+## 157. `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeContracts.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeContracts.cs`
 
@@ -79859,7 +80027,7 @@ public sealed record NIRABridgeErrorResponse
 
 ---
 
-## 156. `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeCredentialStore.cs`
+## 158. `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeCredentialStore.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeCredentialStore.cs`
 
@@ -80258,7 +80426,7 @@ public sealed class NIRABridgeCredentialStore
 
 ---
 
-## 157. `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeOptions.cs`
+## 159. `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeOptions.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeOptions.cs`
 
@@ -80302,7 +80470,7 @@ public static class NIRABridgeOptions
 
 ---
 
-## 158. `NIRAAgent\Integrations\Elvara\Bridge\NIRALocalBridgeService.cs`
+## 160. `NIRAAgent\Integrations\Elvara\Bridge\NIRALocalBridgeService.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\Bridge\NIRALocalBridgeService.cs`
 
@@ -81374,7 +81542,7 @@ public sealed class NIRALocalBridgeService
 
 ---
 
-## 159. `NIRAAgent\Integrations\Elvara\ElvaraAppDescriptor.cs`
+## 161. `NIRAAgent\Integrations\Elvara\ElvaraAppDescriptor.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\ElvaraAppDescriptor.cs`
 
@@ -81450,7 +81618,7 @@ public sealed record ElvaraAppDescriptor
 
 ---
 
-## 160. `NIRAAgent\Integrations\Elvara\ElvaraAppRegistry.cs`
+## 162. `NIRAAgent\Integrations\Elvara\ElvaraAppRegistry.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\ElvaraAppRegistry.cs`
 
@@ -81638,7 +81806,7 @@ public sealed class ElvaraAppRegistry
 
 ---
 
-## 161. `NIRAAgent\Integrations\Elvara\NIRAExternalAppContext.cs`
+## 163. `NIRAAgent\Integrations\Elvara\NIRAExternalAppContext.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\NIRAExternalAppContext.cs`
 
@@ -81704,7 +81872,7 @@ public sealed record NIRAExternalAppContext
 
 ---
 
-## 162. `NIRAAgent\Memory\LongTerm\NIRACognitionMemoryFormatter.cs`
+## 164. `NIRAAgent\Memory\LongTerm\NIRACognitionMemoryFormatter.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRACognitionMemoryFormatter.cs`
 
@@ -82422,7 +82590,7 @@ public static class NIRACognitionMemoryFormatter
 
 ---
 
-## 163. `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryService.cs`
+## 165. `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryService.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryService.cs`
 
@@ -83864,7 +84032,7 @@ public sealed class NIRALongTermMemoryService
 
 ---
 
-## 164. `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryStore.cs`
+## 166. `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryStore.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryStore.cs`
 
@@ -86633,7 +86801,7 @@ internal sealed record NIRAStoredMemory(
 
 ---
 
-## 165. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociation.cs`
+## 167. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociation.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociation.cs`
 
@@ -86707,7 +86875,7 @@ internal sealed record NIRAStoredMemoryAssociationProfile(
 
 ---
 
-## 166. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationProfile.cs`
+## 168. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationProfile.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationProfile.cs`
 
@@ -87122,7 +87290,7 @@ public sealed record NIRAMemoryAssociationProfile
 
 ---
 
-## 167. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationService.cs`
+## 169. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationService.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationService.cs`
 
@@ -87894,7 +88062,7 @@ public sealed class NIRAMemoryAssociationService
 
 ---
 
-## 168. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociativeIndexStore.cs`
+## 170. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociativeIndexStore.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociativeIndexStore.cs`
 
@@ -89561,7 +89729,7 @@ public sealed class NIRAMemoryAssociativeIndexStore
 
 ---
 
-## 169. `NIRAAgent\Memory\LongTerm\NIRAMemoryCandidate.cs`
+## 171. `NIRAAgent\Memory\LongTerm\NIRAMemoryCandidate.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryCandidate.cs`
 
@@ -89741,7 +89909,7 @@ public sealed record NIRAMemoryCandidate
 
 ---
 
-## 170. `NIRAAgent\Memory\LongTerm\NIRAMemoryConfidencePolicy.cs`
+## 172. `NIRAAgent\Memory\LongTerm\NIRAMemoryConfidencePolicy.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryConfidencePolicy.cs`
 
@@ -89953,7 +90121,7 @@ public static class NIRAMemoryConfidencePolicy
 
 ---
 
-## 171. `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidation.cs`
+## 173. `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidation.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidation.cs`
 
@@ -90036,7 +90204,7 @@ public sealed record NIRAMemoryConsolidationResult
 
 ---
 
-## 172. `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidator.cs`
+## 174. `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidator.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidator.cs`
 
@@ -91294,7 +91462,7 @@ public sealed class NIRAMemoryConsolidator
 
 ---
 
-## 173. `NIRAAgent\Memory\LongTerm\NIRAMemoryContextService.cs`
+## 175. `NIRAAgent\Memory\LongTerm\NIRAMemoryContextService.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryContextService.cs`
 
@@ -91507,7 +91675,7 @@ public sealed class NIRAMemoryContextService
 
 ---
 
-## 174. `NIRAAgent\Memory\LongTerm\NIRAMemoryContextSnapshot.cs`
+## 176. `NIRAAgent\Memory\LongTerm\NIRAMemoryContextSnapshot.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryContextSnapshot.cs`
 
@@ -91582,7 +91750,7 @@ public sealed record NIRAMemoryContextSnapshot
 
 ---
 
-## 175. `NIRAAgent\Memory\LongTerm\NIRAMemoryEvidence.cs`
+## 177. `NIRAAgent\Memory\LongTerm\NIRAMemoryEvidence.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryEvidence.cs`
 
@@ -91665,7 +91833,7 @@ public sealed record NIRAMemoryEvidence
 
 ---
 
-## 176. `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationContext.cs`
+## 178. `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationContext.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationContext.cs`
 
@@ -92127,7 +92295,7 @@ public sealed record NIRAMemoryFormationResult
 
 ---
 
-## 177. `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationService.cs`
+## 179. `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationService.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationService.cs`
 
@@ -93102,7 +93270,7 @@ public sealed class NIRAMemoryFormationService
 
 ---
 
-## 178. `NIRAAgent\Memory\LongTerm\NIRAMemoryKind.cs`
+## 180. `NIRAAgent\Memory\LongTerm\NIRAMemoryKind.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryKind.cs`
 
@@ -93182,7 +93350,7 @@ public enum NIRAMemorySourceType
 
 ---
 
-## 179. `NIRAAgent\Memory\LongTerm\NIRAMemoryKnowledgeEntry.cs`
+## 181. `NIRAAgent\Memory\LongTerm\NIRAMemoryKnowledgeEntry.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryKnowledgeEntry.cs`
 
@@ -93214,7 +93382,7 @@ public sealed record NIRAMemoryKnowledgeEntry
 
 ---
 
-## 180. `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceReport.cs`
+## 182. `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceReport.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceReport.cs`
 
@@ -93359,7 +93527,7 @@ public sealed record NIRAMemoryMaintenanceReport
 
 ---
 
-## 181. `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceService.cs`
+## 183. `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceService.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceService.cs`
 
@@ -93968,7 +94136,7 @@ public sealed class NIRAMemoryMaintenanceService
 
 ---
 
-## 182. `NIRAAgent\Memory\LongTerm\NIRAMemoryRecord.cs`
+## 184. `NIRAAgent\Memory\LongTerm\NIRAMemoryRecord.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryRecord.cs`
 
@@ -94284,7 +94452,7 @@ public sealed record NIRAMemoryRecord
 
 ---
 
-## 183. `NIRAAgent\Memory\LongTerm\NIRAMemorySearchRequest.cs`
+## 185. `NIRAAgent\Memory\LongTerm\NIRAMemorySearchRequest.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemorySearchRequest.cs`
 
@@ -94509,7 +94677,7 @@ public sealed record NIRAMemorySearchRequest
 
 ---
 
-## 184. `NIRAAgent\Memory\LongTerm\NIRAMemorySearchResult.cs`
+## 186. `NIRAAgent\Memory\LongTerm\NIRAMemorySearchResult.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemorySearchResult.cs`
 
@@ -94615,7 +94783,7 @@ public sealed record NIRAMemorySearchResult
 
 ---
 
-## 185. `NIRAAgent\Memory\LongTerm\NIRASensitiveMemoryPolicy.cs`
+## 187. `NIRAAgent\Memory\LongTerm\NIRASensitiveMemoryPolicy.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRASensitiveMemoryPolicy.cs`
 
@@ -94785,7 +94953,7 @@ public static class NIRASensitiveMemoryPolicy
 
 ---
 
-## 186. `NIRAAgent\Mind\NIRABackgroundProcessor.cs`
+## 188. `NIRAAgent\Mind\NIRABackgroundProcessor.cs`
 
 **File:** `NIRAAgent\Mind\NIRABackgroundProcessor.cs`
 
@@ -94913,7 +95081,7 @@ public sealed class NIRABackgroundProcessor
 
 ---
 
-## 187. `NIRAAgent\Mind\NIRAExecutive.cs`
+## 189. `NIRAAgent\Mind\NIRAExecutive.cs`
 
 **File:** `NIRAAgent\Mind\NIRAExecutive.cs`
 
@@ -99165,6 +99333,28 @@ public sealed class NIRAExecutive
                     decision.DynamicToolProposals.Count == 0 &&
                     decision.DynamicToolInvocations.Count == 0;
 
+                // Diagnostic-only repeat-guard trace. Never write raw arguments,
+                // paths, tokens or result data into the log. This lets us
+                // distinguish a changed request signature from a guard whose
+                // other conditions were not met, without changing the policy.
+                if (cycle > 1 &&
+                    mindEvent.Source == NIRAMindEventSource.User &&
+                    decision.State == NIRACognitionState.Continue &&
+                    requestedCapabilities.Length > 0 &&
+                    newCapabilityRequests.Length == 0)
+                {
+                    Debug.WriteLine(
+                        $"[Executive] REPEAT GUARD TRACE | Run={runId:D} | " +
+                        $"Cycle={cycle} | Requests={requestedCapabilities.Length} | " +
+                        $"ExactPriorSucceededObserve={exactPreviouslyObservedRead} | " +
+                        $"MadeProgress={madeProgress} | " +
+                        $"MemorySearches={decision.MemorySearches.Count} | " +
+                        $"ConversationSearches={decision.ConversationSearches.Count} | " +
+                        $"OtherWork={decision.GoalProposals.Count + decision.BranchProposals.Count + decision.BranchWorkProposals.Count + decision.DynamicToolProposals.Count + decision.DynamicToolInvocations.Count} | " +
+                        $"NoProgressCycles={noProgressCycles} | " +
+                        $"Saturated={saturatedSingleObservation}");
+                }
+
                 if (saturatedSingleObservation)
                     Debug.WriteLine(
                         $"[Executive] REPEATED OBSERVATION SATURATED | Run={runId:D} | " +
@@ -102947,7 +103137,7 @@ public sealed class NIRAExecutive
 
 ---
 
-## 188. `NIRAAgent\Mind\NIRAMindActivityTracker.cs`
+## 190. `NIRAAgent\Mind\NIRAMindActivityTracker.cs`
 
 **File:** `NIRAAgent\Mind\NIRAMindActivityTracker.cs`
 
@@ -103095,7 +103285,7 @@ public sealed class NIRAMindActivityTracker
 
 ---
 
-## 189. `NIRAAgent\Mind\NIRAMindEvent.cs`
+## 191. `NIRAAgent\Mind\NIRAMindEvent.cs`
 
 **File:** `NIRAAgent\Mind\NIRAMindEvent.cs`
 
@@ -103817,7 +104007,7 @@ public sealed record NIRAMindEvent
 
 ---
 
-## 190. `NIRAAgent\Mind\NIRAMindRuntime.cs`
+## 192. `NIRAAgent\Mind\NIRAMindRuntime.cs`
 
 **File:** `NIRAAgent\Mind\NIRAMindRuntime.cs`
 
@@ -104331,7 +104521,7 @@ public sealed class NIRAMindRuntime
 
 ---
 
-## 191. `NIRAAgent\Mind\NIRAOutputChunk.cs`
+## 193. `NIRAAgent\Mind\NIRAOutputChunk.cs`
 
 **File:** `NIRAAgent\Mind\NIRAOutputChunk.cs`
 
@@ -104412,7 +104602,7 @@ public sealed record NIRAOutputChunk
 
 ---
 
-## 192. `NIRAAgent\Mind\NIRAOutputDispatcher.cs`
+## 194. `NIRAAgent\Mind\NIRAOutputDispatcher.cs`
 
 **File:** `NIRAAgent\Mind\NIRAOutputDispatcher.cs`
 
@@ -104519,7 +104709,7 @@ public sealed class NIRAOutputDispatcher
 
 ---
 
-## 193. `NIRAAgent\NIRAAgent.csproj`
+## 195. `NIRAAgent\NIRAAgent.csproj`
 
 **File:** `NIRAAgent\NIRAAgent.csproj`
 
@@ -104642,7 +104832,7 @@ public sealed class NIRAOutputDispatcher
 
 ---
 
-## 194. `NIRAAgent\PC\Awareness\NIRAPresenceService.cs`
+## 196. `NIRAAgent\PC\Awareness\NIRAPresenceService.cs`
 
 **File:** `NIRAAgent\PC\Awareness\NIRAPresenceService.cs`
 
@@ -105054,7 +105244,7 @@ public sealed class NIRAPresenceService
 
 ---
 
-## 195. `NIRAAgent\PC\Awareness\PcAwarenessService.cs`
+## 197. `NIRAAgent\PC\Awareness\PcAwarenessService.cs`
 
 **File:** `NIRAAgent\PC\Awareness\PcAwarenessService.cs`
 
@@ -105856,7 +106046,7 @@ public sealed class PcAwarenessService
 
 ---
 
-## 196. `NIRAAgent\PC\Awareness\PcContextFormatter.cs`
+## 198. `NIRAAgent\PC\Awareness\PcContextFormatter.cs`
 
 **File:** `NIRAAgent\PC\Awareness\PcContextFormatter.cs`
 
@@ -106058,7 +106248,7 @@ public static class PcContextFormatter
 
 ---
 
-## 197. `NIRAAgent\PC\Awareness\PcWorldState.cs`
+## 199. `NIRAAgent\PC\Awareness\PcWorldState.cs`
 
 **File:** `NIRAAgent\PC\Awareness\PcWorldState.cs`
 
@@ -106635,7 +106825,7 @@ public readonly record struct PcRectangle(
 
 ---
 
-## 198. `NIRAAgent\PC\Awareness\PcWorldStateService.cs`
+## 200. `NIRAAgent\PC\Awareness\PcWorldStateService.cs`
 
 **File:** `NIRAAgent\PC\Awareness\PcWorldStateService.cs`
 
@@ -107075,7 +107265,7 @@ public sealed class PcWorldStateService
 
 ---
 
-## 199. `NIRAAgent\Perception\AttentionManager.cs`
+## 201. `NIRAAgent\Perception\AttentionManager.cs`
 
 **File:** `NIRAAgent\Perception\AttentionManager.cs`
 
@@ -107820,7 +108010,7 @@ public sealed class AttentionManager
 
 ---
 
-## 200. `NIRAAgent\Perception\CompanionTimerService.cs`
+## 202. `NIRAAgent\Perception\CompanionTimerService.cs`
 
 **File:** `NIRAAgent\Perception\CompanionTimerService.cs`
 
@@ -107993,7 +108183,7 @@ public sealed class CompanionTimerService
 
 ---
 
-## 201. `NIRAAgent\Perception\PcMonitorService.cs`
+## 203. `NIRAAgent\Perception\PcMonitorService.cs`
 
 **File:** `NIRAAgent\Perception\PcMonitorService.cs`
 
@@ -108191,7 +108381,7 @@ public sealed class PcMonitorService
 
 ---
 
-## 202. `NIRAAgent\Perception\PerceptionAnalyzer.cs`
+## 204. `NIRAAgent\Perception\PerceptionAnalyzer.cs`
 
 **File:** `NIRAAgent\Perception\PerceptionAnalyzer.cs`
 
@@ -108585,7 +108775,7 @@ public sealed class PerceptionAnalyzer
 
 ---
 
-## 203. `NIRAAgent\Perception\PerceptionEvent.cs`
+## 205. `NIRAAgent\Perception\PerceptionEvent.cs`
 
 **File:** `NIRAAgent\Perception\PerceptionEvent.cs`
 
@@ -108660,7 +108850,7 @@ public sealed class PerceptionEvent
 
 ---
 
-## 204. `NIRAAgent\Piper\Models\en_US-hfc_female-medium.onnx.json`
+## 206. `NIRAAgent\Piper\Models\en_US-hfc_female-medium.onnx.json`
 
 **File:** `NIRAAgent\Piper\Models\en_US-hfc_female-medium.onnx.json`
 
@@ -109177,7 +109367,7 @@ public sealed class PerceptionEvent
 
 ---
 
-## 205. `NIRAAgent\Presentation\NIRADualChannelResponse.cs`
+## 207. `NIRAAgent\Presentation\NIRADualChannelResponse.cs`
 
 **File:** `NIRAAgent\Presentation\NIRADualChannelResponse.cs`
 
@@ -109385,7 +109575,7 @@ public static class NIRAPresentationPolicy
 
 ---
 
-## 206. `NIRAAgent\Presentation\NIRARichBlockJsonReader.cs`
+## 208. `NIRAAgent\Presentation\NIRARichBlockJsonReader.cs`
 
 **File:** `NIRAAgent\Presentation\NIRARichBlockJsonReader.cs`
 
@@ -109799,7 +109989,7 @@ public static class NIRARichBlockJsonReader
 
 ---
 
-## 207. `NIRAAgent\Prompt\cognition.yaml`
+## 209. `NIRAAgent\Prompt\cognition.yaml`
 
 **File:** `NIRAAgent\Prompt\cognition.yaml`
 
@@ -110648,7 +110838,7 @@ first_call_grounding_and_continuity:
 
 ---
 
-## 208. `NIRAAgent\Prompt\cognition_contract.yaml`
+## 210. `NIRAAgent\Prompt\cognition_contract.yaml`
 
 **File:** `NIRAAgent\Prompt\cognition_contract.yaml`
 
@@ -111133,7 +111323,7 @@ one_call_tool_routing:
 
 ---
 
-## 209. `NIRAAgent\Prompt\elvara_tradeai.yaml`
+## 211. `NIRAAgent\Prompt\elvara_tradeai.yaml`
 
 **File:** `NIRAAgent\Prompt\elvara_tradeai.yaml`
 
@@ -111188,7 +111378,7 @@ instructions: |
 
 ---
 
-## 210. `NIRAAgent\Prompt\memory_formation.yaml`
+## 212. `NIRAAgent\Prompt\memory_formation.yaml`
 
 **File:** `NIRAAgent\Prompt\memory_formation.yaml`
 
@@ -111530,7 +111720,7 @@ learned_procedural_skills:
 
 ---
 
-## 211. `NIRAAgent\Prompt\memory_recall.yaml`
+## 213. `NIRAAgent\Prompt\memory_recall.yaml`
 
 **File:** `NIRAAgent\Prompt\memory_recall.yaml`
 
@@ -111593,7 +111783,7 @@ full_mode_search_bound:
 
 ---
 
-## 212. `NIRAAgent\Prompt\nira_personality.yaml`
+## 214. `NIRAAgent\Prompt\nira_personality.yaml`
 
 **File:** `NIRAAgent\Prompt\nira_personality.yaml`
 
@@ -111993,7 +112183,7 @@ truth:
 
 ---
 
-## 213. `NIRAAgent\Prompt\response_realization.yaml`
+## 215. `NIRAAgent\Prompt\response_realization.yaml`
 
 **File:** `NIRAAgent\Prompt\response_realization.yaml`
 
@@ -112105,7 +112295,7 @@ output:
 
 ---
 
-## 214. `NIRAAgent\Self\Model\NIRARuntimeSelfKnowledgeProvider.cs`
+## 216. `NIRAAgent\Self\Model\NIRARuntimeSelfKnowledgeProvider.cs`
 
 **File:** `NIRAAgent\Self\Model\NIRARuntimeSelfKnowledgeProvider.cs`
 
@@ -112401,7 +112591,7 @@ public sealed class NIRARuntimeSelfKnowledgeProvider
 
 ---
 
-## 215. `NIRAAgent\Self\Model\NIRASelfModelContracts.cs`
+## 217. `NIRAAgent\Self\Model\NIRASelfModelContracts.cs`
 
 **File:** `NIRAAgent\Self\Model\NIRASelfModelContracts.cs`
 
@@ -113095,7 +113285,7 @@ public sealed record NIRACommitmentApplyResult
 
 ---
 
-## 216. `NIRAAgent\Self\Model\NIRASelfModelService.cs`
+## 218. `NIRAAgent\Self\Model\NIRASelfModelService.cs`
 
 **File:** `NIRAAgent\Self\Model\NIRASelfModelService.cs`
 
@@ -115058,7 +115248,7 @@ public sealed class NIRASelfModelService
 
 ---
 
-## 217. `NIRAAgent\Self\Model\NIRASelfModelStore.cs`
+## 219. `NIRAAgent\Self\Model\NIRASelfModelStore.cs`
 
 **File:** `NIRAAgent\Self\Model\NIRASelfModelStore.cs`
 
@@ -116829,7 +117019,7 @@ public sealed class NIRASelfModelStore
 
 ---
 
-## 218. `NIRAAgent\Self\Preferences\NIRASelfPreferenceMemorySyncService.cs`
+## 220. `NIRAAgent\Self\Preferences\NIRASelfPreferenceMemorySyncService.cs`
 
 **File:** `NIRAAgent\Self\Preferences\NIRASelfPreferenceMemorySyncService.cs`
 
@@ -117409,7 +117599,7 @@ public enum NIRASelfPreferenceMemorySyncAction
 
 ---
 
-## 219. `NIRAAgent\Self\Preferences\NIRASelfPreferenceService.cs`
+## 221. `NIRAAgent\Self\Preferences\NIRASelfPreferenceService.cs`
 
 **File:** `NIRAAgent\Self\Preferences\NIRASelfPreferenceService.cs`
 
@@ -118592,7 +118782,7 @@ public sealed class NIRASelfPreferenceService
 
 ---
 
-## 220. `NIRAAgent\Self\Preferences\NIRASelfPreferenceState.cs`
+## 222. `NIRAAgent\Self\Preferences\NIRASelfPreferenceState.cs`
 
 **File:** `NIRAAgent\Self\Preferences\NIRASelfPreferenceState.cs`
 
@@ -118993,7 +119183,7 @@ public sealed record NIRASelfPreferenceApplyResult
 
 ---
 
-## 221. `NIRAAgent\Self\Preferences\NIRASelfPreferenceStore.cs`
+## 223. `NIRAAgent\Self\Preferences\NIRASelfPreferenceStore.cs`
 
 **File:** `NIRAAgent\Self\Preferences\NIRASelfPreferenceStore.cs`
 
@@ -120214,7 +120404,7 @@ public sealed class NIRASelfPreferenceStore
 
 ---
 
-## 222. `NIRAAgent\Self\Preferences\NIRATemporaryOpinionState.cs`
+## 224. `NIRAAgent\Self\Preferences\NIRATemporaryOpinionState.cs`
 
 **File:** `NIRAAgent\Self\Preferences\NIRATemporaryOpinionState.cs`
 
@@ -120488,7 +120678,7 @@ public readonly record struct NIRATemporaryOpinionSnapshot(
 
 ---
 
-## 223. `NIRAAgent\Semantic\INIRASemanticEncoder.cs`
+## 225. `NIRAAgent\Semantic\INIRASemanticEncoder.cs`
 
 **File:** `NIRAAgent\Semantic\INIRASemanticEncoder.cs`
 
@@ -120508,7 +120698,7 @@ public interface INIRASemanticEncoder
 
 ---
 
-## 224. `NIRAAgent\Semantic\MiniLmSemanticEncoder.cs`
+## 226. `NIRAAgent\Semantic\MiniLmSemanticEncoder.cs`
 
 **File:** `NIRAAgent\Semantic\MiniLmSemanticEncoder.cs`
 
@@ -121247,7 +121437,7 @@ public sealed class MiniLmSemanticEncoder
 
 ---
 
-## 225. `NIRAAgent\Semantic\Models\all-MiniLM-L6-v2\vocab.txt`
+## 227. `NIRAAgent\Semantic\Models\all-MiniLM-L6-v2\vocab.txt`
 
 **File:** `NIRAAgent\Semantic\Models\all-MiniLM-L6-v2\vocab.txt`
 
@@ -151778,7 +151968,7 @@ necessitated
 
 ---
 
-## 226. `NIRAAgent\Semantic\NIRASemanticMemoryService.cs`
+## 228. `NIRAAgent\Semantic\NIRASemanticMemoryService.cs`
 
 **File:** `NIRAAgent\Semantic\NIRASemanticMemoryService.cs`
 
@@ -152112,7 +152302,7 @@ public sealed class NIRASemanticMemoryService
 
 ---
 
-## 227. `NIRAAgent\Semantic\NIRASemanticObservation.cs`
+## 229. `NIRAAgent\Semantic\NIRASemanticObservation.cs`
 
 **File:** `NIRAAgent\Semantic\NIRASemanticObservation.cs`
 
@@ -152240,7 +152430,7 @@ public sealed record NIRASemanticObservation
 
 ---
 
-## 228. `NIRAAgent\Semantic\NIRASemanticSimilarity.cs`
+## 230. `NIRAAgent\Semantic\NIRASemanticSimilarity.cs`
 
 **File:** `NIRAAgent\Semantic\NIRASemanticSimilarity.cs`
 
@@ -152349,7 +152539,7 @@ public static class NIRASemanticSimilarity
 
 ---
 
-## 229. `NIRAAgent\Semantic\NIRAWordPieceTokenizer.cs`
+## 231. `NIRAAgent\Semantic\NIRAWordPieceTokenizer.cs`
 
 **File:** `NIRAAgent\Semantic\NIRAWordPieceTokenizer.cs`
 
@@ -152852,7 +153042,7 @@ internal readonly record struct NIRATokenizedInput(
 
 ---
 
-## 230. `NIRAAgent\Semantic\SemanticEmbedding.cs`
+## 232. `NIRAAgent\Semantic\SemanticEmbedding.cs`
 
 **File:** `NIRAAgent\Semantic\SemanticEmbedding.cs`
 
@@ -152903,7 +153093,7 @@ public sealed class SemanticEmbedding
 
 ---
 
-## 231. `NIRAAgent\Settings\NIRARuntimeSettingsService.cs`
+## 233. `NIRAAgent\Settings\NIRARuntimeSettingsService.cs`
 
 **File:** `NIRAAgent\Settings\NIRARuntimeSettingsService.cs`
 
@@ -153163,7 +153353,7 @@ public sealed class NIRARuntimeSettingsService
 
 ---
 
-## 232. `NIRAAgent\Skills\NIRALearnedSkillContracts.cs`
+## 234. `NIRAAgent\Skills\NIRALearnedSkillContracts.cs`
 
 **File:** `NIRAAgent\Skills\NIRALearnedSkillContracts.cs`
 
@@ -153494,7 +153684,7 @@ public sealed record NIRALearnedSkillMutationResult
 
 ---
 
-## 233. `NIRAAgent\Skills\NIRALearnedSkillService.cs`
+## 235. `NIRAAgent\Skills\NIRALearnedSkillService.cs`
 
 **File:** `NIRAAgent\Skills\NIRALearnedSkillService.cs`
 
@@ -155062,7 +155252,7 @@ public sealed class NIRALearnedSkillService
 
 ---
 
-## 234. `NIRAAgent\Skills\NIRALearnedSkillStore.cs`
+## 236. `NIRAAgent\Skills\NIRALearnedSkillStore.cs`
 
 **File:** `NIRAAgent\Skills\NIRALearnedSkillStore.cs`
 
@@ -155663,7 +155853,7 @@ public sealed class NIRALearnedSkillStore
 
 ---
 
-## 235. `NIRAAgent\Temporal\NIRATemporalCommitmentReasoner.cs`
+## 237. `NIRAAgent\Temporal\NIRATemporalCommitmentReasoner.cs`
 
 **File:** `NIRAAgent\Temporal\NIRATemporalCommitmentReasoner.cs`
 
@@ -155890,7 +156080,7 @@ public sealed class NIRATemporalCommitmentReasoner
 
 ---
 
-## 236. `NIRAAgent\Temporal\NIRATemporalCommitmentReconciliationService.cs`
+## 238. `NIRAAgent\Temporal\NIRATemporalCommitmentReconciliationService.cs`
 
 **File:** `NIRAAgent\Temporal\NIRATemporalCommitmentReconciliationService.cs`
 
@@ -156071,7 +156261,7 @@ public sealed class NIRATemporalCommitmentReconciliationService
 
 ---
 
-## 237. `NIRAAgent\Temporal\NIRATemporalCommitmentSchedulerService.cs`
+## 239. `NIRAAgent\Temporal\NIRATemporalCommitmentSchedulerService.cs`
 
 **File:** `NIRAAgent\Temporal\NIRATemporalCommitmentSchedulerService.cs`
 
@@ -156266,7 +156456,7 @@ public sealed class NIRATemporalCommitmentSchedulerService
 
 ---
 
-## 238. `NIRAAgent\Temporal\NIRATemporalContracts.cs`
+## 240. `NIRAAgent\Temporal\NIRATemporalContracts.cs`
 
 **File:** `NIRAAgent\Temporal\NIRATemporalContracts.cs`
 
@@ -157573,7 +157763,7 @@ public sealed class NIRATemporalContextService
 
 ---
 
-## 239. `NIRAAgent\Tools\NIRADynamicToolContracts.cs`
+## 241. `NIRAAgent\Tools\NIRADynamicToolContracts.cs`
 
 **File:** `NIRAAgent\Tools\NIRADynamicToolContracts.cs`
 
@@ -158059,7 +158249,7 @@ public sealed record NIRADynamicToolExecutionResult
 
 ---
 
-## 240. `NIRAAgent\Tools\NIRADynamicToolExecutor.cs`
+## 242. `NIRAAgent\Tools\NIRADynamicToolExecutor.cs`
 
 **File:** `NIRAAgent\Tools\NIRADynamicToolExecutor.cs`
 
@@ -158941,7 +159131,7 @@ public sealed class NIRADynamicToolExecutor
 
 ---
 
-## 241. `NIRAAgent\Tools\NIRADynamicToolService.cs`
+## 243. `NIRAAgent\Tools\NIRADynamicToolService.cs`
 
 **File:** `NIRAAgent\Tools\NIRADynamicToolService.cs`
 
@@ -159594,7 +159784,7 @@ public sealed class NIRADynamicToolService
 
 ---
 
-## 242. `NIRAAgent\Tools\NIRADynamicToolStore.cs`
+## 244. `NIRAAgent\Tools\NIRADynamicToolStore.cs`
 
 **File:** `NIRAAgent\Tools\NIRADynamicToolStore.cs`
 
@@ -160884,7 +161074,7 @@ public sealed class NIRADynamicToolStore
 
 ---
 
-## 243. `NIRAAgent\Tools\NIRADynamicToolValidator.cs`
+## 245. `NIRAAgent\Tools\NIRADynamicToolValidator.cs`
 
 **File:** `NIRAAgent\Tools\NIRADynamicToolValidator.cs`
 
@@ -161278,7 +161468,7 @@ public sealed class NIRADynamicToolValidator
 
 ---
 
-## 244. `NIRAAgent\Vision\NIRAVisualEvidenceContracts.cs`
+## 246. `NIRAAgent\Vision\NIRAVisualEvidenceContracts.cs`
 
 **File:** `NIRAAgent\Vision\NIRAVisualEvidenceContracts.cs`
 
@@ -161794,7 +161984,7 @@ public interface INIRAScreenCaptureBackend
 
 ---
 
-## 245. `NIRAAgent\Vision\NIRAVisualEvidenceService.cs`
+## 247. `NIRAAgent\Vision\NIRAVisualEvidenceService.cs`
 
 **File:** `NIRAAgent\Vision\NIRAVisualEvidenceService.cs`
 
@@ -163490,7 +163680,7 @@ public sealed class NIRAVisualEvidenceService
 
 ---
 
-## 246. `NIRAAgent\Vision\NIRAVisualObservationContracts.cs`
+## 248. `NIRAAgent\Vision\NIRAVisualObservationContracts.cs`
 
 **File:** `NIRAAgent\Vision\NIRAVisualObservationContracts.cs`
 
@@ -163577,7 +163767,7 @@ public sealed record NIRAVisualObservation
 
 ---
 
-## 247. `NIRAAgent\Vision\NIRAVisualUnderstandingService.cs`
+## 249. `NIRAAgent\Vision\NIRAVisualUnderstandingService.cs`
 
 **File:** `NIRAAgent\Vision\NIRAVisualUnderstandingService.cs`
 
@@ -164297,7 +164487,7 @@ public sealed class NIRAVisualUnderstandingService
 
 ---
 
-## 248. `NIRAAgent\Voice\AdaptiveVoiceService.cs`
+## 250. `NIRAAgent\Voice\AdaptiveVoiceService.cs`
 
 **File:** `NIRAAgent\Voice\AdaptiveVoiceService.cs`
 
@@ -164412,7 +164602,7 @@ public sealed class AdaptiveVoiceService
 
 ---
 
-## 249. `NIRAAgent\Voice\Groq\GroqOrpheusVoiceService.cs`
+## 251. `NIRAAgent\Voice\Groq\GroqOrpheusVoiceService.cs`
 
 **File:** `NIRAAgent\Voice\Groq\GroqOrpheusVoiceService.cs`
 
@@ -165461,7 +165651,7 @@ public sealed class GroqOrpheusVoiceService
 
 ---
 
-## 250. `NIRAAgent\Voice\Groq\GroqVocalDirectionMapper.cs`
+## 252. `NIRAAgent\Voice\Groq\GroqVocalDirectionMapper.cs`
 
 **File:** `NIRAAgent\Voice\Groq\GroqVocalDirectionMapper.cs`
 
@@ -165737,7 +165927,7 @@ public static class GroqVocalDirectionMapper
 
 ---
 
-## 251. `NIRAAgent\Voice\IVoiceService.cs`
+## 253. `NIRAAgent\Voice\IVoiceService.cs`
 
 **File:** `NIRAAgent\Voice\IVoiceService.cs`
 
@@ -165771,7 +165961,7 @@ public interface IVoiceService
 
 ---
 
-## 252. `NIRAAgent\Voice\NIRAVocalIntent.cs`
+## 254. `NIRAAgent\Voice\NIRAVocalIntent.cs`
 
 **File:** `NIRAAgent\Voice\NIRAVocalIntent.cs`
 
@@ -165858,7 +166048,7 @@ public readonly record struct NIRAVocalIntent(
 
 ---
 
-## 253. `NIRAAgent\Voice\NIRAVoiceExpression.cs`
+## 255. `NIRAAgent\Voice\NIRAVoiceExpression.cs`
 
 **File:** `NIRAAgent\Voice\NIRAVoiceExpression.cs`
 
@@ -165971,7 +166161,7 @@ public readonly record struct NIRAVoiceExpression(
 
 ---
 
-## 254. `NIRAAgent\Voice\NIRAVoiceExpressionService.cs`
+## 256. `NIRAAgent\Voice\NIRAVoiceExpressionService.cs`
 
 **File:** `NIRAAgent\Voice\NIRAVoiceExpressionService.cs`
 
@@ -166279,7 +166469,7 @@ public sealed class NIRAVoiceExpressionService
 
 ---
 
-## 255. `NIRAAgent\Voice\PiperVoiceService.cs`
+## 257. `NIRAAgent\Voice\PiperVoiceService.cs`
 
 **File:** `NIRAAgent\Voice\PiperVoiceService.cs`
 
@@ -166816,7 +167006,7 @@ public sealed class PiperVoiceService
 
 ---
 
-## 256. `NIRAAgent\Voice\PreparedVoiceAudio.cs`
+## 258. `NIRAAgent\Voice\PreparedVoiceAudio.cs`
 
 **File:** `NIRAAgent\Voice\PreparedVoiceAudio.cs`
 
@@ -166983,7 +167173,7 @@ public sealed class PreparedVoiceAudio
 
 ---
 
-## 257. `NIRAAgent\Voice\SpeechChunker.cs`
+## 259. `NIRAAgent\Voice\SpeechChunker.cs`
 
 **File:** `NIRAAgent\Voice\SpeechChunker.cs`
 
@@ -167796,7 +167986,7 @@ public sealed class SpeechChunker
 
 ---
 
-## 258. `NIRAAgent\Voice\SpeechTextSanitizer.cs`
+## 260. `NIRAAgent\Voice\SpeechTextSanitizer.cs`
 
 **File:** `NIRAAgent\Voice\SpeechTextSanitizer.cs`
 
@@ -168052,7 +168242,7 @@ public static partial class SpeechTextSanitizer
 
 ---
 
-## 259. `NIRAAgent\Voice\VoiceAudioPlayer.cs`
+## 261. `NIRAAgent\Voice\VoiceAudioPlayer.cs`
 
 **File:** `NIRAAgent\Voice\VoiceAudioPlayer.cs`
 
@@ -168166,7 +168356,7 @@ public sealed class VoiceAudioPlayer
 
 ---
 
-## 260. `NIRAAgent\Voice\VoiceQueue.cs`
+## 262. `NIRAAgent\Voice\VoiceQueue.cs`
 
 **File:** `NIRAAgent\Voice\VoiceQueue.cs`
 
@@ -169266,7 +169456,7 @@ public sealed class VoiceQueue
 
 ---
 
-## 261. `NIRAAgent\Voice\VoiceUtterance.cs`
+## 263. `NIRAAgent\Voice\VoiceUtterance.cs`
 
 **File:** `NIRAAgent\Voice\VoiceUtterance.cs`
 

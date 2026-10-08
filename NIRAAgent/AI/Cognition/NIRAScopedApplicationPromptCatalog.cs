@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using NIRAAgent.Mind;
@@ -10,6 +11,8 @@ internal static class NIRAScopedApplicationPromptCatalog
 {
     private const int MaximumAppsPerCall = 2;
     private const int MaximumPromptCharacters = 3000;
+    private static readonly ConcurrentDictionary<string, byte> CapacityWarnings =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public static NIRAScopedPromptSelection Select(
         NIRACognitionContext context,
@@ -81,6 +84,16 @@ internal static class NIRAScopedApplicationPromptCatalog
                 {
                     Debug.WriteLine($"[ScopedPrompt] SKIPPED_TOO_LARGE | App={appId} | Chars={content.Length}");
                     continue;
+                }
+
+                // Warn while still valid, so a future product-prompt update
+                // does not unexpectedly cross the fixed runtime budget.
+                if (content.Length > MaximumPromptCharacters * 9 / 10 &&
+                    CapacityWarnings.TryAdd(appId, 0))
+                {
+                    Debug.WriteLine(
+                        $"[ScopedPrompt] NEAR_CAPACITY | App={appId} | " +
+                        $"Chars={content.Length} | Limit={MaximumPromptCharacters}");
                 }
 
                 guidance.AppendLine($"APP={appId} (domain guidance only; not runtime permissions)");

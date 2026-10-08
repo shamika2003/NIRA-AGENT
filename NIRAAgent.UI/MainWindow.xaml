@@ -4,6 +4,7 @@
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         xmlns:local="clr-namespace:NIRAAgent.UI.ViewModels"
         xmlns:ui="clr-namespace:NIRAAgent.UI"
+        xmlns:present="clr-namespace:NIRAAgent.UI.Presentation"
         xmlns:typing="clr-namespace:NIRAAgent.UI.Typing"
         Title="NIRA by ELVARA"
         Icon="Assets/Nira-Icon.ico"
@@ -342,7 +343,7 @@
 
                             <TextBlock x:Name="AssistantContentText"
                                        Grid.Row="0"
-                                       Text="{Binding Content}"
+                                       present:NIRAStyledChatText.Text="{Binding Content}"
                                        Foreground="{DynamicResource NIRATextBrush}"
                                        FontSize="14"
                                        LineHeight="21"
@@ -1910,5 +1911,3 @@
         </Grid>
     </Grid>
 </Window>
-
-

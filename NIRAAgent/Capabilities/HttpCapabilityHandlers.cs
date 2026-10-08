@@ -424,7 +424,7 @@ public sealed class NIRAHttpDownloadCapabilityHandler
                 new[]
                 {
                     Parameter("url", "string", true, "Absolute http/https URL."),
-                    Parameter("destination", "string", true, "Destination file path."),
+                    Parameter("destination", "string", true, "Fully-qualified absolute destination file path. Do not use a relative path or application working directory."),
                     Parameter("overwrite", "boolean", false, "Replace an existing destination. Default false."),
                     Parameter("timeoutSeconds", "integer", false, "Timeout from 1-600 seconds. Default 120."),
                     Parameter("maxBytes", "integer", false, "Maximum download size in bytes. Default 268435456 (256 MiB), maximum 1073741824 (1 GiB).")
@@ -487,12 +487,13 @@ public sealed class NIRAHttpDownloadCapabilityHandler
                     4096));
 
 
+        string requestedDestination = NIRACapabilityArguments.RequireString(
+            request, "destination", 32760);
+        if (!Path.IsPathFullyQualified(requestedDestination))
+            throw new ArgumentException(
+                "destination must be an absolute file path. Relative paths must not resolve inside NIRA's application directory.");
         string destination =
-            NIRACapabilityArguments.NormalizePath(
-                NIRACapabilityArguments.RequireString(
-                    request,
-                    "destination",
-                    32760));
+            NIRACapabilityArguments.NormalizePath(requestedDestination);
 
 
         bool overwrite =
@@ -766,4 +767,3 @@ public sealed class NIRAHttpDownloadCapabilityHandler
         };
     }
 }
-
