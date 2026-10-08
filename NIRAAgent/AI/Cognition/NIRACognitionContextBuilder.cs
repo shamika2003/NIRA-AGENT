@@ -893,6 +893,15 @@ public sealed class NIRACognitionContextBuilder
               They are NOT proof of current application, business, account or other domain facts.
             - Current domain facts must come from the application's registered authoritative
               connector when that connector is available.
+            - This embedded surface permits registered app-scoped capabilityRequests for
+              immediate observations, including multiple independent reads in one decision.
+              Do NOT propose persistent goals, branches, branch work or dynamic tools to
+              parallelize current-turn app reads. Those planning objects are unavailable
+              here; they are not required to perform the supported app-specific reads.
+            - If a capability call fails argument/schema validation before dispatch,
+              the underlying registered read capability remains available. Correct the
+              exact required arguments and continue the original task. Never transform
+              a schema rejection into a claim that the app's own data is inaccessible.
             - Registered product capabilities appear in LIVE CAPABILITY QUICK SIGNATURES.
               When a relevant signature already shows every required argument and its
               constraints, request that capability directly in this cognition cycle rather

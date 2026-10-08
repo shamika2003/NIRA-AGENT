@@ -824,6 +824,18 @@ public sealed class NIRAExecutive
         int capabilitySchemaCorrectionCount =
             0;
 
+        // A rejected model proposal did NOT observe the world. Keep this
+        // run-local obligation until an actual capability result (including
+        // authoritative denial/failure) is returned, or NIRA explicitly
+        // reports a genuine blocker. A model-written Complete is not proof.
+        bool awaitingRejectedCapabilityEvidence = false;
+        int unsupportedCompletionRecoveryCount = 0;
+
+        // A model may propose forbidden persistent planning for an otherwise
+        // allowed embedded app read. Correct the planning route rather than
+        // misreporting the read-only application capability as unavailable.
+        int embeddedPlanningCorrectionCount = 0;
+
         // At most two independent reviews of an action-based user's final
         // answer. A review is a reconsideration signal, never world evidence.
         int taskCompletionReviewCount = 0;
@@ -948,6 +960,17 @@ public sealed class NIRAExecutive
                     cancellationToken);
 
 
+            // Trust actual registered capability results, not textual evidence,
+            // when selecting optional domain prompt guidance for later cycles.
+            context = context with
+            {
+                ObservedCapabilityIds = capabilityResultsBySignature.Values
+                    .Select(result => result.CapabilityId)
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray()
+            };
+
             latestContext =
                 context;
 
@@ -979,8 +1002,97 @@ public sealed class NIRAExecutive
                 RestrictEmbeddedElvaraDecision(
                     mindEvent,
                     decision,
-                    executiveEvidence);
+                    executiveEvidence,
+                    out bool embeddedPlanningNeedsCorrection);
 
+            if (embeddedPlanningNeedsCorrection)
+            {
+                embeddedPlanningCorrectionCount++;
+                if (embeddedPlanningCorrectionCount > 2)
+                {
+                    // Repeated disallowed planning is not evidence that this
+                    // application's read capabilities are unavailable. Stop
+                    // the unsupported plan without claiming an observation.
+                    decision = decision with
+                    {
+                        State = NIRACognitionState.Blocked,
+                        EmitReply = true,
+                        Reply = "I couldn't complete the permitted part of that " +
+                            "request from this app. Global PC operations are " +
+                            "not available in this embedded view.",
+                        Speech = string.Empty,
+                        ReplyReady = true,
+                        CharacterReady = true,
+                        DecisionSummary =
+                            "Embedded planning retries exhausted without an app-scoped read."
+                    };
+                    Debug.WriteLine(
+                        $"[Executive] EMBEDDED PLAN RECOVERY BLOCKED | " +
+                        $"Run={runId:D} | Cycle={cycle}");
+                }
+                else
+                {
+                    Debug.WriteLine(
+                        $"[Executive] EMBEDDED PLAN RECOVERY | " +
+                        $"Run={runId:D} | Cycle={cycle} | " +
+                        $"Attempt={embeddedPlanningCorrectionCount}");
+                }
+            }
+
+            // Completion integrity belongs at the decision boundary, BEFORE
+            // downstream branches can accept a model's unsupported Complete.
+            // Rejected capability requests have not observed the world.
+            if (mindEvent.Source == NIRAMindEventSource.User &&
+                awaitingRejectedCapabilityEvidence &&
+                decision.State == NIRACognitionState.Complete &&
+                decision.CapabilityRequests.Count == 0)
+            {
+                if (unsupportedCompletionRecoveryCount++ == 0)
+                {
+                    expandedSections.Add("capabilities");
+                    executiveEvidence.AppendLine();
+                    executiveEvidence.AppendLine(
+                        "EXECUTIVE OUTSTANDING OBSERVATION CONTRACT: An earlier " +
+                        "capability request failed validation before dispatch. " +
+                        "No corresponding runtime result has been observed. " +
+                        "The original user objective is unfinished. Correct the " +
+                        "registered capability arguments or give an explicit " +
+                        "grounded blocker; do not substitute an unrelated reply, " +
+                        "a promise of future work, or an uncommitted goal/branch.");
+                    decision = decision with
+                    {
+                        State = NIRACognitionState.Continue,
+                        EmitReply = false,
+                        Reply = string.Empty,
+                        Speech = string.Empty,
+                        ReplyReady = false,
+                        CharacterReady = false
+                    };
+                    Debug.WriteLine(
+                        $"[Executive] UNSUPPORTED COMPLETION RECOVERY | " +
+                        $"Run={runId:D} | Cycle={cycle} | " +
+                        "Reason=RejectedCapabilityHadNoExecutionResult");
+                }
+                else
+                {
+                    decision = decision with
+                    {
+                        State = NIRACognitionState.Blocked,
+                        EmitReply = true,
+                        Reply = "I couldn't complete that check. The proposed " +
+                            "data request was rejected before execution, and " +
+                            "I still don't have a verified result.",
+                        Speech = string.Empty,
+                        ReplyReady = true,
+                        CharacterReady = true,
+                        DecisionSummary =
+                            "Executive rejected unsupported completion after capability failure."
+                    };
+                    Debug.WriteLine(
+                        $"[Executive] UNSUPPORTED COMPLETION BLOCKED | " +
+                        $"Run={runId:D} | Cycle={cycle}");
+                }
+            }
 
             bool modelContractCorrectionThisCycle =
                 false;
@@ -999,6 +1111,7 @@ public sealed class NIRAExecutive
                 // decision was invalid. A valid sibling remains usable.
                 if (decision.CapabilityRequests.Count == 0)
                 {
+                    awaitingRejectedCapabilityEvidence = true;
                     if (modelContractCorrectionCount == 0)
                     {
                         modelContractCorrectionCount++;
@@ -1606,7 +1719,7 @@ public sealed class NIRAExecutive
                                 : reviewedDeliverable,
                             primaryReviewEvidence,
                             context.ConversationContext,
-                            _conversation.PendingTask?.Objective ?? string.Empty),
+                            GetPendingTaskForEvent(mindEvent)?.Objective ?? string.Empty),
                         cancellationToken);
                 if (branchReview?.NeedsReconsideration == true)
                 {
@@ -3100,6 +3213,7 @@ public sealed class NIRAExecutive
             if (capabilitySchemaRejectionsThisCycle > 0 &&
                 schemaValidCapabilities.Count == 0)
             {
+                awaitingRejectedCapabilityEvidence = true;
                 if (capabilitySchemaCorrectionCount == 0)
                 {
                     capabilitySchemaCorrectionCount++;
@@ -4167,162 +4281,166 @@ public sealed class NIRAExecutive
                 }
             }
 
-            // A direct user run that used only conclusive observation
-            // capabilities does not need an independent completion-model pass
-            // once cognition has already synthesized a non-empty Complete reply.
-            // This is intentionally narrow: no pending task, no dynamic-tool
-            // evidence, no state-changing capability, no uncertain result, and
-            // every dispatched capability must have succeeded.
-            bool directConclusiveObserveCompletion =
-                mindEvent.Source == NIRAMindEventSource.User &&
-                decision.State == NIRACognitionState.Complete &&
-                decision.EmitReply &&
-                !string.IsNullOrWhiteSpace(decision.Reply) &&
-                _conversation.PendingTask is null &&
-                dynamicToolEvidence.Length == 0 &&
-                capabilityResultsBySignature.Count > 0 &&
-                capabilityResultsBySignature.Values.All(result =>
-                    result.Succeeded &&
-                    result.Risk == NIRACapabilityRisk.Observe &&
-                    !result.ChangedSystemState &&
-                    !result.OutcomeUncertain);
-
-            // A single successful, non-browser atomic capability can itself be
-            // authoritative proof of that primitive outcome. When terminal cognition has
-            // already consumed that result and says the ORIGINAL user objective is Complete,
-            // do not spend another LLM review call merely to re-check the same successful
-            // primitive. Complex/multi-capability/browser/dynamic-tool tasks still retain
-            // independent completion review.
-            NIRACapabilityResult[] conclusiveNonBrowserResults =
-                capabilityResultsBySignature.Values
-                    .Where(result =>
-                        result.Succeeded &&
-                        !result.OutcomeUncertain &&
-                        !result.CapabilityId.StartsWith(
-                            "browser.",
-                            StringComparison.OrdinalIgnoreCase))
-                    .ToArray();
-
-            int conclusiveStateChangingResults =
-                conclusiveNonBrowserResults.Count(result =>
-                    result.ChangedSystemState);
-
-            bool directConclusiveAtomicCapabilityCompletion =
-                mindEvent.Source == NIRAMindEventSource.User &&
-                decision.State == NIRACognitionState.Complete &&
-                decision.EmitReply &&
-                !string.IsNullOrWhiteSpace(decision.Reply) &&
-                _conversation.PendingTask is null &&
-                dynamicToolEvidence.Length == 0 &&
-                capabilityResultsBySignature.Count > 0 &&
-                conclusiveNonBrowserResults.Length == capabilityResultsBySignature.Count &&
-                conclusiveStateChangingResults == 1 &&
-                conclusiveNonBrowserResults
-                    .Where(result => !result.ChangedSystemState)
-                    .All(result => result.Risk == NIRACapabilityRisk.Observe);
-
-            // Check the original user outcome before treating a complex tool-using
-            // run as finished. Successful low-level actions are not automatically proof
-            // of a larger/multi-step objective, but a single conclusive atomic result
-            // above does not need an LLM to verify the runtime's own success receipt.
-            if (mindEvent.Source == NIRAMindEventSource.User &&
-                (decision.State is NIRACognitionState.Complete or NIRACognitionState.NeedUser) &&
-                decision.EmitReply &&
-                taskCompletionReviewCount < 2 &&
-                (decision.State != NIRACognitionState.NeedUser ||
-                 taskCompletionReviewCount == 0) &&
-                !directConclusiveObserveCompletion &&
-                !directConclusiveAtomicCapabilityCompletion &&
-                // Review only when this run actually produced machine/tool
-                // evidence. A stale conversational PendingTask is not enough
-                // to justify another model call, and NeedUser gets at most one
-                // reconsideration before the runtime accepts the real blocker.
-                (capabilityEvidence.Length > 0 ||
-                 dynamicToolEvidence.Length > 0))
+            // CONTRACT-RECOVERY COMPLETION INTEGRITY
+            // A prior schema/model-contract rejection has NOT fulfilled the
+            // current request. Only a real capability result clears that debt.
+            // A failed/denied capability result also counts as evidence of the
+            // attempt; cognition may then explain the actual limitation, never
+            // pretend the requested data was observed.
+            if (awaitingRejectedCapabilityEvidence && capabilityResults.Count > 0)
             {
+                awaitingRejectedCapabilityEvidence = false;
+                Debug.WriteLine(
+                    $"[Executive] CONTRACT RECOVERY OBSERVED | Run={runId:D} | " +
+                    $"Cycle={cycle} | Results={capabilityResults.Count}");
+            }
+
+            // USER-OBJECTIVE DELIVERY GATE (ALL USER SURFACES)
+            // The cognition model can accidentally turn an executable request
+            // into a greeting or unrelated response without even proposing a
+            // capability. No tool-based or embedding-similarity heuristic can
+            // catch every case: zero tool requests is precisely the failure mode.
+            // Judge EVERY model-written terminal USER reply against the ORIGINAL
+            // request before releasing it. The reviewer is a separate model
+            // assessment, not world evidence or an authority to invoke tools.
+            // This policy is domain-agnostic; it has no phrase or app routing.
+            bool userTerminalDraft =
+                mindEvent.Source == NIRAMindEventSource.User &&
+                (decision.State == NIRACognitionState.Complete ||
+                 decision.State == NIRACognitionState.NeedUser) &&
+                decision.EmitReply &&
+                !string.IsNullOrWhiteSpace(decision.Reply);
+
+            // No user-visible model-written terminal reply bypasses this gate,
+            // including replies following a successful state-changing action.
+            if (userTerminalDraft &&
+                !completionReviewConfirmedComplete)
+            {
+                string? originAppId = mindEvent.Metadata.TryGetValue(
+                    "externalAppId", out string? originApp) &&
+                    !string.IsNullOrWhiteSpace(originApp)
+                        ? originApp.Trim().ToLowerInvariant()
+                        : null;
+
+                // The reviewer needs the *trusted surface boundary*, not
+                // hypothetical capabilities suggested by generated text.
+                // This is descriptive only; Executive still prevents access.
+                string surfaceEvidence = originAppId is null
+                    ? "ORIGIN: Main NIRA desktop. Only registered capabilities " +
+                      "subject to runtime authorization can perform operations."
+                    : $"ORIGIN: Embedded ELVARA app '{originAppId}'. " +
+                      $"Only registered elvara.{originAppId}.* capabilities can " +
+                      "execute here. System-wide storage, filesystem, shell, " +
+                      "process and browser capabilities cannot execute here. " +
+                      "Independently available app-scoped subtasks still matter.";
+
                 completionReviewCalls++;
+                Debug.WriteLine(
+                    $"[ObjectiveGate] REVIEW | Run={runId:D} | Cycle={cycle} | " +
+                    $"Surface={(originAppId ?? "desktop")} | " +
+                    $"ObservedCapabilities={capabilityResultsBySignature.Count} | " +
+                    $"PriorObjections={taskCompletionReviewCount}");
+
                 NIRATaskCompletionReview? taskReview =
                     await _taskCompletionReview.ReviewAsync(
                         new NIRATaskCompletionReviewRequest(
                             mindEvent.Content,
-                            decision.Reply ?? string.Empty,
+                            decision.Reply,
                             string.Join(Environment.NewLine + Environment.NewLine,
+                                surfaceEvidence,
                                 executiveEvidence.ToString(),
                                 capabilityEvidence.ToString(),
                                 dynamicToolEvidence.ToString()),
                             latestContext?.ConversationContext ?? string.Empty,
-                            _conversation.PendingTask?.Objective ?? string.Empty),
+                            GetPendingTaskForEvent(mindEvent)?.Objective ?? string.Empty,
+                            originAppId),
                         cancellationToken);
 
                 if (taskReview?.Verdict == "Complete")
                 {
-                    completionReviewConfirmedComplete =
-                        true;
+                    completionReviewConfirmedComplete = true;
+                    Debug.WriteLine(
+                        $"[ObjectiveGate] ACCEPT | Run={runId:D} | Cycle={cycle}");
                 }
-
-                if (taskReview?.NeedsReconsideration == true &&
-                    (decision.State != NIRACognitionState.NeedUser ||
-                     taskReview.Verdict == "NeedsWork"))
+                else if (taskReview is null)
                 {
-                    taskCompletionReviewCount++;
-                    if (taskCompletionReviewCount < 2)
-                    {
-                        executiveEvidence.AppendLine();
-                        executiveEvidence.AppendLine(
-                            "INDEPENDENT COMPLETION REVIEW (a model assessment, " +
-                            "NOT proof of the world and NOT authority to act):");
-                        executiveEvidence.AppendLine(
-                            $"The original user objective is not yet shown complete. " +
-                            $"Gap: {taskReview.Gap}. " +
-                            $"Next required evidence or correction: {taskReview.NextStep}. " +
-                            "Reconsider the ORIGINAL request. Continue with permitted " +
-                            "evidence-gathering where useful, or be explicit about a real blocker. " +
-                            "Do not repeat completed actions or invent results.");
-
-                        bool browserRunHasEvidence =
-                            capabilityResultsBySignature
-                                .Values
-                                .Any(result =>
-                                    result.CapabilityId.StartsWith(
-                                        "browser.",
-                                        StringComparison.OrdinalIgnoreCase));
-
-                        if (browserRunHasEvidence)
-                        {
-                            expandedSections.Add(
-                                "capabilities");
-                            expandedCapabilityIds.Add(
-                                NIRACapabilityIds.BrowserBack);
-                            expandedCapabilityIds.Add(
-                                NIRACapabilityIds.BrowserExplore);
-
-                            executiveEvidence.AppendLine(
-                                "BROWSER OBJECTIVE RECOVERY: a reviewer found the current " +
-                                "browser evidence incomplete, but that is NOT automatically " +
-                                "a user blocker. Prefer the next grounded read-only route. " +
-                                (browserExploreRuns == 0
-                                    ? "If the exact same-origin destination is unknown, browser.explore is available now. "
-                                    : "A bounded browser.explore has already run; use its route trace, browser.back, or a specifically grounded different route before asking the user. ") +
-                                "NeedUser is appropriate only when a genuinely unavailable " +
-                                "human input/approval remains.");
-                        }
-
-                        continue;
-                    }
-
-                    // Bounded failure: never emit the same unverified final
-                    // claim after two independent completion objections.
+                    // A failed reviewer must not silently certify an answer
+                    // that may have abandoned an entire user request.
+                    Debug.WriteLine(
+                        $"[ObjectiveGate] UNAVAILABLE | Run={runId:D} | Cycle={cycle}");
                     decision = decision with
                     {
                         State = NIRACognitionState.Blocked,
                         EmitReply = true,
-                        Reply = "I couldn't verify the full result yet. " +
-                                (string.IsNullOrWhiteSpace(taskReview.Gap)
-                                    ? "The requested outcome is still incomplete."
-                                    : taskReview.Gap),
-                        DecisionSummary =
-                            "Completion review found an unresolved user objective."
+                        Reply = "I couldn't verify my answer to that request just " +
+                                "now, so I won't pretend it's completed. " +
+                                "Please try again.",
+                        Speech = string.Empty,
+                        ReplyReady = true,
+                        CharacterReady = true,
+                        DecisionSummary = "Independent objective check unavailable."
                     };
+                }
+                else
+                {
+                    taskCompletionReviewCount++;
+                    Debug.WriteLine(
+                        $"[ObjectiveGate] REJECT | Run={runId:D} | Cycle={cycle} | " +
+                        $"Verdict={taskReview.Verdict} | " +
+                        $"Objection={taskCompletionReviewCount} | " +
+                        $"Gap={TrimLog(taskReview.Gap)}");
+
+                    if (taskCompletionReviewCount < 3)
+                    {
+                        executiveEvidence.AppendLine();
+                        executiveEvidence.AppendLine(
+                            "INDEPENDENT OBJECTIVE-FIDELITY CORRECTION (model " +
+                            "assessment only; NOT world evidence or action permission):");
+                        executiveEvidence.AppendLine(
+                            "THE PREVIOUS FINAL DRAFT WAS REJECTED. You MUST answer " +
+                            "the ORIGINAL CURRENT USER REQUEST, NOT an earlier " +
+                            "greeting or previous conversation topic.");
+                        executiveEvidence.AppendLine($"OriginalRequest: {mindEvent.Content}");
+                        executiveEvidence.AppendLine($"MissingOrWrong: {taskReview.Gap}");
+                        executiveEvidence.AppendLine($"CorrectionNeeded: {taskReview.NextStep}");
+                        executiveEvidence.AppendLine(surfaceEvidence);
+                        executiveEvidence.AppendLine(
+                            "Preserve verified independent outcomes. If current " +
+                            "data is needed, request a permitted registered " +
+                            "capability; if sufficient evidence is already " +
+                            "available, ANSWER NOW and cover all requested parts. " +
+                            "If a part is unavailable, explain exactly that part " +
+                            "while completing the others. Do not merely greet " +
+                            "or repeat already completed observations.");
+                        if (taskCompletionReviewCount == 1)
+                        {
+                            // Make the registered schema available to a
+                            // correction cycle without guessing tools.
+                            expandedSections.Add("capabilities");
+                        }
+                        Debug.WriteLine(
+                            $"[ObjectiveGate] RETRY | Run={runId:D} | " +
+                            $"NextCycle={cycle + 1} | Objection={taskCompletionReviewCount}");
+                        continue;
+                    }
+
+                    // Bounded, *honest* failure: do not leak machine telemetry
+                    // or issue a greeting after repeated failed draft repair.
+                    string gap = string.IsNullOrWhiteSpace(taskReview.Gap)
+                        ? "The requested outcome is still not verified."
+                        : taskReview.Gap.Trim();
+                    decision = decision with
+                    {
+                        State = NIRACognitionState.Blocked,
+                        EmitReply = true,
+                        Reply = "I couldn't finish that request reliably. " + gap,
+                        Speech = string.Empty,
+                        ReplyReady = true,
+                        CharacterReady = true,
+                        DecisionSummary = "Repeated independent objective review rejected the draft."
+                    };
+                    Debug.WriteLine(
+                        $"[ObjectiveGate] BOUNDED_STOP | Run={runId:D} | Cycle={cycle}");
                 }
             }
 
@@ -4359,43 +4477,8 @@ public sealed class NIRAExecutive
             }
 
 
-            // A conclusive observation-only user run is already grounded by
-            // trusted runtime evidence and one terminal cognition synthesis.
-            // Mark the semantic reply ready so completion review can stay skipped.
-            // Terminal character routing is decided separately from semantic readiness.
-            if (directConclusiveObserveCompletion && !decision.ReplyReady)
-            {
-                decision = decision with
-                {
-                    ReplyReady = true
-                };
-
-                Debug.WriteLine(
-                    $"[Executive] DIRECT OBSERVE FAST PATH | Run={runId:D} | " +
-                    $"Cycle={cycle} | Capabilities={capabilityResultsBySignature.Count} | " +
-                    "CompletionReview=Skipped | SemanticReplyReady=True | " +
-                    "CharacterRouting=Deferred");
-            }
-
-            if (directConclusiveAtomicCapabilityCompletion && !decision.ReplyReady)
-            {
-                decision = decision with
-                {
-                    ReplyReady = true
-                };
-
-                NIRACapabilityResult atomicResult =
-                    conclusiveNonBrowserResults.Single(result =>
-                        result.ChangedSystemState);
-
-                Debug.WriteLine(
-                    $"[Executive] DIRECT ATOMIC CAPABILITY FAST PATH | Run={runId:D} | " +
-                    $"Cycle={cycle} | Capability={atomicResult.CapabilityId} | " +
-                    $"Risk={atomicResult.Risk} | Changed={atomicResult.ChangedSystemState} | " +
-                    $"SupportingObserveResults={conclusiveNonBrowserResults.Length - 1} | " +
-                    "CompletionReview=Skipped | SemanticReplyReady=True | " +
-                    "CharacterRouting=Deferred");
-            }
+            // Observe results are reviewed for reply/objective fidelity above.
+            // Do not label a draft ready just because a read succeeded.
 
             // If reconsideration really requires the user, persist a waiting
             // transition and communicate the precise request instead of
@@ -4464,6 +4547,8 @@ public sealed class NIRAExecutive
             // can be handled by cognition without replaying the old task.
             if (mindEvent.Source == NIRAMindEventSource.User)
             {
+                using IDisposable? pendingScope =
+                    PushConversationScopeForEvent(mindEvent);
                 if (decision.State == NIRACognitionState.NeedUser &&
                     decision.EmitReply)
                     _conversation.RememberUnresolvedTask(
@@ -5965,7 +6050,9 @@ public sealed class NIRAExecutive
                 $"I couldn't complete that because the last action failed. {summary}",
 
             NIRACapabilityResultStatus.Succeeded =>
-                $"The last operation completed, but the requested objective is still not verified. I stopped when no further task work was queued rather than claiming success. Last verified operation: {summary}",
+                "I checked the available data, but I couldn't confirm the exact " +
+                "result you requested. I won't substitute a different target " +
+                "or pretend that the check is complete.",
 
             _ =>
                 $"I couldn't make further progress on that request, so I stopped instead of repeating the same step. {summary}"
@@ -7261,6 +7348,33 @@ public sealed class NIRAExecutive
         return added;
     }
 
+    // Conversation operations after awaits/async-iterator yields must resolve
+    // from the originating, trusted mind event instead of ambient AsyncLocal
+    // alone. Embedded working history stays separate from the desktop archive.
+    private IDisposable? PushConversationScopeForEvent(NIRAMindEvent mindEvent)
+    {
+        if (mindEvent.Source != NIRAMindEventSource.User)
+            return null;
+
+        if (mindEvent.Metadata.TryGetValue("externalAppId", out string? appId) &&
+            !string.IsNullOrWhiteSpace(appId))
+        {
+            return _conversation.PushScope(
+                $"app:{appId.Trim()}", persistToArchive: false);
+        }
+
+        // Set the desktop scope explicitly as well. Even if an asynchronous
+        // continuation arrives with a stale ambient scope, this user reply
+        // belongs to main, not to a previously active embedded product.
+        return _conversation.PushScope("main", persistToArchive: true);
+    }
+
+    private ConversationPendingTask? GetPendingTaskForEvent(NIRAMindEvent mindEvent)
+    {
+        using IDisposable? scope = PushConversationScopeForEvent(mindEvent);
+        return _conversation.PendingTask;
+    }
+
     private async Task<Guid?> RecordResponseAsync(
         NIRAMindEvent mindEvent,
         string response,
@@ -7272,10 +7386,22 @@ public sealed class NIRAExecutive
         if (mindEvent.Source ==
             NIRAMindEventSource.User || persistBackground)
         {
-            archivedId = _conversation.AddAssistantMessage(
-                response, mindEvent.SocialEventId,
-                new NIRAPresentationSnapshot(speech ?? response,
-                    displayBlocks ?? Array.Empty<NIRARichBlock>()));
+            // IMPORTANT: the response is committed after nested async iterator
+            // continuations. Do not assume the initiating surface's AsyncLocal
+            // conversation scope still flows here. Re-establish the trusted
+            // embedded app scope for the write itself, so an Ask NIRA reply
+            // cannot land in the main desktop thread or its durable archive.
+            // The original event metadata was created by NIRAMindRuntime from
+            // the authenticated bridge context, not from the model's reply.
+            IDisposable? responseScope = PushConversationScopeForEvent(mindEvent);
+
+            using (responseScope)
+            {
+                archivedId = _conversation.AddAssistantMessage(
+                    response, mindEvent.SocialEventId,
+                    new NIRAPresentationSnapshot(speech ?? response,
+                        displayBlocks ?? Array.Empty<NIRARichBlock>()));
+            }
         }
 
 
@@ -7500,8 +7626,10 @@ public sealed class NIRAExecutive
     private static NIRACognitionDecision RestrictEmbeddedElvaraDecision(
         NIRAMindEvent mindEvent,
         NIRACognitionDecision decision,
-        StringBuilder executiveEvidence)
+        StringBuilder executiveEvidence,
+        out bool planningNeedsCorrection)
     {
+        planningNeedsCorrection = false;
         if (
             mindEvent.Source !=
                 NIRAMindEventSource.User
@@ -7673,48 +7801,80 @@ public sealed class NIRAExecutive
                 "work, tell the user to use main NIRA.");
 
 
-            bool hasAllowedWork =
-                allowedCapabilityRequests.Length >
-                    0;
+            bool hasAllowedWork = allowedCapabilityRequests.Length > 0;
+            bool hasForbiddenCapability =
+                decision.CapabilityRequests.Count > allowedCapabilityRequests.Length;
+            bool hasForbiddenControl = decision.ControlRequests.Count > 0;
 
-
-            bool hasUserReply =
-                decision.EmitReply
-                &&
-                !string.IsNullOrWhiteSpace(
-                    decision.Reply);
-
-
-            if (
-                !hasAllowedWork
-                &&
-                !hasUserReply
-                &&
-                decision.State ==
-                    NIRACognitionState.Continue)
+            if (!hasAllowedWork && (hasForbiddenCapability || hasForbiddenControl))
             {
-                restricted =
-                    restricted with
-                    {
-                        State =
-                            NIRACognitionState.Complete,
-
-                        EmitReply =
-                            true,
-
-                        Reply =
-                            "That operation isn't available from this embedded ELVARA app surface. " +
-                            "Use main NIRA for system-wide actions.",
-
-                        Speech =
-                            "That operation isn't available here. Use main NIRA for system-wide actions.",
-
-                        ReplyReady =
-                            true,
-
-                        CharacterReady =
-                            false
-                    };
+                // An entire multi-part request must NOT be marked Blocked just
+                // because the first proposal chose a forbidden sub-operation.
+                // Give cognition bounded space to extract and run any permissible
+                // sibling task. The existing embeddedPlanningCorrectionCount
+                // limits this path; no forbidden primitive ever executes.
+                planningNeedsCorrection = true;
+                executiveEvidence.AppendLine(
+                    "EMBEDDED PARTIAL-OBJECTIVE RECOVERY: One proposed operation " +
+                    "is forbidden on this app surface. Check the ORIGINAL user " +
+                    "request for independent app-scoped parts. Run those permitted " +
+                    "reads, then describe both the verified results and exact " +
+                    "unavailable parts. If all parts are forbidden, give one " +
+                    "honest limitation. Never retry global PC operations here.");
+                restricted = restricted with
+                {
+                    State = NIRACognitionState.Continue,
+                    EmitReply = false,
+                    Reply = string.Empty,
+                    Speech = string.Empty,
+                    ReplyReady = false,
+                    CharacterReady = false,
+                    DecisionSummary = "Embedded boundary withheld forbidden work pending partial-task review."
+                };
+            }
+            else if (!hasAllowedWork)
+            {
+                // Goal/branch/dynamic-tool proposals from the model are not
+                // proof the originating app's read-only capabilities are
+                // unavailable. Recover the allowed foreground capability path
+                // instead of converting valid app-data work into a false denial
+                // or claiming a persistent plan was created.
+                planningNeedsCorrection = true;
+                executiveEvidence.AppendLine(
+                    "EMBEDDED FOREGROUND RECOVERY: Persistent goals, branches, " +
+                    "branch work, dynamic tools and off-surface operations were " +
+                    "not committed. The original user request is still pending. " +
+                    "Use the originating application's registered read-only " +
+                    "capabilityRequests directly, batching independent reads " +
+                    "when helpful. Do not claim any blocked work was created.");
+                restricted = restricted with
+                {
+                    State = NIRACognitionState.Continue,
+                    EmitReply = false,
+                    Reply = string.Empty,
+                    Speech = string.Empty,
+                    ReplyReady = false,
+                    CharacterReady = false,
+                    DecisionSummary =
+                        "Embedded persistent-planning proposal suppressed for foreground correction."
+                };
+            }
+            else if (hasAllowedWork &&
+                     (restricted.State == NIRACognitionState.Complete ||
+                      restricted.State == NIRACognitionState.Blocked))
+            {
+                // Registered read(s) are still queued for execution; a
+                // simultaneous forbidden proposal cannot certify completion
+                // or justify falsely denying the allowed application read.
+                restricted = restricted with
+                {
+                    State = NIRACognitionState.Continue,
+                    EmitReply = false,
+                    Reply = string.Empty,
+                    Speech = string.Empty,
+                    ReplyReady = false,
+                    CharacterReady = false
+                };
             }
         }
 

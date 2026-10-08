@@ -201,6 +201,10 @@ public sealed record NIRACognitionContext
         string.Empty;
 
 
+    // Executive-supplied IDs from actual capability results in THIS run.
+    // Never parsed from model-authored text or raw connector output.
+    public IReadOnlyList<string> ObservedCapabilityIds { get; init; } = Array.Empty<string>();
+
     public string CapabilityEvidence
     {
         get;

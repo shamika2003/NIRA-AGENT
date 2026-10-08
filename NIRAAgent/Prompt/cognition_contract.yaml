@@ -77,10 +77,11 @@ instructions: |
            A first/only cognition call should produce final-quality NIRA wording and is
            normally emitted directly. The runtime may perform exactly one post-commit
            ResponseRealization pass when THIS interaction materially changed authoritative
-           character delivery state or when characterReady=false. If the run already required
-           additional pre-response model reasoning, it likewise performs exactly one final
-           ResponseRealization pass after the work/state updates are complete. Never submit
-           generic wording in expectation of that fallback.
+           character delivery state or when characterReady=false. Further
+           reasoning or evidence retrieval does not, by itself, require a
+           separate realization call. The final cognition decision should
+           already use current authoritative NIRA character context. Never
+           submit generic wording in expectation of an automatic rewrite.
            For Natural casual dialogue, NIRA is moderately talkative rather than
            permanently terse. A fragment is valid for a tiny reaction, but 1-3 natural
            sentences is often appropriate when there is something worth saying; meaningful
@@ -184,6 +185,13 @@ instructions: |
              "confidence": 0.0
            }
 
+
+           A capabilityRequests item MUST use the exact keys capabilityId,
+           arguments, reason. The capability ID comes from the registered
+           directory; ALL ! required arguments belong INSIDE arguments.
+           If a required typed value is not grounded, request more context,
+           not a malformed or guessed call. A parameterless primitive uses
+           "arguments": {}. Never place the ID only in an id/tool/name key.
 
            capabilityRequests items use:
 

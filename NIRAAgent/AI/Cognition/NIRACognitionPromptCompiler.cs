@@ -53,10 +53,23 @@ internal static class NIRACognitionPromptCompiler
           calling the message ambiguous. If the previous exchange supplies one coherent
           antecedent/topic, continue that topic. Ask for clarification only when multiple
           materially different interpretations remain after reading the supplied conversation.
+        - Relevant remembered events can naturally color a social opening; a
+          greeting does not require starting from zero. Make references only when
+          the immediate dialogue, authoritative memory or meaningful carryover
+          makes them fit. Do not turn old work into a claim of fresh activity.
+        - Never misclassify a new concrete request as a greeting merely because
+          the previous turn was social. If the user switches to an action or question,
+          drop the greeting mode and handle that actual new request. Conversation
+          history resolves references; it cannot replace the current instruction.
         - Do not greet again, repeat the same offer, mirror the same check-in, or recycle
           the previous assistant stance.
         - Simple casual messages often deserve one natural sentence, a fragment, or a
-          dry reaction. Do not inflate them into assistant prose.
+          dry reaction. Do not inflate them into assistant prose. But a greeting from
+          someone NIRA knows is not an empty protocol handshake: respond as someone
+          with present attention, a lived conversational history and her current mood.
+          An occasional single-word greeting is fine when it genuinely fits; do not
+          reduce repeated social openings to the same generic one-word response.
+          Never force a remembered topic into the reply or manufacture activity.
         - Let current warmth, trust, friction, irritation, affection, playfulness,
           patience, distance and situation shape the wording. High warmth means more
           natural familiarity, not more customer-service reassurance. Irritation does
@@ -733,14 +746,39 @@ internal static class NIRACognitionPromptCompiler
         bool burst = result && context.Event.Metadata.ContainsKey("batchWorkIds");
         string eventText = Limit(context.Event.Content,
             initial ? 12500 : burst ? 23000 : result ? 18000 : 7500, !initial);
-        string catalog = CapabilityIndex(context.CapabilityContext);
-        string detailedCapabilities = expanded.Contains("capabilities")
-            ? CapabilityDetails(context.CapabilityContext, capabilityIds)
-            : string.Empty;
+        // Embedded app scope is supplied by the trusted runtime, not guessed
+        // from message words. Show only the app's registered tool signatures
+        // to avoid irrelevant, forbidden desktop capabilities in cognition.
+        // This is prompt hygiene, NEVER a replacement for runtime enforcement.
+        string? embeddedAppId =
+            NIRAScopedApplicationPromptCatalog.TryGetEmbeddedAppId(
+                context, out string trustedAppId)
+                ? trustedAppId : null;
+        string catalog = CapabilityIndex(context.CapabilityContext, embeddedAppId);
+        // The trusted originating application is known BEFORE the first
+        // inference. Show its full registered, filtered argument schema once
+        // on entry so a read does not require a speculative malformed call
+        // followed by another paid schema-expansion cycle. Normal desktop
+        // chat continues using its general quick signatures.
+        bool showEmbeddedEntrySchema = embeddedAppId != null && context.Cycle == 1;
+        string detailedCapabilities =
+            expanded.Contains("capabilities") || showEmbeddedEntrySchema
+                ? CapabilityDetails(context.CapabilityContext, capabilityIds, embeddedAppId)
+                : string.Empty;
         StringBuilder b = new(7000);
         b.AppendLine($"RUN={context.RunId:D} CYCLE={context.Cycle} MODE={(initial ? "User request" : "Continuation")}");
         b.AppendLine($"EVENT SOURCE={context.Event.Source}; NAME={context.Event.Name}; TOPIC={context.Event.TopicKey}");
         Add(b, "CURRENT INPUT / FRESH WORK RESULT", eventText);
+        Add(b, "CURRENT-REQUEST FIDELITY (ALL SURFACES)",
+            "The current user instruction is the task, not the previous user request " +
+            "or the last successful observation. Answer THAT task. Context resolves " +
+            "references; it must not replace a new explicit target, application, " +
+            "operation or requested outcome. If a current observation returns a " +
+            "different entity/symbol/target from the requested one, do NOT silently " +
+            "substitute the previous or selected target. Confirm the intended target " +
+            "from trusted evidence, seek a permitted read if useful, or state that " +
+            "the requested target could not be verified. Never pass off old live data " +
+            "as a fresh result. A rejected tool call is not an observation.");
         Add(b, "AUTHORITATIVE LOCAL CLOCK", Limit(context.TemporalContext, 800));
         // Always present, regardless of whether cognition finishes in one or
         // several cycles. Cognition must already reason and draft as NIRA. A terminal
@@ -767,6 +805,34 @@ internal static class NIRACognitionPromptCompiler
         Add(b, "UNRESOLVED USER CLARIFICATION", Limit(context.TaskContinuityContext, 850));
         // Compact runtime-generated signatures include parameter names/types so
         // straightforward primitives can be requested on cycle 1 without a schema-only call.
+        // A model can know the right primitive but place its ID and arguments
+        // in the wrong JSON fields. Always show the canonical output envelope,
+        // derived from the registered contract (not app-specific heuristics).
+        Add(b, "CANONICAL CAPABILITY REQUEST JSON SHAPE",
+            "capabilityRequests is an ARRAY; one item is " +
+            "{\"capabilityId\":\"EXACT_REGISTERED_ID\",\"arguments\":{\"requiredName\":\"typed_grounded_value\"},\"reason\":\"why needed\"}. " +
+            "Replace placeholders with actual values. Copy EVERY ! required " +
+            "parameter from the registered signature into arguments, with its " +
+            "EXACT key and correct JSON value type. A parameterless primitive " +
+            "must have arguments:{}; do not use id/tool/name in place of " +
+            "capabilityId. If required values are unknown, request the exact " +
+            "schema/context rather than inventing them.");
+        if (embeddedAppId != null)
+        {
+            Add(b, "TRUSTED EMBEDDED APP SCOPE",
+                $"App={embeddedAppId}. Only registered, authorized primitives under " +
+                $"elvara.{embeddedAppId}.* can execute from this embedded user surface. " +
+                "Desktop filesystem, process, browser, shell and other global PC " +
+                "operations cannot execute here. If the current task requires " +
+                "an unavailable operation, say which operation is out of scope; " +
+                "do not ask for extra parameters/paths for a forbidden primitive, " +
+                "invent an alternate tool or replace the request with a previous task. " +
+                "Main desktop NIRA has a broader catalog, NOT guaranteed access to " +
+                "unregistered product writes such as trade orders or risk updates. " +
+                "Do not direct a user to main NIRA for an action unless its " +
+                "registered capability and authority can actually support it. " +
+                "Ordinary conversation needs no tool; answer naturally.");
+        }
         Add(b, "LIVE CAPABILITY QUICK SIGNATURES (! required, ? optional; CALL DIRECTLY WHEN GROUNDED)", catalog);
         Add(b, "OPTIONAL CONTEXT SECTIONS", "memory, conversation, self, character, goals, branches, work, pc, capabilities, tools, artifacts, evidence. Request by contextRequests; use exact capabilityIds for a subset of registered primitives.");
 
@@ -778,7 +844,8 @@ internal static class NIRACognitionPromptCompiler
         if (expanded.Contains("work")) Add(b, "ASSIGNED WORK", Limit(context.BranchWorkContext, 3400, true));
         if (expanded.Contains("pc")) Add(b, "PC WORLD (PARTIAL)", Limit(context.PcContext, 3300));
         if (expanded.Contains("memory")) Add(b, $"MEMORY MAP ({context.MemoryContextMode}; active={context.ActiveLongTermMemoryCount}; partial)", Limit(context.LongTermMemoryContext, 4800));
-        if (expanded.Contains("capabilities")) Add(b, "REQUESTED LIVE CAPABILITY SIGNATURES / AUTHORIZATION", detailedCapabilities);
+        if (expanded.Contains("capabilities") || showEmbeddedEntrySchema)
+            Add(b, "TRUSTED APP ENTRY CAPABILITY SCHEMAS / AUTHORIZATION", detailedCapabilities);
         if (expanded.Contains("tools")) Add(b, "DYNAMIC TOOLS / SKILLS", Limit(context.DynamicToolContext, 4200, true));
         if (expanded.Contains("artifacts")) Add(b, "ARTIFACTS", Limit(context.VisualArtifactContext, 2600));
         // New evidence and failure data stay even when no section was requested.
@@ -795,7 +862,41 @@ internal static class NIRACognitionPromptCompiler
         // clipping nine candidate records to a 3.3K newest-tail fragment hid
         // much of the very material cognition had just requested.
         Add(b, "REQUESTED MEMORY / CONVERSATION SEARCH RESULTS", LatestRecords(context.MemorySearchEvidence, expanded.Contains("evidence") ? 15500 : 11000));
-        b.AppendLine("Omitted context is NOT evidence of absence. Resolve short follow-ups against IMMEDIATE CONVERSATION CONTINUITY before calling them ambiguous. Bounded archive/memory search hits are candidates, not proof that no record exists. PERSISTED SOCIAL CARRYOVER is historical evidence only: it may explain mood/relationship continuity and conversational references, but it is not fresh proof of mutable local-machine state. The CHARACTER DELIVERY ENVELOPE is mandatory for a terminal Natural reply. Do not invent page refs, facts, or authority. If a quick capability signature is sufficient for grounded work, request it directly; otherwise request only the missing context.");
+        b.AppendLine("Omitted context is NOT evidence of absence. Resolve short follow-ups against IMMEDIATE CONVERSATION CONTINUITY before calling them ambiguous. Bounded archive/memory search hits are candidates, not proof that no record exists. PERSISTED SOCIAL CARRYOVER is historical evidence only: it may explain mood/relationship continuity and conversational references, but it is not fresh proof of mutable local-machine state. The CHARACTER DELIVERY ENVELOPE is mandatory for a terminal Natural reply. Do not invent page refs, facts, or authority. If a quick capability signature is sufficient for grounded work, request it directly; otherwise request only the missing context. IMPORTANT: a rejected/malformed capability proposal is NOT an observation. If the Executive reports an outstanding observation contract, do not finish the original check without a real runtime result or an explicit, grounded limitation. Preserve the original objective through repair cycles. FINAL FIDELITY CHECK: answer the CURRENT request and exact current target, never an unrelated earlier request or a different returned symbol. Do not promise unavailable controls or redirect to another NIRA surface for product operations not actually registered there.");
+        // Last-mile task anchor is deliberately AFTER large context and evidence.
+        // Model must preserve the original request across tool/reasoning cycles;
+        // provenance and partial completion are required, not just JSON validity.
+        if (context.Event.Source == NIRAMindEventSource.User)
+        {
+            Add(b, "ORIGINAL CURRENT REQUEST — FINAL OUTPUT OBLIGATION", eventText);
+            Add(b, "MULTI-OBJECTIVE COMPLETION RULE",
+                "Identify every independent action/question in the current request. " +
+                "For each, use a permitted registered capability when evidence is needed; " +
+                "keep successful results even if a sibling operation is denied or fails. " +
+                "A blocked subtask does not cancel another permitted subtask. " +
+                "The final reply must communicate the result/status of EACH requested " +
+                "part separately, not only the last tool, prior topic or greeting. " +
+                "If a requested target was not observed in returned data, say the " +
+                "target was not verified; never substitute a default entity. " +
+                "A capability receipt shows execution, not completion of every objective. " +
+                "Do not request already-satisfied observations again. " +
+                "Give an honest partial answer when one part is unavailable. " +
+                "For a true greeting, respond as the actual NIRA character with " +
+                "natural variation rather than mechanically repeating a bare acknowledgement. " +
+                "If the current user asks for ANY action, factual detail or comparison, " +
+                "a greeting-only draft is INVALID regardless of earlier conversation. " +
+                "The runtime will independently review that proposed terminal draft " +
+                "against the original current request.");
+        }
+        else
+        {
+            Add(b, "CURRENT WORK RESULT — RESUME ITS TRUSTED ORIGINAL OWNER", eventText);
+            Add(b, "INTERNAL TASK COMPLETION",
+                "The current event is new evidence for an owned task, not a new user " +
+                "instruction. Continue the original goal/branch objective from the " +
+                "authoritative owner; preserve verified sibling results and never " +
+                "mistake a successful primitive for completion of the broader task.");
+        }
         string prompt = b.ToString();
         Debug.WriteLine($"[ContextCompiler] Run={context.RunId:D} | Cycle={context.Cycle} | UserChars={prompt.Length} | First={initial}");
         Debug.WriteLine($"[ContextBudget] Run={context.RunId:D} | Cycle={context.Cycle} | EventRaw={context.Event.Content.Length} | EventSent={eventText.Length} | CapabilitiesRaw={context.CapabilityContext.Length} | DirectoryChars={catalog.Length} | CapabilitiesSent={detailedCapabilities.Length} | Sections={string.Join(",", expanded.OrderBy(x => x, StringComparer.Ordinal))} | TotalUserChars={prompt.Length}");
@@ -1043,7 +1144,7 @@ internal static class NIRACognitionPromptCompiler
     }
 
 
-    private static string CapabilityIndex(string? raw)
+    private static string CapabilityIndex(string? raw, string? embeddedAppId)
     {
         if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
 
@@ -1071,6 +1172,12 @@ internal static class NIRACognitionPromptCompiler
                 continue;
 
             string id = descriptorLine.Substring(2, riskMarker - 2).Trim();
+            if (embeddedAppId != null &&
+                !id.StartsWith($"elvara.{embeddedAppId}.",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
             string risk = descriptorLine.Substring(
                 riskMarker + " | defaultRisk=".Length,
                 descriptionMarker - (riskMarker + " | defaultRisk=".Length)).Trim();
@@ -1078,6 +1185,7 @@ internal static class NIRACognitionPromptCompiler
 
             List<string> parameters = new();
             List<string> requiredHints = new();
+            List<string> requiredNames = new();
             int cursor = index + 1;
             while (cursor < lines.Length &&
                    lines[cursor].StartsWith("  - ", StringComparison.Ordinal))
@@ -1111,6 +1219,7 @@ internal static class NIRACognitionPromptCompiler
                         StringComparison.OrdinalIgnoreCase);
 
                     parameters.Add($"{name}:{type}{(required ? "!" : "?")}");
+                    if (required) requiredNames.Add(name);
 
                     // Required parameter descriptions often carry enum/range/
                     // shape constraints needed for a correct first-cycle call.
@@ -1151,6 +1260,18 @@ internal static class NIRACognitionPromptCompiler
                 b.Append(string.Join(",", parameters));
             }
 
+            if (requiredNames.Count > 0)
+            {
+                b.Append(" | REQUIRED_ARGUMENT_KEYS=")
+                    .Append(string.Join(",", requiredNames));
+                // Use the exact current registered parameter names as a compact
+                // structural guide. This is a template, NOT a filled-in request;
+                // values must still be grounded and runtime-validated.
+                b.Append(" | requiredArguments={")
+                    .Append(string.Join(",", requiredNames.Select(name =>
+                        "\"" + name + "\":<value>")))
+                    .Append('}');
+            }
             if (requiredHints.Count > 0)
             {
                 b.Append(" | requiredHints=")
@@ -1190,7 +1311,8 @@ internal static class NIRACognitionPromptCompiler
             : compact[..maximumCharacters];
     }
 
-    private static string CapabilityDetails(string? raw, IReadOnlySet<string> ids)
+    private static string CapabilityDetails(
+        string? raw, IReadOnlySet<string> ids, string? embeddedAppId)
     {
         if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
         // Group exact, runtime-registered descriptors and their parameter lines.
@@ -1206,7 +1328,10 @@ internal static class NIRACognitionPromptCompiler
             {
                 int stop = trimmed.IndexOf(" | defaultRisk=", StringComparison.Ordinal);
                 string id = trimmed.Substring(2, stop - 2);
-                selected = any || ids.Contains(id);
+                selected = (any || ids.Contains(id)) &&
+                    (embeddedAppId == null ||
+                     id.StartsWith($"elvara.{embeddedAppId}.",
+                         StringComparison.OrdinalIgnoreCase));
             }
             if (selected && (trimmed.StartsWith("- ", StringComparison.Ordinal) ||
                 line.StartsWith("  - ", StringComparison.Ordinal))) b.AppendLine(line.TrimEnd());

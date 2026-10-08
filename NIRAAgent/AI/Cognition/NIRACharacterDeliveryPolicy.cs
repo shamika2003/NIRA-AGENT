@@ -136,9 +136,19 @@ internal static class NIRACharacterDeliveryPolicy
         NIRAAttitudeService attitudeService =
             new();
 
+        // Situation mode/intensity were proposed during cognition. Compare
+        // derived attitude using the SAME committed situation on both sides;
+        // otherwise Casual<->FocusedWork artificially raises restraint even
+        // with no consequential mood/relationship change. Real committed
+        // emotional/relational shifts still trigger the usual checks above.
+        NIRACharacterSnapshot comparableBefore = before with
+        {
+            Situation = after.Situation
+        };
+
         NIRAAttitudeState beforeAttitude =
             attitudeService.Evaluate(
-                before,
+                comparableBefore,
                 interaction);
 
         NIRAAttitudeState afterAttitude =

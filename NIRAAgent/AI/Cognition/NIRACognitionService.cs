@@ -184,7 +184,15 @@ public sealed class NIRACognitionService
         // contract. No giant action schema just to read a requested memory.
         // If the model requests capability/tool/work context, the next call
         // automatically uses the complete action contract.
-        bool informationOnly = !legacy &&
+        // A malformed model proposal requires a contract-aware repair pass,
+        // not the smaller information-only prompt. Inspect only trusted
+        // Executive evidence (never external tool or user text).
+        bool needsCapabilityContractRepair =
+            context.ExecutiveEvidence.Contains(
+                "EXECUTIVE CAPABILITY SCHEMA PREFLIGHT", StringComparison.Ordinal) ||
+            context.ExecutiveEvidence.Contains(
+                "Malformed capability request rejected before dispatch", StringComparison.Ordinal);
+        bool informationOnly = !legacy && !needsCapabilityContractRepair &&
             context.Event.Source == NIRAAgent.Mind.NIRAMindEventSource.User &&
             string.IsNullOrWhiteSpace(context.OwnedTaskContext) &&
             string.IsNullOrWhiteSpace(context.CapabilityEvidence) &&
@@ -218,6 +226,20 @@ public sealed class NIRACognitionService
         string userPrompt = legacy
             ? BuildUserPrompt(context)
             : NIRACognitionPromptCompiler.User(context, expandedSections, expandedCapabilityIds);
+
+        // App guidance remains active throughout a trusted embedded run;
+        // desktop turns load it only for registered, selected/observed app
+        // capabilities. This changes no permission or Bridge registration.
+        NIRAScopedPromptSelection scoped =
+            NIRAScopedApplicationPromptCatalog.Select(context, expandedCapabilityIds);
+        if (!string.IsNullOrWhiteSpace(scoped.Guidance))
+        {
+            systemPrompt += "\n\nSCOPED ELVARA APPLICATION GUIDANCE " +
+                "(supplemental; NIRA general rules and trusted runtime win):\n" +
+                scoped.Guidance;
+            Debug.WriteLine($"[ScopedPrompt] INCLUDED | Run={context.RunId:D} | " +
+                $"Cycle={context.Cycle} | Apps={scoped.AppIds} | Chars={scoped.Guidance.Length}");
+        }
 
         Debug.WriteLine($"[CognitionPrompt] Run={context.RunId:D} | Cycle={context.Cycle} | " +
             $"Mode={(legacy ? "Legacy" : evidenceSynthesisOnly ? "EvidenceSynthesis" : bootstrap ? "Bootstrap" : informationOnly ? "Information" : "Focused")} | SystemChars={systemPrompt.Length} | " +

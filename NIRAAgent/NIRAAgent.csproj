@@ -52,6 +52,11 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
 
+    <!-- Optional Bridge-owned ELVARA domain prompts. NIRA owns the generic loader. -->
+    <None Update="Prompt\elvara_*.yaml">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+
     <None Update="Prompt\cognition.yaml">
       <CopyToOutputDirectory>
         PreserveNewest
