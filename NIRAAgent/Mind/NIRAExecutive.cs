@@ -3480,7 +3480,9 @@ public sealed class NIRAExecutive
                     signature,
                     out NIRACapabilityResult? previousResult);
 
-
+                // Repeated execution is suppressed by the signature set above.
+                // Saturation is evaluated later against the *recorded result*,
+                // not whether this duplicate was logged on an earlier cycle.
                 AppendRepeatedCapabilityRequestEvidence(
                     capabilityEvidence,
                     request,
@@ -4212,9 +4214,45 @@ public sealed class NIRAExecutive
                 }
 
 
+                // Evaluate the exact registered, normalized request signature
+                // directly against the completed result ledger. The earlier
+                // repeat guard only counted duplicates the *first* time they
+                // were logged, and required the whole result ledger to contain
+                // exactly one entry. Those unrelated conditions let a repeated
+                // successful Observe read consume additional cognition cycles.
+                // Never infer equivalence merely from a capability ID: different
+                // arguments (e.g., different targets) are independent requests.
+                NIRACapabilityResult? exactPreviousObservation = null;
+                bool exactPreviouslyObservedRead =
+                    requestedCapabilities.Length == 1 &&
+                    capabilityResultsBySignature.TryGetValue(
+                        requestedCapabilities[0].BuildSignature(),
+                        out exactPreviousObservation) &&
+                    exactPreviousObservation.Succeeded &&
+                    exactPreviousObservation.Risk == NIRACapabilityRisk.Observe;
+
+                bool saturatedSingleObservation =
+                    mindEvent.Source == NIRAMindEventSource.User &&
+                    decision.State == NIRACognitionState.Continue &&
+                    exactPreviouslyObservedRead &&
+                    newCapabilityRequests.Length == 0 &&
+                    !madeProgress &&
+                    decision.MemorySearches.Count == 0 &&
+                    decision.ConversationSearches.Count == 0 &&
+                    decision.GoalProposals.Count == 0 &&
+                    decision.BranchProposals.Count == 0 &&
+                    decision.BranchWorkProposals.Count == 0 &&
+                    decision.DynamicToolProposals.Count == 0 &&
+                    decision.DynamicToolInvocations.Count == 0;
+
+                if (saturatedSingleObservation)
+                    Debug.WriteLine(
+                        $"[Executive] REPEATED OBSERVATION SATURATED | Run={runId:D} | " +
+                        $"Cycle={cycle} | NewDispatch=0 | ExactSignature=True | " +
+                        $"Risk={exactPreviousObservation!.Risk}");
+
                 bool forceTerminal =
-                    noProgressCycles >=
-                    2;
+                    noProgressCycles >= 2 || saturatedSingleObservation;
 
 
                 if (forceTerminal &&
@@ -4367,7 +4405,14 @@ public sealed class NIRAExecutive
                                 dynamicToolEvidence.ToString()),
                             latestContext?.ConversationContext ?? string.Empty,
                             GetPendingTaskForEvent(mindEvent)?.Objective ?? string.Empty,
-                            originAppId),
+                            originAppId,
+                            string.Join(Environment.NewLine + Environment.NewLine,
+                                "SCOPED RECENT CONVERSATION (historical, not a new action):",
+                                latestContext?.ConversationPulseContext ?? string.Empty,
+                                "DURABLE MEMORY AVAILABLE TO COGNITION (historical, not live verification):",
+                                latestContext?.LongTermMemoryContext ?? string.Empty,
+                                "PERSISTED SOCIAL CARRYOVER (context, not proof of a new check):",
+                                latestContext?.SocialCarryoverContext ?? string.Empty)),
                         cancellationToken);
 
                 if (taskReview?.Verdict == "Complete")
@@ -4418,19 +4463,34 @@ public sealed class NIRAExecutive
                         executiveEvidence.AppendLine($"MissingOrWrong: {taskReview.Gap}");
                         executiveEvidence.AppendLine($"CorrectionNeeded: {taskReview.NextStep}");
                         executiveEvidence.AppendLine(surfaceEvidence);
+                        bool retrospectiveCorrection =
+                            string.Equals(taskReview.TemporalMode, "Retrospective",
+                                StringComparison.OrdinalIgnoreCase);
                         executiveEvidence.AppendLine(
-                            "Preserve verified independent outcomes. If current " +
-                            "data is needed, request a permitted registered " +
-                            "capability; if sufficient evidence is already " +
-                            "available, ANSWER NOW and cover all requested parts. " +
-                            "If a part is unavailable, explain exactly that part " +
-                            "while completing the others. Do not merely greet " +
-                            "or repeat already completed observations.");
+                            retrospectiveCorrection
+                                ? "RETROSPECTIVE CORRECTION: The user asked about PAST " +
+                                  "events, not for fresh measurements. Use only the " +
+                                  "actual scoped conversation, grounded social history, " +
+                                  "and durable memory. Drop unsupported numbers/details, " +
+                                  "and say " +
+                                  "what cannot be remembered precisely. Do NOT request " +
+                                  "new live capabilities just to manufacture evidence " +
+                                  "for a past observation. Never present current readings " +
+                                  "as if they were historical records."
+                                : "Preserve verified independent outcomes. If current " +
+                                  "data is needed, request a permitted registered " +
+                                  "capability; if sufficient evidence is already " +
+                                  "available, ANSWER NOW and cover all requested parts. " +
+                                  "If a part is unavailable, explain exactly that part " +
+                                  "while completing the others. Do not merely greet " +
+                                  "or repeat already completed observations.");
                         if (taskCompletionReviewCount == 1)
                         {
-                            // Make the registered schema available to a
-                            // correction cycle without guessing tools.
-                            expandedSections.Add("capabilities");
+                            // Expand the relevant evidence family instead of
+                            // presenting live capabilities as a remedy for an
+                            // unsupported *historical* claim.
+                            expandedSections.Add(retrospectiveCorrection
+                                ? "conversation" : "capabilities");
                         }
                         Debug.WriteLine(
                             $"[ObjectiveGate] RETRY | Run={runId:D} | " +
@@ -4438,16 +4498,19 @@ public sealed class NIRAExecutive
                         continue;
                     }
 
-                    // Bounded, *honest* failure: do not leak machine telemetry
-                    // or issue a greeting after repeated failed draft repair.
-                    string gap = string.IsNullOrWhiteSpace(taskReview.Gap)
-                        ? "The requested outcome is still not verified."
-                        : taskReview.Gap.Trim();
+                    // A reviewer objection is machine diagnostic text, not a
+                    // user-facing response. Avoid leaking its model-written gap.
                     decision = decision with
                     {
                         State = NIRACognitionState.Blocked,
                         EmitReply = true,
-                        Reply = "I couldn't finish that request reliably. " + gap,
+                        Reply = string.Equals(taskReview.TemporalMode,
+                            "Retrospective", StringComparison.OrdinalIgnoreCase)
+                            ? "I can recall parts of our earlier conversation, but " +
+                              "I can't verify the specific details from the history " +
+                              "available in this thread, so I won't invent them."
+                            : "I couldn't verify enough of that answer to give " +
+                              "you a reliable result just now.",
                         Speech = string.Empty,
                         ReplyReady = true,
                         CharacterReady = true,
@@ -6084,7 +6147,13 @@ public sealed class NIRAExecutive
 
 
         evidence.AppendLine(
-            "Use the previous authoritative result instead of repeating the same request. If more work is needed, choose a materially different capability request, request genuinely missing user input, or finish with the real blocker.");
+            "Use the previous authoritative result instead of repeating the same request. " +
+            "If the result omitted the exact requested target, say no matching " +
+            "record was verified in THAT source; do not invent a fallback target " +
+            "or demand the identical read again. If different authoritative " +
+            "evidence is genuinely needed, choose a different grounded source; " +
+            "otherwise finish with a clear, truthful limitation. Do not infer " +
+            "that a missing match proves global nonexistence.");
     }
 
 
@@ -6120,9 +6189,10 @@ public sealed class NIRAExecutive
                 $"I couldn't complete that because the last action failed. {summary}",
 
             NIRACapabilityResultStatus.Succeeded =>
-                "I checked the available data, but I couldn't confirm the exact " +
-                "result you requested. I won't substitute a different target " +
-                "or pretend that the check is complete.",
+                "I checked the available source, but it did not verify the " +
+                "specific result you requested. I can't confirm it from the " +
+                "returned data, and repeating that unchanged lookup would " +
+                "not add evidence.",
 
             _ =>
                 $"I couldn't make further progress on that request, so I stopped instead of repeating the same step. {summary}"

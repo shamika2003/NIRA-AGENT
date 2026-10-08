@@ -27,7 +27,7 @@ public sealed class NIRASystemStorageListCapabilityHandler
                 NIRACapabilityIds.SystemStorageList,
 
             Description =
-                "Observe current ready local storage volumes and return total, used, free and available capacity plus free percentage. Read-only; no shell or PowerShell is used. No arguments.",
+                "Observe ready local storage volumes. Table size fields are exact BYTES (TotalBytes, UsedBytes, FreeBytes, AvailableBytes); FreePercent is FreeBytes/TotalBytes*100. For user-facing sizes, label decimal GB (bytes/1,000,000,000) versus binary GiB (bytes/1,073,741,824) correctly. Read-only; no arguments.",
 
             DefaultRisk =
                 NIRACapabilityRisk.Observe,
@@ -56,8 +56,11 @@ public sealed class NIRASystemStorageListCapabilityHandler
         StringBuilder output =
             new();
 
+        // Preserve the original eight fields in order for existing consumers.
+        // Additional precomputed displays stop the model from silently treating
+        // bytes / 2^30 as decimal GB. All fields are read-only measurements.
         output.AppendLine(
-            "Drive\tType\tFormat\tTotalBytes\tUsedBytes\tFreeBytes\tAvailableBytes\tFreePercent");
+            "Drive\tType\tFormat\tTotalBytes\tUsedBytes\tFreeBytes\tAvailableBytes\tFreePercent\tFreeGB\tFreeGiB");
 
         int observed =
             0;
@@ -140,8 +143,18 @@ public sealed class NIRASystemStorageListCapabilityHandler
                     .Append('\t')
                     .Append(available.ToString(CultureInfo.InvariantCulture))
                     .Append('\t')
-                    .AppendLine(
+                    .Append(
                         freePercent.ToString(
+                            "F2",
+                            CultureInfo.InvariantCulture))
+                    .Append('\t')
+                    .Append(
+                        (free / 1_000_000_000.0).ToString(
+                            "F2",
+                            CultureInfo.InvariantCulture))
+                    .Append('\t')
+                    .AppendLine(
+                        (free / 1_073_741_824.0).ToString(
                             "F2",
                             CultureInfo.InvariantCulture));
 
@@ -185,7 +198,11 @@ public sealed class NIRASystemStorageListCapabilityHandler
             new NIRACapabilityHandlerResult
             {
                 Summary =
-                    $"Observed {observed} ready local storage volume(s). Skipped={skipped}. Capacity values are current DriveInfo observations.",
+                    $"Observed {observed} ready local storage volume(s). Skipped={skipped}. " +
+                    "Raw capacity fields are exact bytes. FreeGB and FreeGiB are precomputed " +
+                    "from the SAME FreeBytes observation using decimal and binary divisors. " +
+                    "FreePercent=FreeBytes/TotalBytes*100. Use FreeGB with GB or FreeGiB " +
+                    "with GiB; do not mix these figures or units.",
 
                 Output =
                     output.ToString().TrimEnd(),

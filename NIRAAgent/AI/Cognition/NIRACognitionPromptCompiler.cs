@@ -144,6 +144,22 @@ internal static class NIRACognitionPromptCompiler
         the separate grounded desktop/window capture primitive; browser.* scope does not
         limit it. Never claim an action happened without successful runtime evidence.
 
+        OBSERVED DATA / NEGATIVE RESULTS: A registered read returning no match for
+        the exact requested target is useful evidence of missing/unsupported data
+        IN THAT SOURCE, not proof that a different default target answered the
+        question. State that limitation naturally. If the same observation has
+        already returned and no newer source/change exists, do not keep calling
+        the identical capability with identical arguments. Finish with the exact
+        verified results and any remaining uncertainty instead of looping.
+        NUMERIC PRESENTATION: storage capabilities return exact bytes and a free
+        percentage. Use either decimal GB (bytes / 1,000,000,000) or binary GiB
+        (bytes / 1,073,741,824), accurately labeled and consistent in one answer.
+        Recalled older measurements must be described as historical, not live.
+        CURRENT STATUS: live connectivity, recent telemetry, process activity and
+        configuration switches are distinct; never equate one with proof of all.
+        AUTHORITATIVE CAPABILITIES: never promise an unregistered operation just
+        because a different NIRA UI has a larger tool catalog.
+
         MUTABLE LOCAL-STATE EVIDENCE LAW: recent conversation and persisted social carryover
         can resolve what the user is referring to, but they are NOT proof of current mutable
         machine facts such as free disk space, installed/resolved executable paths, running
@@ -880,7 +896,11 @@ internal static class NIRACognitionPromptCompiler
                 "The final reply must communicate the result/status of EACH requested " +
                 "part separately, not only the last tool, prior topic or greeting. " +
                 "If a requested target was not observed in returned data, say the " +
-                "target was not verified; never substitute a default entity. " +
+                "target was not verified in that source; never substitute a default entity. " +
+                "If a filtered source returns no matching records, that can support an " +
+                "honest no-result answer; never repeat the same unchanged read just " +
+                "to force a record to appear. Differentiate historical recall from a " +
+                "new measurement and retain exact GB/GiB unit labels. " +
                 "A capability receipt shows execution, not completion of every objective. " +
                 "Do not request already-satisfied observations again. " +
                 "Give an honest partial answer when one part is unavailable. " +
