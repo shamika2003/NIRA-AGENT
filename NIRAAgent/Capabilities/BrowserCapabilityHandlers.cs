@@ -225,8 +225,15 @@ internal static class NIRABrowserCapabilityFormatting
         if (!string.IsNullOrWhiteSpace(inspection.CanonicalUrl))
             text.AppendLine($"CanonicalUrl={CleanUrl(inspection.CanonicalUrl, 2000)}");
         text.AppendLine($"Title={Clean(inspection.Title, 500)}");
-        if (inspection.Headings.Count > 0)
-            text.AppendLine($"DOMHeadings=[{string.Join("; ", inspection.Headings.Select(h => Clean(h, 380)))}]");
+        // This count is the result of the current DOM scan, not a guess about
+        // the website. An empty heading array must remain visible evidence:
+        // omitting the field makes cognition/review confuse "none found" with
+        // "never inspected", causing redundant inspections and invented h1s.
+        text.AppendLine($"DOMHeadingCount={inspection.Headings.Count}");
+        text.AppendLine(inspection.Headings.Count > 0
+            ? $"DOMHeadings=[{string.Join("; ", inspection.Headings.Select(h => Clean(h, 380)))}]"
+            : "DOMHeadings=[]");
+        text.AppendLine("DOMHeadingScope=Semantic h1/h2/h3 and role=heading elements visible to the DOM scanner on this exact inspected document; page title is separate and does not establish a main heading.");
         if (!string.IsNullOrWhiteSpace(inspection.SiteName))
             text.AppendLine($"SiteName={Clean(inspection.SiteName, 300)}");
         if (!string.IsNullOrWhiteSpace(inspection.Language))

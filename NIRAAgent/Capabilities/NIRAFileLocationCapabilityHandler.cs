@@ -27,7 +27,7 @@ public sealed class NIRAFileLocationCapabilityHandler : INIRACapabilityHandler
                 "For installed-application identity/location by human application name, prefer application.resolve; " +
                 "do not guess conventional installation roots and use this as a substitute for Windows application discovery. " +
                 "Use a grounded absolute root when one is known. If no root is supplied, the " +
-                "handler can search all ready fixed local drives so an explicit whole-PC exact-name locate " +
+                "handler first searches Windows-resolved user known folders (such as the current redirected Desktop), then ready fixed local drives, so an explicit whole-PC exact-name locate " +
                 "request does not require the user to invent a base directory. File matches include " +
                 "basic metadata (size and last-write time) so a location/size request does not need " +
                 "a second filesystem.metadata call. It never accesses file contents.",
@@ -83,11 +83,7 @@ public sealed class NIRAFileLocationCapabilityHandler : INIRACapabilityHandler
         string[] roots;
         if (string.IsNullOrWhiteSpace(requestedRoot))
         {
-            roots = DriveInfo.GetDrives()
-                .Where(drive => drive.IsReady && drive.DriveType == DriveType.Fixed)
-                .Select(drive => drive.RootDirectory.FullName)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray();
+            roots = ResolveWholePcSearchRoots();
 
             if (roots.Length == 0)
                 throw new InvalidOperationException(
@@ -256,6 +252,43 @@ public sealed class NIRAFileLocationCapabilityHandler : INIRACapabilityHandler
                 output.ToString().TrimEnd(),
             ChangedSystemState = false
         });
+    }
+
+    // Windows Known Folder resolution respects OneDrive/enterprise redirection.
+    // Do not substitute C:\Users\Default, Public, or a guessed user name.
+    // These are read-only search roots; the explicit absolute-root contract
+    // remains unchanged.
+    internal static string[] ResolveWholePcSearchRoots()
+    {
+        List<string> roots = new();
+        void AddDirectory(string? candidate)
+        {
+            if (string.IsNullOrWhiteSpace(candidate) ||
+                !Path.IsPathFullyQualified(candidate) ||
+                !Directory.Exists(candidate)) return;
+            string resolved = Path.GetFullPath(candidate);
+            if (!roots.Contains(resolved, StringComparer.OrdinalIgnoreCase))
+                roots.Add(resolved);
+        }
+
+        AddDirectory(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory));
+        // Some Windows setups redirect the user's Desktop through OneDrive.
+        // The environment exposes the provider's actual configured root.
+        foreach (string variable in new[] { "OneDrive", "OneDriveConsumer", "OneDriveCommercial" })
+        {
+            string? providerRoot = Environment.GetEnvironmentVariable(variable);
+            if (!string.IsNullOrWhiteSpace(providerRoot))
+                AddDirectory(Path.Combine(providerRoot, "Desktop"));
+        }
+        AddDirectory(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Desktop"));
+
+        foreach (DriveInfo drive in DriveInfo.GetDrives())
+        {
+            if (drive.IsReady && drive.DriveType == DriveType.Fixed)
+                AddDirectory(drive.RootDirectory.FullName);
+        }
+        return roots.ToArray();
     }
 
     private static NIRACapabilityParameterDescriptor Parameter(

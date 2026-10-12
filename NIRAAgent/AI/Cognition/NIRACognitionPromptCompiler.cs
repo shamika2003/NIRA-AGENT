@@ -601,6 +601,13 @@ internal static class NIRACognitionPromptCompiler
             navigate back to an already-inspected URL to obtain the same facts.
             If the destination evidence answers the user, finish NOW. Re-read
             a page only after a real document change or specific missing detail.
+            Browser DOMHeadingCount=0 with DOMHeadings=[] is a completed negative
+            semantic-heading observation for THAT inspected document, not a missing
+            browser.inspect call. If asked for a heading, distinguish it from the
+            observed page Title: say no semantic main heading was found in that
+            document rather than copying the title into an invented H1. Do not
+            re-inspect unchanged content to search for the same absent heading.
+            When a heading IS present, use its actual grounded DOM text.
             An implicit inspect/navigate uses this task's active tab, not a
             random browser tab; use browser.current ONCE only when selecting a
             different tab or explicitly claiming a restored page. Never ask a

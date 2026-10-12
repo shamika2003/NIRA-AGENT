@@ -1048,7 +1048,8 @@ public sealed class NIRABrowserService : IAsyncDisposable
                 $"[BrowserFlow] INSPECT | Session={_sessionId:D} | Page={id:D} | " +
                 $"Inspection={inspection.InspectionId:D} | Elements={elements.Count} | " +
                 $"Forms={forms.Count} | PasswordField={inspection.PasswordControlObserved} | " +
-                $"TextChars={bodyText.Length} | TextSource={inspection.TextSource} | " +
+                $"TextChars={bodyText.Length} | Headings={headings.Count} | " +
+                $"TextSource={inspection.TextSource} | " +
                 $"Url='{NavigationUrlForCognition(page.Url)}'");
 
             return inspection;
@@ -4481,10 +4482,28 @@ public sealed class NIRABrowserService : IAsyncDisposable
           const article = document.querySelector('article');
           const main = document.querySelector('main, [role="main"]');
           const articleText = clean(article?.innerText || '', maxTextCharacters);
-          const headings = Array.from(document.querySelectorAll('h1,h2,h3'))
-            .filter(visible)
+          // Headings are document-structure evidence, not interactive targets.
+          // Some legitimate pages report zero-sized layout boxes during a
+          // responsive or transient render, so the interactive visibility
+          // test must not silently discard their DOM heading evidence.
+          const headings = Array.from(document.querySelectorAll('h1,h2,h3,[role="heading"]'))
+            .filter(el => {
+              // Never count headings hidden by an ancestor or CSS, even if
+              // their text is still present in the raw DOM.
+              for (let current = el; current instanceof Element; current = current.parentElement) {
+                if (current.hasAttribute('hidden') || current.getAttribute('aria-hidden') === 'true') return false;
+                const style = getComputedStyle(current);
+                if (style.visibility === 'hidden' || style.display === 'none') return false;
+              }
+              return true;
+            })
             .slice(0, 12)
-            .map(el => el.tagName.toUpperCase() + ': ' + clean(el.innerText || el.textContent || '', 340))
+            .map(el => {
+              const level = /^H[1-3]$/.test(el.tagName) ? el.tagName :
+                'H' + (el.getAttribute('aria-level') || '?');
+              const content = clean(el.innerText || el.textContent || '', 340);
+              return content ? level + ': ' + content : '';
+            })
             .filter(value => value.length > 5);
           const mainText = clean(main?.innerText || '', maxTextCharacters);
           const bodyText = clean(document.body?.innerText || '', maxTextCharacters);

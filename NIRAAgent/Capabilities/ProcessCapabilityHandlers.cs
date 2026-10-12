@@ -31,7 +31,7 @@ public sealed class NIRAProcessListCapabilityHandler
                 new[]
                 {
                     Parameter("name", "string", false, "Optional process-name substring filter."),
-                    Parameter("sortBy", "string", false, "Name, Pid, WorkingSet, or PrivateMemory. Memory sorts largest first; Name/Pid sort ascending. Default Name."),
+                    Parameter("sortBy", "string", false, "Name, Pid, WorkingSet (aliases: Memory, MemoryUsage, WorkingSetMemory, Working Set), or PrivateMemory. Memory sorts largest first; Name/Pid sort ascending. Default Name."),
                     Parameter("maxResults", "integer", false, "Maximum returned processes after filtering/sorting. Default 100, maximum 500.")
                 }
         };
@@ -70,6 +70,18 @@ public sealed class NIRAProcessListCapabilityHandler
                 100,
                 1,
                 500);
+
+        // The model may describe the same read-only sort with a direction or
+        // separator. Canonicalize the sort value at the handler boundary;
+        // do not invent new process operations or use a user-phrase router.
+        sortBy = sortBy.Trim();
+        string sortToken = new string(sortBy.Where(char.IsLetterOrDigit).ToArray());
+        if (sortToken.StartsWith("WorkingSet", StringComparison.OrdinalIgnoreCase) ||
+            sortToken.StartsWith("Memory", StringComparison.OrdinalIgnoreCase) ||
+            sortToken.Equals("Ram", StringComparison.OrdinalIgnoreCase))
+            sortBy = "WorkingSet";
+        else if (sortToken.StartsWith("PrivateMemory", StringComparison.OrdinalIgnoreCase))
+            sortBy = "PrivateMemory";
 
         if (sortBy.Equals("Name", StringComparison.OrdinalIgnoreCase))
             sortBy = "Name";

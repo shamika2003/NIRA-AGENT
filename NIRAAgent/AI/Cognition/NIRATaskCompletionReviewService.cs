@@ -106,6 +106,16 @@ public sealed class NIRATaskCompletionReviewService
             product operations become available just by switching to main NIRA.
             The user-facing reply must correctly distinguish executed observations,
             unavailable operations, and unverifiable facts.
+            BROWSER STRUCTURE FIDELITY: DOMHeadingCount and DOMHeadings from a
+            CURRENT_PAGE_INSPECTION are runtime-extracted observations of the
+            inspected document. If the count is zero, the agent may accurately
+            report the observed page title and that no semantic DOM heading was
+            found in that document. That truthful negative finding can Complete
+            a request for the title and main heading; do not demand an invented
+            H1 or the same unchanged inspection again. A page Title alone never
+            proves a matching H1 exists. If actual heading text was observed,
+            judge the draft against that text. Never extrapolate the absence
+            beyond the exact inspected page or ignore evidence of page change.
             An exact requested target missing from an authoritative filtered
             result can be reported as not found/not verified IN THAT RESULT;
             this is an honest terminal answer, not an obligation to rerun the

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Reflection;
 using NIRAAgent.Capabilities;
+using NIRAAgent.Browser;
 using NIRAAgent.Embodiment;
 using NIRAAgent.Presentation;
 
@@ -103,6 +104,57 @@ Check("Markdown from screen is never spoken as markup", () =>
 {
     Equal("Storage C: 21.25 GB free.", NIRAPresentationPolicy.PlainSpeechFallback(
         "## Storage\n- **C:** `21.25 GB` free."));
+});
+
+Check("Process memory sort accepts semantically equivalent aliases", () =>
+{
+    var handler = new NIRAProcessListCapabilityHandler();
+    NIRACapabilityRequest request = Request("process.list", """{"sortBy":"Memory","maxResults":3}""");
+    NIRACapabilityHandlerResult result = handler.ExecuteAsync(request).GetAwaiter().GetResult();
+    if (!result.Summary.Contains("SortBy=WorkingSet", StringComparison.Ordinal) ||
+        !result.Output.Contains("WorkingSetMiB", StringComparison.Ordinal))
+        throw new Exception("Memory alias not resolved to working-set sort");
+    var descending = Request("process.list", """{"sortBy":"memory_desc","maxResults":3}""");
+    if (!handler.ExecuteAsync(descending).GetAwaiter().GetResult().Summary.Contains(
+            "SortBy=WorkingSet", StringComparison.Ordinal))
+        throw new Exception("Descending memory alias not normalized");
+});
+
+Check("Desktop discovery uses current Windows known folder before drives", () =>
+{
+    Type handler = typeof(NIRAFileLocationCapabilityHandler);
+    var method = handler.GetMethod("ResolveWholePcSearchRoots", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new Exception("Known-folder root resolver missing");
+    string[] roots = (string[])method.Invoke(null, null)!;
+    string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+    if (!string.IsNullOrWhiteSpace(desktop) && Directory.Exists(desktop) &&
+        (roots.Length == 0 || !string.Equals(Path.GetFullPath(desktop), roots[0], StringComparison.OrdinalIgnoreCase)))
+        throw new Exception("Windows Desktop was not first in the search roots");
+});
+
+Check("Browser heading evidence distinguishes observed absence from present H1", () =>
+{
+    Type formatter = typeof(NIRABrowserInspection).Assembly.GetType(
+        "NIRAAgent.Capabilities.NIRABrowserCapabilityFormatting", throwOnError: true)!;
+    MethodInfo method = formatter.GetMethod("Inspection", BindingFlags.Static | BindingFlags.Public)
+        ?? throw new Exception("Browser inspection formatter unavailable");
+
+    string absent = (string)method.Invoke(null, new object[]
+    {
+        new NIRABrowserInspection { Title = "Observed page title", Headings = Array.Empty<string>() }
+    })!;
+    if (!absent.Contains("DOMHeadingCount=0", StringComparison.Ordinal) ||
+        !absent.Contains("DOMHeadings=[]", StringComparison.Ordinal) ||
+        !absent.Contains("Title=Observed page title", StringComparison.Ordinal))
+        throw new Exception("Missing explicit negative heading observation");
+
+    string present = (string)method.Invoke(null, new object[]
+    {
+        new NIRABrowserInspection { Title = "Different title", Headings = new[] { "H1: Real heading" } }
+    })!;
+    if (!present.Contains("DOMHeadingCount=1", StringComparison.Ordinal) ||
+        !present.Contains("DOMHeadings=[H1: Real heading]", StringComparison.Ordinal))
+        throw new Exception("Grounded heading observation was lost");
 });
 
 Console.WriteLine($"REGRESSION CHECKS: {passed} passed, {failed} failed");

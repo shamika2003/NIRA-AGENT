@@ -829,6 +829,8 @@ public sealed class NIRAExecutive
         // authoritative denial/failure) is returned, or NIRA explicitly
         // reports a genuine blocker. A model-written Complete is not proof.
         bool awaitingRejectedCapabilityEvidence = false;
+        HashSet<string> rejectedCapabilityIds =
+            new(StringComparer.OrdinalIgnoreCase);
         int unsupportedCompletionRecoveryCount = 0;
 
         // A model may propose forbidden persistent planning for an otherwise
@@ -1085,6 +1087,7 @@ public sealed class NIRAExecutive
                         Speech = string.Empty,
                         ReplyReady = true,
                         CharacterReady = true,
+                        DisplayBlocks = Array.Empty<NIRARichBlock>(),
                         DecisionSummary =
                             "Executive rejected unsupported completion after capability failure."
                     };
@@ -3162,6 +3165,8 @@ public sealed class NIRAExecutive
                         candidate.CapabilityId?.Trim() ?? string.Empty,
                         schemaError
                     ));
+                if (!string.IsNullOrWhiteSpace(candidate.CapabilityId))
+                    rejectedCapabilityIds.Add(candidate.CapabilityId.Trim());
             }
 
             int capabilitySchemaRejectionsThisCycle =
@@ -3245,6 +3250,7 @@ public sealed class NIRAExecutive
                         Speech = string.Empty,
                         ReplyReady = true,
                         CharacterReady = false,
+                        DisplayBlocks = Array.Empty<NIRARichBlock>(),
                         CapabilityRequests = Array.Empty<NIRACapabilityRequest>(),
                         DecisionSummary =
                             "Repeated capability-schema failure was stopped before dispatch."
@@ -3498,6 +3504,24 @@ public sealed class NIRAExecutive
                 await _capabilities.ExecuteAsync(
                     newCapabilityRequests,
                     cancellationToken);
+
+            // Observe repair of the actual rejected capability ID, not a
+            // previous unrelated successful observation from this run.
+            if (awaitingRejectedCapabilityEvidence &&
+                capabilityResults.Where((result, index) =>
+                    index < newCapabilityRequests.Length &&
+                    (rejectedCapabilityIds.Count == 0 ||
+                     rejectedCapabilityIds.Contains(newCapabilityRequests[index].CapabilityId)))
+                    .Any())
+            {
+                // Runtime success, denial, or failure establishes what really
+                // happened. A rejected ID needs a matching executed primitive;
+                // a missing-ID model object needs a fresh observed request.
+                awaitingRejectedCapabilityEvidence = false;
+                rejectedCapabilityIds.Clear();
+                Debug.WriteLine($"[Executive] CONTRACT RECOVERY OBSERVED | " +
+                    $"Run={runId:D} | Cycle={cycle} | Source=CorrectedCapabilityResult");
+            }
 
             // Ground the interactive tab in THIS exact user turn. If NIRA
             // later chooses real parallel ownership, the page can be adopted.
@@ -4347,13 +4371,6 @@ public sealed class NIRAExecutive
             // A failed/denied capability result also counts as evidence of the
             // attempt; cognition may then explain the actual limitation, never
             // pretend the requested data was observed.
-            if (awaitingRejectedCapabilityEvidence && capabilityResults.Count > 0)
-            {
-                awaitingRejectedCapabilityEvidence = false;
-                Debug.WriteLine(
-                    $"[Executive] CONTRACT RECOVERY OBSERVED | Run={runId:D} | " +
-                    $"Cycle={cycle} | Results={capabilityResults.Count}");
-            }
 
             // USER-OBJECTIVE DELIVERY GATE (ALL USER SURFACES)
             // The cognition model can accidentally turn an executable request
