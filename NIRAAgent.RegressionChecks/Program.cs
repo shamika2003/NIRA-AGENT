@@ -4,6 +4,7 @@ using NIRAAgent.Capabilities;
 using NIRAAgent.Browser;
 using NIRAAgent.Embodiment;
 using NIRAAgent.Presentation;
+using NIRAAgent.AI.Ollama;
 
 // Run with: dotnet run --project NIRAAgent.RegressionChecks
 // These are offline contract checks, not simulated live model/Bridge tests.
@@ -155,6 +156,43 @@ Check("Browser heading evidence distinguishes observed absence from present H1",
     if (!present.Contains("DOMHeadingCount=1", StringComparison.Ordinal) ||
         !present.Contains("DOMHeadings=[H1: Real heading]", StringComparison.Ordinal))
         throw new Exception("Grounded heading observation was lost");
+});
+
+Check("NIRA's primary and deep models have distinct default roles", () =>
+{
+    Equal("gemma4:31b-cloud", NIRAModelSelection.PrimaryDefault);
+    Equal("nemotron-3-ultra:cloud", NIRAModelSelection.DeepDefault);
+});
+
+Check("Normal one-call cognition needs no deep delegation", () =>
+{
+    bool delegated = NIRAModelSelection.TryReadDelegation(
+        """{"state":"Complete","emitReply":true,"reply":"Hello.","deepReasoningRequest":null}""",
+        out string focus);
+    if (delegated || focus.Length != 0)
+        throw new Exception("Ordinary cognition incorrectly requested an extra model call");
+});
+
+Check("Structured deep request is recognized without extra classifier", () =>
+{
+    bool delegated = NIRAModelSelection.TryReadDelegation(
+        """{"state":"Continue","emitReply":false,"deepReasoningRequest":{"focus":"Analyze conflicting build evidence"}}""",
+        out string focus);
+    if (!delegated || focus != "Analyze conflicting build evidence")
+        throw new Exception("Grounded deep request not recognized");
+});
+
+Check("Malformed or unbounded deep requests do not trigger a call", () =>
+{
+    string[] bad = {
+        "not json",
+        """{"deepReasoningRequest":{"focus":""}}""",
+        """{"deepReasoningRequest":{"focus":55}}""",
+        """{"deepReasoningRequest":true}""",
+        "{\"deepReasoningRequest\":{\"focus\":\"" + new string('x', 601) + "\"}}"
+    };
+    if (bad.Any(x => NIRAModelSelection.TryReadDelegation(x, out _)))
+        throw new Exception("Invalid request escalated");
 });
 
 Console.WriteLine($"REGRESSION CHECKS: {passed} passed, {failed} failed");

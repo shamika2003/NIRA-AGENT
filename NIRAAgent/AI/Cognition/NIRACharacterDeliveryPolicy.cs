@@ -15,13 +15,27 @@ namespace NIRAAgent.AI.Cognition;
 // authoritative PRE-INTERACTION and POST-INTERACTION snapshots produced by
 // NIRACharacterDynamicsService, so passive runtime decay can never masquerade as
 // a reaction to the current user message.
-// Normal first-call terminal Natural replies are still emitted directly. This assessment
-// is also the narrow deterministic gate for a post-commit realization when the CURRENT
-// interaction materially changed NIRA's authoritative delivery state. That keeps ordinary
-// replies at one model call while preventing a pre-commit draft from hiding a real social
-// transition such as hostility, repair, affection, concern or a material mood/attitude shift.
+// RequiresFidelityPass is the permanent final-Natural-output contract.
+// Assess still records material current-event state shifts, independently of the
+// always-on fidelity gate, for interpretation, diagnostics and future evaluation.
 internal static class NIRACharacterDeliveryPolicy
 {
+    // A Natural public reply is NIRA speaking, not merely a completed Executive task.
+    // This stable routing invariant does not depend on mood change, social scores,
+    // a model's self-reported characterReady flag, or particular user keywords.
+    // PreserveExact and nonterminal work remain under their existing contracts.
+    public static bool RequiresFidelityPass(
+        NIRACognitionDecision decision,
+        string finalDraft,
+        bool hasOutstandingCognitionWork)
+    {
+        ArgumentNullException.ThrowIfNull(decision);
+        return !hasOutstandingCognitionWork &&
+               decision.EmitReply &&
+               decision.ReplyPresentation == NIRAReplyPresentationMode.Natural &&
+               !string.IsNullOrWhiteSpace(finalDraft);
+    }
+
     public static NIRACharacterDeliveryAssessment Assess(
         NIRACharacterTransition transition,
         NIRAInteractionContext? interaction,

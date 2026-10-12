@@ -14,8 +14,7 @@ public sealed class OllamaClient : IDisposable
 {
     private const string BaseUrl = "https://ollama.com";
 
-    private const string ModelName =
-        "gpt-oss:120b-cloud";
+    private static string ModelName => NIRAModelSelection.Primary;
 
     private readonly HttpClient _httpClient;
     private readonly NIRAOllamaApiKeyService _apiKeys;

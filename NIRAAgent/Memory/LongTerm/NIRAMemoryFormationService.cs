@@ -30,8 +30,7 @@ namespace NIRAAgent.Memory.LongTerm;
 
 public sealed class NIRAMemoryFormationService
 {
-    private const string MainReasoningModel =
-        "gpt-oss:120b-cloud";
+    private static string MainReasoningModel => NIRAModelSelection.Primary;
 
 
     private const int MaximumMemoryProposals =
@@ -964,4 +963,3 @@ public sealed class NIRAMemoryFormationService
         return content.Trim();
     }
 }
-

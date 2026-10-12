@@ -158,7 +158,8 @@ public sealed class ConversationManager
 
     public void RememberUnresolvedTask(
         string objective,
-        string question)
+        string question,
+        bool resumesPriorObjective = false)
     {
         if (
             string.IsNullOrWhiteSpace(
@@ -179,13 +180,22 @@ public sealed class ConversationManager
 
             state.PendingTask =
                 new ConversationPendingTask(
-                    state.PendingTask?.Objective
-                        ??
-                        objective.Trim(),
+                    SelectPendingObjective(
+                        state.PendingTask?.Objective,
+                        objective.Trim(), resumesPriorObjective),
                     question.Trim());
         }
     }
 
+
+    // Pure, regression-testable rule: a new clarification normally replaces
+    // an unrelated waiting task. Only grounded model-reviewed continuity may
+    // keep the old, full objective when the user gave a short follow-up.
+    public static string SelectPendingObjective(
+        string? priorObjective, string latestObjective, bool resumesPriorObjective) =>
+        resumesPriorObjective && !string.IsNullOrWhiteSpace(priorObjective)
+            ? priorObjective
+            : latestObjective;
 
     public void ResolvePendingTask()
     {

@@ -207,6 +207,46 @@ public sealed class NIRACharacterDynamicsService
 
 
     // =========================================================
+    // PURE CHARACTER-TRANSITION SIMULATION
+    //
+    // Uses the SAME private decay/interaction equations as Apply(),
+    // but never constructs a state store and never persists anything.
+    // Intended for deterministic regression tests and isolated labs.
+    // The caller supplies the observed appraisal and elapsed live time;
+    // this method never classifies input text or manufactures events.
+    // =========================================================
+    public static NIRACharacterTransition SimulateIsolated(
+        NIRACharacterSnapshot snapshot,
+        NIRAInteractionContext interaction,
+        NIRAInteractionAppraisal appraisal,
+        TimeSpan elapsed)
+    {
+        ArgumentNullException.ThrowIfNull(interaction);
+        ArgumentNullException.ThrowIfNull(appraisal);
+        if (elapsed < TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(elapsed));
+
+        NIRACharacterSnapshot beforeDecay = snapshot.Normalize();
+        NIRACharacterSnapshot beforeInteraction =
+            ApplyDecay(beforeDecay, elapsed).Normalize();
+        NIRACharacterSnapshot changed =
+            ApplyInteraction(beforeInteraction, interaction, appraisal.Normalize()).Normalize();
+
+        bool mutated = beforeDecay.Relationship != changed.Relationship ||
+                       beforeDecay.Mood != changed.Mood ||
+                       beforeDecay.Situation != changed.Situation;
+        NIRACharacterSnapshot after = mutated
+            ? changed with
+            {
+                Version = beforeDecay.Version + 1,
+                UpdatedAt = beforeDecay.UpdatedAt + elapsed
+            }
+            : beforeDecay;
+
+        return new NIRACharacterTransition(beforeDecay, beforeInteraction, after);
+    }
+
+    // =========================================================
     // APPLY LIVED INTERNAL EXPERIENCE
     //
     // Relationship state never changes here. This path exists so
@@ -1231,12 +1271,20 @@ public sealed class NIRACharacterDynamicsService
                                 -meaning.Trust)))));
 
 
-        if (primary <=
-            0.0001)
+        // A weak, uncertain negative tint is not durable social damage. In
+        // particular, casual banter or an ordinary technical disagreement can
+        // produce tiny model-negative values without a credible social attack.
+        // Use a smooth dead zone on the STRUCTURED appraisal, not text matching:
+        // explicit hostility/dismissal/pressure above the threshold still
+        // registers, including recurrence amplification.
+        const double weakSignalFloor = 0.18;
+        if (primary <= weakSignalFloor)
         {
             return 0.0;
         }
 
+        double calibratedStrength =
+            (primary - weakSignalFloor) / (1.0 - weakSignalFloor);
 
         // Negative social pressure is allowed to register sooner than ordinary
         // positive tone. Repetition only amplifies an already-negative appraisal.
@@ -1253,6 +1301,7 @@ public sealed class NIRACharacterDynamicsService
 
         return Math.Clamp(
             certainty *
+            calibratedStrength *
             (
                 0.28 +
                 0.72 *

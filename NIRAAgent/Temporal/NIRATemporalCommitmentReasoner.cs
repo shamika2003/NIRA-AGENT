@@ -36,8 +36,7 @@ public sealed record NIRATemporalInterpretationResult
 
 public sealed class NIRATemporalCommitmentReasoner
 {
-    private const string MainReasoningModel =
-        "gpt-oss:120b-cloud";
+    private static string MainReasoningModel => NIRAModelSelection.Primary;
 
     private readonly OllamaClient _ollama;
     private readonly NIRATemporalContextService _temporal;
@@ -216,4 +215,3 @@ public sealed class NIRATemporalCommitmentReasoner
         return value[start..(end + 1)].Trim();
     }
 }
-

@@ -31,8 +31,7 @@ public sealed class NIRAVisualUnderstandingService
     public const string VisionModelEnvironmentVariable =
         "NIRA_OLLAMA_VISION_MODEL";
 
-    private const string DefaultVisionModel =
-        "gemma4:31b-cloud";
+    private static string DefaultVisionModel => NIRAModelSelection.Primary;
 
     private const int MaximumRecentObservations = 32;
     private const int MaximumQuestionCharacters = 1200;
@@ -709,4 +708,3 @@ public sealed class NIRAVisualUnderstandingService
         public double Confidence { get; init; }
     }
 }
-

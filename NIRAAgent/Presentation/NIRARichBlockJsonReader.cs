@@ -258,6 +258,9 @@ public static class NIRARichBlockJsonReader
             "stat" or "statcard" or "statistic" or "kpi" or "metriccard" or "metricpanel" => "metric",
             _ => type
         };
+        // "file" cards are reserved for authoritative runtime tool evidence.
+        // A model's unverified success claim must never impersonate that status UI.
+        if (type == "file") return null;
         if (type is not ("heading" or "text" or "card" or "metric" or "table" or "chart" or "code" or "details" or "list" or "quote" or "timeline" or "checklist" or "progress" or "tabs" or "followups"))
             type = defaultType;
 
@@ -403,6 +406,3 @@ public static class NIRARichBlockJsonReader
         return false;
     }
 }
-
-
-

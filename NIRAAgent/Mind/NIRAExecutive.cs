@@ -317,6 +317,17 @@ public sealed class NIRAExecutive
     }
 
 
+    // Early terminal exits must not skip NIRA's final natural-delivery boundary.
+    // Facts/status remain authoritative. Security, verbatim, and intermediate
+    // progress outputs are deliberately protected from a generative rewrite.
+    private Task<string> DeliverEarlyReplyAsync(
+        NIRAMindEvent mindEvent,
+        string groundedReply,
+        NIRAPublicReplyKind kind,
+        CancellationToken cancellationToken) =>
+        NIRAPublicCharacterDelivery.DeliverAsync(
+            _responseRealization, mindEvent, groundedReply, kind, cancellationToken);
+
     public async IAsyncEnumerable<NIRAOutputChunk> RunAsync(
         NIRAMindEvent mindEvent,
         [EnumeratorCancellation]
@@ -424,11 +435,14 @@ public sealed class NIRAExecutive
                 if (blocked.Any(result => result.Changed))
                 {
                     Debug.WriteLine($"[Executive] GOAL LOOP GUARD | Goal={guardedGoalId:D} | {taskBlocker}");
-                    await RecordResponseAsync(mindEvent, message);
+                    string deliveredMessage = await DeliverEarlyReplyAsync(
+                        mindEvent, message, NIRAPublicReplyKind.Protected,
+                        cancellationToken);
+                    await RecordResponseAsync(mindEvent, deliveredMessage);
                     yield return new NIRAOutputChunk {
                         RunId = runId, Source = mindEvent.Source,
                         Type = NIRAOutputChunkType.Text,
-                        Content = message,
+                        Content = deliveredMessage,
                         VoiceExpression = NIRAVoiceExpression.Neutral
                     };
                 }
@@ -558,11 +572,14 @@ public sealed class NIRAExecutive
             if (committed.Any(item => item.Changed &&
                 item.Goal?.Status == NIRAGoalStatus.Completed))
             {
-                string spoken = finalAnswer.Length <= 350
-                    ? finalAnswer
+                string deliveredAnswer = await DeliverEarlyReplyAsync(
+                    mindEvent, finalAnswer, NIRAPublicReplyKind.VerifiedResult,
+                    cancellationToken);
+                string spoken = deliveredAnswer.Length <= 350
+                    ? deliveredAnswer
                     : "Found it. The details are in our chat.";
                 Guid? archivedId = await RecordResponseAsync(
-                    mindEvent, finalAnswer, spoken, persistBackground: true);
+                    mindEvent, deliveredAnswer, spoken, persistBackground: true);
                 Debug.WriteLine($"[Journey] FINAL ANSWER DELIVERED | " +
                     $"Goal={completedGoalId:D} | Branch={completedBranchId:D} | " +
                     $"Chars={finalAnswer.Length} | Source=ReviewedBranchResult | " +
@@ -572,7 +589,7 @@ public sealed class NIRAExecutive
                     RunId = runId,
                     Source = mindEvent.Source,
                     Type = NIRAOutputChunkType.Text,
-                    Content = finalAnswer,
+                    Content = deliveredAnswer,
                     SpeechContent = spoken,
                     ArchiveMessageId = archivedId,
                     VoiceExpression = NIRAVoiceExpression.Neutral
@@ -899,6 +916,10 @@ public sealed class NIRAExecutive
             new(
                 StringComparer.OrdinalIgnoreCase);
 
+        // Paired with the actual execution result, not a text claim made by cognition.
+        Dictionary<string, NIRACapabilityRequest> capabilityRequestsBySignature =
+            new(StringComparer.OrdinalIgnoreCase);
+
 
         HashSet<string> reportedDuplicateCapabilityRequests =
             new(
@@ -935,6 +956,11 @@ public sealed class NIRAExecutive
 
         bool savedCredentialNeedUserRecoveryUsed =
             false;
+
+        // One bounded retry for a user-source NeedUser missing its visible
+        // clarification. No loops, speculative questions, or store mutation.
+        bool emptyNeedUserHandoffRecoveryUsed = false;
+        bool acceptedNeedUserResumesPriorObjective = false;
 
 
         NIRACognitionContext? latestContext =
@@ -975,6 +1001,13 @@ public sealed class NIRAExecutive
 
             latestContext =
                 context;
+
+            if (cycle == 1)
+            {
+                // Presence and lengths only. Never log private memory or chat.
+                Debug.WriteLine("[ProductionContinuity] " +
+                    NIRAProductionContinuityPolicy.DescribeContext(context));
+            }
 
 
             // Once additional memory queries return no NEW record identities,
@@ -1241,6 +1274,26 @@ public sealed class NIRAExecutive
                 continue;
             }
 
+            // A malformed NeedUser must not strand a live chat with an empty
+            // reply and no pending-task handoff. Let cognition repair the same
+            // request once; on repeated failure emit a safe neutral question.
+            // This does not change permission, capability, branch or goal routing.
+            if (NIRAProductionContinuityPolicy.HasEmptyUserHandoff(
+                    mindEvent.Source, decision))
+            {
+                if (!emptyNeedUserHandoffRecoveryUsed)
+                {
+                    emptyNeedUserHandoffRecoveryUsed = true;
+                    executiveEvidence.AppendLine();
+                    executiveEvidence.AppendLine(
+                        NIRAProductionContinuityPolicy.MissingHandoffCorrection);
+                    Debug.WriteLine($"[ProductionContinuity] NEEDUSER_RETRY | Run={runId:D}; Cycle={cycle}");
+                    continue;
+                }
+
+                decision = NIRAProductionContinuityPolicy.MakeVisibleFallback(decision);
+                Debug.WriteLine($"[ProductionContinuity] NEEDUSER_VISIBLE_FALLBACK | Run={runId:D}; Cycle={cycle}");
+            }
 
             if (parallelFinalizationGoalId is Guid fanInGoalId)
             {
@@ -1334,11 +1387,14 @@ public sealed class NIRAExecutive
                     mindEvent, verifiedControl!, cancellationToken);
                 Debug.WriteLine($"[Executive] CONTROL COMPLETE | Run={runId:D} | " +
                     $"Operation={verifiedControl!.Operation} | Cycles={cycle}");
-                await RecordResponseAsync(mindEvent, controlReply);
+                string deliveredControlReply = await DeliverEarlyReplyAsync(
+                    mindEvent, controlReply, NIRAPublicReplyKind.VerifiedResult,
+                    cancellationToken);
+                await RecordResponseAsync(mindEvent, deliveredControlReply);
                 yield return new NIRAOutputChunk
                 {
                     RunId = runId, Source = mindEvent.Source,
-                    Type = NIRAOutputChunkType.Text, Content = controlReply,
+                    Type = NIRAOutputChunkType.Text, Content = deliveredControlReply,
                     VoiceExpression = NIRAVoiceExpression.Neutral
                 };
                 yield return new NIRAOutputChunk
@@ -2910,11 +2966,14 @@ public sealed class NIRAExecutive
                 if (setBlocked.Any(result => result.Changed))
                 {
                     Debug.WriteLine($"[Executive] CROSS-RUN BUDGET STOP | Goal={limitedGoalId:D}");
-                    await RecordResponseAsync(mindEvent, blocker);
+                    string deliveredBlocker = await DeliverEarlyReplyAsync(
+                        mindEvent, blocker, NIRAPublicReplyKind.Protected,
+                        cancellationToken);
+                    await RecordResponseAsync(mindEvent, deliveredBlocker);
                     yield return new NIRAOutputChunk {
                         RunId = runId, Source = mindEvent.Source,
                         Type = NIRAOutputChunkType.Text,
-                        Content = blocker,
+                        Content = deliveredBlocker,
                         VoiceExpression = NIRAVoiceExpression.Neutral
                     };
                 }
@@ -3551,6 +3610,7 @@ public sealed class NIRAExecutive
 
                 capabilityResultsBySignature[signature] =
                     result;
+                capabilityRequestsBySignature[signature] = newCapabilityRequests[index];
 
                 if (newCapabilityRequests[index].CapabilityId ==
                         NIRACapabilityIds.BrowserNavigate &&
@@ -3826,11 +3886,14 @@ public sealed class NIRAExecutive
                         mindEvent, ResolveTaskGoalId(
                             mindEvent, ownedGoalId, goalResults, branchResults),
                         haltReason, cancellationToken);
-                    await RecordResponseAsync(mindEvent, haltReason);
+                    string deliveredHalt = await DeliverEarlyReplyAsync(
+                        mindEvent, haltReason, NIRAPublicReplyKind.Protected,
+                        cancellationToken);
+                    await RecordResponseAsync(mindEvent, deliveredHalt);
                     yield return new NIRAOutputChunk
                     {
                         RunId = runId, Source = mindEvent.Source,
-                        Type = NIRAOutputChunkType.Text, Content = haltReason,
+                        Type = NIRAOutputChunkType.Text, Content = deliveredHalt,
                         VoiceExpression = NIRAVoiceExpression.Neutral
                     };
                     yield return new NIRAOutputChunk
@@ -4026,12 +4089,15 @@ public sealed class NIRAExecutive
                 {
                     string handoff = "I've handed the next step to background work. " +
                         "You can keep chatting while I follow it through.";
-                    await RecordResponseAsync(mindEvent, handoff);
+                    string deliveredHandoff = await DeliverEarlyReplyAsync(
+                        mindEvent, handoff, NIRAPublicReplyKind.Natural,
+                        cancellationToken);
+                    await RecordResponseAsync(mindEvent, deliveredHandoff);
                     yield return new NIRAOutputChunk
                     {
                         RunId = runId, Source = mindEvent.Source,
                         Type = NIRAOutputChunkType.Text,
-                        Content = handoff, SpeechContent = handoff,
+                        Content = deliveredHandoff, SpeechContent = deliveredHandoff,
                         VoiceExpression = expression
                     };
                 }
@@ -4451,14 +4517,21 @@ public sealed class NIRAExecutive
                                 "DURABLE MEMORY AVAILABLE TO COGNITION (historical, not live verification):",
                                 latestContext?.LongTermMemoryContext ?? string.Empty,
                                 "PERSISTED SOCIAL CARRYOVER (context, not proof of a new check):",
-                                latestContext?.SocialCarryoverContext ?? string.Empty)),
+                                latestContext?.SocialCarryoverContext ?? string.Empty),
+                            decision.State.ToString()),
                         cancellationToken);
 
-                if (taskReview?.Verdict == "Complete")
+                if (NIRAProductionContinuityPolicy.AcceptsObjectiveReview(
+                        decision, taskReview))
                 {
                     completionReviewConfirmedComplete = true;
+                    acceptedNeedUserResumesPriorObjective =
+                        decision.State == NIRACognitionState.NeedUser &&
+                        taskReview!.ResumesPriorObjective;
                     Debug.WriteLine(
-                        $"[ObjectiveGate] ACCEPT | Run={runId:D} | Cycle={cycle}");
+                        $"[ObjectiveGate] ACCEPT | Run={runId:D} | Cycle={cycle} | " +
+                        $"Outcome={taskReview!.Verdict} | " +
+                        $"ResumesPriorObjective={acceptedNeedUserResumesPriorObjective}");
                 }
                 else if (taskReview is null)
                 {
@@ -4668,7 +4741,8 @@ public sealed class NIRAExecutive
                 if (decision.State == NIRACognitionState.NeedUser &&
                     decision.EmitReply)
                     _conversation.RememberUnresolvedTask(
-                        mindEvent.Content, decision.Reply ?? string.Empty);
+                        mindEvent.Content, decision.Reply ?? string.Empty,
+                        acceptedNeedUserResumesPriorObjective);
                 else if (decision.State == NIRACognitionState.Complete)
                     _conversation.ResolvePendingTask();
             }
@@ -4718,22 +4792,17 @@ public sealed class NIRAExecutive
                 //
                 // NIRA has an intentionally asymmetric model-call architecture:
                 //
-                //   * If the FIRST cognition call can answer the user and the committed
-                //     character state remains materially compatible with that pre-commit
-                //     draft, the call is final. Ordinary conversation therefore remains
-                //     a one-model-call path.
+                //   * The FIRST cognition call resolves semantic task meaning.
+                //     Final Natural wording gets exactly one presentation-only character
+                //     pass even when the character state has not changed.
                 //
-                //   * If THIS user interaction materially changes authoritative character
-                //     delivery state (or cognition explicitly reports characterReady=false),
-                //     exactly ONE post-commit ResponseRealization call is allowed. This is not
-                //     cosmetic polishing: cognition had to appraise the user event before the
-                //     runtime could commit the new mood/relationship state, so the second call
-                //     lets final wording use the authoritative POST-interaction state.
+                //   * Character expression always uses the authoritative POST-interaction
+                //     mood/relationship state. A material shift is recorded as a reason,
+                //     but no longer the sole condition for expression.
                 //
-                //   * If the run already needed additional pre-response model reasoning
-                //     (another cognition cycle, an independent completion review, or a
-                //     pre-reply commitment-formation pass), it likewise gets exactly ONE final
-                //     ResponseRealization call after state/work updates are committed.
+                //   * Exactly ONE response-realization call is permitted per terminal
+                //     Natural reply regardless of how many earlier cognition/review calls
+                //     were required. Failed realization returns the original draft.
                 //
                 // PreserveExact still bypasses LLM rewriting because literal/verbatim
                 // output must remain exact.
@@ -4812,39 +4881,23 @@ public sealed class NIRAExecutive
                         characterDelivery.RequiresRealization
                     );
 
-                // Character expressiveness is separate from factual completion.
-                // A source-grounded warm/playful social act can warrant a richer
-                // presentation when cognition produced an extremely thin draft.
-                // This uses structured social appraisal, not greeting words,
-                // phrase tables, or any application-specific routing.
-                bool sociallyThinReply =
-                    terminalNaturalReply &&
-                    mindEvent.Source == NIRAMindEventSource.User &&
-                    appliedSocialAppraisal != null &&
-                    reply.Length > 0 && reply.Length <= 18 &&
-                    (appliedSocialAppraisal.Meaning.Warmth >= 0.30 ||
-                     appliedSocialAppraisal.Meaning.Affection >= 0.30 ||
-                     appliedSocialAppraisal.Meaning.Playfulness >= 0.40);
-
-                // Work-related extra calls alone are not a reason to rewrite.
-                // A truly thin SOCIAL reply may receive one naturalization pass;
-                // all factual claims in a tool-backed answer stay reviewable.
+                // NIRA's persona is part of every public Natural reply, not a
+                // mood-delta optimization. Even a perfectly stable character state
+                // must never route around her identity, judgment and social voice.
+                // The realization service consumes the already grounded draft
+                // and authoritative post-interaction state; on failure it returns
+                // the draft untouched. PreserveExact never goes through a rewrite.
                 bool shouldRealize =
-                    terminalNaturalReply &&
-                    (postCommitCharacterRealization || sociallyThinReply);
-
-                if (sociallyThinReply)
-                    Debug.WriteLine($"[NIRA-Fidelity-V3] SOCIAL_DEPTH | " +
-                        $"Run={runId:D} | ReplyChars={reply.Length}");
+                    NIRACharacterDeliveryPolicy.RequiresFidelityPass(
+                        decision, reply, hasOutstandingCognitionWork);
 
                 bool directCharacterDelivery =
-                    terminalNaturalReply
-                    &&
-                    !shouldRealize;
+                    terminalNaturalReply && !shouldRealize;
 
                 Debug.WriteLine(
                     $"[ResponseRoute] Run={runId} | Realize={shouldRealize} | " +
                     $"DirectCharacter={directCharacterDelivery} | " +
+                    $"AlwaysOnCharacterPass={shouldRealize} | " +
                     $"PostCommitCharacterRealization={postCommitCharacterRealization} | " +
                     $"PreResponseModelCalls={preResponseModelCalls} | " +
                     $"ReplyReady={decision.ReplyReady} | " +
@@ -4915,7 +4968,19 @@ public sealed class NIRAExecutive
                     // Independent reviewer approved the cognition draft earlier.
                     // Realization is only expression: if it drops a verified
                     // sub-result or authorization qualifier, restore that draft.
-                    if (mindEvent.Source == NIRAMindEventSource.User &&
+                    if (capabilityResultsBySignature.Count > 0 &&
+                        !NIRAPublicCharacterDelivery.PreservesGroundedResult(
+                            groundedDraftBeforeRealization, realized.Reply))
+                    {
+                        Debug.WriteLine($"[NIRA-Fidelity-V3] EVIDENCE_REVERT | Run={runId:D} | " +
+                            "Reason=Concrete tool-result facts changed during expression");
+                        realized = realized with
+                        {
+                            Reply = groundedDraftBeforeRealization,
+                            Speech = groundedSpeechBeforeRealization
+                        };
+                    }
+                    else if (mindEvent.Source == NIRAMindEventSource.User &&
                         completionReviewConfirmedComplete &&
                         !string.Equals(realized.Reply,
                             groundedDraftBeforeRealization, StringComparison.Ordinal) &&
@@ -4984,6 +5049,9 @@ public sealed class NIRAExecutive
                     ? NIRAPresentationPolicy.PlainSpeechFallback(reply)
                     : decision.Speech.Trim();
                 IReadOnlyList<NIRARichBlock> blocks = decision.DisplayBlocks;
+                blocks = NIRAVerifiedFilePresentation.Attach(
+                    blocks, capabilityRequestsBySignature,
+                    capabilityResultsBySignature, reply);
                 (reply, spoken, blocks) = NIRAPresentationPolicy.RecoverCode(reply, spoken, blocks);
                 spoken = NIRAPresentationPolicy.EnsureInformativeSpeech(spoken, blocks);
                 Guid? archivedResponseId = await RecordResponseAsync(

@@ -25,6 +25,7 @@ instructions: |
              "replyReady": false,
              "characterReady": false,
              "decisionSummary": "short operational status only",
+             "deepReasoningRequest": null,
              "progressUpdate": "optional short user-visible status while continuing; no secrets",
              "progressSpeech": "optional natural spoken checkpoint; empty by default",
              "progressCorrection": false,
@@ -50,6 +51,14 @@ instructions: |
                "pace": 1.0
              }
            }
+
+           deepReasoningRequest is OPTIONAL: null by default; set to
+           {"focus":"short grounded description of hard reasoning needed"}
+           only when the current NIRA cognition genuinely needs a stronger
+           reasoning pass. This is a proposal within the SAME call; never ask
+           an LLM to classify the user separately. Ordinary conversation,
+           direct answers, missing evidence and normal capability requests
+           should not delegate. NIRA's runtime validates and bounds it.
 
            APPRAISAL-FIRST ORDER IS A SEMANTIC SAFETY REQUIREMENT FOR USER EVENTS:
            determine appraisalEvidenceQuote + appraisal from the CURRENT user event

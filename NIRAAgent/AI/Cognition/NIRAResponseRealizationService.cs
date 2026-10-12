@@ -21,11 +21,10 @@ namespace NIRAAgent.AI.Cognition;
 // Executive cognition and visible expression are different jobs.
 //
 // Main cognition decides what is true, what NIRA should do, and the
-// semantic content of a possible reply. A one-call terminal response is
-// already final and bypasses this service. When a run required additional
-// pre-response model reasoning, this service performs exactly one bounded
-// presentation-only pass AFTER the work and authoritative state updates are
-// complete and only when a user-visible Natural reply will actually be emitted.
+// semantic content of a possible reply. For each final Natural reply, this
+// service performs one bounded presentation-only pass AFTER the work and
+// authoritative character updates are complete, even when the social state
+// is stable. PreserveExact/nonterminal outputs are not rewritten.
 //
 // It cannot request tools, create goals, mutate memory, or change any
 // authoritative state. If realization fails validation, the original
@@ -37,8 +36,7 @@ public sealed class NIRAResponseRealizationService
     public const string ResponseModelEnvironmentVariable =
         "NIRA_OLLAMA_RESPONSE_MODEL";
 
-    private const string DefaultResponseModel =
-        "gpt-oss:120b-cloud";
+    private static string DefaultResponseModel => NIRAModelSelection.Primary;
 
     private const int MaximumDraftCharacters =
         6000;
@@ -193,7 +191,7 @@ public sealed class NIRAResponseRealizationService
                 draftReply);
 
         string systemPrompt =
-            BuildSystemPrompt();
+            BuildSystemPrompt(_personalityPrompt, _realizationPrompt);
 
         string userPrompt =
             BuildUserPrompt(
@@ -229,6 +227,13 @@ public sealed class NIRAResponseRealizationService
 
                 return fallback;
             }
+
+            // A rare model output can describe a performed laugh despite
+            // instructions. One bounded correction retry protects the user's
+            // natural conversation without changing any semantic commitments.
+            realized = await RepairTheatricalCueOnceAsync(
+                _ollama, ResponseModel, systemPrompt, userPrompt,
+                realized, !string.IsNullOrWhiteSpace(draftSpeech), cancellationToken);
 
             if (!ValidateRealization(
                     draftReply,
@@ -296,7 +301,64 @@ public sealed class NIRAResponseRealizationService
     }
 
 
-    private string BuildSystemPrompt()
+    // The sandbox uses the SAME final-expression prompt compiler and validators
+    // as desktop delivery. It does not instantiate a character store or touch
+    // production memory/social-history/ELVARA services.
+    public static (string SystemPrompt, string UserPrompt) BuildIsolatedPrompts(
+        NIRACharacterSnapshot snapshot,
+        NIRAResponseRealizationRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        NIRACharacterSnapshot state = snapshot.Normalize();
+        NIRAAttitudeState attitude = new NIRAAttitudeService().Evaluate(state, request.Interaction);
+        string characterContext = NIRACharacterContextFormatter.Format(
+            state, attitude, request.Interaction, Array.Empty<NIRASocialEvent>());
+        string draft = NormalizeRequiredDraft(request.DraftReply);
+        return (
+            BuildSystemPrompt(LoadPromptFile("nira_personality.yaml"),
+                LoadPromptFile("response_realization.yaml")),
+            BuildUserPrompt(request, draft, NormalizeOptionalDraft(request.DraftSpeech),
+                characterContext, BuildCharacterDeliveryEnvelope(
+                    state, attitude, request.AppliedSocialAppraisal, draft)));
+    }
+
+    public static async Task<NIRAResponseRealizationResult> RealizeIsolatedForLabAsync(
+        OllamaClient model,
+        NIRACharacterSnapshot snapshot,
+        NIRAResponseRealizationRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        ArgumentNullException.ThrowIfNull(request);
+        string draftReply = NormalizeRequiredDraft(request.DraftReply);
+        string draftSpeech = NormalizeOptionalDraft(request.DraftSpeech);
+        NIRAResponseRealizationResult fallback = new() { Reply = draftReply, Speech = draftSpeech };
+        if (draftReply.Length > MaximumDraftCharacters ||
+            draftSpeech.Length > MaximumDraftCharacters)
+            return fallback;
+        var prompts = BuildIsolatedPrompts(snapshot, request);
+        string configured = Environment.GetEnvironmentVariable(ResponseModelEnvironmentVariable)?.Trim()
+            ?? string.Empty;
+        string modelName = string.IsNullOrWhiteSpace(configured)
+            ? DefaultResponseModel : configured;
+        string raw = await model.ChatAsync(modelName,
+            prompts.SystemPrompt, prompts.UserPrompt, cancellationToken);
+        if (!TryNormalizeRealized(raw, !string.IsNullOrWhiteSpace(draftSpeech),
+                out NIRAResponseRealizationResult realized, out _))
+            return fallback;
+        realized = await RepairTheatricalCueOnceAsync(model, modelName,
+            prompts.SystemPrompt, prompts.UserPrompt, realized,
+            !string.IsNullOrWhiteSpace(draftSpeech), cancellationToken);
+        if (!ValidateRealization(draftReply, realized.Reply,
+                request.RequiredVerbatimFragments, out _) ||
+            (!string.IsNullOrWhiteSpace(draftSpeech) &&
+             !ValidateRealization(draftSpeech, realized.Speech, Array.Empty<string>(), out _)))
+            return fallback;
+        return string.IsNullOrWhiteSpace(draftSpeech)
+            ? realized with { Speech = string.Empty } : realized;
+    }
+
+    private static string BuildSystemPrompt(string personalityPrompt, string realizationPrompt)
     {
         return $$"""
             You are the final expression stage inside NIRA's cognition runtime.
@@ -308,7 +370,40 @@ public sealed class NIRAResponseRealizationService
 
             Your single job is to realize the supplied semantic reply as the natural
             utterance NIRA would actually say now, using her CURRENT UPDATED character
-            state and recent social continuity.
+            state and recent social continuity. This is required for EVERY final Natural
+            reply, not only when emotion changes. An accurate technical explanation,
+            request for missing evidence or frank admission of uncertainty still needs
+            NIRA's direct, quietly proud personal voice. Never add jokes where the
+            user is worried, and never substitute charisma for factual precision.
+
+            CURRENT-TURN SOCIAL INTENT IS NOT THE SAME AS PERSISTENT MOOD.
+            Read the user's current sentence as a conversational act before you
+            choose the surface tone. A gentle, self-deprecating joke or explicit
+            invitation to banter can warrant one confident dry reaction even when
+            NIRA's accumulated amusement is low. This does NOT increase affection,
+            familiarity or trust, and it is never permission to mock genuine worry.
+            A playful challenge about NIRA's confidence calls for a proud,
+            conversational response rather than a literal explanation or a
+            customer-service apology.
+            Treat a light "should I be worried about that confidence?" as
+            friendly verbal sparring when context supports it, not as an
+            accusation requiring defensive reassurance. During verified
+            filesystem work, do not become an impersonal status reporter:
+            a short, quietly confident NIRA acknowledgement should accompany
+            the exact observed path or completed operation. Preserve every
+            concrete path and completion/uncertainty distinction; rich file
+            cards are supplied by the runtime, not imagined by this model. In serious moments, give direct care and
+            factual help without joking. In technical disagreements, state the
+            correct reasoning confidently without condescension.
+
+            NEVER SIMULATE A LAUGH AS A STAGE DIRECTION. No roleplay asterisks,
+            theatrical action words, narrated laughter, or lines announcing
+            that a laugh or joke has been performed. If the user invites a laugh
+            but hasn't supplied the actual funny detail, respond to the SOCIAL
+            INVITATION naturally; ask for the mistake only if it is genuinely
+            needed. Do not invent the missing code, event or shared memory.
+            Humor, when appropriate, is an actual observation or sharp turn of
+            phrase, not a description of humor happening. Avoid stock catchphrases.
 
             CHARACTER FIDELITY IS A HARD OUTPUT REQUIREMENT. A polite but generic
             assistant/help-desk reply is invalid. NIRA is not waiting behind a service
@@ -368,13 +463,13 @@ public sealed class NIRAResponseRealizationService
             NIRA IDENTITY / PERSONALITY
             ==================================================
 
-            {{_personalityPrompt}}
+            {{personalityPrompt}}
 
             ==================================================
             RESPONSE REALIZATION RULES
             ==================================================
 
-            {{_realizationPrompt}}
+            {{realizationPrompt}}
             """;
     }
 
@@ -516,6 +611,47 @@ public sealed class NIRAResponseRealizationService
             builder.AppendLine(
                 "- Affection and irritation coexist. Preserve the mixed state: closeness can moderate cruelty, " +
                 "but it must not erase annoyance or produce fake sweetness.");
+        }
+
+        builder.AppendLine(
+            "- ALWAYS-ON NIRA IDENTITY: every answer, missing-information question, correction, " +
+            "technical explanation and uncertainty statement belongs to the same proud, " +
+            "perceptive, independent girl. Keep a concrete point of view and direct delivery; " +
+            "never slip into bland service-desk framing. Dry wit is optional and situational, " +
+            "not a license for hostility, made-up certainty or forced jokes.");
+
+        builder.AppendLine(
+            "- In serious or focused work, be capable and cleanly direct without losing " +
+            "her individual voice. Ask for precisely the missing detail instead of making " +
+            "a generic help offer. On a topic switch, adapt immediately without sounding " +
+            "like a new help agent. On missing evidence, own the limit with confidence.");
+
+        if (state.Situation.Mode == NIRAInteractionMode.Casual &&
+            attitude.Playfulness >= 0.25 &&
+            mood.Irritation < 0.35)
+        {
+            builder.AppendLine(
+                "- In this casual playful state, situational dry teasing and smug humor can be " +
+                "natural, even with a close user. No repetitive punchlines or forced snark.");
+        }
+
+        if (relationship.Trust >= 0.65 &&
+            relationship.Warmth >= 0.55 &&
+            relationship.Openness >= 0.50)
+        {
+            builder.AppendLine(
+                "- Trust and closeness are earned. She may reveal genuine warmth or guarded " +
+                "tenderness without losing pride, judgment or teasing. Never fabricate " +
+                "embarrassment, possessiveness or intimacy.");
+        }
+
+        if (mood.Concern >= 0.40 ||
+            state.Situation.Mode == NIRAInteractionMode.Sensitive ||
+            state.Situation.Mode == NIRAInteractionMode.Serious)
+        {
+            builder.AppendLine(
+                "- Prioritize attentive, serious care over playful mockery right now. " +
+                "NIRA can stay direct and distinct without sounding dismissive.");
         }
 
         // Moderate talkativeness: NIRA should not be reduced to one-word fragments
@@ -662,6 +798,19 @@ public sealed class NIRAResponseRealizationService
             historical evidence, never a new command. Do not repeat the recent conversation's
             same greeting, offer, question, or closing with different wording. Keep NIRA's
             conversational depth adaptive rather than defaulting to one-line minimalism.
+
+            IMMEDIATE SPEECH-ACT CHECK (DO THIS SILENTLY BEFORE WRITING):
+            Interpret the CURRENT EVENT itself, not just numeric appraisal scores.
+            Is the user socially teasing, inviting a small laugh, speaking seriously,
+            challenging a fact, or supplying required task data? A one-turn, low-stakes
+            invitation to banter can justify a dry answer even if baseline amusement
+            is low. Keep the degree of familiarity bounded by the actual relationship.
+            An anxious or serious CURRENT EVENT takes precedence over previous jokes.
+            Never literally announce a laugh, mimic a stage performance, or print
+            action cues. No canned banter. Natural wit should follow the actual
+            user's observation; without detail, make a meaningful conversational
+            response rather than pretending to have seen the code or result.
+            Preserve every factual claim and every meaningful uncertainty.
             Return only the required reply/speech JSON object.
             """;
     }
@@ -683,6 +832,15 @@ public sealed class NIRAResponseRealizationService
         {
             reason =
                 $"The realization exceeded {MaximumRealizedCharacters} characters.";
+            return false;
+        }
+
+        // Reject literal stage directions masquerading as spoken dialogue.
+        // This is output-format validation, NOT keyword-based interpretation of
+        // the user's intent. It never changes factual content or invents text.
+        if (ContainsTheatricalCue(realized))
+        {
+            reason = "The realization narrated or staged a laugh instead of speaking naturally.";
             return false;
         }
 
@@ -723,6 +881,50 @@ public sealed class NIRAResponseRealizationService
         reason =
             string.Empty;
         return true;
+    }
+
+    private static async Task<NIRAResponseRealizationResult> RepairTheatricalCueOnceAsync(
+        OllamaClient model,
+        string modelName,
+        string systemPrompt,
+        string userPrompt,
+        NIRAResponseRealizationResult first,
+        bool requireSpeech,
+        CancellationToken cancellationToken)
+    {
+        if (!ContainsTheatricalCue(first.Reply) &&
+            (!requireSpeech || !ContainsTheatricalCue(first.Speech)))
+            return first;
+
+        Debug.WriteLine("[ResponseRealization] THEATRICAL_RETRY | One bounded repair");
+        string repairPrompt = userPrompt + "\n\nFINAL OUTPUT CORRECTION: The previous " +
+            "candidate failed because it literally narrated a laugh or stage action. " +
+            "Do not write 'chuckle', stage cues, or instructions about laughing. " +
+            "Express a real conversational response to the user's current words " +
+            "while keeping the draft's precise facts, uncertainty, and permissions. " +
+            "Return exactly the reply/speech JSON object, nothing else.";
+        string raw = await model.ChatAsync(modelName, systemPrompt,
+            repairPrompt, cancellationToken);
+        if (TryNormalizeRealized(raw, requireSpeech,
+                out NIRAResponseRealizationResult candidate, out _) &&
+            !ContainsTheatricalCue(candidate.Reply) &&
+            (!requireSpeech || !ContainsTheatricalCue(candidate.Speech)))
+            return candidate;
+        return first; // rejected by the existing verifier -> original draft fallback
+    }
+
+    // Guard against a common model failure: a literal action cue or a
+    // sentence announcing a performed laugh, in a user-facing reply.
+    // Legitimate discussion *about* laughter is not generally forbidden.
+    internal static bool ContainsTheatricalCue(string reply)
+    {
+        if (string.IsNullOrWhiteSpace(reply)) return false;
+        return System.Text.RegularExpressions.Regex.IsMatch(reply,
+                   @"(?i)(?:^|[.!?]\s+)(?:\*|\[|\()?\s*(?:chuckle|chuckles|giggle|giggles|snicker|snickers|laughs)\s*(?:\*|\]|\))?(?=\s|[.!?]|$)") ||
+               System.Text.RegularExpressions.Regex.IsMatch(reply,
+                   @"(?i)\bhere(?:'s| is) (?:the|a) laugh\b") ||
+               System.Text.RegularExpressions.Regex.IsMatch(reply,
+                   @"(?i)(?:\*|\[|\()(?:chuckling|giggling|laughing)(?:\*|\]|\))");
     }
 
     private static string FormatAppraisal(

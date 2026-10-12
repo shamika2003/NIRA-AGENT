@@ -70,6 +70,7 @@ public static class NIRARichBlockRenderer
         "heading" => Frame(Text(block.Title.Length > 0 ? block.Title : block.Text, 18, true), false),
         "text" => Frame(Body(block), false),
         "card" => Card(block),
+        "file" => FileResult(block),
         "metric" => Frame(Metric(block)),
         "table" => Frame(Table(block), true, 12),
         "chart" => Frame(Chart(block)),
@@ -116,6 +117,57 @@ public static class NIRARichBlockRenderer
             wrap.Children.Add(frame);
         }
         return wrap;
+    }
+
+    private static Border FileResult(NIRARichBlock block)
+    {
+        var root = new StackPanel();
+        var header = new DockPanel { LastChildFill = false };
+        var status = Text(block.Unit.Length > 0 ? block.Unit : "FILE", 10, true, "NIRACyanBrush");
+        status.VerticalAlignment = VerticalAlignment.Center;
+        DockPanel.SetDock(status, Dock.Left);
+        header.Children.Add(status);
+
+        Button? copyButton = null;
+        copyButton = ActionButton("Copy path", () =>
+        {
+            try
+            {
+                System.Windows.Clipboard.SetText(block.Text);
+                if (copyButton != null) copyButton.Content = "Copied";
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[FileCard] Clipboard unavailable: {ex.GetType().Name}");
+            }
+        });
+        var copy = copyButton!;
+        copy.ToolTip = "Copy the observed file path; no file operation is performed";
+        DockPanel.SetDock(copy, Dock.Right);
+        header.Children.Add(copy);
+        root.Children.Add(header);
+
+        var name = Text(block.Title, 17, true);
+        name.Margin = new Thickness(0, 8, 0, 3);
+        root.Children.Add(name);
+
+        var locationLabel = Text("LOCATION", 10, true, "NIRASecondaryBrush");
+        locationLabel.Margin = new Thickness(0, 8, 0, 3);
+        root.Children.Add(locationLabel);
+        var path = Text(block.Text, 12);
+        path.FontFamily = new FontFamily("Consolas");
+        root.Children.Add(path);
+
+        if (block.Items.Count > 0 && !string.IsNullOrWhiteSpace(block.Items[0]))
+        {
+            var sourceLabel = Text("COPIED FROM", 10, true, "NIRASecondaryBrush");
+            sourceLabel.Margin = new Thickness(0, 12, 0, 3);
+            root.Children.Add(sourceLabel);
+            var source = Text(block.Items[0], 11, false, "NIRASecondaryBrush");
+            source.FontFamily = new FontFamily("Consolas");
+            root.Children.Add(source);
+        }
+        return Frame(root, true, 15, 760);
     }
 
     private static Border Card(NIRARichBlock block)
@@ -857,6 +909,3 @@ public static class NIRARichBlockRenderer
         return root;
     }
 }
-
-
-
