@@ -522,6 +522,13 @@ public sealed class NIRACognitionContextBuilder
               "objective. An unrelated request must not silently resume it. " +
               "Do not downgrade the objective to the wording of a short answer.";
 
+        if (mindEvent.Source == NIRAMindEventSource.User &&
+            mindEvent.Metadata.TryGetValue("otherActiveUserWork", out string? activeWork) &&
+            !string.IsNullOrWhiteSpace(activeWork))
+        {
+            taskContinuityContext = activeWork + "\n" + taskContinuityContext;
+        }
+
 
         if (cycle ==
             1)

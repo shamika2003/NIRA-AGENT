@@ -1,3 +1,4 @@
+using NIRAAgent.Temporal;
 /*
  * filename: NIRAExecutive.cs
  */
@@ -129,6 +130,23 @@ public sealed class NIRAExecutive
         _authorityContext;
 
     private readonly NIRABrowserService _browser;
+
+    // Runtime-owned task observation only; no capability or goal authority.
+    private NIRAActiveTurnLedger? _activeWorkLedger;
+
+    internal void AttachActiveWorkLedger(NIRAActiveTurnLedger ledger)
+    {
+        ArgumentNullException.ThrowIfNull(ledger);
+        Volatile.Write(ref _activeWorkLedger, ledger);
+    }
+
+    private string CurrentOtherWorkDeliveryUpdate(NIRAMindEvent mindEvent)
+    {
+        if (mindEvent.Source != NIRAMindEventSource.User ||
+            !mindEvent.Metadata.TryGetValue("observedActiveWorkIds", out string? observedIds))
+            return string.Empty;
+        return Volatile.Read(ref _activeWorkLedger)?.DeliveryUpdate(observedIds) ?? string.Empty;
+    }
 
     // Non-secret credential metadata only. Secrets never enter cognition.
     // This lets cognition know that a previously saved website account exists
@@ -950,6 +968,7 @@ public sealed class NIRAExecutive
         bool completionReviewConfirmedComplete = false;
         bool formationAppliedBeforeReply = false;
         bool preReviewCommitmentSucceeded = false;
+        bool directTemporalWakeVerified = false;
         bool secureSignInReturned = false;
         bool siteLinkOpened = false;
         string? lastObservedLoginRoute = null;
@@ -4464,6 +4483,42 @@ public sealed class NIRAExecutive
                 decision.EmitReply &&
                 !string.IsNullOrWhiteSpace(decision.Reply);
 
+            // Due reminders already include an authoritative commitment ID.
+            // Gemma may decide to DELIVER and include a structured Complete
+            // proposal in the SAME cognition call. We don't need a separate
+            // experience-formation model merely to transition that known ID.
+            // Do not complete a deferred, unsent, or recurring occurrence.
+            if (string.Equals(mindEvent.Name, "TemporalCommitmentDue",
+                    StringComparison.Ordinal) &&
+                decision.State == NIRACognitionState.Complete &&
+                decision.EmitReply && !string.IsNullOrWhiteSpace(decision.Reply) &&
+                mindEvent.Metadata.TryGetValue("commitmentId", out string? dueId) &&
+                Guid.TryParse(dueId, out Guid dueGuid))
+            {
+                NIRACommitmentFormationProposal[] dueTransitions =
+                    decision.CommitmentProposals
+                        .Where(p => p.Action == NIRACommitmentProposalAction.Complete &&
+                            p.EvidenceSource == NIRACommitmentEvidenceSource.NIRAReply &&
+                            Guid.TryParse(p.CommitmentId, out Guid proposalGuid) &&
+                            proposalGuid == dueGuid &&
+                            !string.IsNullOrWhiteSpace(p.EvidenceQuote) &&
+                            decision.Reply.Contains(p.EvidenceQuote, StringComparison.Ordinal))
+                        .Take(1).ToArray();
+                if (dueTransitions.Length == 1)
+                {
+                    int verifiedChanges = await _selfModel.ApplyCommitmentProposalsAsync(
+                        mindEvent, decision.Reply, dueTransitions, cancellationToken);
+                    if (verifiedChanges > 0)
+                    {
+                        directTemporalWakeVerified = true;
+                        formationAppliedBeforeReply = true;
+                        Debug.WriteLine($"[TemporalCommitment] DIRECT_WAKE | " +
+                            $"Run={runId:D} | VerifiedChanges={verifiedChanges} | " +
+                            "ExtraModelCalls=0");
+                    }
+                }
+            }
+
             // FUTURE OBLIGATION: PERSIST BEFORE OBJECTIVE REVIEW.
             // Temporal reminders belong to the authoritative self-model, NOT
             // a made-up timer capability and NOT a fresh persistent goal.
@@ -4481,15 +4536,39 @@ public sealed class NIRAExecutive
                 // claim or an unrelated previously scheduled reminder.
                 Dictionary<Guid, NIRACommitmentState> commitmentsBefore =
                     _selfModel.CurrentCommitments.ToDictionary(item => item.Id);
-                memoryFormationCalls++;
-                int appliedCommitmentChanges = await ApplyMemoryFormationAsync(
-                    runId,
-                    mindEvent,
-                    interaction?.Event,
-                    latestContext,
-                    decision,
-                    decision.Reply,
-                    cancellationToken);
+                int appliedCommitmentChanges = 0;
+                // Fast structured path: the SAME cognition result may include
+                // a grounded commitment and relative-time proposal. The real
+                // self-model is still the sole persistence authority. Do not
+                // invent a parser or accept the model's success claim.
+                NIRACommitmentFormationProposal[] directReminders =
+                    decision.CommitmentProposals
+                        .Where(p => p.Action == NIRACommitmentProposalAction.Create &&
+                            p.EvidenceSource == NIRACommitmentEvidenceSource.NIRAReply &&
+                            p.Temporal is { Mode: not NIRATemporalTimingMode.None } &&
+                            !string.IsNullOrWhiteSpace(p.EvidenceQuote) &&
+                            decision.Reply.Contains(p.EvidenceQuote, StringComparison.Ordinal))
+                        .Take(1)
+                        .ToArray();
+                if (directReminders.Length == 1)
+                {
+                    appliedCommitmentChanges =
+                        await _selfModel.ApplyCommitmentProposalsAsync(
+                            mindEvent, decision.Reply, directReminders,
+                            cancellationToken);
+                    Debug.WriteLine($"[TemporalCommitment] DIRECT_PROPOSAL | " +
+                        $"Run={runId:D} | Accepted={appliedCommitmentChanges} | ExtraModelCalls=0");
+                }
+                if (appliedCommitmentChanges <= 0)
+                {
+                    // Older/partial model responses remain compatible: no
+                    // speculative scheduling if the structured proposal is
+                    // absent or rejected. Original formation remains intact.
+                    memoryFormationCalls++;
+                    appliedCommitmentChanges = await ApplyMemoryFormationAsync(
+                        runId, mindEvent, interaction?.Event, latestContext,
+                        decision, decision.Reply, cancellationToken);
+                }
 
                 formationAppliedBeforeReply = true;
                 preReviewCommitmentSucceeded = appliedCommitmentChanges > 0;
@@ -4555,6 +4634,28 @@ public sealed class NIRAExecutive
             // including replies following a successful state-changing action.
             // Failed persistence is blocked by trusted runtime evidence above,
             // rather than repeatedly asking an LLM to schedule a nonexistent tool.
+            // Gemma can produce the final character-ready answer in one call for
+            // a shape-checked, evidence-free first-turn conversation or a truly
+            // self-contained knowledge explanation. No tools, commitments, prior
+            // objectives, or evidence-dependent claims are authorized by flags.
+            // No tool, action, reminder or factual task can opt in via a flag alone.
+            bool directConversation = userTerminalDraft &&
+                NIRAConversationFastPath.CanUseDirectReply(
+                    decision,
+                    firstUserCycle: cycle == 1,
+                    hasTrustedWorkEvidence: capabilityResultsBySignature.Count > 0 ||
+                        preReviewCommitmentSucceeded ||
+                        capabilityEvidence.Length > 0 ||
+                        dynamicToolEvidence.Length > 0,
+                    hasPendingOwnedTask: GetPendingTaskForEvent(mindEvent) != null,
+                    embeddedApplication: mindEvent.Metadata.ContainsKey("externalAppId"));
+            if (directConversation)
+            {
+                completionReviewConfirmedComplete = true;
+                Debug.WriteLine($"[ConversationFastPath] REVIEW_SKIPPED | Run={runId:D} | " +
+                    $"Reason={(decision.SelfContainedAnswer ? "StandaloneKnowledge" : "VerifiedInterpersonalDecision")} | ExtraModelCalls=0");
+            }
+
             if (userTerminalDraft &&
                 !completionReviewConfirmedComplete)
             {
@@ -4961,7 +5062,7 @@ public sealed class NIRAExecutive
                     +
                     completionReviewCalls
                     +
-                    (formationAppliedBeforeReply ? 1 : 0);
+                    memoryFormationCalls;
 
                 bool terminalNaturalReply =
                     decision.ReplyPresentation ==
@@ -4985,8 +5086,11 @@ public sealed class NIRAExecutive
                 // and authoritative post-interaction state; on failure it returns
                 // the draft untouched. PreserveExact never goes through a rewrite.
                 bool shouldRealize =
-                    NIRACharacterDeliveryPolicy.RequiresFidelityPass(
-                        decision, reply, hasOutstandingCognitionWork);
+                    NIRACharacterDeliveryPolicy.RequiresOptimizedFidelityPass(
+                        decision, reply, hasOutstandingCognitionWork,
+                        authoritativeCharacterShift: characterDelivery.RequiresRealization,
+                        independentlyReviewed: completionReviewConfirmedComplete ||
+                            directTemporalWakeVerified);
 
                 bool directCharacterDelivery =
                     terminalNaturalReply && !shouldRealize;
@@ -5151,6 +5255,25 @@ public sealed class NIRAExecutive
                     capabilityResultsBySignature, reply);
                 (reply, spoken, blocks) = NIRAPresentationPolicy.RecoverCode(reply, spoken, blocks);
                 spoken = NIRAPresentationPolicy.EnsureInformativeSpeech(spoken, blocks);
+
+                // The other-work context was accurate when cognition began, but
+                // another run can finish while review/realization is still pending.
+                // Correct that stale observation using runtime evidence BEFORE
+                // archiving and emitting the final response. Exact/protected
+                // presentation remains untouched; no additional model call.
+                if (decision.ReplyPresentation == NIRAReplyPresentationMode.Natural)
+                {
+                    string latestStatus = CurrentOtherWorkDeliveryUpdate(mindEvent);
+                    if (latestStatus.Length > 0)
+                    {
+                        reply = string.IsNullOrWhiteSpace(reply)
+                            ? latestStatus : reply.TrimEnd() + "\n\n" + latestStatus;
+                        spoken = string.IsNullOrWhiteSpace(spoken)
+                            ? latestStatus : spoken.TrimEnd() + " " + latestStatus;
+                        Debug.WriteLine($"[ConcurrentMind] FRESH_DELIVERY | Run={runId} | " +
+                            "UpdatedOtherWork=True | ExtraModelCalls=0");
+                    }
+                }
                 Guid? archivedResponseId = await RecordResponseAsync(
                     mindEvent, reply, spoken, blocks);
                 Debug.WriteLine($"[DualResponse] Run={runId} | SpeechChars={spoken.Length} | ScreenChars={reply.Length} | Blocks={blocks.Count}");

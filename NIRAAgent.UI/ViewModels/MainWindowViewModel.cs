@@ -40,15 +40,11 @@ public sealed class MainWindowViewModel
         _settings;
 
 
-    private readonly SpeechChunker
-        _userSpeechChunker =
-            new();
-
-
-    private readonly SpeechResponseState
-        _userSpeechState =
-            new();
-
+    // User replies have independent speech buffers: a later conversation must
+    // never clear an earlier run's text or speech state.
+    private int _activeUserTurns;
+    private long _newestUserTurn;
+    internal const int MaximumQueuedUserTurns = 12;
 
     private readonly Dictionary<Guid, BackgroundResponseState>
         _backgroundResponses =
@@ -176,10 +172,9 @@ public sealed class MainWindowViewModel
 
 
     public bool CanSend =>
-        !IsProcessing
-        &&
-        !string.IsNullOrWhiteSpace(
-            MessageInput);
+        !_shutdown.IsCancellationRequested &&
+        _activeUserTurns < MaximumQueuedUserTurns &&
+        !string.IsNullOrWhiteSpace(MessageInput);
 
 
     public ICommand SendCommand =>
@@ -236,9 +231,9 @@ public sealed class MainWindowViewModel
     {
         if (string.IsNullOrWhiteSpace(choice)) return;
         // Clicked options become ordinary user messages, not permissioned actions.
-        // If busy, prefill rather than submitting into an active cognition run.
+        // Follow-ups are independent user turns even when an earlier task runs.
         MessageInput = "Regarding your previous answer: " + choice.Trim();
-        if (!IsProcessing) _ = SendMessageAsync();
+        if (CanSend) _ = SendMessageAsync();
     }
 
     private async Task SendMessageAsync()
@@ -258,21 +253,22 @@ public sealed class MainWindowViewModel
         Guid? attachedPastChatSessionId = _attachedPastChatSessionId;
         ClearPastChatAttachment();
 
+        // Reserve a slot synchronously on the UI thread before the first await.
+        // A long Ultra run should not disable the input for the next message.
+        if (_activeUserTurns >= MaximumQueuedUserTurns ||
+            _shutdown.IsCancellationRequested)
+            return;
+
+        _activeUserTurns++;
+        IsProcessing = true;
+        long turnSequence = Interlocked.Increment(ref _newestUserTurn);
+        SpeechChunker speechChunker = new();
+        SpeechResponseState speechState = new();
         _voiceQueue.Interrupt();
 
-
-        _userSpeechChunker.Clear();
-
-
-        _userSpeechState.Reset();
-
-
-        MessageInput =
-            string.Empty;
-
-
-        IsProcessing =
-            true;
+        MessageInput = string.Empty;
+        OnPropertyChanged(nameof(CanSend));
+        _sendCommand.RaiseCanExecuteChanged();
 
 
         ChatMessageViewModel userMessage =
@@ -324,6 +320,7 @@ public sealed class MainWindowViewModel
                     string spoken = chunk.SpeechContent.Trim();
                     TimeSpan gap = DateTimeOffset.UtcNow - lastSpokenProgress;
                     if (_settings.Current.VoiceEnabled &&
+                        turnSequence == Interlocked.Read(ref _newestUserTurn) &&
                         !string.IsNullOrWhiteSpace(spoken) &&
                         !string.Equals(spoken, lastSpokenProgressText,
                             StringComparison.OrdinalIgnoreCase) &&
@@ -347,16 +344,18 @@ public sealed class MainWindowViewModel
                 HandleChunk(
                     assistantMessage,
                     chunk,
-                    _userSpeechChunker,
-                    _userSpeechState,
-                    _settings.Current.VoiceEnabled);
+                    speechChunker,
+                    speechState,
+                    _settings.Current.VoiceEnabled &&
+                    turnSequence == Interlocked.Read(ref _newestUserTurn));
             }
 
 
             FlushSpeech(
-                _userSpeechChunker,
-                _userSpeechState,
-                _settings.Current.VoiceEnabled);
+                speechChunker,
+                speechState,
+                _settings.Current.VoiceEnabled &&
+                turnSequence == Interlocked.Read(ref _newestUserTurn));
 
 
             if (assistantMessage.HasContent ||
@@ -378,17 +377,13 @@ public sealed class MainWindowViewModel
         catch (OperationCanceledException)
             when (_shutdown.IsCancellationRequested)
         {
-            _userSpeechChunker.Clear();
-
-
-            _userSpeechState.Reset();
+            speechChunker.Clear();
+            speechState.Reset();
         }
         catch (Exception ex)
         {
-            _userSpeechChunker.Clear();
-
-
-            _userSpeechState.Reset();
+            speechChunker.Clear();
+            speechState.Reset();
 
 
             assistantMessage.Content =
@@ -410,8 +405,12 @@ public sealed class MainWindowViewModel
                     Messages.Remove(assistantMessage);
             }
 
-            IsProcessing =
-                false;
+            speechChunker.Clear();
+            speechState.Reset();
+            _activeUserTurns = Math.Max(0, _activeUserTurns - 1);
+            IsProcessing = _activeUserTurns > 0;
+            OnPropertyChanged(nameof(CanSend));
+            _sendCommand.RaiseCanExecuteChanged();
         }
     }
 
@@ -793,12 +792,6 @@ public sealed class MainWindowViewModel
 
 
         _voiceQueue.Interrupt();
-
-
-        _userSpeechChunker.Clear();
-
-
-        _userSpeechState.Reset();
 
 
         foreach (

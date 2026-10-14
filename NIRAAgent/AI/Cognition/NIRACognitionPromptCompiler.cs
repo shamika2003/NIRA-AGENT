@@ -248,6 +248,36 @@ internal static class NIRACognitionPromptCompiler
         new lived experience and requires no memory review. Do not infer new facts
         from NIRA's own reply.
 
+        TIME-BOUND OBLIGATIONS: To save a full additional memory-formation
+        LLM call, the SAME initial cognition response MAY supply one
+        commitmentProposals item when reviewCommitment=true. Example:
+        {"action":"Create","summary":"Remind user to check the report",
+         "evidenceSource":"NIRAReply","evidenceQuote":"I'll remind you",
+         "temporal":{"mode":"Exact","relativeDelaySeconds":120,
+                     "originalExpression":"in two minutes"},
+         "confidence":0.95,"reason":"User requested timed reminder"}.
+        evidenceQuote MUST be a verbatim substring of the ACTUAL reply;
+        relativeDelaySeconds comes from the user's specified duration, never
+        from a guessed current clock. Use a normalized short summary and
+        correct enum strings; the trusted self-model rejects unsupported
+        evidence, duplicates and invalid schedules. If you cannot supply
+        a valid proposal, emit [] and let the existing formation pass reason.
+        Never claim a reminder was persisted merely because you proposed it.
+        The runtime will authoritatively check persistence before delivery.
+
+        VERIFIED REMINDER WAKE (internal event only): On TemporalCommitmentDue,
+        NIRA decides whether to deliver the reminder now or defer based on
+        the authoritative schedule and user situation. If you actually deliver
+        a one-off reminder in a Complete reply, you MAY include:
+        {"action":"Complete","commitmentId":"exact event GUID",
+         "evidenceSource":"NIRAReply","evidenceQuote":"exact reply fragment",
+         "confidence":0.95,"reason":"Delivered current due reminder"}
+        in commitmentProposals without a separate memory-formation call.
+        The Executive requires the EXACT wake ID and validates the reply quote
+        and persisted lifecycle. Never mark deferred or unspoken work complete.
+        For recurring commitments do not resolve the whole obligation: one
+        delivery is only one occurrence. When in doubt, emit [] for fallback.
+
         FUTURE OBLIGATIONS / REMINDERS: reviewCommitment is a separate terminal
         signal. Set reviewCommitment=true ONLY when NIRA's FINAL reply actually
         accepts, reschedules, cancels, or otherwise changes a future unresolved
@@ -389,6 +419,8 @@ internal static class NIRACognitionPromptCompiler
          "speech":"separate spoken wording or empty to use reply",
          "displayBlocks":[],
          "replyReady":true,"characterReady":true,
+         "conversationOnly":false,"selfContainedAnswer":false,
+         "commitmentProposals":[],
          "reviewExperience":false,"reviewCommitment":false,
          "novelExperienceEvidence":"","memorySearches":[],"conversationSearches":[],
          "replyPresentation":"Natural|PreserveExact",
@@ -402,6 +434,31 @@ internal static class NIRACognitionPromptCompiler
          "vocalIntent":{"warmth":0.0,"energy":0.0,"tension":0.0,
            "playfulness":0.0,"confidence":0.0,"tenderness":0.0,
            "surprise":0.0,"pace":1.0}}
+        SELF-CONTAINED ONE-CALL KNOWLEDGE: Set selfContainedAnswer=true only for a
+        complete stand-alone explanation supported by general reasoning without
+        external evidence, new memory, task continuation, current PC/app state,
+        numbers drawn from a live system, actions, or promises. Return the FULL
+        technically precise answer as NIRA in the first call with replyReady=true
+        and characterReady=true. Avoid misleading technical analogies and false
+        concurrency or reliability guarantees; state material uncertainty. Do NOT use for safety-critical or uncertain
+        claims, personal history, ongoing work, or a task that genuinely benefits
+        from tools or independent verification. conversationOnly and
+        selfContainedAnswer are mutually exclusive; when in doubt, set both false.
+        The runtime still validates its actual work/evidence state and all
+        action arrays; these fields never grant authority or prove correctness.
+
+        CONVERSATION-ONLY ONE-CALL DELIVERY: Set conversationOnly=true ONLY when
+        the current user turn is purely interpersonal conversation (greeting,
+        personal reaction or casual check-in) and the answer neither claims a
+        factual observation/task result nor accepts a new action, commitment,
+        investigation, clarification, or work obligation. This is a semantic
+        judgment inside the SAME cognition decision, not an extra classifier.
+        Set state=Complete, emitReply=true, replyReady=true, characterReady=true
+        and write NIRA's COMPLETE natural wording now. All capability, memory,
+        plan, branch, search, control, review, and display proposals must be
+        empty/false. When unsure, set conversationOnly=false. The Executive
+        independently verifies the decision shape; this flag never grants
+        authority or proves task completion.
         JOURNEY: On multi-step work, put a short public status in progressUpdate
         in the SAME cognition result. It describes what you will check next or
         what fresh evidence just showed, never internal thought or success not
@@ -570,10 +627,10 @@ internal static class NIRACognitionPromptCompiler
             acknowledgements and useful content without generic appeasement, routine
             offers of help, or customer-service conflict management. Set
             characterReady=true only when that wording already reflects NIRA from the
-            supplied pre-commit state. The Executive always performs one bounded,
-            presentation-only realization for terminal Natural replies using NIRA's
-            current authoritative state, even when that state did not move.
-            PreserveExact is not rewritten. Cognition must still draft NIRA's own
+            supplied pre-commit state. The Executive verifies completion and
+            post-interaction character state. A character-ready verified answer
+            can be delivered directly while state is stable; otherwise it may
+            need a separate realization. PreserveExact is not rewritten. Cognition must still draft NIRA's own
             credible voice; never postpone identity to the expression pass.
             Set reviewExperience=true ONLY for a novel, user-supplied fact,
             preference, or grounded meaningful outcome. For a user event, set
@@ -837,6 +894,8 @@ internal static class NIRACognitionPromptCompiler
             "capabilityIds": ["exact current registered capability ID"],
             "replyReady": true|false,
             "characterReady": true|false,
+            "conversationOnly": true|false,
+            "selfContainedAnswer": true|false,
             "speech": "optional natural spoken version of reply",
             "displayBlocks": [{"type":"heading|text|card|metric|table|chart|code|details|list|quote|timeline|checklist|progress|tabs|followups",
               "title":"","text":"","unit":"","language":"",
@@ -849,6 +908,10 @@ internal static class NIRACognitionPromptCompiler
             Never infer ISO calendar dates from weekday names alone.
             "reviewExperience": true|false,
             "reviewCommitment": true|false,
+            "commitmentProposals": [{"action":"Create","summary":"...",
+                 "evidenceSource":"NIRAReply","evidenceQuote":"exact reply fragment",
+                 "temporal":{"mode":"Exact","relativeDelaySeconds":120},
+                 "confidence":0.95,"reason":"..."}],
             "novelExperienceEvidence": "exact short quote from current user input or empty",
             "conversationSearches": [{"query":"description of prior exchange",
                  "maximumResults":6,"currentSessionOnly":false,
@@ -941,7 +1004,7 @@ internal static class NIRACognitionPromptCompiler
         // This is state owned by NIRA's self-model, not personality prose.
         Add(b, "CURRENT AUTHORITATIVE SELF PULSE", SelfPulse(context.SelfModelContext));
         Add(b, "ORIGINAL OBJECTIVE AND TRUSTED WORK OWNER", Limit(context.OwnedTaskContext, 3600));
-        Add(b, "UNRESOLVED USER CLARIFICATION", Limit(context.TaskContinuityContext, 850));
+        Add(b, "UNRESOLVED USER CLARIFICATION", Limit(context.TaskContinuityContext, 1600));
         // Compact runtime-generated signatures include parameter names/types so
         // straightforward primitives can be requested on cycle 1 without a schema-only call.
         // A model can know the right primitive but place its ID and arguments
@@ -1440,11 +1503,9 @@ internal static class NIRACognitionPromptCompiler
 
             if (requiredNames.Count > 0)
             {
-                b.Append(" | REQUIRED_ARGUMENT_KEYS=")
-                    .Append(string.Join(",", requiredNames));
-                // Use the exact current registered parameter names as a compact
-                // structural guide. This is a template, NOT a filled-in request;
-                // values must still be grounded and runtime-validated.
+                // requiredArguments includes the complete exact required key
+                // set; duplicating it in REQUIRED_ARGUMENT_KEYS wasted prompt
+                // tokens every turn. This remains runtime-derived and typed.
                 b.Append(" | requiredArguments={")
                     .Append(string.Join(",", requiredNames.Select(name =>
                         "\"" + name + "\":<value>")))
@@ -1585,6 +1646,11 @@ internal static class NIRACognitionPromptCompiler
     // windows. Keep the authoritative Executive journal intact; compact only
     // this model-visible projection. Read windows are runtime evidence, not
     // instructions, and never confer permission or completion by themselves.
+    // A bounded, runtime-grounded observation projection reused for recovery.
+    // It never grants tool authority and never invents unread file contents.
+    internal static string BoundedSourceReadEvidence(string? raw, int max) =>
+        SourceReadRecords(raw, max);
+
     private static string SourceReadRecords(string? raw, int max)
     {
         if (string.IsNullOrWhiteSpace(raw)) return string.Empty;

@@ -24,7 +24,10 @@ instructions: |
              "replyPresentation": "Natural|PreserveExact",
              "replyReady": false,
              "characterReady": false,
+             "conversationOnly": false,
+             "selfContainedAnswer": false,
              "reviewCommitment": false,
+             "commitmentProposals": [],
              "decisionSummary": "short operational status only",
              "deepReasoningRequest": null,
              "progressUpdate": "optional short user-visible status while continuing; no secrets",
@@ -52,6 +55,30 @@ instructions: |
                "pace": 1.0
              }
            }
+
+           STRUCTURED COMMITMENT EFFICIENCY: When reviewCommitment=true for
+           an accepted future reminder, optionally put one grounded proposal
+           into commitmentProposals IN THIS SAME decision. Use action=Create,
+           evidenceSource=NIRAReply, evidenceQuote=an EXACT contiguous excerpt
+           of the proposed reply accepting the reminder, summary=what to remind,
+           confidence (0..1), and temporal={"mode":"Exact",
+           "relativeDelaySeconds":120,"originalExpression":"in two minutes"}
+           for a 2-minute reminder. Other valid temporal semantics may use
+           targetLocalDate/localTime or recurrence as the trusted scheduler
+           supports. The authoritative self-model validates proposal evidence,
+           schedule and storage. If uncertain emit [] and allow existing
+           separate formation fallback. A proposal never equals a saved event.
+           For ordinary chat, no future promise, or unrelated tool work, use [].
+
+           TEMPORAL WAKE DELIVERY: For an internal TemporalCommitmentDue event,
+           if NIRA actually emits the reminder in a Complete reply, it may
+           attach one commitmentProposals item with action=Complete,
+           commitmentId=the EXACT authoritative event commitmentId,
+           evidenceSource=NIRAReply, evidenceQuote=exact substring of final
+           reply, and high confidence. The self-model validates and persists
+           the transition without a second memory-formation LLM call. If
+           deferred, silent, uncertain, or recurring, don't mark the entire
+           obligation completed; return [] and use the established fallback.
 
            FUTURE-OBLIGATION HANDOFF: reviewCommitment is REQUIRED in every
            terminal JSON decision. Set reviewCommitment=true only when the
@@ -97,6 +124,25 @@ instructions: |
            or merely making conflict easier to resolve is NOT repair by itself. If the
            CURRENT user event contains no actual repair act, set repair=0. Existing
            relationship can resolve ambiguity but cannot reverse clear current evidence.
+
+           SELF-CONTAINED ANSWER OPT-IN: selfContainedAnswer=true applies only
+           to a complete, general-knowledge explanation requiring no live
+           observations, user-specific facts, memory retrieval, tools,
+           permission, state changes, scheduling, work status, or verification.
+           Provide the accurate, complete answer and final NIRA character wording
+           now (replyReady=true, characterReady=true). Do not use it for uncertain
+           factual claims or substantial research. It may not coexist with
+           conversationOnly=true. The Executive independently checks the full
+           proposal shape and actual work/evidence before skipping any calls.
+
+           CONVERSATION-ONLY OPT-IN: conversationOnly=true applies only to
+           interpersonal dialogue with NO independent fact check, tool, action,
+           scheduled obligation, memory retrieval, task status verification,
+           or ongoing objective. It is a proposal in this SAME model call,
+           never authority. Such a decision must be Complete with final
+           characterReady/replyReady wording and all action/review requests empty.
+           If any task/evidence/obligation is present, set conversationOnly=false.
+           Never assert an unobserved completion to qualify for a fast response.
 
            replyReady means the grounded semantic content is complete.
            characterReady is separate: set it true only for a Natural reply whose

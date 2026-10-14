@@ -36,6 +36,37 @@ internal static class NIRACharacterDeliveryPolicy
                !string.IsNullOrWhiteSpace(finalDraft);
     }
 
+    // Explicit optimized terminal path. Cognition authored NIRA's final wording
+    // using the authoritative pre-commit pulse. If the committed post-interaction
+    // state did not meaningfully change delivery, a second stylistic cloud call
+    // would not add character fidelity. Deep/tool/task drafts remain conservative
+    // because they are never marked safe by the conversational fast-path policy.
+    // Compatibility overload for prior policies/tests; without the trusted
+    // Executive review receipt, non-social tasks still require realization.
+    public static bool RequiresOptimizedFidelityPass(
+        NIRACognitionDecision decision, string finalDraft,
+        bool hasOutstandingCognitionWork, bool authoritativeCharacterShift) =>
+        RequiresOptimizedFidelityPass(decision, finalDraft,
+            hasOutstandingCognitionWork, authoritativeCharacterShift, false);
+
+    public static bool RequiresOptimizedFidelityPass(
+        NIRACognitionDecision decision, string finalDraft,
+        bool hasOutstandingCognitionWork, bool authoritativeCharacterShift,
+        bool independentlyReviewed)
+    {
+        if (!RequiresFidelityPass(decision, finalDraft, hasOutstandingCognitionWork))
+            return false;
+        // No model flag alone allows skipping verification. First-turn
+        // conversation/knowledge must pass the Executive's trusted fast-path;
+        // observed work must be independently completed and reviewed first.
+        // After either boundary, a stable already-character-ready final reply
+        // gains nothing from a second expensive wording call.
+        return !(decision.ConversationOnly || decision.SelfContainedAnswer ||
+                 independentlyReviewed) ||
+               !decision.ReplyReady || !decision.CharacterReady ||
+               authoritativeCharacterShift;
+    }
+
     public static NIRACharacterDeliveryAssessment Assess(
         NIRACharacterTransition transition,
         NIRAInteractionContext? interaction,

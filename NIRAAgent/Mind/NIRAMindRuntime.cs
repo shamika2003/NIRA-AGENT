@@ -3,6 +3,7 @@
  */
 
 using System.Runtime.CompilerServices;
+using System.Diagnostics;
 
 using NIRAAgent.Agent.State;
 using NIRAAgent.Character.History;
@@ -34,14 +35,16 @@ public sealed class NIRAMindRuntime
         _conversation;
 
 
-    // One foreground user conversation at a time across NIRA's
-    // desktop UI and embedded ELVARA application surfaces.
-    private readonly SemaphoreSlim
-        _userCognitionGate =
-            new(
-                1,
-                1);
+    // Run slots bound concurrent user-turn reasoning without serializing an
+    // entire long-running user task. Each run retains its own async context;
+    // the Executive remains the sole owner of tool authorization and effects.
+    // New messages may wait for a slot, but do not cancel existing work.
+    internal const int MaximumConcurrentUserRuns = 3;
+    private readonly SemaphoreSlim _userRunSlots =
+        new(MaximumConcurrentUserRuns, MaximumConcurrentUserRuns);
 
+
+    private readonly NIRAActiveTurnLedger _activeUserWork = new();
 
     private int
         _activeCognitionRuns;
@@ -82,6 +85,9 @@ public sealed class NIRAMindRuntime
             conversation
             ?? throw new ArgumentNullException(
                 nameof(conversation));
+
+        _executive.AttachActiveWorkLedger(_activeUserWork);
+        Debug.WriteLine($"[ConcurrentMind] READY | Revision=NIRA-CONCURRENT-20261014-S2 | UserRunSlots={MaximumConcurrentUserRuns}");
     }
 
 
@@ -98,7 +104,7 @@ public sealed class NIRAMindRuntime
         }
 
 
-        await _userCognitionGate
+        await _userRunSlots
             .WaitAsync(
                 cancellationToken);
 
@@ -126,25 +132,25 @@ public sealed class NIRAMindRuntime
                 socialEvent.Id);
 
 
+            Dictionary<string, string> userMetadata = new();
+            if (attachedPastChatSessionId is Guid sid && sid != Guid.Empty)
+                userMetadata["attachedPastChatSessionId"] = sid.ToString("D");
+            NIRAActiveWorkObservation otherWork = _activeUserWork.Observe();
+            if (otherWork.Context.Length > 0)
+            {
+                userMetadata["otherActiveUserWork"] = otherWork.Context;
+                userMetadata["observedActiveWorkIds"] = otherWork.ObservedIds;
+            }
+            else
+            {
+                string recentWork = _activeUserWork.RecentOutcomeContext();
+                if (recentWork.Length > 0)
+                    userMetadata["otherActiveUserWork"] = recentWork;
+            }
+
             NIRAMindEvent mindEvent =
-                NIRAMindEvent.UserMessage(
-                    input,
-                    socialEvent.Id,
-                    socialEvent.TopicKey) with
-                {
-                    Metadata =
-                        attachedPastChatSessionId is Guid sid
-                        &&
-                        sid !=
-                            Guid.Empty
-                            ? new Dictionary<string, string>
-                            {
-                                ["attachedPastChatSessionId"] =
-                                    sid.ToString(
-                                        "D")
-                            }
-                            : new Dictionary<string, string>()
-                };
+                NIRAMindEvent.UserMessage(input, socialEvent.Id,
+                    socialEvent.TopicKey) with { Metadata = userMetadata };
 
 
             await foreach (
@@ -160,7 +166,7 @@ public sealed class NIRAMindRuntime
         }
         finally
         {
-            _userCognitionGate.Release();
+            _userRunSlots.Release();
         }
     }
 
@@ -223,7 +229,7 @@ public sealed class NIRAMindRuntime
                     false);
 
 
-        await _userCognitionGate
+        await _userRunSlots
             .WaitAsync(
                 cancellationToken);
 
@@ -288,6 +294,13 @@ public sealed class NIRAMindRuntime
             }
 
 
+            NIRAActiveWorkObservation otherWork = _activeUserWork.Observe();
+            if (otherWork.Context.Length > 0)
+            {
+                metadata["otherActiveUserWork"] = otherWork.Context;
+                metadata["observedActiveWorkIds"] = otherWork.ObservedIds;
+            }
+
             NIRAMindEvent mindEvent =
                 NIRAMindEvent.UserMessage(
                     input,
@@ -315,7 +328,7 @@ public sealed class NIRAMindRuntime
         }
         finally
         {
-            _userCognitionGate.Release();
+            _userRunSlots.Release();
         }
     }
 
@@ -419,12 +432,14 @@ public sealed class NIRAMindRuntime
         [EnumeratorCancellation]
         CancellationToken cancellationToken)
     {
+        using NIRAActiveTurnLedger.Lease? activeTurn =
+            mindEvent.Source == NIRAMindEventSource.User
+                ? _activeUserWork.Enter(mindEvent.Content)
+                : null;
         BeginCognitionRun();
 
-
-        bool completed =
-            false;
-
+        bool completed = false;
+        bool publishedReply = false;
 
         try
         {
@@ -434,13 +449,14 @@ public sealed class NIRAMindRuntime
                     mindEvent,
                     cancellationToken))
             {
-                if (chunk.Type ==
-                    NIRAOutputChunkType.Completed)
+                if (chunk.Type == NIRAOutputChunkType.Text &&
+                    (!string.IsNullOrWhiteSpace(chunk.Content) || chunk.DisplayBlocks.Count > 0))
+                    publishedReply = true;
+                if (chunk.Type == NIRAOutputChunkType.Completed)
                 {
-                    completed =
-                        true;
+                    completed = true;
+                    activeTurn?.Finish(publishedReply);
                 }
-
 
                 yield return chunk;
             }

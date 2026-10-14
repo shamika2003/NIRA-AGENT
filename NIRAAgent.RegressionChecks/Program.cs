@@ -14,6 +14,7 @@ int passed = 0;
 int failed = 0;
 Console.WriteLine($"[DeepRouting] REGRESSION | Revision={NIRAModelSelection.RoutingRevision} | " +
     $"Assembly={typeof(NIRAModelSelection).Assembly.Location}");
+Console.WriteLine("[ConcurrentMind] REGRESSION | Revision=NIRA-CONCURRENT-20261014-S4-ADAPTIVE");
 
 Check("Capability identity ignores transient request IDs and explanations", () =>
 {
@@ -434,6 +435,337 @@ Check("Explicit deep reasoning is discoverable through the primary output contra
     if (!contract.Contains("EXPLICITLY requests", StringComparison.Ordinal) ||
         !contract.Contains("deepReasoningRequest", StringComparison.Ordinal))
         throw new Exception("Explicit specialist delegation instruction missing");
+});
+
+Check("Concurrent user turns retain a bounded independent reasoning lane", () =>
+{
+    const int expectedSlots = 3;
+    var field = typeof(NIRAMindRuntime).GetField("MaximumConcurrentUserRuns",
+        BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static)
+        ?? throw new Exception("Bounded user-run admission missing");
+    Equal(expectedSlots, (int)field.GetRawConstantValue()!);
+});
+
+Check("Ongoing user work snapshots are truthful and cleared after completion", () =>
+{
+    var ledger = new NIRAActiveTurnLedger();
+    using (ledger.Enter("Analyze a complex project"))
+    {
+        if (!ledger.Snapshot().Contains("Analyze a complex project", StringComparison.Ordinal) ||
+            !ledger.Snapshot().Contains("not completed", StringComparison.Ordinal))
+            throw new Exception("In-flight work ledger lost status or falsely claimed completion");
+    }
+    Equal(string.Empty, ledger.Snapshot());
+});
+
+Check("Internal event ownership keys share a goal and isolate independent commitments", () =>
+{
+    var goal = Guid.NewGuid().ToString("D");
+    var first = new NIRAMindEvent { Source = NIRAMindEventSource.Internal,
+        TopicKey = "branch:first", Metadata = new Dictionary<string, string> { ["goalId"] = goal } };
+    var second = first with { TopicKey = "branch:other" };
+    Equal(NIRAInternalWorkGate.OwnershipKey(first), NIRAInternalWorkGate.OwnershipKey(second));
+    var due = new NIRAMindEvent { Source = NIRAMindEventSource.Internal,
+        Name = "TemporalCommitmentDue", TopicKey = "commitment:a",
+        Metadata = new Dictionary<string, string> { ["commitmentId"] = Guid.NewGuid().ToString("D") } };
+    NotEqual(NIRAInternalWorkGate.OwnershipKey(first), NIRAInternalWorkGate.OwnershipKey(due));
+});
+
+Check("Internal background admission keeps same goal serialized and temporal wake independent", () =>
+{
+    var gate = new NIRAInternalWorkGate();
+    var shared = Guid.NewGuid().ToString("D");
+    var first = new NIRAMindEvent { Source = NIRAMindEventSource.Internal,
+        Name = "PersistentBranchWorkResult", TopicKey = "branch:a",
+        Metadata = new Dictionary<string, string> { ["goalId"] = shared } };
+    var same = first with { TopicKey = "branch:b" };
+    var other = new NIRAMindEvent { Source = NIRAMindEventSource.Internal,
+        TopicKey = "goal:independent" };
+    var due = new NIRAMindEvent { Source = NIRAMindEventSource.Internal,
+        Name = "TemporalCommitmentDue", TopicKey = "commitment:independent" };
+
+    using IDisposable firstLease = gate.EnterAsync(first).GetAwaiter().GetResult();
+    Task<IDisposable> waiting = gate.EnterAsync(same);
+    if (waiting.IsCompleted) throw new Exception("Same goal overlapped");
+    using (gate.EnterAsync(other).GetAwaiter().GetResult())
+    using (gate.EnterAsync(due).GetAwaiter().GetResult())
+    {
+        // Temporal work has reserved admission even when ordinary slots are busy.
+        if (waiting.IsCompleted) throw new Exception("Same goal lock was bypassed");
+    }
+    firstLease.Dispose();
+    if (!waiting.Wait(TimeSpan.FromSeconds(3)))
+        throw new Exception("Same-owner work never resumed after release");
+    waiting.Result.Dispose();
+});
+
+Check("S2 captures stable task identities without treating in-flight work as finished", () =>
+{
+    var ledger = new NIRAActiveTurnLedger();
+    using var audit = ledger.Enter("Inspect the NIRA source");
+    NIRAActiveWorkObservation initial = ledger.Observe();
+    if (!initial.Context.Contains("Inspect the NIRA source", StringComparison.Ordinal) ||
+        string.IsNullOrWhiteSpace(initial.ObservedIds) ||
+        !string.IsNullOrEmpty(ledger.DeliveryUpdate(initial.ObservedIds)))
+        throw new Exception("Active work was lost or declared finished prematurely");
+});
+
+Check("S2 completion while answering produces grounded zero-call delivery update", () =>
+{
+    var ledger = new NIRAActiveTurnLedger();
+    using var audit = ledger.Enter("Read-only source audit");
+    NIRAActiveWorkObservation seen = ledger.Observe();
+    if (!string.IsNullOrEmpty(ledger.DeliveryUpdate(seen.ObservedIds)))
+        throw new Exception("Running work was claimed completed");
+    audit.Finish(resultPublished: true);
+    string update = ledger.DeliveryUpdate(seen.ObservedIds);
+    if (!update.Contains("finished processing", StringComparison.Ordinal) ||
+        !update.Contains("response is already in this conversation", StringComparison.Ordinal) ||
+        !string.IsNullOrEmpty(ledger.Snapshot()))
+        throw new Exception("Finished run was not published or remained active");
+});
+
+Check("S2 stopped runs cannot claim successful work or a published answer", () =>
+{
+    var ledger = new NIRAActiveTurnLedger();
+    NIRAActiveWorkObservation observed;
+    using (ledger.Enter("Interrupted file analysis"))
+        observed = ledger.Observe();
+    string update = ledger.DeliveryUpdate(observed.ObservedIds);
+    if (!update.Contains("stopped before finishing", StringComparison.Ordinal) ||
+        update.Contains("response is already", StringComparison.Ordinal))
+        throw new Exception("Stopped work was reported as successful");
+});
+
+Check("S2 task status binds only to previously observed work and does not cross runs", () =>
+{
+    var ledger = new NIRAActiveTurnLedger();
+    using var older = ledger.Enter("Older audit");
+    NIRAActiveWorkObservation before = ledger.Observe();
+    using var unrelated = ledger.Enter("Other task");
+    unrelated.Finish(resultPublished: true);
+    if (!string.IsNullOrEmpty(ledger.DeliveryUpdate(before.ObservedIds)))
+        throw new Exception("A newly started task contaminated the earlier conversation");
+    older.Finish(resultPublished: false);
+    string update = ledger.DeliveryUpdate(before.ObservedIds);
+    if (!update.Contains("finished processing, but no answer was published", StringComparison.Ordinal) ||
+        update.Contains("Other task", StringComparison.Ordinal))
+        throw new Exception("Run correlation or publish-state guard failed");
+});
+
+Check("S2 keeps task-status correction behind the Executive delivery boundary", () =>
+{
+    MethodInfo? method = typeof(NIRAExecutive).GetMethod("AttachActiveWorkLedger",
+        BindingFlags.Instance | BindingFlags.NonPublic);
+    if (method is null)
+        throw new Exception("Executive is missing authoritative task-state attachment");
+});
+
+Check("S3 conversation-only first turn can complete without repeated models", () =>
+{
+    var d = new NIRACognitionDecision
+    {
+        State = NIRACognitionState.Complete, EmitReply = true,
+        Reply = "Well, hello there.", ReplyReady = true,
+        CharacterReady = true, ConversationOnly = true
+    };
+    if (!NIRAConversationFastPath.CanUseDirectReply(d, true, false, false, false))
+        throw new Exception("Complete conversation-only reply was not admitted");
+    if (NIRAConversationFastPath.CanUseDirectReply(d with { ConversationOnly = false },
+            true, false, false, false))
+        throw new Exception("Ordinary evidence-bound task bypassed the reviewer");
+});
+
+Check("S3 conversation-only fast path refuses tool and commitment claims", () =>
+{
+    var social = new NIRACognitionDecision
+    {
+        State = NIRACognitionState.Complete, EmitReply = true,
+        Reply = "Fine. That's cute.", ReplyReady = true,
+        CharacterReady = true, ConversationOnly = true
+    };
+    var tool = social with { CapabilityRequests = new [] { Request("system.storage.list", "{}") } };
+    if (NIRAConversationFastPath.CanUseDirectReply(tool, true, false, false, false) ||
+        NIRAConversationFastPath.CanUseDirectReply(social with { ReviewCommitment = true }, true, false, false, false) ||
+        NIRAConversationFastPath.CanUseDirectReply(social with { ReviewExperience = true }, true, false, false, false))
+        throw new Exception("Action, formation or reminder bypassed verification");
+});
+
+Check("S3 fast path refuses retries, pending objectives, and embedded app access", () =>
+{
+    var d = new NIRACognitionDecision { State=NIRACognitionState.Complete,
+        EmitReply=true, Reply="Hi.", ReplyReady=true, CharacterReady=true,
+        ConversationOnly=true };
+    if (NIRAConversationFastPath.CanUseDirectReply(d, false, false, false, false) ||
+        NIRAConversationFastPath.CanUseDirectReply(d, true, true, false, false) ||
+        NIRAConversationFastPath.CanUseDirectReply(d, true, false, true, false) ||
+        NIRAConversationFastPath.CanUseDirectReply(d, true, false, false, true))
+        throw new Exception("Execution context bypassed the trusted reviewer");
+});
+
+Check("S3 character realization is skipped only with grounded stable ready reply", () =>
+{
+    Type policy = typeof(NIRAModelSelection).Assembly.GetType(
+        "NIRAAgent.AI.Cognition.NIRACharacterDeliveryPolicy", true)!;
+    MethodInfo method = policy.GetMethod("RequiresOptimizedFidelityPass", BindingFlags.Static |
+        BindingFlags.Public, null, new[] { typeof(NIRACognitionDecision), typeof(string),
+            typeof(bool), typeof(bool) }, null)
+        ?? throw new Exception("Four-input authoritative delivery route missing");
+    bool Needs(NIRACognitionDecision d, bool shift) =>
+        (bool)method.Invoke(null, new object[] { d, d.Reply, false, shift })!;
+    var d = new NIRACognitionDecision { State=NIRACognitionState.Complete,
+        EmitReply=true, Reply="Nice try.", ReplyReady=true, CharacterReady=true,
+        ConversationOnly=true };
+    if (Needs(d,false) || !Needs(d,true) ||
+        !Needs(d with { CharacterReady=false },false) ||
+        !Needs(d with { ConversationOnly=false },false))
+        throw new Exception("Stable personal delivery or state-shift safeguard broken");
+});
+
+Check("S3 current source checkpoint count is based on complete result lines", () =>
+{
+    Type cognition = typeof(NIRAModelSelection).Assembly.GetType(
+        "NIRAAgent.AI.Cognition.NIRACognitionService", true)!;
+    MethodInfo count = cognition.GetMethod("CountSourceReads", BindingFlags.Static |
+        BindingFlags.NonPublic) ?? throw new Exception("Read counter unavailable");
+    string evidence = "CapabilityId: filesystem.read\r\nL1: CapabilityId: filesystem.read\r\n" +
+        "CapabilityId: filesystem.read\r\n";
+    Equal(2, (int)count.Invoke(null, new object?[] { evidence })!);
+});
+
+Check("S3 recovery rejects runs containing non-read capability results", () =>
+{
+    Type cognition = typeof(NIRAModelSelection).Assembly.GetType(
+        "NIRAAgent.AI.Cognition.NIRACognitionService", true)!;
+    MethodInfo gate = cognition.GetMethod("HasOnlyFileReadCapabilityResults", BindingFlags.Static |
+        BindingFlags.NonPublic) ?? throw new Exception("Recovery capability gate unavailable");
+    bool Allowed(string raw) => (bool)gate.Invoke(null, new object?[] { raw })!;
+    if (!Allowed("CapabilityId: filesystem.read\nCapabilityId: filesystem.read\n") ||
+        Allowed("CapabilityId: filesystem.read\nCapabilityId: shell.execute\n") ||
+        Allowed("CapabilityId: filesystem.read\n"))
+        throw new Exception("Read-only recovery boundary broken");
+});
+
+Check("S3 status correction tracks original outstanding work, not finished check-in", () =>
+{
+    var ledger = new NIRAActiveTurnLedger();
+    using var audit = ledger.Enter("Full architecture audit");
+    using var checkin = ledger.Enter("Quick status check");
+    var observation = ledger.Observe();
+    if (!observation.Context.Contains("Full architecture audit", StringComparison.Ordinal))
+        throw new Exception("Primary active work was lost");
+    checkin.Finish(true);
+    if (!string.IsNullOrEmpty(ledger.DeliveryUpdate(observation.ObservedIds)))
+        throw new Exception("A finished check-in contaminated the audit's delivery state");
+    audit.Finish(false);
+    if (!ledger.DeliveryUpdate(observation.ObservedIds)
+            .Contains("Full architecture audit", StringComparison.Ordinal))
+        throw new Exception("Audit lifecycle was not observed");
+});
+
+Check("S3 prompt contract carries explicit single-call social classification", () =>
+{
+    string root = LocatePromptFolder() ?? throw new Exception("Missing prompt directory");
+    string contract = File.ReadAllText(Path.Combine(root,"cognition_contract.yaml"));
+    if (!contract.Contains("\"conversationOnly\": false", StringComparison.Ordinal) ||
+        !contract.Contains("CONVERSATION-ONLY OPT-IN", StringComparison.Ordinal))
+        throw new Exception("Focused cognitive schema lacks conversation-only control");
+});
+
+Check("S3 new messages see recent finished-work truth without extra model calls", () =>
+{
+    var ledger = new NIRAActiveTurnLedger();
+    if (ledger.RecentOutcomeContext().Length != 0)
+        throw new Exception("New ledger fabricated a prior task");
+    using var audit = ledger.Enter("Code audit");
+    audit.Finish(true);
+    string note = ledger.RecentOutcomeContext();
+    if (!note.Contains("Processing ended", StringComparison.Ordinal) ||
+        !note.Contains("Code audit", StringComparison.Ordinal) ||
+        note.Contains("succeeded", StringComparison.OrdinalIgnoreCase))
+        throw new Exception("Recent lifecycle state was ungrounded");
+});
+
+Check("S4 due-reminder direct transition is tied to authoritative ID", () =>
+{
+    MethodInfo? gate = typeof(NIRAExecutive).GetMethod("ShouldPreReviewCommitment",
+        BindingFlags.NonPublic | BindingFlags.Static);
+    if (gate == null) throw new Exception("Trusted commitment review contract missing");
+    // No direct mutation is authorized by the model or by this test.
+    string source = File.ReadAllText(Path.Combine(
+        Directory.GetParent(LocatePromptFolder() ??
+            throw new Exception("Prompt folder unavailable"))?.Parent?.FullName ??
+            throw new Exception("Project root unavailable"),
+        "NIRAAgent", "Mind", "NIRAExecutive.cs"));
+    if (!source.Contains("proposalGuid == dueGuid", StringComparison.Ordinal) ||
+        !source.Contains("directTemporalWakeVerified = true", StringComparison.Ordinal) ||
+        !source.Contains("verifiedChanges > 0", StringComparison.Ordinal))
+        throw new Exception("Due event ID or persistence gates missing");
+});
+
+Check("S4 stable interpersonal overload remains compatible", () =>
+{
+    Type policy = typeof(NIRAModelSelection).Assembly.GetType(
+        "NIRAAgent.AI.Cognition.NIRACharacterDeliveryPolicy", true)!;
+    if (!policy.GetMethods(BindingFlags.Static | BindingFlags.Public).Any(x =>
+        x.Name == "RequiresOptimizedFidelityPass" && x.GetParameters().Length == 4))
+        throw new Exception("Compatibility overload missing");
+});
+
+Check("S4 direct reminder structure remains untrusted and bounded", () =>
+{
+    var reminder = new NIRACognitionDecision { State=NIRACognitionState.Complete,
+        EmitReply=true, Reply="I'll remind you in two minutes.",
+        ReplyReady=true, CharacterReady=true, SelfContainedAnswer=true,
+        CommitmentProposals = new [] { new NIRAAgent.Self.Model.NIRACommitmentFormationProposal {
+            Action = NIRAAgent.Self.Model.NIRACommitmentProposalAction.Create,
+            EvidenceSource = NIRAAgent.Self.Model.NIRACommitmentEvidenceSource.NIRAReply,
+            EvidenceQuote = "I'll remind you", Summary = "Check NIRA reasoning" } } };
+    if (NIRAConversationFastPath.CanUseDirectReply(reminder, true, false, false, false))
+        throw new Exception("Model-written reminder bypassed verified persistence");
+});
+
+Check("S4 general explanation can finish in one reviewed-by-contract cognition call", () =>
+{
+    var explanation = new NIRACognitionDecision { State = NIRACognitionState.Complete,
+        EmitReply = true, Reply = "async enables await, which suspends without blocking a thread.",
+        ReplyReady = true, CharacterReady = true, SelfContainedAnswer = true };
+    if (!NIRAConversationFastPath.CanUseDirectReply(explanation, true, false, false, false))
+        throw new Exception("Simple general explanation was forced through redundant cloud stages");
+    if (NIRAConversationFastPath.CanUseDirectReply(explanation with {
+            CapabilityRequests = new[] { Request("system.storage.list", "{}") }
+        }, true, false, false, false) ||
+        NIRAConversationFastPath.CanUseDirectReply(explanation, true, true, false, false) ||
+        NIRAConversationFastPath.CanUseDirectReply(explanation with {
+            ReviewCommitment = true }, true, false, false, false))
+        throw new Exception("Knowledge classification bypassed observed work / commitment rules");
+});
+
+Check("S4 verified completed answer avoids redundant character call only while stable", () =>
+{
+    Type policy = typeof(NIRAModelSelection).Assembly.GetType(
+        "NIRAAgent.AI.Cognition.NIRACharacterDeliveryPolicy", true)!;
+    MethodInfo? method = policy.GetMethods(BindingFlags.Static | BindingFlags.Public)
+        .SingleOrDefault(x => x.Name == "RequiresOptimizedFidelityPass" &&
+            x.GetParameters().Length == 5);
+    if (method == null) throw new Exception("Reviewed natural delivery overload is absent");
+    var draft = new NIRACognitionDecision { State = NIRACognitionState.Complete,
+        EmitReply = true, Reply = "C: has 9.38 GB free.", ReplyReady = true,
+        CharacterReady = true, ReplyPresentation = NIRAReplyPresentationMode.Natural };
+    bool Needs(bool shift, bool review, NIRACognitionDecision d) =>
+        (bool)method.Invoke(null, new object[] { d, d.Reply, false, shift, review })!;
+    if (Needs(false, true, draft) || !Needs(false, false, draft) ||
+        !Needs(true, true, draft) || !Needs(false, true, draft with { CharacterReady = false }))
+        throw new Exception("Unverified or materially changed reply bypassed character safety");
+});
+
+Check("S4 knowledge contract is explicit and cannot authorize tools", () =>
+{
+    string root = LocatePromptFolder() ?? throw new Exception("Missing prompt directory");
+    string contract = File.ReadAllText(Path.Combine(root, "cognition_contract.yaml"));
+    if (!contract.Contains("\"selfContainedAnswer\": false", StringComparison.Ordinal) ||
+        !contract.Contains("SELF-CONTAINED ANSWER OPT-IN", StringComparison.Ordinal))
+        throw new Exception("Knowledge one-call contract is missing");
 });
 
 Console.WriteLine($"REGRESSION CHECKS: {passed} passed, {failed} failed");

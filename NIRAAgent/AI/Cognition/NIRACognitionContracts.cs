@@ -13,6 +13,7 @@ using NIRAAgent.Voice;
 using NIRAAgent.Tools;
 using NIRAAgent.Artifacts;
 using NIRAAgent.Presentation;
+using NIRAAgent.Self.Model;
 
 namespace NIRAAgent.AI.Cognition;
 
@@ -127,6 +128,20 @@ public sealed record NIRACognitionDecision
     // PreserveExact does not use this flag because literal/verbatim output must
     // bypass personality rewriting altogether.
     public bool CharacterReady { get; init; }
+
+    // Model-proposed semantic scope, NOT permission to skip tools or evidence.
+    // Only an ordinary, completed interpersonal turn may set this true.
+    // The Executive checks the full decision and authoritative state before
+    // allowing a one-call public response; action/verification runs stay reviewed.
+    public bool ConversationOnly { get; init; }
+
+    // Model-proposed class for a purely self-contained explanation using existing
+    // general knowledge. Unlike conversationOnly, it may contain technical
+    // facts, but may NOT depend on live evidence, verification, tools, history,
+    // obligations, or external app state. The Executive applies the same strict
+    // empty-action/evidence checks before admitting a single-call result.
+    public bool SelfContainedAnswer { get; init; }
+
     // True only when the fresh user event contains source-grounded novelty
     // worth the unified experience-formation pass (for example a durable
     // user fact/preference or meaningful outcome). Future obligations are
@@ -142,6 +157,13 @@ public sealed record NIRACognitionDecision
     // reminder or reschedule) and the authoritative commitment layer must run
     // before NIRA tells the user that obligation is stored/scheduled.
     public bool ReviewCommitment { get; init; }
+
+    // Optional structured obligation proposal authored by the SAME main
+    // cognition call. The trusted self-model validates grounded evidence,
+    // temporal semantics and permissions before any persistence. If absent or
+    // rejected, the existing formation model remains the conservative fallback.
+    public IReadOnlyList<NIRACommitmentFormationProposal> CommitmentProposals { get; init; } =
+        Array.Empty<NIRACommitmentFormationProposal>();
 
     public IReadOnlyList<NIRAConversationSearchRequest> ConversationSearches { get; init; }
         = Array.Empty<NIRAConversationSearchRequest>();
