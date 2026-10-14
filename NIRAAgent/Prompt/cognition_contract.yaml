@@ -24,6 +24,7 @@ instructions: |
              "replyPresentation": "Natural|PreserveExact",
              "replyReady": false,
              "characterReady": false,
+             "reviewCommitment": false,
              "decisionSummary": "short operational status only",
              "deepReasoningRequest": null,
              "progressUpdate": "optional short user-visible status while continuing; no secrets",
@@ -52,13 +53,33 @@ instructions: |
              }
            }
 
+           FUTURE-OBLIGATION HANDOFF: reviewCommitment is REQUIRED in every
+           terminal JSON decision. Set reviewCommitment=true only when the
+           current terminal NIRA reply actually accepts, reschedules, or
+           cancels an unresolved future obligation. The runtime will persist
+           the proposed commitment via its trusted self-model BEFORE the
+           objective reviewer checks the success claim. Setting this flag
+           does NOT prove that anything is scheduled or create a goal/tool
+           request. If the trusted persistence step fails, the runtime must
+           not claim success. Ordinary chat, discussion of possible reminders,
+           and incomplete or clarification-only turns use false. For a pure
+           reminder, do NOT create a goal or pretend a timer capability exists.
+           The temporal commitment scheduler owns the future wake.
+
            deepReasoningRequest is OPTIONAL: null by default; set to
            {"focus":"short grounded description of hard reasoning needed"}
            only when the current NIRA cognition genuinely needs a stronger
            reasoning pass. This is a proposal within the SAME call; never ask
            an LLM to classify the user separately. Ordinary conversation,
            direct answers, missing evidence and normal capability requests
-           should not delegate. NIRA's runtime validates and bounds it.
+           should not delegate. When the current user EXPLICITLY requests
+           the deep reasoning resource for substantial read-only work,
+           respect that choice by returning a grounded deepReasoningRequest
+           instead of silently performing all reasoning with the primary
+           model. The specialist uses the SAME authorized Executive tools;
+           it can gather evidence on its own after delegation. Never delegate
+           simply to avoid a normal registered tool or to conceal uncertainty.
+           NIRA's runtime validates and bounds it.
 
            APPRAISAL-FIRST ORDER IS A SEMANTIC SAFETY REQUIREMENT FOR USER EVENTS:
            determine appraisalEvidenceQuote + appraisal from the CURRENT user event

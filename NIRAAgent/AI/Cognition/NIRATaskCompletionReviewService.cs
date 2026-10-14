@@ -24,6 +24,15 @@ public sealed class NIRATaskCompletionReviewService
             that merely greets the user or discusses a previous task is NeedsWork.
             Do not mark a draft Complete because its tone is nice, its JSON is
             valid, its internal summary says done, or a tool call once succeeded.
+            TEMPORAL COMMITMENT PERSISTENCE: the NIRA self-model's trusted
+            commitment store and scheduler (not a generic tool capability) own
+            first future wake-ups. When EXECUTIVE EVIDENCE contains an explicit
+            successful authoritative commitment-persistence result, accept
+            that as evidence the stated future commitment change was saved.
+            Do NOT demand a fictional timer/schedule capability invocation.
+            A model-written claim, goal proposal, or an unaccepted commitment
+            is NOT proof. Verify the user-visible reply against the actually
+            confirmed change, and review any unrelated requested work normally.
             Evaluate each independent part of a multi-part request separately.
             Unsupported operations must be explained, but their failure must NOT
             prevent independently permitted parts from being performed.

@@ -949,6 +949,7 @@ public sealed class NIRAExecutive
         int memoryFormationCalls = 0;
         bool completionReviewConfirmedComplete = false;
         bool formationAppliedBeforeReply = false;
+        bool preReviewCommitmentSucceeded = false;
         bool secureSignInReturned = false;
         bool siteLinkOpened = false;
         string? lastObservedLoginRoute = null;
@@ -4463,8 +4464,97 @@ public sealed class NIRAExecutive
                 decision.EmitReply &&
                 !string.IsNullOrWhiteSpace(decision.Reply);
 
+            // FUTURE OBLIGATION: PERSIST BEFORE OBJECTIVE REVIEW.
+            // Temporal reminders belong to the authoritative self-model, NOT
+            // a made-up timer capability and NOT a fresh persistent goal.
+            // A review of a 'scheduled' claim would otherwise fail because
+            // the old post-review formation order offered no world evidence.
+            // This path adds ONE formation call only when primary cognition
+            // already proposed reviewCommitment in its normal JSON decision.
+            if (ShouldPreReviewCommitment(
+                    mindEvent.Source, decision, formationAppliedBeforeReply) &&
+                latestContext != null &&
+                ShouldApplyMemoryFormation(mindEvent, goalResults, branchResults))
+            {
+                // Capture the pre-mutation snapshot so reviewer evidence
+                // describes the actual changed commitment, not just a model
+                // claim or an unrelated previously scheduled reminder.
+                Dictionary<Guid, NIRACommitmentState> commitmentsBefore =
+                    _selfModel.CurrentCommitments.ToDictionary(item => item.Id);
+                memoryFormationCalls++;
+                int appliedCommitmentChanges = await ApplyMemoryFormationAsync(
+                    runId,
+                    mindEvent,
+                    interaction?.Event,
+                    latestContext,
+                    decision,
+                    decision.Reply,
+                    cancellationToken);
+
+                formationAppliedBeforeReply = true;
+                preReviewCommitmentSucceeded = appliedCommitmentChanges > 0;
+                Debug.WriteLine($"[TemporalCommitment] PRE_REVIEW | " +
+                    $"Run={runId:D} | Persisted={preReviewCommitmentSucceeded} | " +
+                    $"Changes={appliedCommitmentChanges}");
+
+                if (preReviewCommitmentSucceeded)
+                {
+                    NIRACommitmentState[] changedCommitments =
+                        _selfModel.CurrentCommitments
+                            .Where(item => !commitmentsBefore.TryGetValue(
+                                item.Id, out NIRACommitmentState? previous) ||
+                                !Equals(previous, item))
+                            .Take(6)
+                            .ToArray();
+                    executiveEvidence.AppendLine();
+                    executiveEvidence.AppendLine(
+                        "AUTHORITATIVE TEMPORAL COMMITMENT PERSISTENCE: " +
+                        "The trusted NIRA self-model stored a future obligation " +
+                        $"change (Changed={appliedCommitmentChanges}). " +
+                        "The commitment scheduler owns future wake-ups; no " +
+                        "separate timer capability is required. " +
+                        "A saved unscheduled obligation is NOT proof of a " +
+                        "specific-time reminder. Check the actual schedule below.");
+                    foreach (NIRACommitmentState item in changedCommitments)
+                    {
+                        executiveEvidence.AppendLine(
+                            $"CommitmentId={item.Id:D}; Status={item.Status}; " +
+                            $"Summary={item.Summary}; " +
+                            $"IsScheduled={item.Temporal?.IsScheduled == true}; " +
+                            $"NextWakeAtUtc={item.Temporal?.NextWakeAtUtc?.ToString("O") ?? "none"}");
+                    }
+                    if (changedCommitments.Length == 0)
+                        executiveEvidence.AppendLine(
+                            "No changed commitment snapshot was found; do not " +
+                            "infer an exact scheduled wake from change count.");
+                    // Prevent a second commitment-formation call in finalization.
+                    decision = decision with { ReviewCommitment = false };
+                }
+                else
+                {
+                    // Never allow the completion reviewer, expression model,
+                    // or another cognition round to claim unsaved scheduling.
+                    const string failedCommitmentReply =
+                        "I couldn't reliably save that future reminder or " +
+                        "commitment, so I won't pretend it's scheduled.";
+                    decision = decision with
+                    {
+                        State = NIRACognitionState.Blocked,
+                        EmitReply = true,
+                        Reply = failedCommitmentReply,
+                        Speech = failedCommitmentReply,
+                        ReviewCommitment = false,
+                        ReplyReady = true,
+                        DecisionSummary = "Authoritative commitment persistence failed."
+                    };
+                    userTerminalDraft = false;
+                }
+            }
+
             // No user-visible model-written terminal reply bypasses this gate,
             // including replies following a successful state-changing action.
+            // Failed persistence is blocked by trusted runtime evidence above,
+            // rather than repeatedly asking an LLM to schedule a nonexistent tool.
             if (userTerminalDraft &&
                 !completionReviewConfirmedComplete)
             {
@@ -4543,9 +4633,12 @@ public sealed class NIRAExecutive
                     {
                         State = NIRACognitionState.Blocked,
                         EmitReply = true,
-                        Reply = "I couldn't verify my answer to that request just " +
-                                "now, so I won't pretend it's completed. " +
-                                "Please try again.",
+                        Reply = preReviewCommitmentSucceeded
+                            ? "I saved the future commitment, but couldn't verify " +
+                              "the rest of my answer right now."
+                            : "I couldn't verify my answer to that request just " +
+                              "now, so I won't pretend it's completed. " +
+                              "Please try again.",
                         Speech = string.Empty,
                         ReplyReady = true,
                         CharacterReady = true,
@@ -4616,13 +4709,16 @@ public sealed class NIRAExecutive
                     {
                         State = NIRACognitionState.Blocked,
                         EmitReply = true,
-                        Reply = string.Equals(taskReview.TemporalMode,
-                            "Retrospective", StringComparison.OrdinalIgnoreCase)
-                            ? "I can recall parts of our earlier conversation, but " +
-                              "I can't verify the specific details from the history " +
-                              "available in this thread, so I won't invent them."
-                            : "I couldn't verify enough of that answer to give " +
-                              "you a reliable result just now.",
+                        Reply = preReviewCommitmentSucceeded
+                            ? "I saved the future commitment, but couldn't verify " +
+                              "the rest of my answer right now."
+                            : string.Equals(taskReview.TemporalMode,
+                                "Retrospective", StringComparison.OrdinalIgnoreCase)
+                                ? "I can recall parts of our earlier conversation, but " +
+                                  "I can't verify the specific details from the history " +
+                                  "available in this thread, so I won't invent them."
+                                : "I couldn't verify enough of that answer to give " +
+                                  "you a reliable result just now.",
                         Speech = string.Empty,
                         ReplyReady = true,
                         CharacterReady = true,
@@ -4811,6 +4907,7 @@ public sealed class NIRAExecutive
                 // This pass must happen BEFORE final response realization because it can
                 // change whether the promised obligation is actually true.
                 if (decision.ReviewCommitment &&
+                    !formationAppliedBeforeReply &&
                     latestContext != null &&
                     ShouldApplyMemoryFormation(
                         mindEvent,
@@ -4860,7 +4957,7 @@ public sealed class NIRAExecutive
                             MaximumDelta: 0.0);
 
                 int preResponseModelCalls =
-                    cycle
+                    cycle + _cognition.GetAdditionalCognitionCallCount(runId)
                     +
                     completionReviewCalls
                     +
@@ -5214,8 +5311,10 @@ public sealed class NIRAExecutive
             }
 
 
+            int cognitionModelCalls = cycle +
+                _cognition.GetAdditionalCognitionCallCount(runId);
             int responsePathModelCalls =
-                cycle
+                cognitionModelCalls
                 +
                 completionReviewCalls
                 +
@@ -5229,12 +5328,14 @@ public sealed class NIRAExecutive
                 (formationAppliedBeforeReply ? 1 : 0);
 
             Debug.WriteLine($"[Journey] RUN MODEL CALLS | Run={runId:D} | " +
-                $"CognitionCalls={cycle} | CompletionReviewCalls={completionReviewCalls} | " +
+                $"CognitionCalls={cognitionModelCalls} | " +
+                $"DeepDelegated={_cognition.GetAdditionalCognitionCallCount(runId) > 0} | " +
+                $"CompletionReviewCalls={completionReviewCalls} | " +
                 $"ResponseRealizationCalls={responseRealizationCalls} | " +
                 $"MemoryFormationCalls={memoryFormationCalls} | " +
                 $"ResponsePathCalls={responsePathModelCalls} | " +
                 $"PostReplyFormationCalls={postReplyMemoryFormationCalls} | " +
-                $"TrackedTotal={cycle + completionReviewCalls + responseRealizationCalls + memoryFormationCalls}");
+                $"TrackedTotal={cognitionModelCalls + completionReviewCalls + responseRealizationCalls + memoryFormationCalls}");
             yield return new NIRAOutputChunk
             {
                 RunId =
@@ -6183,6 +6284,20 @@ public sealed class NIRAExecutive
         return false;
     }
 
+
+    // Pure gate: no user-message keyword matching and no classifier call.
+    // The existing model-structured ReviewCommitment signal requests the
+    // semantic formation pass; trusted state decides if it actually persists.
+    private static bool ShouldPreReviewCommitment(
+        NIRAMindEventSource source,
+        NIRACognitionDecision decision,
+        bool alreadyFormed) =>
+        source == NIRAMindEventSource.User &&
+        !alreadyFormed &&
+        decision.State == NIRACognitionState.Complete &&
+        decision.EmitReply &&
+        decision.ReviewCommitment &&
+        !string.IsNullOrWhiteSpace(decision.Reply);
 
     private static bool ShouldApplyMemoryFormation(
         NIRAMindEvent mindEvent,
