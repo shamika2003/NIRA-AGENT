@@ -32,6 +32,18 @@ namespace NIRAAgent.Mind;
 
 public sealed class NIRAExecutive
 {
+    // Routing and completion are orthogonal. One foreground serial operation
+    // should not allocate a persistent branch; one genuinely delegated operation
+    // must not be hijacked by the direct lane simply because it has one step.
+    // This method makes NO assumption about task text, filename or capability ID.
+    private static bool ShouldCollapseSingleBranch(
+        NIRABranchProposal proposal, bool hasExecutableFirstWork,
+        bool hasNoExistingParentOwnership) =>
+        hasExecutableFirstWork && hasNoExistingParentOwnership &&
+        proposal.DispatchMode != NIRABranchDispatchMode.Delegated &&
+        proposal.JoinPolicy != NIRABranchJoinPolicy.Background;
+
+
     private readonly NIRACognitionService
         _cognition;
 
@@ -2002,7 +2014,9 @@ public sealed class NIRAExecutive
             // Parallel work is useful only when the CURRENT task has durable
             // independent responsibilities. If the model wraps the first/only
             // capability of a fresh user task in ONE new branch, keep that exact
-            // chosen action in the direct cognition loop instead. Unrelated open
+            // chosen action in the direct cognition loop unless it was explicitly
+            // assigned for delegated execution. DispatchMode (work scheduling) is
+            // separate from JoinPolicy (when the parent may complete). Unrelated
             // branches from older turns do not change this routing decision.
             // Explicit branch definitions without executable work, or branches
             // intentionally attached to an existing durable goal, are left to
@@ -2049,8 +2063,8 @@ public sealed class NIRAExecutive
                             "<newly-created-goal-id>",
                             StringComparison.OrdinalIgnoreCase);
 
-                    if (groundedDirectWork &&
-                        sameDecisionOrUnowned)
+                    if (ShouldCollapseSingleBranch(
+                            lone, groundedDirectWork, sameDecisionOrUnowned))
                     {
                         decision = decision with
                         {
@@ -5682,13 +5696,23 @@ public sealed class NIRAExecutive
 
     // Ordinary world data and task names are not special-cased. Only the
     // runtime's documented branch-result envelope supplies lifecycle proof.
-    private static bool IsCommittedCompletedBranchResult(NIRAMindEvent mindEvent)
+    private bool IsCommittedCompletedBranchResult(NIRAMindEvent mindEvent)
     {
-        if (mindEvent.Name != "PersistentBranchResult") return false;
-        string normalized = string.Join(" ", mindEvent.Content.Split(
-            (char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-        return normalized.Contains("Final branch status: Completed",
-            StringComparison.Ordinal);
+        // Internal event text may contain arbitrary model/web/file descriptions.
+        // Completion is a committed branch state, not a phrase in that text.
+        if (mindEvent.Source != NIRAMindEventSource.Internal ||
+            mindEvent.Name != "PersistentBranchResult" ||
+            !TryReadMetadataGuid(mindEvent, "branchId", out Guid branchId) ||
+            !TryReadMetadataGuid(mindEvent, "goalId", out Guid goalId) ||
+            !mindEvent.Metadata.TryGetValue("branchStatus", out string? recordedStatus) ||
+            !Enum.TryParse(recordedStatus, ignoreCase: true,
+                out NIRABranchStatus resultStatus) ||
+            resultStatus != NIRABranchStatus.Completed)
+            return false;
+
+        return _branches.TryGetBranch(branchId, out NIRABranchState? branch) &&
+            branch is { Status: NIRABranchStatus.Completed } &&
+            branch.GoalId == goalId;
     }
 
     private static bool ContainsGroundedQuote(string source, string? quote)
@@ -5974,15 +5998,12 @@ public sealed class NIRAExecutive
             .Where(branch => branch.IsOpen).ToArray();
         if (open.Length != 1) return null;
         Guid branchId = open[0].Id;
-        string? reason = NIRABranchWorkLoopGuard.Evaluate(
+        NIRABranchWorkLoopAssessment? assessment = NIRABranchWorkLoopGuard.Assess(
             _branchWork.CurrentWork.Where(item => item.BranchId == branchId));
-        // A family-local circuit is NOT a terminal parent-goal verdict.
-        // BranchWorkService rejects that repeated primitive but allows a
-        // different evidence-grounded operation, including read-only recovery.
-        // Only the cross-family failure budget can terminalize the parent here.
-        return reason != null && reason.StartsWith(
-            "At least six of the last eight attempted steps failed",
-            StringComparison.Ordinal) ? reason : null;
+        // Only a typed cross-family budget can stop the parent. Explanatory
+        // text must never function as a state machine or change this decision.
+        return assessment?.Reason == NIRABranchWorkLoopReason.GlobalFailureBudget
+            ? assessment.Message : null;
     }
 
     private bool TryGetStaleOwnedInternalEventReason(
@@ -6535,10 +6556,10 @@ public sealed class NIRAExecutive
                 $"I couldn't complete that because the last action failed. {summary}",
 
             NIRACapabilityResultStatus.Succeeded =>
-                "I checked the available source, but it did not verify the " +
-                "specific result you requested. I can't confirm it from the " +
-                "returned data, and repeating that unchanged lookup would " +
-                "not add evidence.",
+                "The last observation succeeded, but it did not establish the " +
+                "requested end result. " + summary + " I stopped instead of " +
+                "repeating an unchanged operation. Any unverified comparison " +
+                "or missing requested item remains unconfirmed.",
 
             _ =>
                 $"I couldn't make further progress on that request, so I stopped instead of repeating the same step. {summary}"
@@ -7385,9 +7406,26 @@ public sealed class NIRAExecutive
                 };
 
 
+            // The formation model supplies semantic intent, but only the
+            // authoritative current user event can ground the quoted request.
+            // Explicitly requested low-salience user facts should not be silently
+            // dropped after NIRA has said it will remember them. The ordinary
+            // confidence, privacy and provenance gates remain unchanged.
+            string rememberQuote = proposal.ExplicitRememberEvidenceQuote?.Trim()
+                ?? string.Empty;
+            bool explicitGroundedRemember =
+                sourceType == NIRAMemorySourceType.UserExplicit &&
+                proposal.Kind is (NIRAMemoryKind.UserFact or NIRAMemoryKind.UserPreference) &&
+                sourceEvent?.Source == NIRASocialEventSource.User &&
+                rememberQuote.Length is >= 12 and <= 320 &&
+                sourceEvent.Content.Contains(rememberQuote, StringComparison.Ordinal);
+
             grounded.Add(
                 proposal.ToCandidate() with
                 {
+                    Importance = explicitGroundedRemember
+                        ? Math.Max(0.45, proposal.Importance)
+                        : proposal.Importance,
                     Provenance =
                         new NIRAMemoryProvenance
                         {

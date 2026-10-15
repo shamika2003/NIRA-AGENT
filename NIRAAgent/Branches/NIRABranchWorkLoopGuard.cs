@@ -7,9 +7,30 @@ namespace NIRAAgent.Branches;
 // Shared, domain-neutral guard. A new model invocation, branch, or process
 // does not reset the underlying persisted work ledger. Do NOT count a tool's
 // mechanical success as proof that the user's objective is complete.
+// Stable machine outcomes. The explanatory Message may be reworded or localized
+// without silently changing which repeated operation is blocked.
+internal enum NIRABranchWorkLoopReason
+{
+    GlobalFailureBudget,
+    RepeatedFailedOperation,
+    AlternatingUnchangedPages,
+    RepeatedUnchangedPage,
+    RepeatedInspection,
+    IdenticalEvidence
+}
+
+internal sealed record NIRABranchWorkLoopAssessment(
+    NIRABranchWorkLoopReason Reason,
+    string Message,
+    string? OperationFamily = null);
+
 internal static class NIRABranchWorkLoopGuard
 {
-    public static string? Evaluate(IEnumerable<NIRABranchWorkItem> goalWork)
+    // Compatibility for diagnostics/callers expecting a user-readable reason.
+    public static string? Evaluate(IEnumerable<NIRABranchWorkItem> goalWork) =>
+        Assess(goalWork)?.Message;
+
+    public static NIRABranchWorkLoopAssessment? Assess(IEnumerable<NIRABranchWorkItem> goalWork)
     {
         // Only terminal work counts. A user could legitimately have a worker
         // running or waiting for consent; never count waiting as failure.
@@ -39,8 +60,9 @@ internal static class NIRABranchWorkLoopGuard
         // also belongs to a failed primitive family. Test this FIRST so a
         // family-local circuit cannot indefinitely mask the global budget.
         if (Failed(newest) && recent.Length >= 8 && recent.Count(Failed) >= 6)
-            return "At least six of the last eight attempted steps failed. " +
-                "Report the concrete blocker or ask for a different direction.";
+            return new(NIRABranchWorkLoopReason.GlobalFailureBudget,
+                "At least six of the last eight attempted steps failed. " +
+                "Report the concrete blocker or ask for a different direction.");
 
         // Three failures of the same primitive within the latest work window
         // are enough to stop repeating it, including across different branch
@@ -51,8 +73,10 @@ internal static class NIRABranchWorkLoopGuard
             string family = Family(newest);
             if (recent.Count(w => Failed(w) && Family(w) == family) >= 3 &&
                 !recent.TakeLast(4).Any(w => w.Succeeded && Family(w) == family))
-                return "The same operation failed repeatedly (" + family +
-                    "). Inspect the last failure and change the plan rather than retrying it.";
+                return new(NIRABranchWorkLoopReason.RepeatedFailedOperation,
+                    "The same operation failed repeatedly (" + family +
+                    "). Inspect the last failure and change the plan rather than retrying it.",
+                    family);
         }
 
         // Cross-capability browser observation loop: navigate/follow/inspect
@@ -112,9 +136,10 @@ internal static class NIRABranchWorkLoopGuard
                 string.Equals(b0, b1, StringComparison.Ordinal) &&
                 !string.Equals(a0, b0, StringComparison.Ordinal))
             {
-                return "Read-only browser work is alternating between the same two " +
+                return new(NIRABranchWorkLoopReason.AlternatingUnchangedPages,
+                    "Read-only browser work is alternating between the same two " +
                     "unchanged page states. Reuse the accumulated evidence or choose " +
-                    "a materially different grounded action instead of revisiting them.";
+                    "a materially different grounded action instead of revisiting them.");
             }
         }
 
@@ -132,10 +157,11 @@ internal static class NIRABranchWorkLoopGuard
                      ObservationField(w, "FinalUrl")) == currentUrl &&
                     ObservationField(w, "ContentSha256") == currentHash) >= 3)
             {
-                return "Repeated read-only browser observations reached the same " +
+                return new(NIRABranchWorkLoopReason.RepeatedUnchangedPage,
+                    "Repeated read-only browser observations reached the same " +
                     "page URL and content hash at least three times without an " +
                     "intervening browser action. Reason from the existing evidence " +
-                    "or choose a materially different grounded action.";
+                    "or choose a materially different grounded action.");
             }
         }
 
@@ -168,10 +194,11 @@ internal static class NIRABranchWorkLoopGuard
                 inspectionTail.All(w =>
                     Field(w, "ContentSha256") == currentHash &&
                     Field(w, "Url") == currentUrl))
-                return "Four consecutive browser inspections saw the same page URL " +
+                return new(NIRABranchWorkLoopReason.RepeatedInspection,
+                    "Four consecutive browser inspections saw the same page URL " +
                     "and content hash without an intervening action. Use the " +
                     "latest grounded links/controls or report why you cannot proceed; " +
-                    "more inspection is not progress.";
+                    "more inspection is not progress.");
         }
 
         // Prevent 'success' loops where an inspection/search/tool returns the
@@ -186,8 +213,10 @@ internal static class NIRABranchWorkLoopGuard
                     StringComparison.Ordinal) &&
                 string.Equals(w.ResultSummary, newest.ResultSummary,
                     StringComparison.Ordinal)) >= 5)
-                return "The same operation returned identical evidence five times " +
-                    "without an independently verified result. Stop reconsidering it.";
+                return new(NIRABranchWorkLoopReason.IdenticalEvidence,
+                    "The same operation returned identical evidence five times " +
+                    "without an independently verified result. Stop reconsidering it.",
+                    family);
         }
 
         return null;

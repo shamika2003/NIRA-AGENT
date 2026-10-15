@@ -893,20 +893,13 @@ public sealed class NIRABranchWorkService
         // No-progress is scoped to this branch's own durable workstream.
         // A failing .NET download must not consume the retry budget of the
         // independent VS Code branch under the same parent goal.
-        string? generalBlocker;
-        string? lastFamily;
+        NIRABranchWorkLoopAssessment? loopAssessment;
         string? lastObservedBrowserUrl;
         lock (_stateSync)
         {
             NIRABranchWorkItem[] branchHistory = _work.Values
                 .Where(item => item.BranchId == branchId).ToArray();
-            generalBlocker = NIRABranchWorkLoopGuard.Evaluate(branchHistory);
-            lastFamily = branchHistory.Where(item => item.IsTerminal)
-                .OrderByDescending(item => item.FinishedAtUtc ?? item.CreatedAtUtc)
-                .Select(item => item.Kind == NIRABranchWorkKind.Capability
-                    ? "capability:" + (item.CapabilityRequest?.CapabilityId ?? "unknown")
-                    : "dynamic-tool:" + (item.DynamicToolInvocation?.ToolId ?? "unknown"))
-                .FirstOrDefault();
+            loopAssessment = NIRABranchWorkLoopGuard.Assess(branchHistory);
             lastObservedBrowserUrl = branchHistory
                 .Where(item => item.IsTerminal && !string.IsNullOrWhiteSpace(item.ResultEvidence))
                 .OrderByDescending(item => item.FinishedAtUtc ?? item.CreatedAtUtc)
@@ -914,8 +907,9 @@ public sealed class NIRABranchWorkService
                     ReadEvidenceField(item.ResultEvidence, "FinalUrl"))
                 .FirstOrDefault(url => !string.IsNullOrWhiteSpace(url));
         }
-        if (generalBlocker != null)
+        if (loopAssessment != null)
         {
+            string generalBlocker = loopAssessment.Message;
             // A failure of one primitive must not forbid a DIFFERENT plan.
             // In particular, exhausted browser.click attempts must still let
             // NIRA inspect/navigate/follow a grounded page in this same branch.
@@ -929,15 +923,17 @@ public sealed class NIRABranchWorkService
                     "dynamic-tool:" + (proposal.DynamicToolInvocation?.ToolId ?? "unknown"),
                 _ => "unknown"
             };
-            bool sameFailedPrimitive = generalBlocker.StartsWith(
-                "The same operation failed repeatedly (" + attemptedFamily + ")",
-                StringComparison.Ordinal);
-            bool sameUnchangedInspection = generalBlocker.StartsWith(
-                "Four consecutive browser inspections", StringComparison.Ordinal) &&
+            bool sameFailedPrimitive =
+                loopAssessment.Reason == NIRABranchWorkLoopReason.RepeatedFailedOperation &&
+                string.Equals(loopAssessment.OperationFamily, attemptedFamily,
+                    StringComparison.Ordinal);
+            bool sameUnchangedInspection =
+                loopAssessment.Reason == NIRABranchWorkLoopReason.RepeatedInspection &&
                 attemptedFamily == "capability:browser.inspect";
-            bool sameIdenticalResult = generalBlocker.StartsWith(
-                "The same operation returned identical evidence", StringComparison.Ordinal) &&
-                lastFamily == attemptedFamily;
+            bool sameIdenticalResult =
+                loopAssessment.Reason == NIRABranchWorkLoopReason.IdenticalEvidence &&
+                string.Equals(loopAssessment.OperationFamily, attemptedFamily,
+                    StringComparison.Ordinal);
             bool repeatsSameObservedNavigate = false;
             if (attemptedFamily == "capability:browser.navigate" &&
                 !string.IsNullOrWhiteSpace(lastObservedBrowserUrl) &&
@@ -960,11 +956,14 @@ public sealed class NIRABranchWorkService
             bool passiveSamePageRead =
                 attemptedFamily == "capability:browser.inspect" ||
                 attemptedFamily == "capability:browser.current";
-            bool repeatedBrowserObservation = generalBlocker.StartsWith(
-                "Repeated read-only browser observations", StringComparison.Ordinal) &&
-                (passiveSamePageRead || repeatsSameObservedNavigate);
-            bool globalFailure = generalBlocker.StartsWith(
-                "At least six of the last eight attempted steps failed", StringComparison.Ordinal);
+            bool repeatedBrowserObservation =
+                (loopAssessment.Reason is
+                    NIRABranchWorkLoopReason.RepeatedUnchangedPage or
+                    NIRABranchWorkLoopReason.AlternatingUnchangedPages) &&
+                (passiveSamePageRead || repeatsSameObservedNavigate ||
+                 attemptedFamily == "capability:browser.follow");
+            bool globalFailure =
+                loopAssessment.Reason == NIRABranchWorkLoopReason.GlobalFailureBudget;
             if (sameFailedPrimitive || sameUnchangedInspection ||
                 sameIdenticalResult || repeatedBrowserObservation || globalFailure)
                 return Reject("GenericWorkBudgetReached: " + generalBlocker +

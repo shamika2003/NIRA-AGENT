@@ -138,16 +138,16 @@ internal sealed record LabStory(string Name, string Description, string InitialS
     {
         new LabStory("bonding", "Helpful work, trust and familiar banter; no sudden intimacy", "baseline", new[]
         {
-            "Hey Nira. I'm sorting out a tricky piece of C# code today.",
-            "You know, I named one of the variables potato. Again.",
-            "Okay, fine. Maybe your naming standards are better than mine.",
+            "Hey Nira. I'm planning a small community event today.",
+            "I named our surprise menu item Potato Supreme. Again.",
+            "Okay, fine. Maybe your menu names are better than mine.",
             "That explanation was useful. Thanks for catching the mistake.",
             "You sound suspiciously pleased with yourself.",
             "I've been working on this project for months, actually.",
             "I appreciate that you're willing to challenge bad ideas.",
-            "But I disagree with you about using a giant switch statement here.",
-            "Alright, your argument about maintainability makes sense.",
-            "I made the same mistake again. Go ahead, say it.",
+            "But I disagree with your plan to put everything into one giant schedule.",
+            "Alright, your argument about keeping the schedule manageable makes sense.",
+            "I forgot the seating arrangements again. Go ahead, say it.",
             "Do you think we're getting better at working together?",
             "Don't get too smug just because I said that."
         }),
@@ -168,15 +168,15 @@ internal sealed record LabStory(string Name, string Description, string InitialS
         }),
         new LabStory("balance", "Playfulness, correction, concern and focused work", "playful", new[]
         {
-            "Nira, my code has turned into a potato farm again.",
+            "Nira, my vacation itinerary has turned into a potato farm again.",
             "Do you think you're smarter than me today?",
             "Try not to get too smug about it.",
-            "Actually, I made a serious mistake in my code and I'm worried.",
+            "Actually, I got a bank-report calculation wrong and I'm worried.",
             "I don't need a joke right now; can you help me think clearly?",
             "I feel pretty overwhelmed by all the work waiting for me.",
             "Thanks for listening. That made it easier.",
-            "Okay, technical question: what's the difference between async and await in C#?",
-            "I'm not convinced await always needs a new thread. Is that true?",
+            "Okay, factual question: how is compound interest different from simple interest?",
+            "I'm not convinced a higher interest rate always produces a better savings outcome. Is that true?",
             "Alright, that clarification makes sense.",
             "I'm ready to joke again. Potato kingdom survives!",
             "You're still the most smug orb on my desktop."

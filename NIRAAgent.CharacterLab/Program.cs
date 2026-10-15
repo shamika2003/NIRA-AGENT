@@ -450,7 +450,7 @@ internal sealed record CharacterScenario(string Name, string Description,
         {
             Relationship = B.Relationship with { Familiarity = 0.80, Trust = 0.82, Warmth = 0.74, Openness = 0.64, Playfulness = 0.97 },
             Mood = B.Mood with { Amusement = 0.94, Valence = 0.70 }
-        }, "Nira, I accidentally closed my code without saving. Again."),
+        }, "Nira, I accidentally lost my shopping list again."),
         new CharacterScenario("irritated", "Residual irritation and friction; not a cheerful reset.", B with
         {
             Relationship = B.Relationship with { Familiarity = 0.72, Trust = 0.49, Warmth = 0.24, Friction = 0.60 },
@@ -476,7 +476,7 @@ internal sealed record CharacterScenario(string Name, string Description,
         {
             Relationship = B.Relationship with { Familiarity = 0.78, Trust = 0.85, Warmth = 0.68, Playfulness = 0.76 },
             Situation = new NIRASituationState(NIRAInteractionMode.FocusedWork, 0.93)
-        }, "Nira, what's wrong with this C# line: int x = \"text\"; ?")
+        }, "Nira, help me prioritize three urgent errands before the shop closes.")
     };
 }
 

@@ -63,6 +63,11 @@ public sealed record NIRAMemoryFormationProposal
     }
 
 
+    // A model-proposed exact quote of the user's instruction to remember.
+    // The Executive validates it against the source event. It is not permission
+    // to persist ungrounded, sensitive, unsupported or unrelated memories.
+    public string? ExplicitRememberEvidenceQuote { get; init; }
+
     public double Importance
     {
         get;
@@ -114,6 +119,9 @@ public sealed record NIRAMemoryFormationProposal
 
             Importance =
                 normalized.Importance,
+
+            ExplicitRememberEvidenceQuote =
+                ExplicitRememberEvidenceQuote?.Trim(),
 
             Confidence =
                 normalized.Confidence,
@@ -451,4 +459,3 @@ public sealed record NIRAMemoryFormationResult
     } =
         Array.Empty<NIRALearnedSkillFormationProposal>();
 }
-

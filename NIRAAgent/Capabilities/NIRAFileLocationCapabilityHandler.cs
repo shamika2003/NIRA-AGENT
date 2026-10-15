@@ -34,7 +34,8 @@ public sealed class NIRAFileLocationCapabilityHandler : INIRACapabilityHandler
             DefaultRisk = NIRACapabilityRisk.Observe,
             Parameters = new[]
             {
-                Parameter("root", "string", false, "Optional grounded absolute directory. Omit only for a whole-PC search across ready fixed local drives."),
+                Parameter("root", "string", false, "Optional grounded absolute directory. Omit for scope=CurrentUserFolder or for a whole-PC search."),
+                Parameter("scope", "string", false, "Optional CurrentUserFolder resolves exactly one OS-owned current-user known directory (Documents, Downloads, Desktop, Pictures, Music, Videos). Omit for unchanged exact-name discovery."),
                 Parameter("name", "string", true, "Exact file or folder name, not a wildcard or path."),
                 Parameter("kind", "string", false, "Directory (folder), File or Either (both). Default Either. Use these values, not arbitrary kinds."),
                 Parameter("maxDepth", "integer", false, "Child-directory depth, 0-6; default 3 for a known root, 6 for whole-PC search."),
@@ -54,6 +55,7 @@ public sealed class NIRAFileLocationCapabilityHandler : INIRACapabilityHandler
         string? requestedRoot =
             NIRACapabilityArguments.GetOptionalString(request, "root", 32760);
         string name = NIRACapabilityArguments.RequireString(request, "name", 255).Trim();
+        string? scope = NIRACapabilityArguments.GetOptionalString(request, "scope", 40);
         string kind = (NIRACapabilityArguments.GetOptionalString(request, "kind", 32)
             ?? "Either").Trim();
         // Canonicalize common *meaning-equivalent* labels without broadening the
@@ -80,6 +82,26 @@ public sealed class NIRAFileLocationCapabilityHandler : INIRACapabilityHandler
             name.IndexOfAny(new[] { '/', '\\', '*', '?', ':' }) >= 0 ||
             !string.Equals(name, Path.GetFileName(name), StringComparison.Ordinal))
             throw new ArgumentException("name must be a single exact file or directory name.");
+        // Opt-in OS-owned location, not a search through other users' folders.
+        // Default filesystem.locate behavior and all legacy callers are untouched.
+        if (!string.IsNullOrWhiteSpace(scope))
+        {
+            if (!scope.Equals("CurrentUserFolder", StringComparison.OrdinalIgnoreCase) ||
+                !string.IsNullOrWhiteSpace(requestedRoot))
+                throw new ArgumentException("scope must be CurrentUserFolder with no root.");
+            if (!kind.Equals("Directory", StringComparison.OrdinalIgnoreCase) &&
+                !kind.Equals("Either", StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("CurrentUserFolder can only resolve directories.");
+            string folder = ResolveCurrentUserFolder(name);
+            return Task.FromResult(new NIRACapabilityHandlerResult
+            {
+                Summary = $"LocationSearch=Unique | Scope=CurrentUserFolder | Name='{name}' | " +
+                    "Kind=Directory | Matches=1 | Truncated=False | Origin=WindowsUserProfile",
+                Output = $"MatchEvidence=WindowsCurrentUserKnownFolder\nDIR\t{folder}",
+                ChangedSystemState = false
+            });
+        }
+
         string[] roots;
         if (string.IsNullOrWhiteSpace(requestedRoot))
         {
@@ -252,6 +274,52 @@ public sealed class NIRAFileLocationCapabilityHandler : INIRACapabilityHandler
                 output.ToString().TrimEnd(),
             ChangedSystemState = false
         });
+    }
+
+    // Opt-in known-user-folder resolution. Exact OS directory identities are
+    // architectural targets, not a list of example filenames/test responses.
+    // A missing or inaccessible folder is reported as such; never silently
+    // scan the whole drive or another account's profile to guess a replacement.
+    internal static string ResolveCurrentUserFolder(string name)
+    {
+        string? path = name.Trim().ToLowerInvariant() switch
+        {
+            "desktop" => Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+            "documents" => Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            "pictures" => Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
+            "music" => Environment.GetFolderPath(Environment.SpecialFolder.MyMusic),
+            "videos" => Environment.GetFolderPath(Environment.SpecialFolder.MyVideos),
+            "downloads" => ResolveCurrentUserDownloads(),
+            _ => throw new ArgumentException("Unknown current-user known folder name.")
+        };
+        if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path) ||
+            !Directory.Exists(path))
+            throw new DirectoryNotFoundException(
+                $"Current-user known folder '{name}' is unavailable; provide its actual path.");
+        return Path.GetFullPath(path);
+    }
+
+    private static string? ResolveCurrentUserDownloads()
+    {
+        // Windows redirects Downloads through the per-user Shell Folders value.
+        // Use the value only when present, not a guessed different user's path.
+        if (OperatingSystem.IsWindows())
+        {
+            try
+            {
+                using Microsoft.Win32.RegistryKey? key =
+                    Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                        @"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders");
+                string? configured = key?.GetValue(
+                    "{374DE290-123F-4565-9164-39C4925E467B}") as string;
+                if (!string.IsNullOrWhiteSpace(configured))
+                    return Environment.ExpandEnvironmentVariables(configured);
+            }
+            catch (System.Security.SecurityException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+        string profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        return string.IsNullOrWhiteSpace(profile) ? null : Path.Combine(profile, "Downloads");
     }
 
     // Windows Known Folder resolution respects OneDrive/enterprise redirection.

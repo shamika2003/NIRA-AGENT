@@ -40,6 +40,16 @@ public enum NIRABranchJoinPolicy
 }
 
 
+// Transient routing intent for a new branch. This is deliberately separate
+// from JoinPolicy: a Required result can run asynchronously, and an optional
+// result can run concurrently without changing the parent's completion rule.
+// The durable work queue persists the accepted assignment and owns execution.
+public enum NIRABranchDispatchMode
+{
+    Inline,
+    Delegated
+}
+
 public enum NIRABranchProposalAction
 {
     Create,
@@ -275,6 +285,10 @@ public sealed record NIRABranchProposal
 
     public NIRABranchJoinPolicy? JoinPolicy { get; init; }
 
+    // Create-time scheduling intent only. Never grants authority or completes
+    // a goal. A Delegated branch must have its own accepted, executable work.
+    public NIRABranchDispatchMode? DispatchMode { get; init; }
+
     public double? Priority { get; init; }
 
     public IReadOnlyList<string> CompletionCriteria { get; init; } =
@@ -330,6 +344,9 @@ public sealed record NIRABranchProposal
             throw new InvalidOperationException(
                 "Branch proposal evidence/reason is too long.");
         }
+
+        if (DispatchMode is { } mode && !Enum.IsDefined(mode))
+            throw new InvalidOperationException("Unknown branch dispatch mode.");
 
         string? key = NormalizeId(ClientKey);
         if (key != null && (key.Length > 40 ||
@@ -387,6 +404,7 @@ public sealed record NIRABranchProposal
             normalized.ParentBranchId ?? string.Empty,
             normalized.Objective.ToLowerInvariant(),
             normalized.JoinPolicy?.ToString() ?? string.Empty,
+            normalized.DispatchMode?.ToString() ?? string.Empty,
             normalized.Priority?.ToString("F4") ?? string.Empty,
             string.Join("~", normalized.CompletionCriteria.Select(value => value.ToLowerInvariant())),
             string.Join("~", normalized.DependsOnBranchIds.Select(value => value.ToLowerInvariant())),
@@ -487,6 +505,3 @@ public sealed record NIRABranchResultEvent
 
     public DateTimeOffset ResolvedAt { get; init; }
 }
-
-
-

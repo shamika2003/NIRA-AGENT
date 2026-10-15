@@ -826,6 +826,44 @@ public sealed class NIRABrowserService : IAsyncDisposable
                     });
 
             IReadOnlyList<string> headings = ReadStringArray(raw, "headings", 12, 380);
+            // A single inspection snapshot can be taken during transient DOM
+            // rendering. Before claiming the page has no semantic heading,
+            // perform one independent, read-only heading query on this SAME page.
+            // Never infer a heading from the title or general body text.
+            if (headings.Count == 0)
+            {
+                try
+                {
+                    string[] secondPass = await page.EvaluateAsync<string[]>("""
+                        () => Array.from(document.querySelectorAll('h1,h2,h3,[role="heading"]'))
+                            .filter(el => {
+                                for (let node = el; node instanceof Element; node = node.parentElement) {
+                                    if (node.hasAttribute('hidden') || node.getAttribute('aria-hidden') === 'true')
+                                        return false;
+                                    const style = getComputedStyle(node);
+                                    if (style.display === 'none' || style.visibility === 'hidden') return false;
+                                }
+                                return true;
+                            })
+                            .slice(0, 12)
+                            .map(el => {
+                                const tag = /^H[1-3]$/.test(el.tagName) ? el.tagName :
+                                    'H' + (el.getAttribute('aria-level') || '?');
+                                const value = (el.innerText || el.textContent || '').trim()
+                                    .replace(/\s+/g, ' ').slice(0, 340);
+                                return value ? `${tag}: ${value}` : '';
+                            }).filter(Boolean)
+                        """);
+                    headings = secondPass
+                        .Where(item => !string.IsNullOrWhiteSpace(item))
+                        .Take(12).ToArray();
+                    Debug.WriteLine($"[BrowserFlow] HEADING_SECOND_PASS | Page={id:D} | Count={headings.Count}");
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    Debug.WriteLine($"[BrowserFlow] HEADING_SECOND_PASS_UNAVAILABLE | {ex.GetType().Name}");
+                }
+            }
             string bodyText = ReadString(raw, "text");
             string textSource = ReadString(raw, "textSource");
             string canonicalUrl = RedactUrlForCognition(ReadString(raw, "canonicalUrl"));
@@ -1194,6 +1232,44 @@ public sealed class NIRABrowserService : IAsyncDisposable
             }
             HashSet<Guid> beforePageIds;
             lock (_stateSync) beforePageIds = _pages.Keys.ToHashSet();
+
+            // Preflight checks actionability without dispatching a click.
+            // In particular, an obstructing search-overlay must not consume the
+            // normal 30-second click timeout or become an uncertain action.
+            // A refused trial is not proof that a navigation occurred.
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                await locator.ClickAsync(new LocatorClickOptions
+                {
+                    Trial = true,
+                    Timeout = Math.Min(timeoutSeconds * 1000, 4500)
+                });
+            }
+            catch (PlaywrightException ex)
+            {
+                Debug.WriteLine($"[Browser] CLICK PREFLIGHT BLOCKED | Page={id:D} | " +
+                    $"Ref='{cleanRef}' | Reason={ex.GetType().Name}");
+                NIRABrowserPageSnapshot refused = await BuildPageSnapshotAsync(id, page);
+                return refused with
+                {
+                    ActionEvidence = new NIRABrowserActionEvidence
+                    {
+                        Operation = "click",
+                        ElementRef = cleanRef,
+                        BeforeUrl = RedactUrlForCognition(beforeUrl),
+                        AfterUrl = refused.Url,
+                        ActionApplied = false,
+                        ObservedPageChange = false,
+                        LocalVerification =
+                            "BrowserClickPreflightBlocked: element was not actionable " +
+                            "(it may be obscured by an overlay or still loading). " +
+                            "No click was dispatched. Inspect the live page or use " +
+                            "an independently grounded URL/navigation strategy; " +
+                            "do not repeat the same obstructed click."
+                    }
+                };
+            }
 
             cancellationToken.ThrowIfCancellationRequested();
             // Transactionally recorded BEFORE dispatch: a process crash leaves

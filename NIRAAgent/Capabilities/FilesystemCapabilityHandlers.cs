@@ -274,7 +274,9 @@ public sealed class NIRADirectoryListCapabilityHandler
                     Parameter("path", "string", true, "Directory path."),
                     Parameter("pattern", "string", false, "Filesystem search pattern such as *.cs. Default *."),
                     Parameter("recursive", "boolean", false, "Whether to recurse into child directories. Default false."),
-                    Parameter("maxEntries", "integer", false, "Maximum entries. Default 200, maximum 1000.")
+                    Parameter("maxEntries", "integer", false, "Maximum entries. Default 200, maximum 1000."),
+                    Parameter("sortBy", "string", false, "Optional LastWriteUtc: return newest modified entries first. Default none preserves legacy order and format."),
+                    Parameter("filesOnly", "boolean", false, "When sortBy=LastWriteUtc, omit folders from the result. Default false.")
                 }
         };
 
@@ -321,6 +323,14 @@ public sealed class NIRADirectoryListCapabilityHandler
                 1000);
 
 
+        string? sortBy = NIRACapabilityArguments.GetOptionalString(request, "sortBy", 40);
+        bool filesOnly = NIRACapabilityArguments.GetBoolean(request, "filesOnly");
+        if (!string.IsNullOrWhiteSpace(sortBy) &&
+            !sortBy.Equals("LastWriteUtc", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("sortBy must be LastWriteUtc when supplied.");
+        if (filesOnly && string.IsNullOrWhiteSpace(sortBy))
+            throw new ArgumentException("filesOnly requires sortBy=LastWriteUtc.");
+
         if (!Directory.Exists(
                 path))
         {
@@ -345,6 +355,66 @@ public sealed class NIRADirectoryListCapabilityHandler
                     FileAttributes.ReparsePoint
             };
 
+
+        // Opt-in bounded, source-grounded ranking. A legacy listing preserves
+        // its original enumeration order and output format below.
+        if (!string.IsNullOrWhiteSpace(sortBy))
+        {
+            const int maximumScannedEntries = 20000;
+            List<(string Path, bool IsDirectory, long SizeBytes, DateTime ModifiedUtc)> observed = new();
+            int scanned = 0;
+            int unavailable = 0;
+            bool scanTruncated = false;
+            foreach (string entry in Directory.EnumerateFileSystemEntries(path, pattern, options))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (scanned >= maximumScannedEntries)
+                {
+                    scanTruncated = true;
+                    break;
+                }
+                scanned++;
+                try
+                {
+                    bool isDirectory = Directory.Exists(entry);
+                    if (isDirectory && filesOnly) continue;
+                    if (isDirectory)
+                    {
+                        DirectoryInfo info = new(entry);
+                        observed.Add((entry, true, 0L, info.LastWriteTimeUtc));
+                    }
+                    else
+                    {
+                        FileInfo info = new(entry);
+                        observed.Add((entry, false, info.Length, info.LastWriteTimeUtc));
+                    }
+                }
+                catch (UnauthorizedAccessException) { unavailable++; }
+                catch (IOException) { unavailable++; }
+            }
+
+            var ranked = observed.OrderByDescending(e => e.ModifiedUtc)
+                .ThenBy(e => e.Path, StringComparer.OrdinalIgnoreCase)
+                .Take(maxEntries).ToArray();
+            StringBuilder rankedOutput = new();
+            foreach (var entry in ranked)
+            {
+                if (entry.IsDirectory)
+                    rankedOutput.AppendLine($"DIR\t{entry.Path}\tLastWriteUtc={entry.ModifiedUtc:O}");
+                else
+                    rankedOutput.AppendLine($"FILE\t{entry.SizeBytes}\t{entry.Path}\tLastWriteUtc={entry.ModifiedUtc:O}");
+            }
+            return Task.FromResult(new NIRACapabilityHandlerResult
+            {
+                Summary = $"Enumerated {ranked.Length} newest entr(y/ies) under '{path}'. " +
+                    $"SortBy=LastWriteUtc | FilesOnly={filesOnly} | Scanned={scanned} | " +
+                    $"Truncated={scanTruncated || observed.Count > maxEntries} | " +
+                    $"ScanComplete={!scanTruncated && unavailable == 0} | Unreadable={unavailable}. " +
+                    "A truncated scan cannot prove the global newest entries.",
+                Output = rankedOutput.ToString().TrimEnd(),
+                ChangedSystemState = false
+            });
+        }
 
         StringBuilder output =
             new();

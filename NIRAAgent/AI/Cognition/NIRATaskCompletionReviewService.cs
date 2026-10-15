@@ -106,7 +106,7 @@ public sealed class NIRATaskCompletionReviewService
             The unresolved objective is context, not a mandatory requirement
             on each subsequent request. Link it only when the user explicitly
             refers to it or semantically supplies its missing information.
-            A new C# error request is not a continuation of a lost-file task.
+            A new, unrelated objective is not a continuation of an earlier unfinished one, regardless of domain.
             If this is a true short follow-up, use RECENT CONVERSATION and
             UNRESOLVED OBJECTIVE to recover the full user-requested outcome.
             Set resumesPriorObjective=true only for a grounded continuation;
@@ -155,8 +155,9 @@ public sealed class NIRATaskCompletionReviewService
             review whether the question identifies that exact missing input.
             If so, verdict=AwaitingUser. Missing information is NOT itself a
             NeedsWork gap when the purpose of the draft is to ask for that
-            information. In particular, a question asking for the C# code is
-            not deficient because the user has not supplied the C# code.
+            information. A clarification requesting genuinely unavailable
+            user-owned input is valid when NIRA cannot discover that input
+            through a permitted tool, regardless of the task domain.
             Never demand a percentage when the user has provided no comparable
             baseline. An honest question for the measurements is the correct
             handoff; a specific fabricated measurement is not.
@@ -263,6 +264,15 @@ public sealed class NIRATaskCompletionReviewService
             Similarly, a factual request with no verifiable result may be Complete
             when the draft correctly reports the limitation instead of inventing
             data or claiming that a read established more than it did.
+            INTERPERSONAL COMPLETION: A statement using a metaphor about one's
+            own code, mood, day or situation can be conversational banter rather
+            than a request for technical analysis. Do not require the user to
+            provide source code or other artifacts unless the CURRENT message
+            actually requests an inspection, review or edit. An appropriate
+            reply engaging casual dialogue can be Complete even when it
+            optionally invites the user to share more. AwaitingUser is ONLY
+            for a genuine proposed NeedUser handoff with indispensable missing
+            input, not a Complete interpersonal reply with an optional question.
             The PROPOSED STATE below distinguishes a final answer (Complete)
             from a genuine user-input question (NeedUser). A Complete draft
             must satisfy the objective with grounded results or an honest
@@ -357,8 +367,17 @@ public sealed class NIRATaskCompletionReviewService
             """;
         try
         {
-            string raw = (await _ollama.ChatAsync(
-                model, system, prompt, cancellationToken, jsonMode: true)).Trim();
+            for (int reviewAttempt = 0; reviewAttempt < 2; reviewAttempt++)
+            {
+                string activePrompt = reviewAttempt == 0 ? prompt : prompt +
+                    "\nREVIEW CONSISTENCY RETRY: Previous verdict AwaitingUser was " +
+                    "inconsistent with PROPOSED STATE=Complete. Evaluate the " +
+                    "actual CURRENT objective and draft again. An optional " +
+                    "invitation to continue casual conversation does not " +
+                    "make a reply an AwaitingUser handoff. Do NOT rubber-stamp " +
+                    "Complete for an unperformed factual or action request.";
+                string raw = (await _ollama.ChatAsync(
+                    model, system, activePrompt, cancellationToken, jsonMode: true)).Trim();
             if (raw.StartsWith("```", StringComparison.Ordinal))
             {
                 int firstNewline = raw.IndexOf('\n');
@@ -396,8 +415,16 @@ public sealed class NIRATaskCompletionReviewService
                 TemporalMode = temporalMode,
                 ResumesPriorObjective = resumesPriorObjective
             };
-            Debug.WriteLine($"[TaskReview] Verdict={result.Verdict} | TemporalMode={result.TemporalMode}");
-            return result;
+                if (reviewAttempt == 0 && verdict == "AwaitingUser" &&
+                    request.ProposedState == "Complete")
+                {
+                    Debug.WriteLine("[TaskReview] STATE_MISMATCH_RECHECK | Complete/AwaitingUser");
+                    continue;
+                }
+                Debug.WriteLine($"[TaskReview] Verdict={result.Verdict} | TemporalMode={result.TemporalMode}");
+                return result;
+            }
+            return null;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

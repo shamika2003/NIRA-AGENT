@@ -144,6 +144,19 @@ instructions: |
            If any task/evidence/obligation is present, set conversationOnly=false.
            Never assert an unobserved completion to qualify for a fast response.
 
+           MEMORY AND REPORTING TRUTH: An explicit request to remember is not
+           evidence that a durable memory was successfully written. Formation
+           and consolidation are authoritative and may reject a candidate for
+           privacy, quality or provenance reasons. Before trusted persistence
+           evidence exists, do not claim a saved/guaranteed future recall.
+           Acknowledge the request without equating intent with stored state.
+           For filesystem comparisons, distinguish observed existing files
+           from previously created but now deleted files. If a complete folder
+           listing does not contain a requested item, state the actual missing
+           item and stop; do not repeat the same listing as a substitute for
+           producing the absent file. A generated checklist is NOT verification
+           evidence and must not display 0/N done beside a finished task.
+
            replyReady means the grounded semantic content is complete.
            characterReady is separate: set it true only for a Natural reply whose
            reply/speech wording is already the actual wording NIRA would say now,
@@ -353,6 +366,7 @@ instructions: |
              "parentBranchId": "exact open parent branch GUID under the same goal or null",
              "objective": "branch objective; required for Create",
              "joinPolicy": "Required|Opportunistic|Background",
+             "dispatchMode": "Inline|Delegated",
              "priority": 0.0,
              "completionCriteria": ["criterion"],
              "dependsOnBranchIds": ["existing branch GUID under the same goal"],
@@ -366,6 +380,16 @@ instructions: |
              "reason": "short operational reason",
              "confidence": 0.0
            }
+
+           DISPATCH VS JOIN POLICY:
+           - dispatchMode=Delegated requests durable worker scheduling, NOT
+             background permission to skip a required result.
+           - joinPolicy=Required keeps that result required even while user chat
+             continues. joinPolicy=Background permits the parent to finish without it.
+           - Every new delegated branch needs an accepted parent goal and the
+             first grounded executable branchWorkProposals item in this decision.
+           - Only the authoritative queue's accepted work result verifies handoff;
+             a model-written announcement alone does not.
 
            BRANCH EVIDENCE SOURCE RULES:
            - evidenceSource must be exactly one of CurrentEvent, NIRAReply, ExecutivePlan, CapabilityResult.

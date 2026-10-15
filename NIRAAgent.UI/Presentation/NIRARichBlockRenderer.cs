@@ -663,7 +663,7 @@ public static class NIRARichBlockRenderer
         var header = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 0, 0, 11) };
         var checkedItems = new HashSet<int>((state?.CheckedIndices ?? Array.Empty<int>())
             .Where(i => i >= 0 && i < block.Items.Count));
-        var tally = Text($"{checkedItems.Count} / {block.Items.Count} DONE", 11, true,
+        var tally = Text($"{checkedItems.Count} / {block.Items.Count} MANUALLY CHECKED", 11, true,
             checkedItems.Count == block.Items.Count ? "NIRACyanBrush" : "NIRASecondaryBrush");
         tally.VerticalAlignment = VerticalAlignment.Center;
         DockPanel.SetDock(tally, Dock.Right);
@@ -699,7 +699,7 @@ public static class NIRARichBlockRenderer
                 Margin = new Thickness(0, 0, 0, 7), Padding = new Thickness(0),
                 HorizontalContentAlignment = HorizontalAlignment.Stretch,
                 Cursor = System.Windows.Input.Cursors.Hand, MinHeight = 43,
-                ToolTip = "Mark this item done in this view" };
+                ToolTip = "Manual checkbox; does not execute or verify NIRA work" };
             Theme(button, Control.BackgroundProperty, "NIRAGlassStrongTintBrush");
             Theme(button, Control.BorderBrushProperty, "NIRAGlassBorderBrush");
             button.Click += (_, _) =>
@@ -713,15 +713,15 @@ public static class NIRARichBlockRenderer
                 tick.Visibility = completed ? Visibility.Visible : Visibility.Collapsed;
                 label.TextDecorations = completed ? TextDecorations.Strikethrough : null;
                 label.Opacity = completed ? .67 : 1;
-                tally.Text = $"{checkedCount} / {block.Items.Count} DONE";
+                tally.Text = $"{checkedCount} / {block.Items.Count} MANUALLY CHECKED";
                 tally.SetResourceReference(TextBlock.ForegroundProperty,
                     checkedCount == block.Items.Count ? "NIRACyanBrush" : "NIRASecondaryBrush");
             };
             root.Children.Add(button);
         }
         var note = Text(changed == null
-            ? "This checklist is local to this view · does not change NIRA's tasks"
-            : "Saved with this chat · does not change NIRA's goals or tasks", 11.5,
+            ? "Manual checklist · actual work status is tracked separately"
+            : "Manual checks saved with this chat · not a verified task status", 11.5,
             false, "NIRASecondaryBrush");
         note.Margin = new Thickness(0, 5, 0, 0);
         root.Children.Add(note);

@@ -7,6 +7,8 @@ using NIRAAgent.Presentation;
 using NIRAAgent.AI.Ollama;
 using NIRAAgent.AI.Cognition;
 using NIRAAgent.Mind;
+using NIRAAgent.Memory.LongTerm;
+using NIRAAgent.Character.History;
 
 // Run with: dotnet run --project NIRAAgent.RegressionChecks
 // These are offline contract checks, not simulated live model/Bridge tests.
@@ -97,6 +99,75 @@ Check("Cancellation contract handles clear referential requests without claiming
     if (!compiled.Contains("referent is clearly an open or blocked branch", StringComparison.Ordinal) ||
         !compiled.Contains("never say a branch was removed", StringComparison.Ordinal))
         throw new Exception("Control request completion claims are not guarded in bootstrap");
+});
+
+Check("Opt-in newest file listing is source-grounded and legacy listing is stable", () =>
+{
+    var handler = new NIRADirectoryListCapabilityHandler();
+    string dir = Path.Combine(Path.GetTempPath(), "nira-list-regression-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        Directory.CreateDirectory(dir);
+        string older = Path.Combine(dir, "old-report.txt");
+        string newer = Path.Combine(dir, "current-invoice.txt");
+        File.WriteAllText(older, "first");
+        File.WriteAllText(newer, "second");
+        File.SetLastWriteTimeUtc(older, new DateTime(2020, 1, 2, 0, 0, 0, DateTimeKind.Utc));
+        File.SetLastWriteTimeUtc(newer, new DateTime(2022, 3, 4, 0, 0, 0, DateTimeKind.Utc));
+        string args = JsonSerializer.Serialize(new { path = dir, sortBy = "LastWriteUtc", filesOnly = true, maxEntries = 1 });
+        var ranked = handler.ExecuteAsync(Request(NIRACapabilityIds.DirectoryList, args)).GetAwaiter().GetResult();
+        if (!ranked.Succeeded || !ranked.Output.Contains("current-invoice.txt", StringComparison.Ordinal) ||
+            ranked.Output.Contains("old-report.txt", StringComparison.Ordinal) ||
+            !ranked.Output.Contains("LastWriteUtc=", StringComparison.Ordinal) ||
+            !ranked.Summary.Contains("ScanComplete=True", StringComparison.Ordinal))
+            throw new Exception("Newest-file query was not correctly ranked and evidenced");
+        string plainArgs = JsonSerializer.Serialize(new { path = dir });
+        var plain = handler.ExecuteAsync(Request(NIRACapabilityIds.DirectoryList, plainArgs)).GetAwaiter().GetResult();
+        if (plain.Output.Contains("LastWriteUtc=", StringComparison.Ordinal) ||
+            plain.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length != 2)
+            throw new Exception("Default legacy listing changed");
+        string invalidArgs = JsonSerializer.Serialize(new { path = dir, sortBy = "NotAnOption" });
+        Throws<ArgumentException>(() => handler.ExecuteAsync(Request(NIRACapabilityIds.DirectoryList, invalidArgs)).GetAwaiter().GetResult());
+    }
+    finally
+    {
+        if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+    }
+});
+
+Check("Nested-only Ultra protocol correction is one-shot and source-safe", () =>
+{
+    MethodInfo eligible = typeof(NIRACognitionService).GetMethod(
+        "CanRetryNestedDeepProtocol", BindingFlags.Static | BindingFlags.NonPublic,
+        binder: null, types: new[] { typeof(string), typeof(NIRACognitionContext), typeof(int) },
+        modifiers: null) ?? throw new Exception("Missing bounded Ultra correction eligibility gate");
+    string nested = """{"deepReasoningRequest":{"focus":"try a new specialist"}}""";
+    string useful = """{"state":"Complete","emitReply":true,"reply":"Final answer","deepReasoningRequest":{"focus":"redundant"}}""";
+    var context = new NIRACognitionContext {
+        Cycle = 1,
+        Event = NIRAMindEvent.UserMessage("Evaluate an emergency rationing plan", Guid.NewGuid(), "regression:test")
+    };
+    bool Allowed(string json, NIRACognitionContext scope, int attempts) =>
+        (bool)(eligible.Invoke(null, new object[] { json, scope, attempts }) ?? false);
+    if (!Allowed(nested, context, 0) || Allowed(nested, context, 1) ||
+        Allowed(nested, context with { Cycle = 2 }, 0) ||
+        Allowed(nested, context with { CapabilityEvidence = "CapabilityId: browser.inspect" }, 0) ||
+        Allowed(useful, context, 0) ||
+        Allowed("""{"analysis":"This plan needs measured resource data and careful trade-offs.","deepReasoningRequest":{"focus":"repeat"}}""", context, 0))
+        throw new Exception("Nested correction bypassed one-shot or evidence boundary");
+});
+
+Check("Foreground delivery status does not imply background branch success", () =>
+{
+    var ledger = new NIRAActiveTurnLedger();
+    using var work = ledger.Enter("Start a background document search");
+    var observed = ledger.Observe();
+    work.Finish(resultPublished: true);
+    string message = ledger.DeliveryUpdate(observed.ObservedIds);
+    if (!message.Contains("background branch", StringComparison.Ordinal) ||
+        !message.Contains("foreground turn", StringComparison.Ordinal) ||
+        message.Contains("branch completed", StringComparison.OrdinalIgnoreCase))
+        throw new Exception("Foreground delivery was conflated with actual branch state");
 });
 
 Check("Capability identity ignores transient request IDs and explanations", () =>
@@ -207,6 +278,64 @@ Check("Process memory sort accepts semantically equivalent aliases", () =>
     if (!handler.ExecuteAsync(descending).GetAwaiter().GetResult().Summary.Contains(
             "SortBy=WorkingSet", StringComparison.Ordinal))
         throw new Exception("Descending memory alias not normalized");
+});
+
+Check("Opt-in user folder lookup keeps legacy broad discovery unchanged", () =>
+{
+    var location = new NIRAFileLocationCapabilityHandler();
+    if (!location.Descriptor.Parameters.Any(p => p.Name == "scope") ||
+        !location.Descriptor.Parameters.Any(p => p.Name == "root"))
+        throw new Exception("Known-folder opt-in descriptor is incomplete");
+    var invalid = Request("filesystem.locate", """{"name":"NotAUserFolder","scope":"CurrentUserFolder","kind":"Directory"}""");
+    try
+    {
+        location.ExecuteAsync(invalid).GetAwaiter().GetResult();
+        throw new Exception("Unknown user folder silently fell back to whole-PC discovery");
+    }
+    catch (ArgumentException) { }
+    var conflicting = Request("filesystem.locate", """{"name":"Downloads","root":"C:\\","scope":"CurrentUserFolder"}""");
+    try
+    {
+        location.ExecuteAsync(conflicting).GetAwaiter().GetResult();
+        throw new Exception("Unknown mixed root/scope accepted");
+    }
+    catch (ArgumentException) { }
+});
+
+Check("Deep analysis synthesis is limited to first-turn evidence-free work", () =>
+{
+    string raw = """{"analysis":"There are several plausible business strategies; each has different liquidity risk and uncertainty.","deepReasoningRequest":{"focus":"delegate again"}}""";
+    var context = new NIRACognitionContext {
+        Cycle = 1,
+        Event = NIRAMindEvent.UserMessage("Compare these business strategies", Guid.NewGuid(), "regression:test")
+    };
+    MethodInfo method = typeof(NIRACognitionService).GetMethod(
+        "CanSynthesizeDeepAnalysis", BindingFlags.Static | BindingFlags.NonPublic)
+        ?? throw new Exception("Missing guarded specialist synthesis entry point");
+    bool Eligible(string answer, NIRACognitionContext scope) =>
+        (bool)(method.Invoke(null, new object[] { answer, scope }) ?? false);
+    if (!Eligible(raw, context) ||
+        Eligible(raw, context with { Cycle = 2 }) ||
+        Eligible(raw, context with { CapabilityEvidence = "CapabilityId: filesystem.read" }) ||
+        Eligible("""{"deepReasoningRequest":{"focus":"delegate again"}}""", context))
+        throw new Exception("Synthesis escaped bounded pure-analysis evidence gate");
+});
+
+Check("Visual source policy forbids substituting live screen for missing attachment", () =>
+{
+    Type compiler = typeof(NIRACognitionService).Assembly.GetType(
+        "NIRAAgent.AI.Cognition.NIRACognitionPromptCompiler", throwOnError: true)!;
+    MethodInfo bootstrap = compiler.GetMethod("BootstrapSystem",
+        BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+        ?? throw new Exception("Missing bootstrap policy compiler");
+    string promptFolder = LocatePromptFolder() ??
+        throw new Exception("Missing production personality file");
+    string policy = (string)(bootstrap.Invoke(null, new object[] {
+        File.ReadAllText(Path.Combine(promptFolder, "nira_personality.yaml"))
+    }) ?? "");
+    if (!policy.Contains("Never substitute a live", StringComparison.Ordinal) ||
+        !policy.Contains("scope=CurrentUserFolder", StringComparison.Ordinal))
+        throw new Exception("Missing image-source separation or safe folder guidance");
 });
 
 Check("Desktop discovery uses current Windows known folder before drives", () =>
@@ -614,8 +743,9 @@ Check("S2 completion while answering produces grounded zero-call delivery update
         throw new Exception("Running work was claimed completed");
     audit.Finish(resultPublished: true);
     string update = ledger.DeliveryUpdate(seen.ObservedIds);
-    if (!update.Contains("finished processing", StringComparison.Ordinal) ||
-        !update.Contains("response is already in this conversation", StringComparison.Ordinal) ||
+    if (!update.Contains("finished its foreground turn", StringComparison.Ordinal) ||
+        !update.Contains("its reply was published", StringComparison.Ordinal) ||
+        !update.Contains("background branch", StringComparison.Ordinal) ||
         !string.IsNullOrEmpty(ledger.Snapshot()))
         throw new Exception("Finished run was not published or remained active");
 });
@@ -643,7 +773,7 @@ Check("S2 task status binds only to previously observed work and does not cross 
         throw new Exception("A newly started task contaminated the earlier conversation");
     older.Finish(resultPublished: false);
     string update = ledger.DeliveryUpdate(before.ObservedIds);
-    if (!update.Contains("finished processing, but no answer was published", StringComparison.Ordinal) ||
+    if (!update.Contains("finished its foreground turn without publishing a reply", StringComparison.Ordinal) ||
         update.Contains("Other task", StringComparison.Ordinal))
         throw new Exception("Run correlation or publish-state guard failed");
 });
@@ -861,6 +991,175 @@ Check("S4 knowledge contract is explicit and cannot authorize tools", () =>
     if (!contract.Contains("\"selfContainedAnswer\": false", StringComparison.Ordinal) ||
         !contract.Contains("SELF-CONTAINED ANSWER OPT-IN", StringComparison.Ordinal))
         throw new Exception("Knowledge one-call contract is missing");
+});
+
+
+Check("Explicit remember request is source-quote grounded and clears only the salience floor", () =>
+{
+    MethodInfo method = typeof(NIRAExecutive).GetMethod(
+        "GroundMemoryFormationProposals", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new Exception("Missing Executive source grounding");
+    var user = new NIRASocialEvent
+    {
+        Id = Guid.NewGuid(), Sequence = 1, Timestamp = DateTimeOffset.UtcNow,
+        Source = NIRASocialEventSource.User, Kind = NIRASocialEventKind.UserMessage,
+        EventName = "UserMessage", Content = "Remember this harmless fact: my spaceship is Aurora-47."
+    };
+    var proposal = new NIRAMemoryFormationProposal
+    {
+        EvidenceBasis = NIRAMemoryEvidenceBasis.UserExplicit,
+        Kind = NIRAMemoryKind.UserFact, Content = "The user's spaceship is Aurora-47.",
+        Importance = 0.30, Confidence = 0.90,
+        ExplicitRememberEvidenceQuote = "Remember this harmless fact"
+    };
+    IReadOnlyList<NIRAMemoryCandidate> Ground(NIRAMemoryFormationProposal item) =>
+        (IReadOnlyList<NIRAMemoryCandidate>)method.Invoke(null, new object?[]
+        {
+            user, new[] { item }
+        })!;
+    var explicitFact = Ground(proposal);
+    Equal(1, explicitFact.Count);
+    Equal(0.45, explicitFact[0].Importance);
+    Equal(0.90, explicitFact[0].Confidence);
+    Equal(NIRAMemorySourceType.UserExplicit, explicitFact[0].Provenance.SourceType);
+    // A claimed quote that is not in the current event is not an opt-in.
+    Equal(0.30, Ground(proposal with
+    {
+        ExplicitRememberEvidenceQuote = "invented instruction"
+    })[0].Importance);
+    Equal(0.30, Ground(proposal with
+    {
+        ExplicitRememberEvidenceQuote = null
+    })[0].Importance);
+});
+
+Check("Casual-completion reviewer and repeat guard contain grounded safeguards", () =>
+{
+    FieldInfo reviewerField = typeof(NIRATaskCompletionReviewService).GetField(
+        "ReviewerSystemPrompt", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new Exception("Reviewer policy field missing");
+    string policy = (string)(reviewerField.GetRawConstantValue() ?? "");
+    if (!policy.Contains("INTERPERSONAL COMPLETION", StringComparison.Ordinal))
+        throw new Exception("Banter completion reviewer guard missing");
+    string path = LocatePromptFolder() ?? throw new Exception("Missing prompt directory");
+    string formation = File.ReadAllText(Path.Combine(path, "memory_formation.yaml"));
+    if (!formation.Contains("explicitRememberEvidenceQuote", StringComparison.Ordinal))
+        throw new Exception("Explicit memory evidence proposal is not instructed");
+});
+
+Check("Delegated single workstream retains worker routing without weakening required joins", () =>
+{
+    MethodInfo method = typeof(NIRAExecutive).GetMethod(
+        "ShouldCollapseSingleBranch", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new Exception("Authoritative routing policy is missing");
+    bool Collapses(NIRAAgent.Branches.NIRABranchProposal branch,
+        bool executable = true, bool fresh = true) =>
+        (bool)method.Invoke(null, new object[] { branch, executable, fresh })!;
+    var required = new NIRAAgent.Branches.NIRABranchProposal
+    {
+        JoinPolicy = NIRAAgent.Branches.NIRABranchJoinPolicy.Required
+    };
+    var delegated = required with
+    {
+        DispatchMode = NIRAAgent.Branches.NIRABranchDispatchMode.Delegated
+    };
+    if (!Collapses(required) || Collapses(delegated) ||
+        Collapses(required, executable:false) || Collapses(required, fresh:false) ||
+        Collapses(required with { JoinPolicy = NIRAAgent.Branches.NIRABranchJoinPolicy.Background }))
+        throw new Exception("Inline/delegated scheduling incorrectly conflated with join policy");
+});
+
+Check("Branch signature distinguishes scheduling intent without affecting authorization", () =>
+{
+    var foreground = new NIRAAgent.Branches.NIRABranchProposal
+    {
+        Action = NIRAAgent.Branches.NIRABranchProposalAction.Create,
+        Objective = "Verify an authorized external result",
+        JoinPolicy = NIRAAgent.Branches.NIRABranchJoinPolicy.Required,
+        EvidenceSource = NIRAAgent.Branches.NIRABranchEvidenceSource.ExecutivePlan,
+        Confidence = 0.91
+    };
+    if (foreground.BuildSignature() == (foreground with
+        { DispatchMode = NIRAAgent.Branches.NIRABranchDispatchMode.Delegated }).BuildSignature())
+        throw new Exception("Delegation lost in branch-proposal deduplication");
+    try
+    {
+        (foreground with { DispatchMode = (NIRAAgent.Branches.NIRABranchDispatchMode)999 }).Normalize();
+        throw new Exception("Unknown dispatch mode was accepted");
+    }
+    catch (InvalidOperationException ex) when (ex.Message == "Unknown branch dispatch mode.")
+    {
+        // The existing contract guard rejects unknown model enum values.
+    }
+});
+
+Check("Typed branch-work loop policy is domain-neutral and independent of message wording", () =>
+{
+    Type guard = typeof(NIRAAgent.Branches.NIRABranchWorkItem).Assembly.GetType(
+        "NIRAAgent.Branches.NIRABranchWorkLoopGuard", throwOnError: true)!;
+    MethodInfo assess = guard.GetMethod("Assess", BindingFlags.Public | BindingFlags.Static)
+        ?? throw new Exception("Typed work-loop assessor is missing");
+    DateTimeOffset now = DateTimeOffset.UtcNow;
+    Guid branch = Guid.NewGuid(), goal = Guid.NewGuid();
+
+    NIRAAgent.Branches.NIRABranchWorkItem Work(int n, string capability,
+        NIRAAgent.Branches.NIRABranchWorkStatus status, string evidence = "") => new()
+    {
+        Id = Guid.NewGuid(), BranchId = branch, GoalId = goal,
+        Kind = NIRAAgent.Branches.NIRABranchWorkKind.Capability,
+        CapabilityRequest = Request(capability, "{}"), Status = status,
+        CreatedAtUtc = now.AddMinutes(n), FinishedAtUtc = now.AddMinutes(n),
+        ResultEvidence = evidence, ResultSummary = "Observed result"
+    };
+    string? Reason(params NIRAAgent.Branches.NIRABranchWorkItem[] records)
+    {
+        object? assessment = assess.Invoke(null, new object[] { records });
+        return assessment?.GetType().GetProperty("Reason")?.GetValue(assessment)?.ToString();
+    }
+
+    // Neither the source language nor the user's topic appears in the policy.
+    var failures = new[] {
+        Work(0, "http.request", NIRAAgent.Branches.NIRABranchWorkStatus.Failed),
+        Work(1, "http.request", NIRAAgent.Branches.NIRABranchWorkStatus.Rejected),
+        Work(2, "http.request", NIRAAgent.Branches.NIRABranchWorkStatus.Failed)
+    };
+    if (Reason(failures) != "RepeatedFailedOperation")
+        throw new Exception("Unrelated repeated operation was not classified by typed outcome");
+
+    var alternating = new[] {
+        Work(0, "browser.navigate", NIRAAgent.Branches.NIRABranchWorkStatus.Succeeded,
+            "Url=https://example.test/a\nContentSha256=aaa"),
+        Work(1, "browser.inspect", NIRAAgent.Branches.NIRABranchWorkStatus.Succeeded,
+            "Url=https://example.test/b\nContentSha256=bbb"),
+        Work(2, "browser.follow", NIRAAgent.Branches.NIRABranchWorkStatus.Succeeded,
+            "Url=https://example.test/a\nContentSha256=aaa"),
+        Work(3, "browser.current", NIRAAgent.Branches.NIRABranchWorkStatus.Succeeded,
+            "Url=https://example.test/b\nContentSha256=bbb")
+    };
+    if (Reason(alternating) != "AlternatingUnchangedPages")
+        throw new Exception("Alternating unchanged browser states were not classified");
+
+    var mixed = new[] {
+        Work(0, "filesystem.read", NIRAAgent.Branches.NIRABranchWorkStatus.Failed),
+        Work(1, "http.request", NIRAAgent.Branches.NIRABranchWorkStatus.Failed),
+        Work(2, "browser.inspect", NIRAAgent.Branches.NIRABranchWorkStatus.Succeeded),
+        Work(3, "system.storage.list", NIRAAgent.Branches.NIRABranchWorkStatus.Failed),
+        Work(4, "filesystem.list", NIRAAgent.Branches.NIRABranchWorkStatus.Failed),
+        Work(5, "browser.current", NIRAAgent.Branches.NIRABranchWorkStatus.Succeeded),
+        Work(6, "process.list", NIRAAgent.Branches.NIRABranchWorkStatus.Failed),
+        Work(7, "http.download", NIRAAgent.Branches.NIRABranchWorkStatus.Failed)
+    };
+    if (Reason(mixed) != "GlobalFailureBudget")
+        throw new Exception("Cross-domain failure budget was not classified");
+});
+
+Check("Completed branch proof comes from committed state, not status text", () =>
+{
+    MethodInfo guard = typeof(NIRAExecutive).GetMethod("IsCommittedCompletedBranchResult",
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new Exception("Committed branch-state check is missing");
+    if (guard.IsStatic)
+        throw new Exception("Branch completion still uses a content-only static test");
 });
 
 Console.WriteLine($"REGRESSION CHECKS: {passed} passed, {failed} failed");

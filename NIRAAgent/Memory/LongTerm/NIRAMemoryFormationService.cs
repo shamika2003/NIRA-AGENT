@@ -255,6 +255,7 @@ public sealed class NIRAMemoryFormationService
                   "canonicalKey": null,
                   "topicKey": null,
                   "importance": 0.0,
+                  "explicitRememberEvidenceQuote": null,
                   "confidence": 0.0,
                   "emotionalWeight": 0.0,
                   "association": {
@@ -660,7 +661,8 @@ public sealed class NIRAMemoryFormationService
                         MaximumKeyLength
                     ||
                     proposal.TopicKey?.Length >
-                        MaximumKeyLength)
+                        MaximumKeyLength ||
+                    proposal.ExplicitRememberEvidenceQuote?.Length > 320)
                 {
                     continue;
                 }

@@ -238,6 +238,8 @@ association:
 
 explicit_memory_intent:
   rules:
+    - When AND ONLY WHEN the current user explicitly asks NIRA to keep a permissible durable fact or preference, set explicitRememberEvidenceQuote on that memory proposal to the exact contiguous words expressing the request to remember. The quote must appear in the fresh user message; do not copy the fact alone or invent a quote. Otherwise use null.
+    - An exact grounded explicit memory request may qualify a safe user fact or preference even when ordinary automatic salience is low. Do not inflate importance for incidental statements or override confidence, safety, event-source, truth or contradiction checks.
     - A user's request to remember something is strong evidence that persistence matters for user/project memory, but the content must still satisfy durability and truth rules.
     - A user's request to remember a claim about NIRA's own preference does not override NIRA's authoritative self-preference learning rules.
     - If user/project content is durable and allowed, preserve it unless the same proposition is already represented in EXISTING LONG-TERM MEMORY.

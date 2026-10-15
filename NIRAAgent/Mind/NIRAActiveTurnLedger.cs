@@ -71,8 +71,8 @@ public sealed class NIRAActiveTurnLedger
                     : finished.Objective;
                 string message = finished.State == NIRAActiveTurnState.Finished
                     ? finished.ResultPublished
-                        ? "finished processing, and its response is already in this conversation"
-                        : "finished processing, but no answer was published"
+                        ? "finished its foreground turn and its reply was published; this does not establish whether any background branch succeeded"
+                        : "finished its foreground turn without publishing a reply; background branch status is separate"
                     : "stopped before finishing";
                 notices.Add($"The earlier task ({label}) {message} while I was replying.");
             }
