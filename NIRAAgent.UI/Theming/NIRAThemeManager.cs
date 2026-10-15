@@ -108,6 +108,12 @@ public static class NIRAThemeManager
         SetBrush("NIRATopBarTintBrush", "#2009111E");
         SetBrush("NIRABackdropVeilBrush", "#0E020611");
         SetBrush("NIRAActivityCardBrush", "#220C1830");
+        SetBrush("NIRAUserBubbleFillBrush", "#D817365C");
+        SetBrush("NIRAUserBubbleEdgeBrush", "#7E6FA5DA");
+        SetBrush("NIRAUserBubbleGlowBrush", "#24488CE2");
+        SetBrush("NIRAComposerFillBrush", "#E0121D38");
+        SetBrush("NIRAComposerEdgeBrush", "#7A6B97C8");
+        SetBrush("NIRAComposerBadgeBrush", "#48152C54");
 
         SetLinearGradient("NIRAWindowGradient", "#050817", "#09112A", "#0B1435");
         SetLinearGradient("NIRANeonLine", "#001468FF", "#801468FF", "#8000E5FF", "#0000E5FF");
@@ -150,6 +156,12 @@ public static class NIRAThemeManager
         SetBrush("NIRATopBarTintBrush", "#90F5FAFF");
         SetBrush("NIRABackdropVeilBrush", "#06FFFFFF");
         SetBrush("NIRAActivityCardBrush", "#7AFFFFFF");
+        SetBrush("NIRAUserBubbleFillBrush", "#EFF0F6FF");
+        SetBrush("NIRAUserBubbleEdgeBrush", "#A7BFE5F6");
+        SetBrush("NIRAUserBubbleGlowBrush", "#264585D8");
+        SetBrush("NIRAComposerFillBrush", "#F6FBFFFF");
+        SetBrush("NIRAComposerEdgeBrush", "#A7BDD9F0");
+        SetBrush("NIRAComposerBadgeBrush", "#ECF3FCFF");
 
         SetLinearGradient("NIRAWindowGradient", "#F4F7FD", "#EEF4FC", "#E5F0FF");
         SetLinearGradient("NIRANeonLine", "#001468FF", "#401468FF", "#3000A7D1", "#0000A7D1");

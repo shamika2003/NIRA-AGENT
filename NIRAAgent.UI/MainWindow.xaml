@@ -31,16 +31,13 @@
     </WindowChrome.WindowChrome>
 
     <Window.Resources>
+        <!-- One motion vocabulary: soft, non-elastic easing. -->
+        <CubicEase x:Key="NIRAMotionEase" EasingMode="EaseOut"/>
+        <SineEase x:Key="NIRAMotionPressEase" EasingMode="EaseInOut"/>
         <LinearGradientBrush x:Key="SidebarGradient" StartPoint="0,0" EndPoint="1,1">
             <GradientStop Color="#08060915" Offset="0"/>
             <GradientStop Color="#12091230" Offset="1"/>
         </LinearGradientBrush>
-
-        <LinearGradientBrush x:Key="UserBubble" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#40223D84" Offset="0"/>
-            <GradientStop Color="#40205CB2" Offset="1"/>
-        </LinearGradientBrush>
-
 
         <!-- Thin, low-distraction scrollbars for chat, activity lists and inputs. -->
         <Style x:Key="ThinScrollThumbStyle" TargetType="Thumb">
@@ -163,7 +160,7 @@
             <Setter Property="Width" Value="124"/>
             <Setter Property="Height" Value="34"/>
             <Setter Property="Padding" Value="0"/>
-            <Setter Property="Margin" Value="0,0,10,0"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
             <Setter Property="Background" Value="#15111F3E"/>
             <Setter Property="Foreground" Value="#D9F5FF"/>
             <Setter Property="BorderBrush" Value="#4C5E7CFF"/>
@@ -197,9 +194,6 @@
                                 <Setter TargetName="Core" Property="BorderBrush" Value="#AA82FFFF"/>
                                 <Setter Property="Foreground" Value="#F6FDFF"/>
                             </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Core" Property="Opacity" Value="0.70"/>
-                            </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -215,31 +209,54 @@
                     <ControlTemplate TargetType="Button">
                         <Grid>
                             <Ellipse x:Name="Glow"
-                                     Width="46"
-                                     Height="46"
+                                     Width="38"
+                                     Height="38"
                                      Fill="#1E4578FF"
                                      Opacity="0.46"/>
                             <Border x:Name="Core"
-                                    Margin="3"
-                                    CornerRadius="14"
+                                    Margin="2"
+                                    CornerRadius="11"
                                     Background="{DynamicResource NIRAPrimaryButtonFill}"
                                     BorderBrush="#B6C8FAFF"
-                                    BorderThickness="1">
-                                <ContentPresenter HorizontalAlignment="Center"
-                                                  VerticalAlignment="Center"/>
+                                    BorderThickness="1" RenderTransformOrigin="0.5,0.5">
+                                <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
+                                <ContentPresenter x:Name="SendGlyphHost" HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+                                    <ContentPresenter.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></ContentPresenter.RenderTransform>
+                                </ContentPresenter>
                             </Border>
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
+                                <Trigger.EnterActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="SendGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1.065" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    <DoubleAnimation Storyboard.TargetName="SendGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1.065" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                <Trigger.ExitActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="SendGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1" Duration="0:0:0.26" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    <DoubleAnimation Storyboard.TargetName="SendGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1" Duration="0:0:0.26" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.ExitActions>
                                 <Setter TargetName="Glow" Property="Opacity" Value="1"/>
                                 <Setter TargetName="Core" Property="BorderBrush" Value="#F0E8FFFF"/>
-                            </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Core" Property="Opacity" Value="0.68"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Opacity" Value="0.35"/>
                             </Trigger>
+                                                    <EventTrigger RoutedEvent="Button.Click">
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace">
+                                    <Storyboard>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Core" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Core" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -274,21 +291,20 @@
                 </StackPanel.Triggers>
                 <TextBlock Text="YOU"
                            HorizontalAlignment="Right"
-                           Margin="0,0,8,6"
-                           FontSize="9"
+                           Margin="0,0,9,5"
+                           FontSize="10"
                            FontWeight="SemiBold"
-                           Foreground="#6686A6"/>
-                <Grid MaxWidth="720">
-                    <Border Margin="-2"
-                            CornerRadius="18,18,5,18"
-                            Background="#12396CFF"
-                            Opacity="0.48"/>
-                    <Border Margin="1"
-                            Padding="17,12"
-                            Background="{StaticResource UserBubble}"
-                            BorderBrush="#7570F4FF"
+                           Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                <Grid MaxWidth="760">
+                    <Border Margin="0,2,-2,-2"
+                            CornerRadius="17,17,5,17"
+                            Background="{DynamicResource NIRAUserBubbleGlowBrush}"/>
+                    <Border Padding="17,12"
+                            Background="{DynamicResource NIRAUserBubbleFillBrush}"
+                            BorderBrush="{DynamicResource NIRAUserBubbleEdgeBrush}"
                             BorderThickness="1"
-                            CornerRadius="17,17,5,17">
+                            CornerRadius="17,17,5,17"
+                            SnapsToDevicePixels="True">
                         <TextBlock Text="{Binding Content}"
                                    Foreground="{DynamicResource NIRATextBrush}"
                                    FontSize="14"
@@ -600,7 +616,7 @@
         </Style>
 
         <Style x:Key="GlassQuickButtonStyle" TargetType="Button" BasedOn="{StaticResource GlassActionButtonStyle}">
-            <Setter Property="Height" Value="58"/>
+            <Setter Property="Height" Value="52"/>
             <Setter Property="Margin" Value="0,0,0,9"/>
             <Setter Property="Background" Value="{DynamicResource NIRAPanelBrush}"/>
             <Setter Property="Template">
@@ -613,21 +629,42 @@
                                     BorderBrush="{TemplateBinding BorderBrush}"
                                     BorderThickness="{TemplateBinding BorderThickness}"
                                     CornerRadius="14"
-                                    SnapsToDevicePixels="True"/>
+                                    SnapsToDevicePixels="True" RenderTransformOrigin="0.5,0.5">
+                                <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
+                            </Border>
                             <Border x:Name="QuickHover"
                                     Background="{DynamicResource NIRACardHoverBrush}"
                                     CornerRadius="14"
                                     Opacity="0"/>
-                            <ContentPresenter Margin="13,8"/>
+                            <ContentPresenter Margin="12,7"/>
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="QuickHover" Property="Opacity" Value="1"/>
+                                <Trigger.EnterActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="QuickHover" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                <Trigger.ExitActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="QuickHover" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.27" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.ExitActions>
+                                
                                 <Setter TargetName="QuickGlass" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
                             </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="QuickRoot" Property="Opacity" Value="0.82"/>
-                            </Trigger>
+                                                    <EventTrigger RoutedEvent="Button.Click">
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace">
+                                    <Storyboard>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="QuickGlass" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="QuickGlass" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -639,11 +676,11 @@
             <Setter Property="Background" Value="{DynamicResource NIRAChipBrush}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource NIRAGlassBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Height" Value="40"/>
-            <Setter Property="MinWidth" Value="76"/>
-            <Setter Property="Padding" Value="16,0"/>
-            <Setter Property="Margin" Value="0,0,10,0"/>
-            <Setter Property="FontSize" Value="10.5"/>
+            <Setter Property="Height" Value="38"/>
+            <Setter Property="MinWidth" Value="68"/>
+            <Setter Property="Padding" Value="11,0"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="FontSize" Value="10.8"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
@@ -654,7 +691,8 @@
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
                                 CornerRadius="13"
-                                SnapsToDevicePixels="True">
+                                SnapsToDevicePixels="True" RenderTransformOrigin="0.5,0.5">
+                                <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="2,0"/>
                         </Border>
                         <ControlTemplate.Triggers>
@@ -662,6 +700,22 @@
                                 <Setter TargetName="TopChrome" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
                                 <Setter TargetName="TopChrome" Property="Background" Value="{DynamicResource NIRACardHoverBrush}"/>
                             </Trigger>
+                                                    <EventTrigger RoutedEvent="Button.Click">
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace">
+                                    <Storyboard>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="TopChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="TopChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -672,10 +726,10 @@
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="{DynamicResource NIRASecondaryBrush}"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Padding" Value="18,0"/>
-            <Setter Property="Margin" Value="4,0"/>
-            <Setter Property="MinWidth" Value="76"/>
-            <Setter Property="Height" Value="44"/>
+            <Setter Property="Padding" Value="11,0"/>
+            <Setter Property="Margin" Value="3,0"/>
+            <Setter Property="MinWidth" Value="68"/>
+            <Setter Property="Height" Value="40"/>
             <Setter Property="FontSize" Value="12.5"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Cursor" Value="Hand"/>
@@ -698,7 +752,13 @@
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="NavHover" Property="Opacity" Value="1"/>
+                                <Trigger.EnterActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="NavHover" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                <Trigger.ExitActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="NavHover" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.27" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.ExitActions>
+                                
                                 <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
                             </Trigger>
                             <Trigger Property="Tag" Value="ACTIVE">
@@ -713,9 +773,9 @@
         </Style>
 
         <Style x:Key="ThemeModeToggleStyle" TargetType="Button">
-            <Setter Property="Width" Value="104"/>
-            <Setter Property="Height" Value="40"/>
-            <Setter Property="Margin" Value="0,0,10,0"/>
+            <Setter Property="Width" Value="140"/>
+            <Setter Property="Height" Value="38"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
             <Setter Property="Background" Value="{DynamicResource NIRAChipBrush}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource NIRAGlassBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
@@ -729,7 +789,9 @@
                                     Background="{TemplateBinding Background}"
                                     BorderBrush="{TemplateBinding BorderBrush}"
                                     BorderThickness="{TemplateBinding BorderThickness}"
-                                    CornerRadius="14"/>
+                                    CornerRadius="14" RenderTransformOrigin="0.5,0.5">
+                                <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
+                            </Border>
                             <Border x:Name="ThemeGlow"
                                     Margin="1"
                                     CornerRadius="13"
@@ -747,6 +809,22 @@
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="ThemeChrome" Property="Opacity" Value="0.8"/>
                             </Trigger>
+                                                    <EventTrigger RoutedEvent="Button.Click">
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace">
+                                    <Storyboard>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="ThemeChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="ThemeChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -796,7 +874,8 @@
                                     CornerRadius="9"
                                     Background="{TemplateBinding Background}"
                                     BorderBrush="{TemplateBinding BorderBrush}"
-                                    BorderThickness="{TemplateBinding BorderThickness}">
+                                    BorderThickness="{TemplateBinding BorderThickness}" RenderTransformOrigin="0.5,0.5">
+                                <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
                                 <Grid>
                                     <!-- quiet cyan energy line -->
                                     <Border x:Name="EnergyLine"
@@ -824,20 +903,36 @@
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="HandleBloom" Property="Opacity" Value="0.72"/>
+                                <Trigger.EnterActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="HandleBloom" Storyboard.TargetProperty="Opacity" To="0.72" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                <Trigger.ExitActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="HandleBloom" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.27" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.ExitActions>
+                                
                                 <Setter TargetName="HandleChrome" Property="Background" Value="#9A0A1B30"/>
                                 <Setter TargetName="HandleChrome" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
-                                <Setter TargetName="EnergyLine" Property="Height" Value="48"/>
                                 <Setter TargetName="EnergyLine" Property="Opacity" Value="0.74"/>
-                                <Setter TargetName="CenterNode" Property="Width" Value="5"/>
-                                <Setter TargetName="CenterNode" Property="Height" Value="5"/>
                                 <Setter TargetName="CenterNode" Property="Opacity" Value="1"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="HandleChrome" Property="Opacity" Value="0.70"/>
                                 <Setter TargetName="HandleBloom" Property="Opacity" Value="0.35"/>
                             </Trigger>
-                        </ControlTemplate.Triggers>
+                                                    <EventTrigger RoutedEvent="Button.Click">
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="HandleChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)">
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.02" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    </DoubleAnimationUsingKeyFrames>
+                                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="HandleChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)">
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.02" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    </DoubleAnimationUsingKeyFrames>
+                                </Storyboard></BeginStoryboard>
+                            </EventTrigger>
+</ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -867,7 +962,8 @@
                                     CornerRadius="9"
                                     Background="{TemplateBinding Background}"
                                     BorderBrush="{TemplateBinding BorderBrush}"
-                                    BorderThickness="{TemplateBinding BorderThickness}">
+                                    BorderThickness="{TemplateBinding BorderThickness}" RenderTransformOrigin="0.5,0.5">
+                                <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
                                 <Grid>
                                     <Border x:Name="EnergyLine"
                                             Width="1"
@@ -921,19 +1017,33 @@
                                 <Setter TargetName="CenterNode" Property="Opacity" Value="0.95"/>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="HandleBloom" Property="Opacity" Value="0.78"/>
+                                <Trigger.EnterActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="HandleBloom" Storyboard.TargetProperty="Opacity" To="0.78" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                <Trigger.ExitActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="HandleBloom" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.27" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.ExitActions>
+                                
                                 <Setter TargetName="HandleChrome" Property="Background" Value="#9A0A1B30"/>
                                 <Setter TargetName="HandleChrome" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
-                                <Setter TargetName="EnergyLine" Property="Height" Value="48"/>
                                 <Setter TargetName="EnergyLine" Property="Opacity" Value="0.76"/>
-                                <Setter TargetName="CenterNode" Property="Width" Value="5"/>
-                                <Setter TargetName="CenterNode" Property="Height" Value="5"/>
                                 <Setter TargetName="CenterNode" Property="Opacity" Value="1"/>
                             </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="HandleChrome" Property="Opacity" Value="0.68"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
+                                                    <EventTrigger RoutedEvent="Button.Click">
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="HandleChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)">
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.02" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    </DoubleAnimationUsingKeyFrames>
+                                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="HandleChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)">
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.02" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    </DoubleAnimationUsingKeyFrames>
+                                </Storyboard></BeginStoryboard>
+                            </EventTrigger>
+</ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -963,7 +1073,8 @@
                                     CornerRadius="9"
                                     Background="{TemplateBinding Background}"
                                     BorderBrush="{TemplateBinding BorderBrush}"
-                                    BorderThickness="{TemplateBinding BorderThickness}">
+                                    BorderThickness="{TemplateBinding BorderThickness}" RenderTransformOrigin="0.5,0.5">
+                                <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
                                 <Grid>
                                     <Border x:Name="EnergyLine"
                                             Width="1"
@@ -1017,19 +1128,33 @@
                                 <Setter TargetName="CenterNode" Property="Opacity" Value="0.95"/>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="HandleBloom" Property="Opacity" Value="0.78"/>
+                                <Trigger.EnterActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="HandleBloom" Storyboard.TargetProperty="Opacity" To="0.78" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                <Trigger.ExitActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="HandleBloom" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.27" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.ExitActions>
+                                
                                 <Setter TargetName="HandleChrome" Property="Background" Value="#9A0A1B30"/>
                                 <Setter TargetName="HandleChrome" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
-                                <Setter TargetName="EnergyLine" Property="Height" Value="48"/>
                                 <Setter TargetName="EnergyLine" Property="Opacity" Value="0.76"/>
-                                <Setter TargetName="CenterNode" Property="Width" Value="5"/>
-                                <Setter TargetName="CenterNode" Property="Height" Value="5"/>
                                 <Setter TargetName="CenterNode" Property="Opacity" Value="1"/>
                             </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="HandleChrome" Property="Opacity" Value="0.68"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
+                                                    <EventTrigger RoutedEvent="Button.Click">
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="HandleChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)">
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.02" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    </DoubleAnimationUsingKeyFrames>
+                                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="HandleChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)">
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.02" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    </DoubleAnimationUsingKeyFrames>
+                                </Storyboard></BeginStoryboard>
+                            </EventTrigger>
+</ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -1054,15 +1179,42 @@
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
                                 CornerRadius="10"
-                                SnapsToDevicePixels="True">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                SnapsToDevicePixels="True" RenderTransformOrigin="0.5,0.5">
+                                <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
+                            <ContentPresenter x:Name="WindowGlyphHost" HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+                                    <ContentPresenter.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></ContentPresenter.RenderTransform>
+                                </ContentPresenter>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
+                                <Trigger.EnterActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="WindowGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1.065" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    <DoubleAnimation Storyboard.TargetName="WindowGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1.065" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                <Trigger.ExitActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="WindowGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1" Duration="0:0:0.26" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    <DoubleAnimation Storyboard.TargetName="WindowGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1" Duration="0:0:0.26" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.ExitActions>
                                 <Setter TargetName="WindowChrome" Property="Background" Value="{DynamicResource NIRACardHoverBrush}"/>
                                 <Setter TargetName="WindowChrome" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
                                 <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
                             </Trigger>
+                                                    <EventTrigger RoutedEvent="Button.Click">
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace">
+                                    <Storyboard>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="WindowChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="WindowChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -1091,20 +1243,46 @@
                             <Border x:Name="Chrome" CornerRadius="9"
                                     Background="{TemplateBinding Background}"
                                     BorderBrush="{TemplateBinding BorderBrush}"
-                                    BorderThickness="{TemplateBinding BorderThickness}">
-                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    BorderThickness="{TemplateBinding BorderThickness}" RenderTransformOrigin="0.5,0.5">
+                                <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
+                                <ContentPresenter x:Name="SidebarGlyphHost" HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+                                    <ContentPresenter.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></ContentPresenter.RenderTransform>
+                                </ContentPresenter>
                             </Border>
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Glow" Property="Opacity" Value="0.72"/>
+                                <Trigger.EnterActions><BeginStoryboard><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity" To="0.72" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    <DoubleAnimation Storyboard.TargetName="SidebarGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1.065" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    <DoubleAnimation Storyboard.TargetName="SidebarGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1.065" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                <Trigger.ExitActions><BeginStoryboard><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.27" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    <DoubleAnimation Storyboard.TargetName="SidebarGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1" Duration="0:0:0.26" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    <DoubleAnimation Storyboard.TargetName="SidebarGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1" Duration="0:0:0.26" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.ExitActions>
+                                
                                 <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource NIRACardHoverBrush}"/>
                                 <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
                                 <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
                             </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Chrome" Property="Opacity" Value="0.72"/>
-                            </Trigger>
+                                                    <EventTrigger RoutedEvent="Button.Click">
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace">
+                                    <Storyboard>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Chrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Chrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -1137,7 +1315,7 @@
 
         <Style x:Key="CompactSidebarToolButtonStyle" TargetType="Button">
             <Setter Property="Width" Value="40"/>
-            <Setter Property="Height" Value="40"/>
+            <Setter Property="Height" Value="38"/>
             <Setter Property="Margin" Value="0,0,0,8"/>
             <Setter Property="Background" Value="#180A1526"/>
             <Setter Property="BorderBrush" Value="{DynamicResource NIRAGlassBorderBrush}"/>
@@ -1154,36 +1332,71 @@
                             <Border x:Name="Chrome" CornerRadius="13"
                                     Background="{TemplateBinding Background}"
                                     BorderBrush="{TemplateBinding BorderBrush}"
-                                    BorderThickness="{TemplateBinding BorderThickness}">
-                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    BorderThickness="{TemplateBinding BorderThickness}" RenderTransformOrigin="0.5,0.5">
+                                <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
+                                <ContentPresenter x:Name="CompactGlyphHost" HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+                                    <ContentPresenter.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></ContentPresenter.RenderTransform>
+                                </ContentPresenter>
                             </Border>
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Glow" Property="Opacity" Value="0.55"/>
+                                <Trigger.EnterActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity" To="0.55" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    <DoubleAnimation Storyboard.TargetName="CompactGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1.065" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    <DoubleAnimation Storyboard.TargetName="CompactGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1.065" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                <Trigger.ExitActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.27" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    <DoubleAnimation Storyboard.TargetName="CompactGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1" Duration="0:0:0.26" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    <DoubleAnimation Storyboard.TargetName="CompactGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1" Duration="0:0:0.26" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.ExitActions>
+                                
                                 <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource NIRACardHoverBrush}"/>
                                 <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
                                 <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
                             </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Chrome" Property="Opacity" Value="0.72"/>
-                            </Trigger>
+                                                    <EventTrigger RoutedEvent="Button.Click">
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace">
+                                    <Storyboard>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Chrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Chrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
         </Style>
 
+        <!-- Native WPF TextBox template preserves caret/selection/scrolling.
+             A bounded textbox inside an AUTO-sized composer protects the screen edge. -->
         <Style x:Key="ComposerTextBoxStyle" TargetType="TextBox">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
+            <Setter Property="SelectionBrush" Value="{DynamicResource NIRASelectionBrush}"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="13.5"/>
             <Setter Property="CaretBrush" Value="{DynamicResource NIRACyanBrush}"/>
-            <Setter Property="Padding" Value="4,0"/>
-            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Padding" Value="4,9,5,9"/>
+            <Setter Property="MinHeight" Value="38"/>
+            <Setter Property="MaxHeight" Value="104"/>
             <Setter Property="AcceptsReturn" Value="True"/>
+            <Setter Property="MinLines" Value="1"/>
+            <Setter Property="MaxLines" Value="4"/>
             <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="VerticalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="HorizontalScrollBarVisibility" Value="Disabled"/>
         </Style>
 
     </Window.Resources>
@@ -1258,8 +1471,7 @@
                     <StackPanel VerticalAlignment="Center">
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                             <TextBlock Text="NIRA"
-                                       FontFamily="Bahnschrift"
-                                       FontStretch="SemiCondensed"
+                                       FontFamily="Segoe UI Variable Display, Segoe UI"
                                        FontSize="29"
                                        FontWeight="Light"
                                        Foreground="{DynamicResource NIRATextBrush}"/>
@@ -1269,18 +1481,17 @@
                                     Opacity="0.58"/>
                             <TextBlock Text="BY ELVARA"
                                        Margin="0,3,0,0"
-                                       FontFamily="Bahnschrift"
-                                       FontStretch="Condensed"
+                                       FontFamily="Segoe UI Variable Text, Segoe UI"
                                        FontSize="8.5"
                                        FontWeight="SemiBold"
                                        Foreground="{DynamicResource NIRASecondaryBrush}"/>
                         </StackPanel>
                         <TextBlock Text="CALM INTELLIGENCE  ·  PRESENT WITH YOU"
                                    Margin="1,-1,0,0"
-                                   FontFamily="Bahnschrift"
-                                   FontStretch="Condensed"
-                                   FontSize="7"
-                                   Foreground="{DynamicResource NIRAMutedBrush}"/>
+                                   FontFamily="Segoe UI Variable Text, Segoe UI"
+                                   FontSize="8"
+                                   FontWeight="Normal"
+                                   Foreground="{DynamicResource NIRASecondaryBrush}"/>
                     </StackPanel>
                 </StackPanel>
 
@@ -1303,61 +1514,68 @@
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button x:Name="SettingsButton" Style="{StaticResource TopActionButtonStyle}" Content="Settings" Click="SettingsButton_Click"/>
                     <Button x:Name="PermissionsButton" Style="{StaticResource TopActionButtonStyle}" Content="Permissions" Click="PermissionsButton_Click"/>
+                    <!-- ELVARA appearance selector: orbital lens rather than stock sun/moon icon. -->
                     <Button x:Name="ThemeModeButton"
                             Style="{StaticResource ThemeModeToggleStyle}"
                             Click="ThemeModeButton_Click"
-                            ToolTip="Switch appearance">
-                        <Grid Margin="8,0">
+                            ToolTip="Switch between Halo and Eclipse">
+                        <Grid Margin="9,0,10,0">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="30"/>
+                                <ColumnDefinition Width="32"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <Border x:Name="ThemeModeOrb"
-                                    Width="26" Height="26"
-                                    CornerRadius="13"
-                                    VerticalAlignment="Center"
+                            <Border x:Name="ThemeModeOrb" Width="30" Height="30"
+                                    CornerRadius="15" VerticalAlignment="Center"
                                     Background="{DynamicResource NIRASoftGlow}"
-                                    BorderBrush="{DynamicResource NIRAFocusBorderBrush}"
-                                    BorderThickness="1">
-                                <TextBlock x:Name="ThemeModeIcon"
-                                           Text="◐"
-                                           FontFamily="Segoe UI Symbol"
-                                           FontSize="12"
-                                           HorizontalAlignment="Center"
-                                           VerticalAlignment="Center"
-                                           Foreground="{DynamicResource NIRATextBrush}"/>
+                                    BorderBrush="{DynamicResource NIRAGlassBorderBrush}"
+                                    BorderThickness="1" RenderTransformOrigin="0.5,0.5">
+                                <Border.RenderTransform>
+                                    <ScaleTransform ScaleX="1" ScaleY="1"/>
+                                </Border.RenderTransform>
+                                <Grid Width="26" Height="26">
+                                    <!-- Quiet orbital guide with moving phase mark. -->
+                                    <Ellipse Width="22" Height="22"
+                                             Stroke="{DynamicResource NIRASecondaryBrush}"
+                                             StrokeThickness="0.8" Opacity="0.40"/>
+                                    <Path Width="26" Height="26" Stretch="Uniform"
+                                          Data="M2,17 C3,8 18,3 24,11 M2,17 C9,24 22,18 24,11"
+                                          Stroke="{DynamicResource NIRACyanBrush}"
+                                          StrokeThickness="1.05" Opacity="0.82"
+                                          StrokeStartLineCap="Round" Fill="Transparent"/>
+                                    <Ellipse Width="5" Height="5" HorizontalAlignment="Center"
+                                             VerticalAlignment="Center" Fill="{DynamicResource NIRACyanBrush}"/>
+                                    <Path x:Name="ThemeModeVector" Width="22" Height="22" Stretch="Uniform"
+                                          Data="M4,10 L8,10"
+                                          Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1.8"
+                                          StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                          StrokeLineJoin="Round" Fill="Transparent"/>
+                                    <TextBlock x:Name="ThemeModeIcon" Visibility="Collapsed" Text=""/>
+                                </Grid>
                             </Border>
-                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="7,0,4,0">
-                                <TextBlock x:Name="ThemeModeText"
-                                           Text="ECLIPSE"
-                                           FontFamily="Bahnschrift"
-                                           FontStretch="Condensed"
-                                           FontSize="8.5"
-                                           FontWeight="SemiBold"
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="9,0,0,0">
+                                <TextBlock x:Name="ThemeModeText" Text="HALO"
+                                           FontFamily="Segoe UI Variable Text, Segoe UI"
+                                           FontSize="10.5" FontWeight="SemiBold"
                                            Foreground="{DynamicResource NIRATextBrush}"/>
-                                <TextBlock Text="THEME"
-                                           Margin="0,-1,0,0"
-                                           FontFamily="Bahnschrift"
-                                           FontStretch="Condensed"
-                                           FontSize="6.5"
-                                           Foreground="{DynamicResource NIRAMutedBrush}"/>
+                                <TextBlock Text="APPEARANCE" Margin="0,0,0,0"
+                                           FontFamily="Segoe UI Variable Text, Segoe UI"
+                                           FontSize="7" Foreground="{DynamicResource NIRASecondaryBrush}"/>
                             </StackPanel>
-                            <TextBlock Grid.Column="2"
-                                       Text="⌄"
-                                       Margin="1,-2,0,0"
-                                       FontSize="12"
-                                       Foreground="{DynamicResource NIRASecondaryBrush}"
-                                       VerticalAlignment="Center"/>
+                            <Path Grid.Column="2" Width="7" Height="5" Margin="3,0,0,0"
+                                  VerticalAlignment="Center" Fill="Transparent"
+                                  Stroke="{DynamicResource NIRASecondaryBrush}"
+                                  StrokeThickness="1.4" StrokeStartLineCap="Round"
+                                  StrokeLineJoin="Round" Data="M0,0 L3.5,3.5 L7,0"/>
                         </Grid>
                     </Button>
-                    <Border Height="36" Margin="0,0,8,0" Padding="13,0"
+                    <Border Height="34" Margin="0,0,8,0" Padding="11,0"
                             Background="{DynamicResource NIRAChipBrush}"
                             BorderBrush="{DynamicResource NIRAGlassBorderBrush}"
                             BorderThickness="1" CornerRadius="12">
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                             <Ellipse x:Name="LivePulseDot" Width="6" Height="6" Fill="{DynamicResource NIRAGreenBrush}" Margin="0,0,7,0"/>
-                            <TextBlock Text="LIVE" FontSize="9" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            <TextBlock Text="LIVE" FontSize="8.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Border>
                     <Button Style="{StaticResource WindowGlyphButtonStyle}"
@@ -1392,7 +1610,7 @@
                 <ColumnDefinition Width="12"/>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="12"/>
-                <ColumnDefinition x:Name="RightSidebarColumn" Width="268"/>
+                <ColumnDefinition x:Name="RightSidebarColumn" Width="292"/>
             </Grid.ColumnDefinitions>
 
             <!-- LEFT / PRESENCE -->
@@ -1412,7 +1630,7 @@
                         <StackPanel Orientation="Horizontal">
                             <Ellipse x:Name="OnlinePulseDot" Width="6" Height="6" Fill="{DynamicResource NIRAGreenBrush}" VerticalAlignment="Center" Margin="0,0,7,0"/>
                             <TextBlock Text="PRESENCE" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource NIRACyanBrush}"/>
-                            <TextBlock Text="  ONLINE" FontSize="9.5" Margin="8,1,0,0" Foreground="{DynamicResource NIRAGreenBrush}"/>
+                            
                         </StackPanel>
                         <TextBlock Text="NIRA is here" Margin="0,7,0,0" FontSize="21" FontWeight="SemiBold"/>
                         <TextBlock Text="Calm mind. Deeper insight. Further together."
@@ -1547,11 +1765,7 @@
                     </Button>
                     <StackPanel Grid.Row="3" VerticalAlignment="Top" Margin="0,8,0,0">
                         <Ellipse Width="7" Height="7" Fill="{DynamicResource NIRAGreenBrush}" HorizontalAlignment="Center" ToolTip="NIRA online"/>
-                        <Border Width="30" Height="30" Margin="0,12,0,0" CornerRadius="15"
-                                Background="#160B5A78" BorderBrush="#3C78D8F0" BorderThickness="1">
-                            <TextBlock Text="N" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NIRACyanBrush}"
-                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Border>
+
                     </StackPanel>
                 </Grid>
             </ContentControl>
@@ -1561,11 +1775,11 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*"/>
                     <RowDefinition Height="12"/>
-                    <RowDefinition Height="146"/>
+                    <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
                 <Grid Grid.Row="0" Margin="8,0,8,0">
-                    <Border HorizontalAlignment="Right" VerticalAlignment="Top"
+                    <Border HorizontalAlignment="Right" VerticalAlignment="Top" Visibility="Collapsed"
                             Padding="10,6" CornerRadius="12"
                             Background="{DynamicResource NIRAChipBrush}"
                             BorderBrush="{DynamicResource NIRABorderBrush}"
@@ -1636,7 +1850,8 @@
                                     Click="QuickPrompt_Click">
                                 <StackPanel>
                                     <Border Width="54" Height="54" CornerRadius="27" Background="#1E8B5CFF" BorderBrush="#559B7CFF" BorderThickness="1">
-                                        <TextBlock Text="□" FontSize="22" Foreground="{DynamicResource NIRAVioletBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        <Path Data="M4,5 H17 V15 H9 L5,19 V15 H4 Z M7,9 H14 M7,12 H12" Width="24" Height="24"
+                                              Stroke="{DynamicResource NIRAVioletBrush}" StrokeThickness="1.6" StrokeLineJoin="Round" Fill="Transparent"/>
                                     </Border>
                                     <TextBlock Text="Work on a Project" Margin="0,18,0,0" FontSize="15" FontWeight="SemiBold"/>
                                     <TextBlock Text="Plan, organize, and make progress on what matters."
@@ -1650,7 +1865,8 @@
                                     Click="QuickPrompt_Click">
                                 <StackPanel>
                                     <Border Width="54" Height="54" CornerRadius="27" Background="#1A44B9CB" BorderBrush="#505EDBFF" BorderThickness="1">
-                                        <TextBlock Text="◎" FontSize="22" Foreground="{DynamicResource NIRACyanBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        <Path Data="M12,2 A10,10 0 1 1 11.99,2 M12,7 A5,5 0 1 1 11.99,7 M12,12 L12,13" Width="24" Height="24"
+                                              Stroke="{DynamicResource NIRACyanBrush}" StrokeThickness="1.5" Fill="Transparent"/>
                                     </Border>
                                     <TextBlock Text="Set a Goal" Margin="0,18,0,0" FontSize="15" FontWeight="SemiBold"/>
                                     <TextBlock Text="Turn your aspirations into clear steps and real outcomes."
@@ -1664,7 +1880,8 @@
                                     Click="QuickPrompt_Click">
                                 <StackPanel>
                                     <Border Width="54" Height="54" CornerRadius="27" Background="#1C566DFF" BorderBrush="#487B8DFF" BorderThickness="1">
-                                        <TextBlock Text="▦" FontSize="22" Foreground="{DynamicResource NIRAVioletBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        <Path Data="M3,3 H10 V10 H3 Z M14,3 H21 V10 H14 Z M3,14 H10 V21 H3 Z M14,14 H21 V21 H14 Z" Width="23" Height="23"
+                                              Stroke="{DynamicResource NIRAVioletBrush}" StrokeThickness="1.5" Fill="Transparent"/>
                                     </Border>
                                     <TextBlock Text="Use Tools" Margin="0,18,0,0" FontSize="15" FontWeight="SemiBold"/>
                                     <TextBlock Text="Access powerful tools to create, analyze, research, and more."
@@ -1695,81 +1912,235 @@
                     </ScrollViewer>
                 </Grid>
 
-                <ContentControl x:Name="ComposerPanel" Grid.Row="2" Style="{StaticResource GlassPanelStrongStyle}">
-                    <Grid Margin="14,12,14,10">
-                        <Grid.RowDefinitions><RowDefinition Height="64"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                        <Grid Grid.Row="0" ClipToBounds="True">
-                            <ui:NIRABackdropBorder Margin="-10" BlurRadius="10" BackdropOpacity="0.75"/>
-                            <Border Background="{DynamicResource NIRAInputTintBrush}"
-                                    BorderBrush="{DynamicResource NIRABorderStrongBrush}"
-                                    BorderThickness="1" CornerRadius="17"/>
-                            <Grid Margin="14,7,8,7">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <Button Width="40" Height="40" VerticalAlignment="Center" Margin="0,0,10,0"
-                                        Style="{StaticResource WindowGlyphButtonStyle}" Content="⌂"/>
-                                <TextBox x:Name="MessageInput" Grid.Column="1"
-                                         Style="{StaticResource ComposerTextBoxStyle}"
-                                         Text="{Binding MessageInput, UpdateSourceTrigger=PropertyChanged}"
-                                         PreviewKeyDown="MessageInput_PreviewKeyDown"
-                                         VerticalAlignment="Stretch"/>
-                                <TextBlock Grid.Column="1" Text="Message NIRA..."
-                                           Margin="5,0,0,0" VerticalAlignment="Center"
-                                           FontSize="14" Foreground="{DynamicResource NIRAMutedBrush}"
-                                           IsHitTestVisible="False">
-                                    <TextBlock.Style>
-                                        <Style TargetType="TextBlock">
-                                            <Setter Property="Visibility" Value="Collapsed"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding MessageInput}" Value="">
-                                                    <Setter Property="Visibility" Value="Visible"/>
-                                                </DataTrigger>
-                                                <DataTrigger Binding="{Binding MessageInput}" Value="{x:Null}">
-                                                    <Setter Property="Visibility" Value="Visible"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </TextBlock.Style>
-                                </TextBlock>
-                                <Button Grid.Column="2" Width="44" Height="44" Margin="10,0,8,0"
-                                        Style="{StaticResource TopActionButtonStyle}" Content="◉"/>
-                                <Button Grid.Column="3" Width="52" Height="52"
-                                        Background="{DynamicResource NIRAPrimaryButtonFill}"
-                                        BorderBrush="#66B8FFFF"
-                                        BorderThickness="1"
-                                        Foreground="White"
-                                        Command="{Binding SendCommand}">
+                <!-- Composer remains screen-safe: text grows locally and attachments stay bounded. -->
+                <ContentControl x:Name="ComposerPanel" Grid.Row="2"
+                                Style="{StaticResource GlassPanelStrongStyle}"
+                                AllowDrop="True"
+                                PreviewDragOver="ComposerPanel_PreviewDragOver"
+                                PreviewDrop="ComposerPanel_Drop" MaxHeight="182">
+                    <Grid Margin="11,7,11,9">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <Border Grid.Row="0" MinHeight="56"
+                                Padding="9,5,8,5"
+                                BorderThickness="1" CornerRadius="17"
+                                SnapsToDevicePixels="True">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Background" Value="{DynamicResource NIRAComposerFillBrush}"/>
+                                    <Setter Property="BorderBrush" Value="{DynamicResource NIRAComposerEdgeBrush}"/>
+                                    <Style.Triggers>
+                                        <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                            <Setter Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
+                                        </Trigger>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter Property="BorderBrush" Value="{DynamicResource NIRAUserBubbleEdgeBrush}"/>
+                                        </Trigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+
+                                <Button x:Name="AttachFilesButton"
+                                        Grid.Column="0" Width="30" Height="30"
+                                        VerticalAlignment="Center" HorizontalAlignment="Center"
+                                        Cursor="Hand" Margin="0" Padding="0"
+                                        ToolTip="Add images or files"
+                                        AutomationProperties.Name="Add attachment"
+                                        Click="AttachFilesButton_Click">
                                     <Button.Template>
                                         <ControlTemplate TargetType="Button">
-                                            <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="18">
-                                                <TextBlock Text="➤" FontSize="22" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{TemplateBinding Foreground}"/>
-                                            </Border>
+                                            <Grid Width="30" Height="30">
+                                                <Border x:Name="PlusChrome" CornerRadius="15" RenderTransformOrigin="0.5,0.5"
+                                                        Background="{DynamicResource NIRAChipBrush}"
+                                                        BorderBrush="{DynamicResource NIRAComposerEdgeBrush}"
+                                                        BorderThickness="1">
+                                                    <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
+                                                </Border>
+                                                <Grid Width="14" Height="14" RenderTransformOrigin="0.5,0.5">
+                                                    <Grid.RenderTransform><ScaleTransform x:Name="PlusHoverScale" ScaleX="1" ScaleY="1"/></Grid.RenderTransform>
+                                                    <Path Data="M7,1 L7,13 M1,7 L13,7"
+                                                          Stroke="{DynamicResource NIRABlueBrush}"
+                                                          StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                          Width="14" Height="14" RenderTransformOrigin="0.5,0.5">
+                                                        <Path.RenderTransform><RotateTransform x:Name="PlusSpin" Angle="0"/></Path.RenderTransform>
+                                                    </Path>
+                                                </Grid>
+                                            </Grid>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="PlusChrome" Property="Background" Value="{DynamicResource NIRACardHoverBrush}"/>
+                                                    <Setter TargetName="PlusChrome" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
+                                                    <Trigger.EnterActions>
+                                                        <BeginStoryboard><Storyboard>
+                                                            <DoubleAnimation Storyboard.TargetName="PlusSpin" Storyboard.TargetProperty="Angle" To="12" Duration="0:0:0.26" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                                            <DoubleAnimation Storyboard.TargetName="PlusHoverScale" Storyboard.TargetProperty="ScaleX" To="1.055" Duration="0:0:0.26" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                                            <DoubleAnimation Storyboard.TargetName="PlusHoverScale" Storyboard.TargetProperty="ScaleY" To="1.055" Duration="0:0:0.26" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                                        </Storyboard></BeginStoryboard>
+                                                    </Trigger.EnterActions>
+                                                    <Trigger.ExitActions>
+                                                        <BeginStoryboard><Storyboard>
+                                                            <DoubleAnimation Storyboard.TargetName="PlusSpin" Storyboard.TargetProperty="Angle" To="0" Duration="0:0:0.28" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                                            <DoubleAnimation Storyboard.TargetName="PlusHoverScale" Storyboard.TargetProperty="ScaleX" To="1" Duration="0:0:0.28" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                                            <DoubleAnimation Storyboard.TargetName="PlusHoverScale" Storyboard.TargetProperty="ScaleY" To="1" Duration="0:0:0.28" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                                        </Storyboard></BeginStoryboard>
+                                                    </Trigger.ExitActions>
+                                                </Trigger>
+                                                                        <EventTrigger RoutedEvent="Button.Click">
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace">
+                                    <Storyboard>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="PlusChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="PlusChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
+                                            </ControlTemplate.Triggers>
                                         </ControlTemplate>
                                     </Button.Template>
                                 </Button>
+
+                                <Grid Grid.Column="1" Margin="10,0,8,0"
+                                      VerticalAlignment="Center">
+                                    <TextBox x:Name="MessageInput"
+                                             Style="{StaticResource ComposerTextBoxStyle}"
+                                             Text="{Binding MessageInput, UpdateSourceTrigger=PropertyChanged}"
+                                             PreviewKeyDown="MessageInput_PreviewKeyDown"
+                                             HorizontalAlignment="Stretch"
+                                             ToolTip="Enter to send. Shift+Enter for a new line."/>
+                                    <TextBlock Text="Message NIRA..."
+                                               Padding="5,0"
+                                               FontSize="13"
+                                               VerticalAlignment="Center"
+                                               Foreground="{DynamicResource NIRAMutedBrush}"
+                                               IsHitTestVisible="False">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding MessageInput}" Value="">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding MessageInput}" Value="{x:Null}">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </Grid>
+
+                                <Button Grid.Column="2" Width="38" Height="38"
+                                        VerticalAlignment="Center"
+                                        Style="{StaticResource SendButtonStyle}"
+                                        ToolTip="Send message (Enter)"
+                                        AutomationProperties.Name="Send message"
+                                        Command="{Binding SendCommand}">
+                                    <Path Width="18" Height="18" Stretch="Uniform" Fill="White"
+                                          Data="M2,2 L21,12 L2,22 L5,14 L13,12 L5,10 Z"/>
+                                </Button>
                             </Grid>
-                        </Grid>
-                        <Grid Grid.Row="1" Margin="2,10,2,0">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                            <StackPanel Orientation="Horizontal">
-                                <Button Style="{StaticResource TopActionButtonStyle}" Height="32" Padding="12,0" Content="Deep Think"
-                                        Tag="Think deeply about this. Start by asking me what problem I want to reason through."
-                                        Click="QuickPrompt_Click"/>
-                                <Button Style="{StaticResource TopActionButtonStyle}" Height="32" Padding="12,0" Content="Search"
-                                        Tag="Help me search and research something. Ask what I want to investigate."
-                                        Click="QuickPrompt_Click"/>
-                                <Button Style="{StaticResource TopActionButtonStyle}" Height="32" Padding="12,0" Content="Browse"
-                                        Tag="Help me browse or inspect something on the PC or web. Ask what I need."
-                                        Click="QuickPrompt_Click"/>
-                                <Button Style="{StaticResource TopActionButtonStyle}" Height="32" Padding="12,0" Content="Create Image"
-                                        Tag="Help me create an image. Ask what I want it to look like."
-                                        Click="QuickPrompt_Click"/>
-                                <Button Style="{StaticResource TopActionButtonStyle}" Height="32" Padding="12,0" Content="Analyze File"
-                                        Tag="Help me analyze a file. Ask me to provide the file or explain what I need checked."
-                                        Click="QuickPrompt_Click"/>
-                            </StackPanel>
-                            <TextBlock Grid.Column="1" Text="Press Enter to send  •  Shift + Enter for new line"
-                                       VerticalAlignment="Center" FontSize="9.5" Foreground="{DynamicResource NIRAMutedBrush}"/>
-                        </Grid>
+                        </Border>
+
+                        <!-- Selected attachments are removable local references with richer previews. -->
+                        <ScrollViewer Grid.Row="1"
+                                      Margin="2,7,2,0"
+                                      MaxHeight="68"
+                                      HorizontalScrollBarVisibility="Auto"
+                                      VerticalScrollBarVisibility="Disabled">
+                            <ScrollViewer.Style>
+                                <Style TargetType="ScrollViewer">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding HasComposerAttachments}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </ScrollViewer.Style>
+                            <ItemsControl ItemsSource="{Binding ComposerAttachments}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,0,6,0" ToolTip="{Binding FullPath}">
+                                            <!-- Images: the only visual is the thumbnail, plus a tiny remove control. -->
+                                            <Border Width="58" Height="58" CornerRadius="10" ClipToBounds="True"
+                                                    Background="{DynamicResource NIRAComposerBadgeBrush}"
+                                                    BorderBrush="{DynamicResource NIRAComposerEdgeBrush}" BorderThickness="1">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsImage}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <Image Source="{Binding PreviewPath}" Width="58" Height="58" Stretch="UniformToFill"/>
+                                            </Border>
+                                            <!-- Documents: restrained compact type icon + filename. -->
+                                            <Border Height="58" MinWidth="146" MaxWidth="222" CornerRadius="10"
+                                                    Background="{DynamicResource NIRAComposerBadgeBrush}"
+                                                    BorderBrush="{DynamicResource NIRAComposerEdgeBrush}" BorderThickness="1">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsImage}" Value="True">
+                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <Grid Margin="9,6,23,6">
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="36"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                                    <Border Width="32" Height="36" CornerRadius="7"
+                                                            Background="{DynamicResource NIRAChipBrush}"
+                                                            BorderBrush="{DynamicResource NIRAComposerEdgeBrush}" BorderThickness="1">
+                                                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                                                            <TextBlock Text="{Binding TypeGlyph}" FontFamily="Segoe UI Symbol" FontSize="15"
+                                                                       HorizontalAlignment="Center" Foreground="{DynamicResource NIRABlueBrush}"/>
+                                                            <TextBlock Text="{Binding ExtensionLabel}" FontSize="7.3" FontWeight="SemiBold"
+                                                                       HorizontalAlignment="Center" Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                                                        </StackPanel>
+                                                    </Border>
+                                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="6,0,0,0">
+                                                        <TextBlock Text="{Binding FileName}" MaxWidth="140" FontSize="11" FontWeight="SemiBold"
+                                                                   TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding TypeLabel}" MaxWidth="140" FontSize="9"
+                                                                   Foreground="{DynamicResource NIRASecondaryBrush}" TextTrimming="CharacterEllipsis"/>
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Border>
+                                            <Button Content="×" Width="18" Height="18" HorizontalAlignment="Right"
+                                                    VerticalAlignment="Top" Margin="0,2,2,0" FontSize="13"
+                                                    Background="#B9122745" BorderBrush="#807FA9D6" BorderThickness="1"
+                                                    Foreground="White" Cursor="Hand" Tag="{Binding}"
+                                                    AutomationProperties.Name="Remove attachment" Click="RemoveComposerAttachment_Click"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+
                     </Grid>
                 </ContentControl>
             </Grid>
@@ -1791,27 +2162,27 @@
                     <Button Style="{StaticResource CompactSidebarToolButtonStyle}"
                             Tag="Summarize what I provide next. Preserve the important details and keep the result concise."
                             ToolTip="Summarize" Click="QuickPrompt_Click">
-                        <TextBlock Text="≡" FontSize="19" Foreground="{DynamicResource NIRABlueBrush}"/>
+                        <Path Width="17" Height="17" Data="M3,5 H17 M3,10 H17 M3,15 H13" Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1.6" StrokeStartLineCap="Round"/>
                     </Button>
                     <Button Style="{StaticResource CompactSidebarToolButtonStyle}"
                             Tag="Analyze what I provide next. Find the important patterns, problems, tradeoffs, and actionable insights."
                             ToolTip="Analyze" Click="QuickPrompt_Click">
-                        <TextBlock Text="▥" FontSize="16" Foreground="{DynamicResource NIRACyanBrush}"/>
+                        <Path Width="17" Height="17" Data="M3,16 L3,10 L6,10 L6,16 M9,16 L9,4 L12,4 L12,16 M15,16 L15,7 L18,7 L18,16" Stroke="{DynamicResource NIRACyanBrush}" StrokeThickness="1.4" StrokeLineJoin="Round"/>
                     </Button>
                     <Button Style="{StaticResource CompactSidebarToolButtonStyle}"
                             Tag="Help me create something. Ask what I want to make and then help me produce it."
-                            ToolTip="Create" Click="QuickPrompt_Click">
+                            ToolTip="Create" Click="QuickPrompt_Click" Visibility="Collapsed">
                         <TextBlock Text="✦" FontSize="17" Foreground="{DynamicResource NIRAVioletBrush}"/>
                     </Button>
                     <Button Style="{StaticResource CompactSidebarToolButtonStyle}"
                             Tag="Help me make a practical plan. Ask what outcome I want, then break it into useful steps and dependencies."
-                            ToolTip="Plan" Click="QuickPrompt_Click">
+                            ToolTip="Plan" Click="QuickPrompt_Click" Visibility="Collapsed">
                         <TextBlock Text="☷" FontSize="16" Foreground="{DynamicResource NIRABlueBrush}"/>
                     </Button>
                     <Button Style="{StaticResource CompactSidebarToolButtonStyle}"
                             Tag="Help me research a topic. Ask what I want to know and what kind of sources or depth I need."
                             ToolTip="Research" Click="QuickPrompt_Click">
-                        <TextBlock Text="⌕" FontSize="18" Foreground="{DynamicResource NIRACyanBrush}"/>
+                        <Path Width="18" Height="18" Data="M10,3 A7,7 0 1 1 3,10 A7,7 0 0 1 10,3 M15,15 L21,21" Stroke="{DynamicResource NIRACyanBrush}" StrokeThickness="1.7" StrokeStartLineCap="Round"/>
                     </Button>
                 </StackPanel>
             </ContentControl>
@@ -1836,23 +2207,23 @@
 
                         <Button Style="{StaticResource GlassQuickButtonStyle}" Tag="Summarize what I provide next. Preserve the important details and keep the result concise." Click="QuickPrompt_Click">
                             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="52"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                                <Border Width="40" Height="40" CornerRadius="20" Background="#140F4C9A" BorderBrush="#446AA8FF" BorderThickness="1" VerticalAlignment="Center"><TextBlock Text="≡" FontSize="21" Foreground="{DynamicResource NIRABlueBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+                                <Border Width="40" Height="40" CornerRadius="20" Background="#140F4C9A" BorderBrush="#446AA8FF" BorderThickness="1" VerticalAlignment="Center"><Path Width="18" Height="18" Data="M3,5 H17 M3,10 H17 M3,15 H13" Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1.6" StrokeStartLineCap="Round"/></Border>
                                 <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Summarize" FontSize="11.5" FontWeight="SemiBold"/><TextBlock Text="Condense and clarify content" FontSize="10" Foreground="{DynamicResource NIRASecondaryBrush}"/></StackPanel>
                             </Grid>
                         </Button>
                         <Button Style="{StaticResource GlassQuickButtonStyle}" Tag="Analyze what I provide next. Find the important patterns, problems, tradeoffs, and actionable insights." Click="QuickPrompt_Click">
                             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="52"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                                <Border Width="40" Height="40" CornerRadius="20" Background="#140B8CC6" BorderBrush="#4474CCFF" BorderThickness="1" VerticalAlignment="Center"><TextBlock Text="▥" FontSize="18" Foreground="{DynamicResource NIRACyanBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+                                <Border Width="40" Height="40" CornerRadius="20" Background="#140B8CC6" BorderBrush="#4474CCFF" BorderThickness="1" VerticalAlignment="Center"><Path Width="18" Height="18" Data="M3,16 L3,10 L6,10 L6,16 M9,16 L9,4 L12,4 L12,16 M15,16 L15,7 L18,7 L18,16" Stroke="{DynamicResource NIRACyanBrush}" StrokeThickness="1.4" StrokeLineJoin="Round"/></Border>
                                 <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Analyze" FontSize="11.5" FontWeight="SemiBold"/><TextBlock Text="Find insights and patterns" FontSize="10" Foreground="{DynamicResource NIRASecondaryBrush}"/></StackPanel>
                             </Grid>
                         </Button>
-                        <Button Style="{StaticResource GlassQuickButtonStyle}" Tag="Help me create something. Ask what I want to make and then help me produce it." Click="QuickPrompt_Click">
+                        <Button Style="{StaticResource GlassQuickButtonStyle}" Tag="Help me create something. Ask what I want to make and then help me produce it." Click="QuickPrompt_Click" Visibility="Collapsed">
                             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="52"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                                 <Border Width="40" Height="40" CornerRadius="20" Background="#14136CFF" BorderBrush="#6289FFFF" BorderThickness="1" VerticalAlignment="Center"><TextBlock Text="✦" FontSize="18" Foreground="{DynamicResource NIRAVioletBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
                                 <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Create" FontSize="11.5" FontWeight="SemiBold"/><TextBlock Text="Generate content and ideas" FontSize="10" Foreground="{DynamicResource NIRASecondaryBrush}"/></StackPanel>
                             </Grid>
                         </Button>
-                        <Button Style="{StaticResource GlassQuickButtonStyle}" Tag="Help me make a practical plan. Ask what outcome I want, then break it into useful steps and dependencies." Click="QuickPrompt_Click">
+                        <Button Style="{StaticResource GlassQuickButtonStyle}" Tag="Help me make a practical plan. Ask what outcome I want, then break it into useful steps and dependencies." Click="QuickPrompt_Click" Visibility="Collapsed">
                             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="52"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                                 <Border Width="40" Height="40" CornerRadius="20" Background="#142655C8" BorderBrush="#617DFFFF" BorderThickness="1" VerticalAlignment="Center"><TextBlock Text="☷" FontSize="18" Foreground="{DynamicResource NIRABlueBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
                                 <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Plan" FontSize="11.5" FontWeight="SemiBold"/><TextBlock Text="Break down and organize" FontSize="10" Foreground="{DynamicResource NIRASecondaryBrush}"/></StackPanel>
@@ -1860,7 +2231,7 @@
                         </Button>
                         <Button Style="{StaticResource GlassQuickButtonStyle}" Tag="Help me research a topic. Ask what I want to know and what kind of sources or depth I need." Click="QuickPrompt_Click" Margin="0,0,0,2">
                             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="52"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                                <Border Width="40" Height="40" CornerRadius="20" Background="#140B7A88" BorderBrush="#589AD4F8" BorderThickness="1" VerticalAlignment="Center"><TextBlock Text="⌕" FontSize="20" Foreground="{DynamicResource NIRACyanBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+                                <Border Width="40" Height="40" CornerRadius="20" Background="#140B7A88" BorderBrush="#589AD4F8" BorderThickness="1" VerticalAlignment="Center"><Path Width="19" Height="19" Data="M10,3 A7,7 0 1 1 3,10 A7,7 0 0 1 10,3 M15,15 L21,21" Stroke="{DynamicResource NIRACyanBrush}" StrokeThickness="1.7" StrokeStartLineCap="Round"/></Border>
                                 <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Research" FontSize="11.5" FontWeight="SemiBold"/><TextBlock Text="Explore and compare sources" FontSize="10" Foreground="{DynamicResource NIRASecondaryBrush}"/></StackPanel>
                             </Grid>
                         </Button>
@@ -1873,12 +2244,18 @@
                         <Grid Margin="0,0,0,10">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <TextBlock Text="PAST CHATS" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource NIRABlueBrush}"/>
-                            <Button Grid.Column="1" Content="↻" ToolTip="Refresh past chats" Padding="5,0" Click="RefreshPastChats_Click"
-                                    FontSize="14" Background="Transparent" BorderThickness="0" Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                            <Button Grid.Column="1" ToolTip="Refresh past chats" Padding="5,0" Click="RefreshPastChats_Click"
+                                    Width="27" Height="27" Cursor="Hand"
+                                    Style="{StaticResource SidebarHeaderIconButtonStyle}">
+                                <Path Width="14" Height="14" Stretch="Uniform"
+                                      Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                      StrokeThickness="1.7" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                                      Data="M18,8 A7.5,7.5 0 1 0 19,13 M18,3 L18,9 L12,9"/>
+                            </Button>
                         </Grid>
                         <TextBox x:Name="PastChatFilterBox" TextChanged="PastChatFilter_TextChanged"
                                  ToolTip="Filter saved chats by their opening message"
-                                 Height="30" Margin="0,0,0,5" Padding="9,5" FontSize="10.5"
+                                 Height="28" Margin="0,0,0,6" Padding="9,4" FontSize="10.2"
                                  Background="{DynamicResource NIRAGlassTintBrush}"
                                  Foreground="White"
                                  BorderBrush="{DynamicResource NIRAGlassBorderBrush}" BorderThickness="1"/>
@@ -1889,7 +2266,7 @@
                         </Grid>
                         <TextBlock x:Name="NoPastChatsText" Text="No past chats yet. They appear after NIRA restarts."
                                    TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource NIRAMutedBrush}"/>
-                        <ScrollViewer MaxHeight="310" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <ScrollViewer MaxHeight="430" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                             <StackPanel x:Name="PastChatsListPanel"/>
                         </ScrollViewer>
                         <Border x:Name="PastChatAttachStrip" Visibility="Collapsed" Margin="0,10,0,0"
@@ -1909,5 +2286,11 @@
                 </ContentControl>
             </StackPanel>
         </Grid>
+        <!-- Soft modal context: darkens the owner while a NIRA utility window is open.
+             No outlined frame, no effect on the existing HALO/ECLIPSE images. -->
+        <Border x:Name="UtilityWindowScrim"
+                Grid.RowSpan="2" Panel.ZIndex="900"
+                Background="#F201040A" Opacity="0"
+                Visibility="Visible" IsHitTestVisible="False"/>
     </Grid>
 </Window>

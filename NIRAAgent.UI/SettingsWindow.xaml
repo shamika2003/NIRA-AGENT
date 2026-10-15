@@ -6,8 +6,8 @@
         Title="NIRA Settings"
         Width="1080"
         Height="760"
-        MinWidth="900"
-        MinHeight="620"
+        MinWidth="660"
+        MinHeight="430"
         WindowStartupLocation="CenterOwner"
         WindowStyle="None"
         ResizeMode="CanResize"
@@ -36,8 +36,8 @@
                         <Grid ClipToBounds="True">
                             <ui:NIRAUtilityBackdropBorder Margin="-18" BlurRadius="14" BackdropOpacity="0.72"/>
                             <Border Background="{DynamicResource NIRAGlassTintBrush}"
-                                    BorderBrush="{DynamicResource NIRAGlassBorderBrush}"
-                                    BorderThickness="1"
+                                    BorderBrush="{DynamicResource NIRAGlassBorderStrongBrush}"
+                                    BorderThickness="1.4"
                                     CornerRadius="18">
                                 <ContentPresenter Margin="{TemplateBinding Padding}"/>
                             </Border>
@@ -54,8 +54,8 @@
                         <Grid ClipToBounds="True">
                             <ui:NIRAUtilityBackdropBorder Margin="-20" BlurRadius="16" BackdropOpacity="0.78"/>
                             <Border Background="{DynamicResource NIRAGlassStrongTintBrush}"
-                                    BorderBrush="{DynamicResource NIRAGlassBorderStrongBrush}"
-                                    BorderThickness="1"
+                                    BorderBrush="{DynamicResource NIRAFocusBorderBrush}"
+                                    BorderThickness="1.5"
                                     CornerRadius="19">
                                 <ContentPresenter Margin="{TemplateBinding Padding}"/>
                             </Border>
@@ -93,28 +93,87 @@
                         <Border x:Name="Chrome" Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="11">
+                                CornerRadius="11" RenderTransformOrigin="0.5,0.5">
+                            <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
+                                <Trigger.EnterActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Chrome" Storyboard.TargetProperty="Opacity" To="0.88" Duration="0:0:0.22">
+                                        <DoubleAnimation.EasingFunction><CubicEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction>
+                                    </DoubleAnimation>
+                                </Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                <Trigger.ExitActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Chrome" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.26">
+                                        <DoubleAnimation.EasingFunction><CubicEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction>
+                                    </DoubleAnimation>
+                                </Storyboard></BeginStoryboard></Trigger.ExitActions>
                                 <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource NIRACardHoverBrush}"/>
                                 <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
                                 <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
                             </Trigger>
+                            <EventTrigger RoutedEvent="Button.Click">
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Chrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)">
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1"/>
+                                    </DoubleAnimationUsingKeyFrames>
+                                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Chrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)">
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1"/>
+                                    </DoubleAnimationUsingKeyFrames>
+                                </Storyboard></BeginStoryboard>
+                            </EventTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
         </Style>
 
-        <Style x:Key="SettingsNavLabel" TargetType="Border">
-            <Setter Property="CornerRadius" Value="11"/>
-            <Setter Property="Padding" Value="12,9"/>
+        <!-- Actual navigation buttons: selected section is driven by SettingsNavigation_Click. -->
+        <Style x:Key="SettingsNavigationButton" TargetType="Button">
+            <Setter Property="Padding" Value="12,10"/>
             <Setter Property="Margin" Value="0,0,0,5"/>
-            <Setter Property="Background" Value="#0DFFFFFF"/>
+            <Setter Property="MinHeight" Value="42"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Background" Value="{DynamicResource NIRAChipBrush}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource NIRAGlassBorderBrush}"/>
-            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="NavChrome" CornerRadius="11"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                Padding="{TemplateBinding Padding}"
+                                RenderTransformOrigin="0.5,0.5">
+                            <Border.RenderTransform><ScaleTransform/></Border.RenderTransform>
+                            <ContentPresenter VerticalAlignment="Center"
+                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="NavChrome" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="NavChrome" Property="Opacity" Value="0.83"/>
+                            </Trigger>
+                            <EventTrigger RoutedEvent="Button.Click">
+                                <BeginStoryboard><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="NavChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" From="0.975" To="1" Duration="0:0:0.2"/>
+                                    <DoubleAnimation Storyboard.TargetName="NavChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" From="0.975" To="1" Duration="0:0:0.2"/>
+                                </Storyboard></BeginStoryboard>
+                            </EventTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
     </Window.Resources>
 
@@ -129,7 +188,7 @@
                Stretch="UniformToFill"
                Opacity="0"
                IsHitTestVisible="False"/>
-        <Rectangle Fill="{DynamicResource NIRABackdropVeilBrush}" Opacity="0.42" IsHitTestVisible="False"/>
+        <Rectangle Fill="{DynamicResource NIRABackdropVeilBrush}" Opacity="0.58" IsHitTestVisible="False"/>
 
         <Grid>
             <Grid.RowDefinitions>
@@ -151,14 +210,12 @@
                     </Grid.ColumnDefinitions>
 
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <Grid Width="40" Height="40" Margin="0,0,13,0">
-                            <Ellipse Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1.4" Opacity="0.8"/>
-                            <Ellipse Margin="5" Stroke="{DynamicResource NIRACyanBrush}" StrokeThickness="1.1" Opacity="0.9"/>
-                            <Ellipse Margin="13" Fill="{DynamicResource NIRACyanBrush}" Opacity="0.9"/>
-                        </Grid>
+                        <Image Width="40" Height="40" Margin="0,0,13,0"
+                               Source="Assets/Nira-Icon.png" Stretch="Uniform"
+                               RenderOptions.BitmapScalingMode="HighQuality"/>
                         <StackPanel VerticalAlignment="Center">
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="NIRA" FontFamily="Bahnschrift SemiCondensed" FontSize="23" FontWeight="SemiBold"/>
+                                <TextBlock Text="NIRA" FontFamily="Segoe UI Variable Display, Segoe UI" FontSize="22" FontWeight="SemiBold"/>
                                 <TextBlock Text=" / SETTINGS" Margin="7,7,0,0" FontSize="9" FontWeight="SemiBold" Foreground="{DynamicResource NIRASecondaryBrush}"/>
                             </StackPanel>
                             <TextBlock Text="PERSONALIZE BEHAVIOR · PRESENCE · INTERFACE"
@@ -169,7 +226,7 @@
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                         <Button x:Name="ThemeToggleButton"
                                 Content="ECLIPSE"
-                                Width="144" Height="38" Margin="0,0,8,0"
+                                Width="150" Height="38" Margin="0,0,8,0"
                                 Background="{DynamicResource NIRAChipBrush}"
                                 BorderBrush="{DynamicResource NIRAGlassBorderBrush}"
                                 BorderThickness="1"
@@ -185,13 +242,24 @@
                                             CornerRadius="12">
                                         <Grid Margin="12,0">
                                             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                                            <Grid Width="24" Height="24" VerticalAlignment="Center">
-                                                <Ellipse Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1"/>
-                                                <Ellipse Margin="7" Fill="{DynamicResource NIRACyanBrush}"/>
+                                            <Grid Width="27" Height="27" VerticalAlignment="Center">
+                                                <Ellipse Width="25" Height="25" Stroke="{DynamicResource NIRASecondaryBrush}"
+                                                         StrokeThickness="0.9" Opacity="0.50"/>
+                                                <Path Width="27" Height="27" Stretch="Uniform"
+                                                      Data="M2,17 C3,8 18,3 25,11 M2,17 C9,25 23,18 25,11"
+                                                      Stroke="{DynamicResource NIRACyanBrush}" StrokeThickness="1.15"
+                                                      Fill="Transparent" Opacity="0.9"/>
+                                                <Ellipse Width="5" Height="5" Fill="{DynamicResource NIRACyanBrush}"/>
+                                                <Path x:Name="SettingsThemeVector" Width="23" Height="23"
+                                                      VerticalAlignment="Center" HorizontalAlignment="Center"
+                                                      Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1.8"
+                                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                      StrokeLineJoin="Round" Fill="Transparent"
+                                                      Data="M12,2.2 C17.6,2.2 21.8,6.5 21.8,12"/>
                                             </Grid>
                                             <StackPanel Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center">
                                                 <TextBlock Text="{Binding Content, RelativeSource={RelativeSource TemplatedParent}}" FontSize="9.5" FontWeight="SemiBold"/>
-                                                <TextBlock Text="SWITCH THEME" FontSize="6.5" Foreground="{DynamicResource NIRAMutedBrush}"/>
+                                                <TextBlock Text="APPEARANCE" FontSize="7.5" Foreground="{DynamicResource NIRAMutedBrush}"/>
                                             </StackPanel>
                                         </Grid>
                                     </Border>
@@ -234,12 +302,54 @@
                         </StackPanel>
 
                         <StackPanel Grid.Row="1">
-                            <Border Style="{StaticResource SettingsNavLabel}" Background="{DynamicResource NIRACardHoverBrush}"><TextBlock Text="◈  Appearance" FontWeight="SemiBold"/></Border>
-                            <Border Style="{StaticResource SettingsNavLabel}"><TextBlock Text="◉  Voice"/></Border>
-                            <Border Style="{StaticResource SettingsNavLabel}"><TextBlock Text="◎  Presence"/></Border>
-                            <Border Style="{StaticResource SettingsNavLabel}"><TextBlock Text="◇  Attention"/></Border>
-                            <Border Style="{StaticResource SettingsNavLabel}"><TextBlock Text="○  Notifications"/></Border>
-                            <Border Style="{StaticResource SettingsNavLabel}"><TextBlock Text="▦  Interface"/></Border>
+                            <Button x:Name="AppearanceNavButton" Tag="Appearance" Style="{StaticResource SettingsNavigationButton}" Click="SettingsNavigation_Click">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Path Width="16" Height="16" Stretch="Uniform" Data="M3,17 L9,3 L15,17 Z M17,4 L19,4 M17,8 L22,8 M17,12 L21,12"
+                                      Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1.5" Fill="Transparent"
+                                      StrokeStartLineCap="Round" StrokeLineJoin="Round"/>
+                                <TextBlock Text="Appearance" Margin="12,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                            </StackPanel>
+                            </Button>
+                            <Button x:Name="VoiceNavButton" Tag="Voice" Style="{StaticResource SettingsNavigationButton}" Click="SettingsNavigation_Click">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Path Width="16" Height="16" Stretch="Uniform" Data="M9,3 A3,3 0 0 1 15,3 V12 A3,3 0 0 1 9,12 Z M5,10 V12 A7,7 0 0 0 19,12 V10 M12,19 V23 M8,23 H16"
+                                      Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1.5" Fill="Transparent"
+                                      StrokeStartLineCap="Round" StrokeLineJoin="Round"/>
+                                <TextBlock Text="Voice" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            </Button>
+                            <Button x:Name="PresenceNavButton" Tag="Presence" Style="{StaticResource SettingsNavigationButton}" Click="SettingsNavigation_Click">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Path Width="16" Height="16" Stretch="Uniform" Data="M12,4 A4,4 0 1 0 12,12 A4,4 0 1 0 12,4 M4,22 V20 A8,8 0 0 1 20,20 V22"
+                                      Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1.5" Fill="Transparent"
+                                      StrokeStartLineCap="Round" StrokeLineJoin="Round"/>
+                                <TextBlock Text="Presence" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            </Button>
+                            <Button x:Name="AttentionNavButton" Tag="Attention" Style="{StaticResource SettingsNavigationButton}" Click="SettingsNavigation_Click">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Path Width="16" Height="16" Stretch="Uniform" Data="M12,3 A9,9 0 1 1 12,21 A9,9 0 1 1 12,3 M12,8 V13 L16,15"
+                                      Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1.5" Fill="Transparent"
+                                      StrokeStartLineCap="Round" StrokeLineJoin="Round"/>
+                                <TextBlock Text="Attention" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            </Button>
+                            <Button x:Name="NotificationsNavButton" Tag="Notifications" Style="{StaticResource SettingsNavigationButton}" Click="SettingsNavigation_Click">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Path Width="16" Height="16" Stretch="Uniform" Data="M7,9 A5,5 0 0 1 17,9 V14 L19,17 H5 L7,14 Z M10,19 H14"
+                                      Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1.5" Fill="Transparent"
+                                      StrokeStartLineCap="Round" StrokeLineJoin="Round"/>
+                                <TextBlock Text="Notifications" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            </Button>
+                            <Button x:Name="InterfaceNavButton" Tag="Interface" Style="{StaticResource SettingsNavigationButton}" Click="SettingsNavigation_Click">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Path Width="16" Height="16" Stretch="Uniform" Data="M3,4 H21 V20 H3 Z M3,9 H21 M10,9 V20"
+                                      Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1.5" Fill="Transparent"
+                                      StrokeStartLineCap="Round" StrokeLineJoin="Round"/>
+                                <TextBlock Text="Interface" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            </Button>
                         </StackPanel>
 
                         <Border Grid.Row="2" Padding="11" CornerRadius="12" Background="{DynamicResource NIRAChipBrush}" BorderBrush="{DynamicResource NIRAGlassBorderBrush}" BorderThickness="1">
@@ -251,14 +361,14 @@
                     </Grid>
                 </ContentControl>
 
-                <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                    <StackPanel Margin="0,0,5,24">
+                <ScrollViewer x:Name="SettingsContentScroll" Grid.Column="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="False">
+                    <StackPanel x:Name="SettingsContentPanel" Margin="0,0,5,24">
                         <TextBlock Text="Personalize NIRA" FontSize="30" FontWeight="Light"/>
                         <TextBlock Text="Tune how NIRA speaks, appears, notices context, and surfaces ongoing work."
                                    Margin="0,5,0,16" FontSize="12" Foreground="{DynamicResource NIRASecondaryBrush}"/>
 
                         <!-- APPEARANCE -->
-                        <TextBlock Text="Appearance" Style="{StaticResource SettingsSectionTitle}"/>
+                        <TextBlock x:Name="AppearanceSection" Text="Appearance" Style="{StaticResource SettingsSectionTitle}"/>
                         <TextBlock Text="The utility windows follow the same ECLIPSE / HALO system as the main interface." Style="{StaticResource SettingsDescription}"/>
                         <ContentControl Style="{StaticResource UtilityGlassCard}" Margin="0,10,0,20">
                             <Grid Margin="17,15">
@@ -275,7 +385,7 @@
                         </ContentControl>
 
                         <!-- VOICE -->
-                        <TextBlock Text="Voice" Style="{StaticResource SettingsSectionTitle}"/>
+                        <TextBlock x:Name="VoiceSection" Text="Voice" Style="{StaticResource SettingsSectionTitle}"/>
                         <TextBlock Text="Control when and how NIRA speaks. Chat text is unaffected." Style="{StaticResource SettingsDescription}"/>
                         <ContentControl Style="{StaticResource UtilityGlassCard}" Margin="0,10,0,20">
                             <StackPanel Margin="17,15">
@@ -298,7 +408,7 @@
                         </ContentControl>
 
                         <!-- PRESENCE -->
-                        <TextBlock Text="Presence" Style="{StaticResource SettingsSectionTitle}"/>
+                        <TextBlock x:Name="PresenceSection" Text="Presence" Style="{StaticResource SettingsSectionTitle}"/>
                         <TextBlock Text="Control NIRA's desktop body and idle behavior." Style="{StaticResource SettingsDescription}"/>
                         <ContentControl Style="{StaticResource UtilityGlassCard}" Margin="0,10,0,20">
                             <StackPanel Margin="17,15">
@@ -321,7 +431,7 @@
                         </ContentControl>
 
                         <!-- ATTENTION -->
-                        <TextBlock Text="Attention &amp; autonomy" Style="{StaticResource SettingsSectionTitle}"/>
+                        <TextBlock x:Name="AttentionSection" Text="Attention &amp; autonomy" Style="{StaticResource SettingsSectionTitle}"/>
                         <TextBlock Text="These affect ambient attention only. Active goals and requested work continue normally." Style="{StaticResource SettingsDescription}"/>
                         <ContentControl Style="{StaticResource UtilityGlassCard}" Margin="0,10,0,20">
                             <StackPanel Margin="17,15">
@@ -332,7 +442,7 @@
                         </ContentControl>
 
                         <!-- NOTIFICATIONS -->
-                        <TextBlock Text="Notifications" Style="{StaticResource SettingsSectionTitle}"/>
+                        <TextBlock x:Name="NotificationsSection" Text="Notifications" Style="{StaticResource SettingsSectionTitle}"/>
                         <TextBlock Text="Choose how NIRA surfaces requests that need your attention." Style="{StaticResource SettingsDescription}"/>
                         <ContentControl Style="{StaticResource UtilityGlassCard}" Margin="0,10,0,20">
                             <StackPanel Margin="17,15">
@@ -342,7 +452,7 @@
                         </ContentControl>
 
                         <!-- INTERFACE -->
-                        <TextBlock Text="Interface" Style="{StaticResource SettingsSectionTitle}"/>
+                        <TextBlock x:Name="InterfaceSection" Text="Interface" Style="{StaticResource SettingsSectionTitle}"/>
                         <TextBlock Text="Choose which persistent work signals stay visible." Style="{StaticResource SettingsDescription}"/>
                         <ContentControl Style="{StaticResource UtilityGlassCard}" Margin="0,10,0,16">
                             <StackPanel Margin="17,15">
@@ -369,6 +479,6 @@
                 </Grid>
             </Grid>
         </Grid>
+
     </Grid>
 </Window>
-

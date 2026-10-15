@@ -168,6 +168,8 @@ public sealed class NIRACognitionService
         _compactContract = LoadPromptFile("cognition_contract.yaml");
 
         Debug.WriteLine($"[DeepRouting] READY | Revision={NIRAModelSelection.RoutingRevision} | " +
+            $"AdaptiveRole={NIRAModelSelection.AdaptiveRoleName} | " +
+            $"DeepWorkRole={NIRAModelSelection.DeepWorkRoleName} | " +
             $"Primary={NIRAModelSelection.Primary} | Deep={NIRAModelSelection.Deep} | " +
             "Mode=SharedExecutiveMultiRound");
 

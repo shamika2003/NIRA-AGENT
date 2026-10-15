@@ -281,6 +281,20 @@ public partial class MainWindow : Window
     private void PermissionToast_OpenFullPermissionsRequested() =>
         OpenPermissions(showRequests: true);
 
+    private void RefreshUtilityWindowScrim()
+    {
+        bool visible = (_settingsWindow is { IsVisible: true, WindowState: not WindowState.Minimized }) ||
+                       (_permissionsWindow is { IsVisible: true, WindowState: not WindowState.Minimized });
+        UtilityWindowScrim.BeginAnimation(OpacityProperty,
+            new DoubleAnimation
+            {
+                To = visible ? 0.91 : 0.0,
+                Duration = TimeSpan.FromMilliseconds(visible ? 320 : 255),
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+                FillBehavior = FillBehavior.HoldEnd
+            }, HandoffBehavior.SnapshotAndReplace);
+    }
+
     private void PermissionsButton_Click(
         object sender,
         RoutedEventArgs e) =>
@@ -311,10 +325,15 @@ public partial class MainWindow : Window
                     Owner = this
                 };
 
+            _settingsWindow.StateChanged += (_, _) => RefreshUtilityWindowScrim();
             _settingsWindow.Closed += (_, _) =>
+            {
                 _settingsWindow = null;
+                RefreshUtilityWindowScrim();
+            };
 
             _settingsWindow.Show();
+            RefreshUtilityWindowScrim();
             return;
         }
 
@@ -329,6 +348,7 @@ public partial class MainWindow : Window
         }
 
         _settingsWindow.Activate();
+        RefreshUtilityWindowScrim();
     }
 
     private void OpenPermissions(bool showRequests)
@@ -362,9 +382,11 @@ public partial class MainWindow : Window
 
             _permissionsWindow.MarkManualSession();
 
+            _permissionsWindow.StateChanged += (_, _) => RefreshUtilityWindowScrim();
             _permissionsWindow.Closed += (_, _) =>
             {
                 _permissionsWindow = null;
+                RefreshUtilityWindowScrim();
                 _permissionToast?.SetSuspended(false);
 
                 if (_settingsService?.Current.PermissionNotificationsEnabled ?? true)
@@ -381,6 +403,7 @@ public partial class MainWindow : Window
         }
 
         _permissionsWindow.MarkManualSession();
+        RefreshUtilityWindowScrim();
 
         if (showRequests)
         {
@@ -468,6 +491,8 @@ public partial class MainWindow : Window
         RefreshThemeSensitiveActivityCards();
     }
 
+    private bool? _lastThemeGlyphWasHalo;
+
     private void UpdateThemeModeButtons()
     {
         bool isHalo =
@@ -485,8 +510,13 @@ public partial class MainWindow : Window
         ThemeModeText.Text =
             isHalo ? "HALO" : "ECLIPSE";
 
-        ThemeModeIcon.Text =
-            isHalo ? "☼" : "◐";
+        ThemeModeIcon.Text = string.Empty;
+
+        // Animate only an actual theme transition, never on startup or a repeated update.
+        bool animateGlyph = _lastThemeGlyphWasHalo.HasValue &&
+                            _lastThemeGlyphWasHalo.Value != isHalo;
+        NIRAThemeGlyph.Apply(ThemeModeVector, isHalo, animateGlyph);
+        _lastThemeGlyphWasHalo = isHalo;
 
         ThemeModeButton.Background =
             (Brush)Application.Current.Resources["NIRAChipBrush"];
@@ -500,9 +530,7 @@ public partial class MainWindow : Window
                 : (Brush)Application.Current.Resources["NIRAVioletGlow"];
 
         ThemeModeOrb.BorderBrush =
-            isHalo
-                ? (Brush)Application.Current.Resources["NIRACyanBrush"]
-                : (Brush)Application.Current.Resources["NIRAVioletBrush"];
+            (Brush)Application.Current.Resources["NIRAGlassBorderBrush"];
     }
 
     private void RefreshThemeSensitiveActivityCards()
@@ -530,10 +558,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        TimeSpan duration = TimeSpan.FromMilliseconds(220);
-        CubicEase easing = new()
+        TimeSpan duration = TimeSpan.FromMilliseconds(390);
+        SineEase easing = new()
         {
-            EasingMode = EasingMode.EaseOut
+            EasingMode = EasingMode.EaseInOut
         };
 
         BackgroundEclipse.BeginAnimation(
@@ -910,6 +938,10 @@ public partial class MainWindow : Window
             ? openBranches
             : _branchService.CurrentBranches
                 .Where(branch => branch.IsResolved &&
+                    // Explicitly cancelled work is no longer a visible active
+                    // responsibility. Preserve its durable audit record; don't
+                    // keep a CANCELLED card in the live presence sidebar.
+                    branch.Status != NIRABranchStatus.Cancelled &&
                     DateTimeOffset.UtcNow - (branch.ResolvedAt ?? branch.UpdatedAt) <
                         TimeSpan.FromHours(2))
                 .OrderByDescending(branch => branch.ResolvedAt ?? branch.UpdatedAt)
@@ -2743,75 +2775,126 @@ public partial class MainWindow : Window
     }
 
 
-    private void SetLeftSidebarCollapsed(
-        bool collapsed)
+    private bool _leftSidebarTransitioning;
+    private bool _rightSidebarTransitioning;
+
+    // Sidebar transitions are independent of cognition and never block message input.
+    private async void SetLeftSidebarCollapsed(bool collapsed)
     {
-        if (_leftSidebarCollapsed == collapsed)
+        if (_leftSidebarCollapsed == collapsed || _leftSidebarTransitioning) return;
+        _leftSidebarTransitioning = true;
+        try
         {
-            return;
+            FrameworkElement leaving = collapsed ? LeftSidebarExpandedHost : LeftSidebarCompactHost;
+            await FadeSidebarOutAsync(leaving);
+            _leftSidebarCollapsed = collapsed;
+            leaving.Visibility = Visibility.Collapsed;
+            FrameworkElement arriving = collapsed ? LeftSidebarCompactHost : LeftSidebarExpandedHost;
+            arriving.Visibility = Visibility.Collapsed;
+            await AnimateSidebarWidthAsync(LeftSidebarColumn,
+                collapsed ? LeftSidebarCollapsedWidth : LeftSidebarExpandedWidth);
+            arriving.Visibility = Visibility.Visible;
+            AnimateSidebarReveal(arriving, fromX: -10);
+            SidebarLayoutChanged?.Invoke(this, EventArgs.Empty);
         }
-
-        _leftSidebarCollapsed =
-            collapsed;
-
-        LeftSidebarColumn.Width =
-            new GridLength(
-                collapsed
-                    ? LeftSidebarCollapsedWidth
-                    : LeftSidebarExpandedWidth);
-
-        LeftSidebarExpandedHost.Visibility =
-            collapsed
-                ? Visibility.Collapsed
-                : Visibility.Visible;
-
-        LeftSidebarCompactHost.Visibility =
-            collapsed
-                ? Visibility.Visible
-                : Visibility.Collapsed;
-
-        SidebarLayoutChanged?.Invoke(
-            this,
-            EventArgs.Empty);
-
-        MessageInput.Focus();
+        finally
+        {
+            _leftSidebarTransitioning = false;
+            MessageInput.Focus();
+        }
     }
 
-
-    private void SetRightSidebarCollapsed(
-        bool collapsed)
+    private async void SetRightSidebarCollapsed(bool collapsed)
     {
-        if (_rightSidebarCollapsed == collapsed)
+        if (_rightSidebarCollapsed == collapsed || _rightSidebarTransitioning) return;
+        _rightSidebarTransitioning = true;
+        try
         {
-            return;
+            FrameworkElement leaving = collapsed ? RightSidebarExpandedHost : RightSidebarCompactHost;
+            await FadeSidebarOutAsync(leaving);
+            _rightSidebarCollapsed = collapsed;
+            leaving.Visibility = Visibility.Collapsed;
+            FrameworkElement arriving = collapsed ? RightSidebarCompactHost : RightSidebarExpandedHost;
+            arriving.Visibility = Visibility.Collapsed;
+            await AnimateSidebarWidthAsync(RightSidebarColumn,
+                collapsed ? RightSidebarCollapsedWidth : RightSidebarExpandedWidth);
+            arriving.Visibility = Visibility.Visible;
+            AnimateSidebarReveal(arriving, fromX: 10);
+            SidebarLayoutChanged?.Invoke(this, EventArgs.Empty);
         }
-
-        _rightSidebarCollapsed =
-            collapsed;
-
-        RightSidebarColumn.Width =
-            new GridLength(
-                collapsed
-                    ? RightSidebarCollapsedWidth
-                    : RightSidebarExpandedWidth);
-
-        RightSidebarExpandedHost.Visibility =
-            collapsed
-                ? Visibility.Collapsed
-                : Visibility.Visible;
-
-        RightSidebarCompactHost.Visibility =
-            collapsed
-                ? Visibility.Visible
-                : Visibility.Collapsed;
-
-        SidebarLayoutChanged?.Invoke(
-            this,
-            EventArgs.Empty);
-
-        MessageInput.Focus();
+        finally
+        {
+            _rightSidebarTransitioning = false;
+            MessageInput.Focus();
+        }
     }
 
+    private static Task FadeSidebarOutAsync(FrameworkElement panel)
+    {
+        panel.BeginAnimation(OpacityProperty, new DoubleAnimation
+        {
+            To = 0.30,
+            Duration = TimeSpan.FromMilliseconds(110),
+            EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
+            FillBehavior = FillBehavior.Stop
+        }, HandoffBehavior.SnapshotAndReplace);
+        // A bounded delay guarantees layout finishes even when the UI is occluded.
+        return Task.Delay(115);
+    }
+
+    private static Task AnimateSidebarWidthAsync(ColumnDefinition column, double targetWidth)
+    {
+        double startWidth = column.ActualWidth;
+        if (Math.Abs(startWidth - targetWidth) < 0.5)
+        {
+            column.Width = new GridLength(targetWidth);
+            return Task.CompletedTask;
+        }
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var timer = new System.Windows.Threading.DispatcherTimer(
+            System.Windows.Threading.DispatcherPriority.Render)
+        {
+            Interval = TimeSpan.FromMilliseconds(16)
+        };
+        EventHandler? tick = null;
+        tick = (_, _) =>
+        {
+            double progress = Math.Clamp(watch.Elapsed.TotalMilliseconds / 230.0, 0.0, 1.0);
+            // Cubic ease-out, explicit width interpolation rather than abrupt GridLength jump.
+            double eased = 1 - Math.Pow(1 - progress, 3);
+            column.Width = new GridLength(startWidth + (targetWidth - startWidth) * eased);
+            if (progress >= 1.0)
+            {
+                timer.Stop();
+                timer.Tick -= tick;
+                column.Width = new GridLength(targetWidth);
+                completion.TrySetResult(true);
+            }
+        };
+        timer.Tick += tick;
+        timer.Start();
+        return completion.Task;
+    }
+
+    private static void AnimateSidebarReveal(FrameworkElement panel, double fromX)
+    {
+        panel.BeginAnimation(OpacityProperty, null);
+        panel.Opacity = 1.0;
+        panel.BeginAnimation(OpacityProperty, new DoubleAnimation(0.34, 1.0, TimeSpan.FromMilliseconds(270))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+            FillBehavior = FillBehavior.Stop
+        });
+        var translate = new TranslateTransform(fromX, 0);
+        panel.RenderTransform = translate;
+        translate.BeginAnimation(TranslateTransform.XProperty,
+            new DoubleAnimation(fromX, 0, TimeSpan.FromMilliseconds(270))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+                FillBehavior = FillBehavior.Stop
+            });
+    }
 
     // =========================================================
     // MINIMIZE
@@ -3038,6 +3121,62 @@ public partial class MainWindow : Window
             _viewModel.AttachPastChat(session.SessionId, session.Title);
             MessageInput.Focus();
         }
+    }
+
+    // Composer attachments: explicit user selection, not silent filesystem discovery.
+    private async void AttachFilesButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button addButton || !addButton.IsEnabled)
+            return;
+
+        // Let the eased click pulse finish before the native
+        // modal file dialog takes over the WPF dispatcher. No model call or
+        // attachment processing runs during this visual-only delay.
+        addButton.IsEnabled = false;
+        try
+        {
+            await Task.Delay(290);
+            var dialog = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Attach to NIRA",
+                Filter = "All supported files|*.*|Images|*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp|Documents|*.pdf;*.docx;*.txt;*.md;*.csv;*.json;*.xlsx",
+                Multiselect = true,
+                CheckFileExists = true
+            };
+            if (dialog.ShowDialog(this) == true)
+            {
+                _viewModel.AddComposerAttachments(dialog.FileNames);
+                MessageInput.Focus();
+            }
+        }
+        finally
+        {
+            addButton.IsEnabled = true;
+        }
+    }
+
+    private void RemoveComposerAttachment_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.Button button &&
+            button.Tag is NIRAComposerAttachment attachment)
+            _viewModel.RemoveComposerAttachment(attachment);
+    }
+
+    private void ComposerPanel_PreviewDragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop)
+            ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void ComposerPanel_Drop(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetData(DataFormats.FileDrop) is string[] paths)
+        {
+            _viewModel.AddComposerAttachments(paths);
+            MessageInput.Focus();
+        }
+        e.Handled = true;
     }
 
     private void MessageInput_PreviewKeyDown(

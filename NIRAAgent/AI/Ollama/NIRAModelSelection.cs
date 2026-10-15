@@ -3,6 +3,14 @@ using System.Text.Json.Nodes;
 
 namespace NIRAAgent.AI.Ollama;
 
+// Stable semantic roles belong to NIRA/ELVARA, never to the cloud model provider.
+// They describe why a reasoning resource is selected, not a second personality.
+public enum NIRAReasoningRole
+{
+    Adaptive,
+    DeepWork
+}
+
 // NIRA has one identity and runtime. These are interchangeable reasoning
 // resources, not separate agents or character/memory owners.
 public static class NIRAModelSelection
@@ -16,10 +24,31 @@ public static class NIRAModelSelection
     public static string Primary => Resolve("NIRA_OLLAMA_PRIMARY_MODEL", PrimaryDefault);
     public static string Deep => Resolve("NIRA_OLLAMA_DEEP_MODEL", DeepDefault);
 
-    // A run selects its reasoning model by persisted delegation state, never
+    // Stable product/runtime role identities. Changing the underlying provider
+    // or version never renames NIRA or changes her character and shared Executive.
+    public const string AdaptiveRoleName = "NIRA Adaptive";
+    public const string DeepWorkRoleName = "NIRA Deep Work";
+
+    public static string NameForRole(NIRAReasoningRole role) => role switch
+    {
+        NIRAReasoningRole.Adaptive => AdaptiveRoleName,
+        NIRAReasoningRole.DeepWork => DeepWorkRoleName,
+        _ => throw new ArgumentOutOfRangeException(nameof(role))
+    };
+
+    // Provider selection and role naming stay separate. Compatibility accessors
+    // Primary/Deep remain intact for existing response/vision/memory consumers.
+    public static string ModelForRole(NIRAReasoningRole role) => role switch
+    {
+        NIRAReasoningRole.Adaptive => Primary,
+        NIRAReasoningRole.DeepWork => Deep,
+        _ => throw new ArgumentOutOfRangeException(nameof(role))
+    };
+
+    // A run selects its reasoning resource by persisted delegation state, never
     // by user text, tool names, or an additional classifier LLM call.
     public static string ForCognition(bool deepRunActive) =>
-        deepRunActive ? Deep : Primary;
+        ModelForRole(deepRunActive ? NIRAReasoningRole.DeepWork : NIRAReasoningRole.Adaptive);
 
     private static string Resolve(string variable, string fallback)
     {

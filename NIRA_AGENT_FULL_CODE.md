@@ -4,11 +4,11 @@
 
 **Project:** `NIRA-AGENT`
 
-**Source/code files:** 275
+**Source/code files:** 276
 
 **Resource files shown in tree:** 16
 
-**Total clean project files:** 291
+**Total clean project files:** 292
 
 ---
 
@@ -86,6 +86,7 @@ NIRA-AGENT/
 │   │   └── NIRATheme.xaml
 │   ├── Theming
 │   │   ├── NIRAMotion.cs
+│   │   ├── NIRAThemeGlyph.cs
 │   │   └── NIRAThemeManager.cs
 │   ├── Typing
 │   │   ├── NIRATypingIndicator.cs
@@ -1760,7 +1761,90 @@ int passed = 0;
 int failed = 0;
 Console.WriteLine($"[DeepRouting] REGRESSION | Revision={NIRAModelSelection.RoutingRevision} | " +
     $"Assembly={typeof(NIRAModelSelection).Assembly.Location}");
-Console.WriteLine("[ConcurrentMind] REGRESSION | Revision=NIRA-CONCURRENT-20261014-S3-LATENCY");
+Console.WriteLine("[ConcurrentMind] REGRESSION | Revision=NIRA-CONCURRENT-20261014-S4-ADAPTIVE");
+
+Check("Browser fallback is reserved for a genuinely missing Playwright executable", () =>
+{
+    MethodInfo method = typeof(NIRABrowserService).GetMethod(
+        "IsBundledChromiumMissing", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new Exception("Missing precise Playwright fallback guard");
+    bool Missing(string message) => (bool)(method.Invoke(null, new object[] { message }) ?? false);
+    if (!Missing("Executable doesn't exist at C:\\Users\\test\\ms-playwright\\chromium-1234\\chrome.exe") ||
+        Missing("browserType.launchPersistentContext: Target page has been closed") ||
+        Missing("Navigation timeout exceeded") || Missing(""))
+        throw new Exception("Unrelated browser launch failures must not be mistaken for missing Chromium");
+});
+
+Check("Browser fallback selects installed Chrome then Edge without other programs", () =>
+{
+    MethodInfo method = typeof(NIRABrowserService).GetMethod(
+        "DiscoverInstalledBrowserChannels", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new Exception("Missing installed browser fallback discovery");
+    string root = Path.Combine(Path.GetTempPath(), "nira-browser-fallback-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        string chrome = Path.Combine(root, "Google", "Chrome", "Application", "chrome.exe");
+        string edge = Path.Combine(root, "Microsoft", "Edge", "Application", "msedge.exe");
+        Directory.CreateDirectory(Path.GetDirectoryName(chrome)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(edge)!);
+        File.WriteAllText(chrome, "offline regression marker");
+        File.WriteAllText(edge, "offline regression marker");
+        var channels = (IReadOnlyList<string>)(method.Invoke(null, new object[] { new[] { root } })
+            ?? throw new Exception("No discovered channel result"));
+        if (!channels.SequenceEqual(new[] { "chrome", "msedge" }))
+            throw new Exception("Installed system browser channel order or restrictions changed");
+    }
+    finally
+    {
+        if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+    }
+});
+
+Check("Browser select preflight requires an exact available value or label", () =>
+{
+    MethodInfo method = typeof(NIRABrowserService).GetMethod(
+        "HasSelectableOption", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new Exception("Missing exact dropdown option preflight");
+    string[][] options = { new[] { "C01", "Object Oriented Design" }, new[] { "C02", "Database Systems" } };
+    bool Has(string option, bool byLabel) =>
+        (bool)(method.Invoke(null, new object[] { options, option, byLabel }) ?? false);
+    if (!Has("C01", false) || !Has("Database Systems", true) ||
+        Has("Object Oriented Design", false) || Has("C01", true) ||
+        Has("Unknown", false) || Has("c01", false))
+        throw new Exception("Browser option selection is not exact or the label/value modes were confused");
+});
+
+Check("Unavailable native browser option has a typed no-effect outcome", () =>
+{
+    Exception option = new NIRABrowserOptionUnavailableException("No matching value");
+    if (option is not InvalidOperationException || option is OperationCanceledException)
+        throw new Exception("Preflight option mismatch must be distinguishable from dispatched uncertainty");
+    MethodInfo policy = typeof(NIRACapabilityService).GetMethod(
+        "IsCertainNoEffectBrowserPreflight", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new Exception("Missing no-effect capability outcome classifier");
+    bool Certain(string capability, Exception e) =>
+        (bool)(policy.Invoke(null, new object[] { capability, e }) ?? false);
+    if (!Certain(NIRACapabilityIds.BrowserSelect, option) ||
+        Certain(NIRACapabilityIds.BrowserClick, option) ||
+        Certain(NIRACapabilityIds.BrowserSelect, new TimeoutException("Selection timed out")))
+        throw new Exception("Only absent native dropdown options are provably no-effect browser preflights");
+});
+
+Check("Cancellation contract handles clear referential requests without claiming unexecuted work", () =>
+{
+    var type = typeof(NIRACognitionService).Assembly.GetType(
+        "NIRAAgent.AI.Cognition.NIRACognitionPromptCompiler")
+        ?? throw new Exception("Missing production prompt compiler");
+    MethodInfo system = type.GetMethod("BootstrapSystem", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)
+        ?? throw new Exception("Missing production bootstrap guidance");
+    string? promptFile = LocatePromptFolder();
+    if (promptFile == null) throw new Exception("Missing authoritative prompt folder");
+    string personality = File.ReadAllText(Path.Combine(promptFile, "nira_personality.yaml"));
+    string compiled = (string?)system.Invoke(null, new object[] { personality }) ?? "";
+    if (!compiled.Contains("referent is clearly an open or blocked branch", StringComparison.Ordinal) ||
+        !compiled.Contains("never say a branch was removed", StringComparison.Ordinal))
+        throw new Exception("Control request completion claims are not guarded in bootstrap");
+});
 
 Check("Capability identity ignores transient request IDs and explanations", () =>
 {
@@ -1924,6 +2008,18 @@ Check("Delegated runs use Ultra without a new classifier", () =>
 {
     Equal(NIRAModelSelection.Primary, NIRAModelSelection.ForCognition(false));
     Equal(NIRAModelSelection.Deep, NIRAModelSelection.ForCognition(true));
+});
+
+Check("NIRA's branded cognition roles are stable and provider independent", () =>
+{
+    Equal("NIRA Adaptive", NIRAModelSelection.NameForRole(NIRAReasoningRole.Adaptive));
+    Equal("NIRA Deep Work", NIRAModelSelection.NameForRole(NIRAReasoningRole.DeepWork));
+    Equal(NIRAModelSelection.Primary, NIRAModelSelection.ModelForRole(NIRAReasoningRole.Adaptive));
+    Equal(NIRAModelSelection.Deep, NIRAModelSelection.ModelForRole(NIRAReasoningRole.DeepWork));
+    Equal(NIRAModelSelection.ForCognition(false),
+        NIRAModelSelection.ModelForRole(NIRAReasoningRole.Adaptive));
+    Equal(NIRAModelSelection.ForCognition(true),
+        NIRAModelSelection.ModelForRole(NIRAReasoningRole.DeepWork));
 });
 
 Check("Deep specialist can request multiple ordinary registered tools", () =>
@@ -2430,6 +2526,88 @@ Check("S3 new messages see recent finished-work truth without extra model calls"
         !note.Contains("Code audit", StringComparison.Ordinal) ||
         note.Contains("succeeded", StringComparison.OrdinalIgnoreCase))
         throw new Exception("Recent lifecycle state was ungrounded");
+});
+
+Check("S4 due-reminder direct transition is tied to authoritative ID", () =>
+{
+    MethodInfo? gate = typeof(NIRAExecutive).GetMethod("ShouldPreReviewCommitment",
+        BindingFlags.NonPublic | BindingFlags.Static);
+    if (gate == null) throw new Exception("Trusted commitment review contract missing");
+    // No direct mutation is authorized by the model or by this test.
+    string source = File.ReadAllText(Path.Combine(
+        Directory.GetParent(LocatePromptFolder() ??
+            throw new Exception("Prompt folder unavailable"))?.Parent?.FullName ??
+            throw new Exception("Project root unavailable"),
+        "NIRAAgent", "Mind", "NIRAExecutive.cs"));
+    if (!source.Contains("proposalGuid == dueGuid", StringComparison.Ordinal) ||
+        !source.Contains("directTemporalWakeVerified = true", StringComparison.Ordinal) ||
+        !source.Contains("verifiedChanges > 0", StringComparison.Ordinal))
+        throw new Exception("Due event ID or persistence gates missing");
+});
+
+Check("S4 stable interpersonal overload remains compatible", () =>
+{
+    Type policy = typeof(NIRAModelSelection).Assembly.GetType(
+        "NIRAAgent.AI.Cognition.NIRACharacterDeliveryPolicy", true)!;
+    if (!policy.GetMethods(BindingFlags.Static | BindingFlags.Public).Any(x =>
+        x.Name == "RequiresOptimizedFidelityPass" && x.GetParameters().Length == 4))
+        throw new Exception("Compatibility overload missing");
+});
+
+Check("S4 direct reminder structure remains untrusted and bounded", () =>
+{
+    var reminder = new NIRACognitionDecision { State=NIRACognitionState.Complete,
+        EmitReply=true, Reply="I'll remind you in two minutes.",
+        ReplyReady=true, CharacterReady=true, SelfContainedAnswer=true,
+        CommitmentProposals = new [] { new NIRAAgent.Self.Model.NIRACommitmentFormationProposal {
+            Action = NIRAAgent.Self.Model.NIRACommitmentProposalAction.Create,
+            EvidenceSource = NIRAAgent.Self.Model.NIRACommitmentEvidenceSource.NIRAReply,
+            EvidenceQuote = "I'll remind you", Summary = "Check NIRA reasoning" } } };
+    if (NIRAConversationFastPath.CanUseDirectReply(reminder, true, false, false, false))
+        throw new Exception("Model-written reminder bypassed verified persistence");
+});
+
+Check("S4 general explanation can finish in one reviewed-by-contract cognition call", () =>
+{
+    var explanation = new NIRACognitionDecision { State = NIRACognitionState.Complete,
+        EmitReply = true, Reply = "async enables await, which suspends without blocking a thread.",
+        ReplyReady = true, CharacterReady = true, SelfContainedAnswer = true };
+    if (!NIRAConversationFastPath.CanUseDirectReply(explanation, true, false, false, false))
+        throw new Exception("Simple general explanation was forced through redundant cloud stages");
+    if (NIRAConversationFastPath.CanUseDirectReply(explanation with {
+            CapabilityRequests = new[] { Request("system.storage.list", "{}") }
+        }, true, false, false, false) ||
+        NIRAConversationFastPath.CanUseDirectReply(explanation, true, true, false, false) ||
+        NIRAConversationFastPath.CanUseDirectReply(explanation with {
+            ReviewCommitment = true }, true, false, false, false))
+        throw new Exception("Knowledge classification bypassed observed work / commitment rules");
+});
+
+Check("S4 verified completed answer avoids redundant character call only while stable", () =>
+{
+    Type policy = typeof(NIRAModelSelection).Assembly.GetType(
+        "NIRAAgent.AI.Cognition.NIRACharacterDeliveryPolicy", true)!;
+    MethodInfo? method = policy.GetMethods(BindingFlags.Static | BindingFlags.Public)
+        .SingleOrDefault(x => x.Name == "RequiresOptimizedFidelityPass" &&
+            x.GetParameters().Length == 5);
+    if (method == null) throw new Exception("Reviewed natural delivery overload is absent");
+    var draft = new NIRACognitionDecision { State = NIRACognitionState.Complete,
+        EmitReply = true, Reply = "C: has 9.38 GB free.", ReplyReady = true,
+        CharacterReady = true, ReplyPresentation = NIRAReplyPresentationMode.Natural };
+    bool Needs(bool shift, bool review, NIRACognitionDecision d) =>
+        (bool)method.Invoke(null, new object[] { d, d.Reply, false, shift, review })!;
+    if (Needs(false, true, draft) || !Needs(false, false, draft) ||
+        !Needs(true, true, draft) || !Needs(false, true, draft with { CharacterReady = false }))
+        throw new Exception("Unverified or materially changed reply bypassed character safety");
+});
+
+Check("S4 knowledge contract is explicit and cannot authorize tools", () =>
+{
+    string root = LocatePromptFolder() ?? throw new Exception("Missing prompt directory");
+    string contract = File.ReadAllText(Path.Combine(root, "cognition_contract.yaml"));
+    if (!contract.Contains("\"selfContainedAnswer\": false", StringComparison.Ordinal) ||
+        !contract.Contains("SELF-CONTAINED ANSWER OPT-IN", StringComparison.Ordinal))
+        throw new Exception("Knowledge one-call contract is missing");
 });
 
 Console.WriteLine($"REGRESSION CHECKS: {passed} passed, {failed} failed");
@@ -11229,16 +11407,13 @@ public partial class CredentialPromptWindow : Window
     </WindowChrome.WindowChrome>
 
     <Window.Resources>
+        <!-- One motion vocabulary: soft, non-elastic easing. -->
+        <CubicEase x:Key="NIRAMotionEase" EasingMode="EaseOut"/>
+        <SineEase x:Key="NIRAMotionPressEase" EasingMode="EaseInOut"/>
         <LinearGradientBrush x:Key="SidebarGradient" StartPoint="0,0" EndPoint="1,1">
             <GradientStop Color="#08060915" Offset="0"/>
             <GradientStop Color="#12091230" Offset="1"/>
         </LinearGradientBrush>
-
-        <LinearGradientBrush x:Key="UserBubble" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#40223D84" Offset="0"/>
-            <GradientStop Color="#40205CB2" Offset="1"/>
-        </LinearGradientBrush>
-
 
         <!-- Thin, low-distraction scrollbars for chat, activity lists and inputs. -->
         <Style x:Key="ThinScrollThumbStyle" TargetType="Thumb">
@@ -11361,7 +11536,7 @@ public partial class CredentialPromptWindow : Window
             <Setter Property="Width" Value="124"/>
             <Setter Property="Height" Value="34"/>
             <Setter Property="Padding" Value="0"/>
-            <Setter Property="Margin" Value="0,0,10,0"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
             <Setter Property="Background" Value="#15111F3E"/>
             <Setter Property="Foreground" Value="#D9F5FF"/>
             <Setter Property="BorderBrush" Value="#4C5E7CFF"/>
@@ -11395,9 +11570,6 @@ public partial class CredentialPromptWindow : Window
                                 <Setter TargetName="Core" Property="BorderBrush" Value="#AA82FFFF"/>
                                 <Setter Property="Foreground" Value="#F6FDFF"/>
                             </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Core" Property="Opacity" Value="0.70"/>
-                            </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -11413,31 +11585,54 @@ public partial class CredentialPromptWindow : Window
                     <ControlTemplate TargetType="Button">
                         <Grid>
                             <Ellipse x:Name="Glow"
-                                     Width="46"
-                                     Height="46"
+                                     Width="38"
+                                     Height="38"
                                      Fill="#1E4578FF"
                                      Opacity="0.46"/>
                             <Border x:Name="Core"
-                                    Margin="3"
-                                    CornerRadius="14"
+                                    Margin="2"
+                                    CornerRadius="11"
                                     Background="{DynamicResource NIRAPrimaryButtonFill}"
                                     BorderBrush="#B6C8FAFF"
-                                    BorderThickness="1">
-                                <ContentPresenter HorizontalAlignment="Center"
-                                                  VerticalAlignment="Center"/>
+                                    BorderThickness="1" RenderTransformOrigin="0.5,0.5">
+                                <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
+                                <ContentPresenter x:Name="SendGlyphHost" HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+                                    <ContentPresenter.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></ContentPresenter.RenderTransform>
+                                </ContentPresenter>
                             </Border>
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
+                                <Trigger.EnterActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="SendGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1.065" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    <DoubleAnimation Storyboard.TargetName="SendGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1.065" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                <Trigger.ExitActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="SendGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1" Duration="0:0:0.26" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    <DoubleAnimation Storyboard.TargetName="SendGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1" Duration="0:0:0.26" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.ExitActions>
                                 <Setter TargetName="Glow" Property="Opacity" Value="1"/>
                                 <Setter TargetName="Core" Property="BorderBrush" Value="#F0E8FFFF"/>
-                            </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Core" Property="Opacity" Value="0.68"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Opacity" Value="0.35"/>
                             </Trigger>
+                                                    <EventTrigger RoutedEvent="Button.Click">
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace">
+                                    <Storyboard>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Core" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Core" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -11472,21 +11667,20 @@ public partial class CredentialPromptWindow : Window
                 </StackPanel.Triggers>
                 <TextBlock Text="YOU"
                            HorizontalAlignment="Right"
-                           Margin="0,0,8,6"
-                           FontSize="9"
+                           Margin="0,0,9,5"
+                           FontSize="10"
                            FontWeight="SemiBold"
-                           Foreground="#6686A6"/>
-                <Grid MaxWidth="720">
-                    <Border Margin="-2"
-                            CornerRadius="18,18,5,18"
-                            Background="#12396CFF"
-                            Opacity="0.48"/>
-                    <Border Margin="1"
-                            Padding="17,12"
-                            Background="{StaticResource UserBubble}"
-                            BorderBrush="#7570F4FF"
+                           Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                <Grid MaxWidth="760">
+                    <Border Margin="0,2,-2,-2"
+                            CornerRadius="17,17,5,17"
+                            Background="{DynamicResource NIRAUserBubbleGlowBrush}"/>
+                    <Border Padding="17,12"
+                            Background="{DynamicResource NIRAUserBubbleFillBrush}"
+                            BorderBrush="{DynamicResource NIRAUserBubbleEdgeBrush}"
                             BorderThickness="1"
-                            CornerRadius="17,17,5,17">
+                            CornerRadius="17,17,5,17"
+                            SnapsToDevicePixels="True">
                         <TextBlock Text="{Binding Content}"
                                    Foreground="{DynamicResource NIRATextBrush}"
                                    FontSize="14"
@@ -11798,7 +11992,7 @@ public partial class CredentialPromptWindow : Window
         </Style>
 
         <Style x:Key="GlassQuickButtonStyle" TargetType="Button" BasedOn="{StaticResource GlassActionButtonStyle}">
-            <Setter Property="Height" Value="58"/>
+            <Setter Property="Height" Value="52"/>
             <Setter Property="Margin" Value="0,0,0,9"/>
             <Setter Property="Background" Value="{DynamicResource NIRAPanelBrush}"/>
             <Setter Property="Template">
@@ -11811,21 +12005,42 @@ public partial class CredentialPromptWindow : Window
                                     BorderBrush="{TemplateBinding BorderBrush}"
                                     BorderThickness="{TemplateBinding BorderThickness}"
                                     CornerRadius="14"
-                                    SnapsToDevicePixels="True"/>
+                                    SnapsToDevicePixels="True" RenderTransformOrigin="0.5,0.5">
+                                <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
+                            </Border>
                             <Border x:Name="QuickHover"
                                     Background="{DynamicResource NIRACardHoverBrush}"
                                     CornerRadius="14"
                                     Opacity="0"/>
-                            <ContentPresenter Margin="13,8"/>
+                            <ContentPresenter Margin="12,7"/>
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="QuickHover" Property="Opacity" Value="1"/>
+                                <Trigger.EnterActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="QuickHover" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                <Trigger.ExitActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="QuickHover" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.27" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.ExitActions>
+                                
                                 <Setter TargetName="QuickGlass" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
                             </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="QuickRoot" Property="Opacity" Value="0.82"/>
-                            </Trigger>
+                                                    <EventTrigger RoutedEvent="Button.Click">
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace">
+                                    <Storyboard>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="QuickGlass" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="QuickGlass" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -11837,11 +12052,11 @@ public partial class CredentialPromptWindow : Window
             <Setter Property="Background" Value="{DynamicResource NIRAChipBrush}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource NIRAGlassBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Height" Value="40"/>
-            <Setter Property="MinWidth" Value="76"/>
-            <Setter Property="Padding" Value="16,0"/>
-            <Setter Property="Margin" Value="0,0,10,0"/>
-            <Setter Property="FontSize" Value="10.5"/>
+            <Setter Property="Height" Value="38"/>
+            <Setter Property="MinWidth" Value="68"/>
+            <Setter Property="Padding" Value="11,0"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="FontSize" Value="10.8"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
@@ -11852,7 +12067,8 @@ public partial class CredentialPromptWindow : Window
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
                                 CornerRadius="13"
-                                SnapsToDevicePixels="True">
+                                SnapsToDevicePixels="True" RenderTransformOrigin="0.5,0.5">
+                                <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="2,0"/>
                         </Border>
                         <ControlTemplate.Triggers>
@@ -11860,6 +12076,22 @@ public partial class CredentialPromptWindow : Window
                                 <Setter TargetName="TopChrome" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
                                 <Setter TargetName="TopChrome" Property="Background" Value="{DynamicResource NIRACardHoverBrush}"/>
                             </Trigger>
+                                                    <EventTrigger RoutedEvent="Button.Click">
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace">
+                                    <Storyboard>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="TopChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="TopChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -11870,10 +12102,10 @@ public partial class CredentialPromptWindow : Window
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="{DynamicResource NIRASecondaryBrush}"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Padding" Value="18,0"/>
-            <Setter Property="Margin" Value="4,0"/>
-            <Setter Property="MinWidth" Value="76"/>
-            <Setter Property="Height" Value="44"/>
+            <Setter Property="Padding" Value="11,0"/>
+            <Setter Property="Margin" Value="3,0"/>
+            <Setter Property="MinWidth" Value="68"/>
+            <Setter Property="Height" Value="40"/>
             <Setter Property="FontSize" Value="12.5"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Cursor" Value="Hand"/>
@@ -11896,7 +12128,13 @@ public partial class CredentialPromptWindow : Window
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="NavHover" Property="Opacity" Value="1"/>
+                                <Trigger.EnterActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="NavHover" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                <Trigger.ExitActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="NavHover" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.27" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.ExitActions>
+                                
                                 <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
                             </Trigger>
                             <Trigger Property="Tag" Value="ACTIVE">
@@ -11911,9 +12149,9 @@ public partial class CredentialPromptWindow : Window
         </Style>
 
         <Style x:Key="ThemeModeToggleStyle" TargetType="Button">
-            <Setter Property="Width" Value="104"/>
-            <Setter Property="Height" Value="40"/>
-            <Setter Property="Margin" Value="0,0,10,0"/>
+            <Setter Property="Width" Value="140"/>
+            <Setter Property="Height" Value="38"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
             <Setter Property="Background" Value="{DynamicResource NIRAChipBrush}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource NIRAGlassBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
@@ -11927,7 +12165,9 @@ public partial class CredentialPromptWindow : Window
                                     Background="{TemplateBinding Background}"
                                     BorderBrush="{TemplateBinding BorderBrush}"
                                     BorderThickness="{TemplateBinding BorderThickness}"
-                                    CornerRadius="14"/>
+                                    CornerRadius="14" RenderTransformOrigin="0.5,0.5">
+                                <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
+                            </Border>
                             <Border x:Name="ThemeGlow"
                                     Margin="1"
                                     CornerRadius="13"
@@ -11945,6 +12185,22 @@ public partial class CredentialPromptWindow : Window
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="ThemeChrome" Property="Opacity" Value="0.8"/>
                             </Trigger>
+                                                    <EventTrigger RoutedEvent="Button.Click">
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace">
+                                    <Storyboard>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="ThemeChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="ThemeChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -11994,7 +12250,8 @@ public partial class CredentialPromptWindow : Window
                                     CornerRadius="9"
                                     Background="{TemplateBinding Background}"
                                     BorderBrush="{TemplateBinding BorderBrush}"
-                                    BorderThickness="{TemplateBinding BorderThickness}">
+                                    BorderThickness="{TemplateBinding BorderThickness}" RenderTransformOrigin="0.5,0.5">
+                                <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
                                 <Grid>
                                     <!-- quiet cyan energy line -->
                                     <Border x:Name="EnergyLine"
@@ -12022,20 +12279,36 @@ public partial class CredentialPromptWindow : Window
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="HandleBloom" Property="Opacity" Value="0.72"/>
+                                <Trigger.EnterActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="HandleBloom" Storyboard.TargetProperty="Opacity" To="0.72" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                <Trigger.ExitActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="HandleBloom" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.27" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.ExitActions>
+                                
                                 <Setter TargetName="HandleChrome" Property="Background" Value="#9A0A1B30"/>
                                 <Setter TargetName="HandleChrome" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
-                                <Setter TargetName="EnergyLine" Property="Height" Value="48"/>
                                 <Setter TargetName="EnergyLine" Property="Opacity" Value="0.74"/>
-                                <Setter TargetName="CenterNode" Property="Width" Value="5"/>
-                                <Setter TargetName="CenterNode" Property="Height" Value="5"/>
                                 <Setter TargetName="CenterNode" Property="Opacity" Value="1"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="HandleChrome" Property="Opacity" Value="0.70"/>
                                 <Setter TargetName="HandleBloom" Property="Opacity" Value="0.35"/>
                             </Trigger>
-                        </ControlTemplate.Triggers>
+                                                    <EventTrigger RoutedEvent="Button.Click">
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="HandleChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)">
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.02" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    </DoubleAnimationUsingKeyFrames>
+                                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="HandleChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)">
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.02" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    </DoubleAnimationUsingKeyFrames>
+                                </Storyboard></BeginStoryboard>
+                            </EventTrigger>
+</ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -12065,7 +12338,8 @@ public partial class CredentialPromptWindow : Window
                                     CornerRadius="9"
                                     Background="{TemplateBinding Background}"
                                     BorderBrush="{TemplateBinding BorderBrush}"
-                                    BorderThickness="{TemplateBinding BorderThickness}">
+                                    BorderThickness="{TemplateBinding BorderThickness}" RenderTransformOrigin="0.5,0.5">
+                                <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
                                 <Grid>
                                     <Border x:Name="EnergyLine"
                                             Width="1"
@@ -12119,19 +12393,33 @@ public partial class CredentialPromptWindow : Window
                                 <Setter TargetName="CenterNode" Property="Opacity" Value="0.95"/>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="HandleBloom" Property="Opacity" Value="0.78"/>
+                                <Trigger.EnterActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="HandleBloom" Storyboard.TargetProperty="Opacity" To="0.78" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                <Trigger.ExitActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="HandleBloom" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.27" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.ExitActions>
+                                
                                 <Setter TargetName="HandleChrome" Property="Background" Value="#9A0A1B30"/>
                                 <Setter TargetName="HandleChrome" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
-                                <Setter TargetName="EnergyLine" Property="Height" Value="48"/>
                                 <Setter TargetName="EnergyLine" Property="Opacity" Value="0.76"/>
-                                <Setter TargetName="CenterNode" Property="Width" Value="5"/>
-                                <Setter TargetName="CenterNode" Property="Height" Value="5"/>
                                 <Setter TargetName="CenterNode" Property="Opacity" Value="1"/>
                             </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="HandleChrome" Property="Opacity" Value="0.68"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
+                                                    <EventTrigger RoutedEvent="Button.Click">
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="HandleChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)">
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.02" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    </DoubleAnimationUsingKeyFrames>
+                                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="HandleChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)">
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.02" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    </DoubleAnimationUsingKeyFrames>
+                                </Storyboard></BeginStoryboard>
+                            </EventTrigger>
+</ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -12161,7 +12449,8 @@ public partial class CredentialPromptWindow : Window
                                     CornerRadius="9"
                                     Background="{TemplateBinding Background}"
                                     BorderBrush="{TemplateBinding BorderBrush}"
-                                    BorderThickness="{TemplateBinding BorderThickness}">
+                                    BorderThickness="{TemplateBinding BorderThickness}" RenderTransformOrigin="0.5,0.5">
+                                <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
                                 <Grid>
                                     <Border x:Name="EnergyLine"
                                             Width="1"
@@ -12215,19 +12504,33 @@ public partial class CredentialPromptWindow : Window
                                 <Setter TargetName="CenterNode" Property="Opacity" Value="0.95"/>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="HandleBloom" Property="Opacity" Value="0.78"/>
+                                <Trigger.EnterActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="HandleBloom" Storyboard.TargetProperty="Opacity" To="0.78" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                <Trigger.ExitActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="HandleBloom" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.27" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.ExitActions>
+                                
                                 <Setter TargetName="HandleChrome" Property="Background" Value="#9A0A1B30"/>
                                 <Setter TargetName="HandleChrome" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
-                                <Setter TargetName="EnergyLine" Property="Height" Value="48"/>
                                 <Setter TargetName="EnergyLine" Property="Opacity" Value="0.76"/>
-                                <Setter TargetName="CenterNode" Property="Width" Value="5"/>
-                                <Setter TargetName="CenterNode" Property="Height" Value="5"/>
                                 <Setter TargetName="CenterNode" Property="Opacity" Value="1"/>
                             </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="HandleChrome" Property="Opacity" Value="0.68"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
+                                                    <EventTrigger RoutedEvent="Button.Click">
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="HandleChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)">
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.02" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    </DoubleAnimationUsingKeyFrames>
+                                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="HandleChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)">
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.02" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    </DoubleAnimationUsingKeyFrames>
+                                </Storyboard></BeginStoryboard>
+                            </EventTrigger>
+</ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -12252,15 +12555,42 @@ public partial class CredentialPromptWindow : Window
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
                                 CornerRadius="10"
-                                SnapsToDevicePixels="True">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                SnapsToDevicePixels="True" RenderTransformOrigin="0.5,0.5">
+                                <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
+                            <ContentPresenter x:Name="WindowGlyphHost" HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+                                    <ContentPresenter.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></ContentPresenter.RenderTransform>
+                                </ContentPresenter>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
+                                <Trigger.EnterActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="WindowGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1.065" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    <DoubleAnimation Storyboard.TargetName="WindowGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1.065" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                <Trigger.ExitActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="WindowGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1" Duration="0:0:0.26" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    <DoubleAnimation Storyboard.TargetName="WindowGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1" Duration="0:0:0.26" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.ExitActions>
                                 <Setter TargetName="WindowChrome" Property="Background" Value="{DynamicResource NIRACardHoverBrush}"/>
                                 <Setter TargetName="WindowChrome" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
                                 <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
                             </Trigger>
+                                                    <EventTrigger RoutedEvent="Button.Click">
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace">
+                                    <Storyboard>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="WindowChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="WindowChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -12289,20 +12619,46 @@ public partial class CredentialPromptWindow : Window
                             <Border x:Name="Chrome" CornerRadius="9"
                                     Background="{TemplateBinding Background}"
                                     BorderBrush="{TemplateBinding BorderBrush}"
-                                    BorderThickness="{TemplateBinding BorderThickness}">
-                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    BorderThickness="{TemplateBinding BorderThickness}" RenderTransformOrigin="0.5,0.5">
+                                <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
+                                <ContentPresenter x:Name="SidebarGlyphHost" HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+                                    <ContentPresenter.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></ContentPresenter.RenderTransform>
+                                </ContentPresenter>
                             </Border>
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Glow" Property="Opacity" Value="0.72"/>
+                                <Trigger.EnterActions><BeginStoryboard><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity" To="0.72" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    <DoubleAnimation Storyboard.TargetName="SidebarGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1.065" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    <DoubleAnimation Storyboard.TargetName="SidebarGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1.065" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                <Trigger.ExitActions><BeginStoryboard><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.27" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    <DoubleAnimation Storyboard.TargetName="SidebarGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1" Duration="0:0:0.26" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    <DoubleAnimation Storyboard.TargetName="SidebarGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1" Duration="0:0:0.26" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.ExitActions>
+                                
                                 <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource NIRACardHoverBrush}"/>
                                 <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
                                 <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
                             </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Chrome" Property="Opacity" Value="0.72"/>
-                            </Trigger>
+                                                    <EventTrigger RoutedEvent="Button.Click">
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace">
+                                    <Storyboard>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Chrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Chrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -12335,7 +12691,7 @@ public partial class CredentialPromptWindow : Window
 
         <Style x:Key="CompactSidebarToolButtonStyle" TargetType="Button">
             <Setter Property="Width" Value="40"/>
-            <Setter Property="Height" Value="40"/>
+            <Setter Property="Height" Value="38"/>
             <Setter Property="Margin" Value="0,0,0,8"/>
             <Setter Property="Background" Value="#180A1526"/>
             <Setter Property="BorderBrush" Value="{DynamicResource NIRAGlassBorderBrush}"/>
@@ -12352,36 +12708,71 @@ public partial class CredentialPromptWindow : Window
                             <Border x:Name="Chrome" CornerRadius="13"
                                     Background="{TemplateBinding Background}"
                                     BorderBrush="{TemplateBinding BorderBrush}"
-                                    BorderThickness="{TemplateBinding BorderThickness}">
-                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    BorderThickness="{TemplateBinding BorderThickness}" RenderTransformOrigin="0.5,0.5">
+                                <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
+                                <ContentPresenter x:Name="CompactGlyphHost" HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+                                    <ContentPresenter.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></ContentPresenter.RenderTransform>
+                                </ContentPresenter>
                             </Border>
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Glow" Property="Opacity" Value="0.55"/>
+                                <Trigger.EnterActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity" To="0.55" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    <DoubleAnimation Storyboard.TargetName="CompactGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1.065" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    <DoubleAnimation Storyboard.TargetName="CompactGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1.065" Duration="0:0:0.24" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                <Trigger.ExitActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.27" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    <DoubleAnimation Storyboard.TargetName="CompactGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1" Duration="0:0:0.26" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                    <DoubleAnimation Storyboard.TargetName="CompactGlyphHost" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1" Duration="0:0:0.26" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                </Storyboard></BeginStoryboard></Trigger.ExitActions>
+                                
                                 <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource NIRACardHoverBrush}"/>
                                 <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
                                 <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
                             </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Chrome" Property="Opacity" Value="0.72"/>
-                            </Trigger>
+                                                    <EventTrigger RoutedEvent="Button.Click">
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace">
+                                    <Storyboard>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Chrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Chrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
         </Style>
 
+        <!-- Native WPF TextBox template preserves caret/selection/scrolling.
+             A bounded textbox inside an AUTO-sized composer protects the screen edge. -->
         <Style x:Key="ComposerTextBoxStyle" TargetType="TextBox">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
+            <Setter Property="SelectionBrush" Value="{DynamicResource NIRASelectionBrush}"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="13.5"/>
             <Setter Property="CaretBrush" Value="{DynamicResource NIRACyanBrush}"/>
-            <Setter Property="Padding" Value="4,0"/>
-            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Padding" Value="4,9,5,9"/>
+            <Setter Property="MinHeight" Value="38"/>
+            <Setter Property="MaxHeight" Value="104"/>
             <Setter Property="AcceptsReturn" Value="True"/>
+            <Setter Property="MinLines" Value="1"/>
+            <Setter Property="MaxLines" Value="4"/>
             <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="VerticalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="HorizontalScrollBarVisibility" Value="Disabled"/>
         </Style>
 
     </Window.Resources>
@@ -12456,8 +12847,7 @@ public partial class CredentialPromptWindow : Window
                     <StackPanel VerticalAlignment="Center">
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                             <TextBlock Text="NIRA"
-                                       FontFamily="Bahnschrift"
-                                       FontStretch="SemiCondensed"
+                                       FontFamily="Segoe UI Variable Display, Segoe UI"
                                        FontSize="29"
                                        FontWeight="Light"
                                        Foreground="{DynamicResource NIRATextBrush}"/>
@@ -12467,18 +12857,17 @@ public partial class CredentialPromptWindow : Window
                                     Opacity="0.58"/>
                             <TextBlock Text="BY ELVARA"
                                        Margin="0,3,0,0"
-                                       FontFamily="Bahnschrift"
-                                       FontStretch="Condensed"
+                                       FontFamily="Segoe UI Variable Text, Segoe UI"
                                        FontSize="8.5"
                                        FontWeight="SemiBold"
                                        Foreground="{DynamicResource NIRASecondaryBrush}"/>
                         </StackPanel>
                         <TextBlock Text="CALM INTELLIGENCE  ·  PRESENT WITH YOU"
                                    Margin="1,-1,0,0"
-                                   FontFamily="Bahnschrift"
-                                   FontStretch="Condensed"
-                                   FontSize="7"
-                                   Foreground="{DynamicResource NIRAMutedBrush}"/>
+                                   FontFamily="Segoe UI Variable Text, Segoe UI"
+                                   FontSize="8"
+                                   FontWeight="Normal"
+                                   Foreground="{DynamicResource NIRASecondaryBrush}"/>
                     </StackPanel>
                 </StackPanel>
 
@@ -12501,61 +12890,68 @@ public partial class CredentialPromptWindow : Window
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button x:Name="SettingsButton" Style="{StaticResource TopActionButtonStyle}" Content="Settings" Click="SettingsButton_Click"/>
                     <Button x:Name="PermissionsButton" Style="{StaticResource TopActionButtonStyle}" Content="Permissions" Click="PermissionsButton_Click"/>
+                    <!-- ELVARA appearance selector: orbital lens rather than stock sun/moon icon. -->
                     <Button x:Name="ThemeModeButton"
                             Style="{StaticResource ThemeModeToggleStyle}"
                             Click="ThemeModeButton_Click"
-                            ToolTip="Switch appearance">
-                        <Grid Margin="8,0">
+                            ToolTip="Switch between Halo and Eclipse">
+                        <Grid Margin="9,0,10,0">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="30"/>
+                                <ColumnDefinition Width="32"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <Border x:Name="ThemeModeOrb"
-                                    Width="26" Height="26"
-                                    CornerRadius="13"
-                                    VerticalAlignment="Center"
+                            <Border x:Name="ThemeModeOrb" Width="30" Height="30"
+                                    CornerRadius="15" VerticalAlignment="Center"
                                     Background="{DynamicResource NIRASoftGlow}"
-                                    BorderBrush="{DynamicResource NIRAFocusBorderBrush}"
-                                    BorderThickness="1">
-                                <TextBlock x:Name="ThemeModeIcon"
-                                           Text="◐"
-                                           FontFamily="Segoe UI Symbol"
-                                           FontSize="12"
-                                           HorizontalAlignment="Center"
-                                           VerticalAlignment="Center"
-                                           Foreground="{DynamicResource NIRATextBrush}"/>
+                                    BorderBrush="{DynamicResource NIRAGlassBorderBrush}"
+                                    BorderThickness="1" RenderTransformOrigin="0.5,0.5">
+                                <Border.RenderTransform>
+                                    <ScaleTransform ScaleX="1" ScaleY="1"/>
+                                </Border.RenderTransform>
+                                <Grid Width="26" Height="26">
+                                    <!-- Quiet orbital guide with moving phase mark. -->
+                                    <Ellipse Width="22" Height="22"
+                                             Stroke="{DynamicResource NIRASecondaryBrush}"
+                                             StrokeThickness="0.8" Opacity="0.40"/>
+                                    <Path Width="26" Height="26" Stretch="Uniform"
+                                          Data="M2,17 C3,8 18,3 24,11 M2,17 C9,24 22,18 24,11"
+                                          Stroke="{DynamicResource NIRACyanBrush}"
+                                          StrokeThickness="1.05" Opacity="0.82"
+                                          StrokeStartLineCap="Round" Fill="Transparent"/>
+                                    <Ellipse Width="5" Height="5" HorizontalAlignment="Center"
+                                             VerticalAlignment="Center" Fill="{DynamicResource NIRACyanBrush}"/>
+                                    <Path x:Name="ThemeModeVector" Width="22" Height="22" Stretch="Uniform"
+                                          Data="M4,10 L8,10"
+                                          Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1.8"
+                                          StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                          StrokeLineJoin="Round" Fill="Transparent"/>
+                                    <TextBlock x:Name="ThemeModeIcon" Visibility="Collapsed" Text=""/>
+                                </Grid>
                             </Border>
-                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="7,0,4,0">
-                                <TextBlock x:Name="ThemeModeText"
-                                           Text="ECLIPSE"
-                                           FontFamily="Bahnschrift"
-                                           FontStretch="Condensed"
-                                           FontSize="8.5"
-                                           FontWeight="SemiBold"
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="9,0,0,0">
+                                <TextBlock x:Name="ThemeModeText" Text="HALO"
+                                           FontFamily="Segoe UI Variable Text, Segoe UI"
+                                           FontSize="10.5" FontWeight="SemiBold"
                                            Foreground="{DynamicResource NIRATextBrush}"/>
-                                <TextBlock Text="THEME"
-                                           Margin="0,-1,0,0"
-                                           FontFamily="Bahnschrift"
-                                           FontStretch="Condensed"
-                                           FontSize="6.5"
-                                           Foreground="{DynamicResource NIRAMutedBrush}"/>
+                                <TextBlock Text="APPEARANCE" Margin="0,0,0,0"
+                                           FontFamily="Segoe UI Variable Text, Segoe UI"
+                                           FontSize="7" Foreground="{DynamicResource NIRASecondaryBrush}"/>
                             </StackPanel>
-                            <TextBlock Grid.Column="2"
-                                       Text="⌄"
-                                       Margin="1,-2,0,0"
-                                       FontSize="12"
-                                       Foreground="{DynamicResource NIRASecondaryBrush}"
-                                       VerticalAlignment="Center"/>
+                            <Path Grid.Column="2" Width="7" Height="5" Margin="3,0,0,0"
+                                  VerticalAlignment="Center" Fill="Transparent"
+                                  Stroke="{DynamicResource NIRASecondaryBrush}"
+                                  StrokeThickness="1.4" StrokeStartLineCap="Round"
+                                  StrokeLineJoin="Round" Data="M0,0 L3.5,3.5 L7,0"/>
                         </Grid>
                     </Button>
-                    <Border Height="36" Margin="0,0,8,0" Padding="13,0"
+                    <Border Height="34" Margin="0,0,8,0" Padding="11,0"
                             Background="{DynamicResource NIRAChipBrush}"
                             BorderBrush="{DynamicResource NIRAGlassBorderBrush}"
                             BorderThickness="1" CornerRadius="12">
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                             <Ellipse x:Name="LivePulseDot" Width="6" Height="6" Fill="{DynamicResource NIRAGreenBrush}" Margin="0,0,7,0"/>
-                            <TextBlock Text="LIVE" FontSize="9" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            <TextBlock Text="LIVE" FontSize="8.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Border>
                     <Button Style="{StaticResource WindowGlyphButtonStyle}"
@@ -12590,7 +12986,7 @@ public partial class CredentialPromptWindow : Window
                 <ColumnDefinition Width="12"/>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="12"/>
-                <ColumnDefinition x:Name="RightSidebarColumn" Width="268"/>
+                <ColumnDefinition x:Name="RightSidebarColumn" Width="292"/>
             </Grid.ColumnDefinitions>
 
             <!-- LEFT / PRESENCE -->
@@ -12610,7 +13006,7 @@ public partial class CredentialPromptWindow : Window
                         <StackPanel Orientation="Horizontal">
                             <Ellipse x:Name="OnlinePulseDot" Width="6" Height="6" Fill="{DynamicResource NIRAGreenBrush}" VerticalAlignment="Center" Margin="0,0,7,0"/>
                             <TextBlock Text="PRESENCE" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource NIRACyanBrush}"/>
-                            <TextBlock Text="  ONLINE" FontSize="9.5" Margin="8,1,0,0" Foreground="{DynamicResource NIRAGreenBrush}"/>
+                            
                         </StackPanel>
                         <TextBlock Text="NIRA is here" Margin="0,7,0,0" FontSize="21" FontWeight="SemiBold"/>
                         <TextBlock Text="Calm mind. Deeper insight. Further together."
@@ -12745,11 +13141,7 @@ public partial class CredentialPromptWindow : Window
                     </Button>
                     <StackPanel Grid.Row="3" VerticalAlignment="Top" Margin="0,8,0,0">
                         <Ellipse Width="7" Height="7" Fill="{DynamicResource NIRAGreenBrush}" HorizontalAlignment="Center" ToolTip="NIRA online"/>
-                        <Border Width="30" Height="30" Margin="0,12,0,0" CornerRadius="15"
-                                Background="#160B5A78" BorderBrush="#3C78D8F0" BorderThickness="1">
-                            <TextBlock Text="N" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NIRACyanBrush}"
-                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Border>
+
                     </StackPanel>
                 </Grid>
             </ContentControl>
@@ -12759,11 +13151,11 @@ public partial class CredentialPromptWindow : Window
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*"/>
                     <RowDefinition Height="12"/>
-                    <RowDefinition Height="146"/>
+                    <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
                 <Grid Grid.Row="0" Margin="8,0,8,0">
-                    <Border HorizontalAlignment="Right" VerticalAlignment="Top"
+                    <Border HorizontalAlignment="Right" VerticalAlignment="Top" Visibility="Collapsed"
                             Padding="10,6" CornerRadius="12"
                             Background="{DynamicResource NIRAChipBrush}"
                             BorderBrush="{DynamicResource NIRABorderBrush}"
@@ -12834,7 +13226,8 @@ public partial class CredentialPromptWindow : Window
                                     Click="QuickPrompt_Click">
                                 <StackPanel>
                                     <Border Width="54" Height="54" CornerRadius="27" Background="#1E8B5CFF" BorderBrush="#559B7CFF" BorderThickness="1">
-                                        <TextBlock Text="□" FontSize="22" Foreground="{DynamicResource NIRAVioletBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        <Path Data="M4,5 H17 V15 H9 L5,19 V15 H4 Z M7,9 H14 M7,12 H12" Width="24" Height="24"
+                                              Stroke="{DynamicResource NIRAVioletBrush}" StrokeThickness="1.6" StrokeLineJoin="Round" Fill="Transparent"/>
                                     </Border>
                                     <TextBlock Text="Work on a Project" Margin="0,18,0,0" FontSize="15" FontWeight="SemiBold"/>
                                     <TextBlock Text="Plan, organize, and make progress on what matters."
@@ -12848,7 +13241,8 @@ public partial class CredentialPromptWindow : Window
                                     Click="QuickPrompt_Click">
                                 <StackPanel>
                                     <Border Width="54" Height="54" CornerRadius="27" Background="#1A44B9CB" BorderBrush="#505EDBFF" BorderThickness="1">
-                                        <TextBlock Text="◎" FontSize="22" Foreground="{DynamicResource NIRACyanBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        <Path Data="M12,2 A10,10 0 1 1 11.99,2 M12,7 A5,5 0 1 1 11.99,7 M12,12 L12,13" Width="24" Height="24"
+                                              Stroke="{DynamicResource NIRACyanBrush}" StrokeThickness="1.5" Fill="Transparent"/>
                                     </Border>
                                     <TextBlock Text="Set a Goal" Margin="0,18,0,0" FontSize="15" FontWeight="SemiBold"/>
                                     <TextBlock Text="Turn your aspirations into clear steps and real outcomes."
@@ -12862,7 +13256,8 @@ public partial class CredentialPromptWindow : Window
                                     Click="QuickPrompt_Click">
                                 <StackPanel>
                                     <Border Width="54" Height="54" CornerRadius="27" Background="#1C566DFF" BorderBrush="#487B8DFF" BorderThickness="1">
-                                        <TextBlock Text="▦" FontSize="22" Foreground="{DynamicResource NIRAVioletBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        <Path Data="M3,3 H10 V10 H3 Z M14,3 H21 V10 H14 Z M3,14 H10 V21 H3 Z M14,14 H21 V21 H14 Z" Width="23" Height="23"
+                                              Stroke="{DynamicResource NIRAVioletBrush}" StrokeThickness="1.5" Fill="Transparent"/>
                                     </Border>
                                     <TextBlock Text="Use Tools" Margin="0,18,0,0" FontSize="15" FontWeight="SemiBold"/>
                                     <TextBlock Text="Access powerful tools to create, analyze, research, and more."
@@ -12893,81 +13288,235 @@ public partial class CredentialPromptWindow : Window
                     </ScrollViewer>
                 </Grid>
 
-                <ContentControl x:Name="ComposerPanel" Grid.Row="2" Style="{StaticResource GlassPanelStrongStyle}">
-                    <Grid Margin="14,12,14,10">
-                        <Grid.RowDefinitions><RowDefinition Height="64"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                        <Grid Grid.Row="0" ClipToBounds="True">
-                            <ui:NIRABackdropBorder Margin="-10" BlurRadius="10" BackdropOpacity="0.75"/>
-                            <Border Background="{DynamicResource NIRAInputTintBrush}"
-                                    BorderBrush="{DynamicResource NIRABorderStrongBrush}"
-                                    BorderThickness="1" CornerRadius="17"/>
-                            <Grid Margin="14,7,8,7">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <Button Width="40" Height="40" VerticalAlignment="Center" Margin="0,0,10,0"
-                                        Style="{StaticResource WindowGlyphButtonStyle}" Content="⌂"/>
-                                <TextBox x:Name="MessageInput" Grid.Column="1"
-                                         Style="{StaticResource ComposerTextBoxStyle}"
-                                         Text="{Binding MessageInput, UpdateSourceTrigger=PropertyChanged}"
-                                         PreviewKeyDown="MessageInput_PreviewKeyDown"
-                                         VerticalAlignment="Stretch"/>
-                                <TextBlock Grid.Column="1" Text="Message NIRA..."
-                                           Margin="5,0,0,0" VerticalAlignment="Center"
-                                           FontSize="14" Foreground="{DynamicResource NIRAMutedBrush}"
-                                           IsHitTestVisible="False">
-                                    <TextBlock.Style>
-                                        <Style TargetType="TextBlock">
-                                            <Setter Property="Visibility" Value="Collapsed"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding MessageInput}" Value="">
-                                                    <Setter Property="Visibility" Value="Visible"/>
-                                                </DataTrigger>
-                                                <DataTrigger Binding="{Binding MessageInput}" Value="{x:Null}">
-                                                    <Setter Property="Visibility" Value="Visible"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </TextBlock.Style>
-                                </TextBlock>
-                                <Button Grid.Column="2" Width="44" Height="44" Margin="10,0,8,0"
-                                        Style="{StaticResource TopActionButtonStyle}" Content="◉"/>
-                                <Button Grid.Column="3" Width="52" Height="52"
-                                        Background="{DynamicResource NIRAPrimaryButtonFill}"
-                                        BorderBrush="#66B8FFFF"
-                                        BorderThickness="1"
-                                        Foreground="White"
-                                        Command="{Binding SendCommand}">
+                <!-- Composer remains screen-safe: text grows locally and attachments stay bounded. -->
+                <ContentControl x:Name="ComposerPanel" Grid.Row="2"
+                                Style="{StaticResource GlassPanelStrongStyle}"
+                                AllowDrop="True"
+                                PreviewDragOver="ComposerPanel_PreviewDragOver"
+                                PreviewDrop="ComposerPanel_Drop" MaxHeight="182">
+                    <Grid Margin="11,7,11,9">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <Border Grid.Row="0" MinHeight="56"
+                                Padding="9,5,8,5"
+                                BorderThickness="1" CornerRadius="17"
+                                SnapsToDevicePixels="True">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Background" Value="{DynamicResource NIRAComposerFillBrush}"/>
+                                    <Setter Property="BorderBrush" Value="{DynamicResource NIRAComposerEdgeBrush}"/>
+                                    <Style.Triggers>
+                                        <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                            <Setter Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
+                                        </Trigger>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter Property="BorderBrush" Value="{DynamicResource NIRAUserBubbleEdgeBrush}"/>
+                                        </Trigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+
+                                <Button x:Name="AttachFilesButton"
+                                        Grid.Column="0" Width="30" Height="30"
+                                        VerticalAlignment="Center" HorizontalAlignment="Center"
+                                        Cursor="Hand" Margin="0" Padding="0"
+                                        ToolTip="Add images or files"
+                                        AutomationProperties.Name="Add attachment"
+                                        Click="AttachFilesButton_Click">
                                     <Button.Template>
                                         <ControlTemplate TargetType="Button">
-                                            <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="18">
-                                                <TextBlock Text="➤" FontSize="22" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{TemplateBinding Foreground}"/>
-                                            </Border>
+                                            <Grid Width="30" Height="30">
+                                                <Border x:Name="PlusChrome" CornerRadius="15" RenderTransformOrigin="0.5,0.5"
+                                                        Background="{DynamicResource NIRAChipBrush}"
+                                                        BorderBrush="{DynamicResource NIRAComposerEdgeBrush}"
+                                                        BorderThickness="1">
+                                                    <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
+                                                </Border>
+                                                <Grid Width="14" Height="14" RenderTransformOrigin="0.5,0.5">
+                                                    <Grid.RenderTransform><ScaleTransform x:Name="PlusHoverScale" ScaleX="1" ScaleY="1"/></Grid.RenderTransform>
+                                                    <Path Data="M7,1 L7,13 M1,7 L13,7"
+                                                          Stroke="{DynamicResource NIRABlueBrush}"
+                                                          StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                          Width="14" Height="14" RenderTransformOrigin="0.5,0.5">
+                                                        <Path.RenderTransform><RotateTransform x:Name="PlusSpin" Angle="0"/></Path.RenderTransform>
+                                                    </Path>
+                                                </Grid>
+                                            </Grid>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="PlusChrome" Property="Background" Value="{DynamicResource NIRACardHoverBrush}"/>
+                                                    <Setter TargetName="PlusChrome" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
+                                                    <Trigger.EnterActions>
+                                                        <BeginStoryboard><Storyboard>
+                                                            <DoubleAnimation Storyboard.TargetName="PlusSpin" Storyboard.TargetProperty="Angle" To="12" Duration="0:0:0.26" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                                            <DoubleAnimation Storyboard.TargetName="PlusHoverScale" Storyboard.TargetProperty="ScaleX" To="1.055" Duration="0:0:0.26" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                                            <DoubleAnimation Storyboard.TargetName="PlusHoverScale" Storyboard.TargetProperty="ScaleY" To="1.055" Duration="0:0:0.26" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                                        </Storyboard></BeginStoryboard>
+                                                    </Trigger.EnterActions>
+                                                    <Trigger.ExitActions>
+                                                        <BeginStoryboard><Storyboard>
+                                                            <DoubleAnimation Storyboard.TargetName="PlusSpin" Storyboard.TargetProperty="Angle" To="0" Duration="0:0:0.28" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                                            <DoubleAnimation Storyboard.TargetName="PlusHoverScale" Storyboard.TargetProperty="ScaleX" To="1" Duration="0:0:0.28" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                                            <DoubleAnimation Storyboard.TargetName="PlusHoverScale" Storyboard.TargetProperty="ScaleY" To="1" Duration="0:0:0.28" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                                        </Storyboard></BeginStoryboard>
+                                                    </Trigger.ExitActions>
+                                                </Trigger>
+                                                                        <EventTrigger RoutedEvent="Button.Click">
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace">
+                                    <Storyboard>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="PlusChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="PlusChrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)">
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955" EasingFunction="{StaticResource NIRAMotionPressEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                            <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1" EasingFunction="{StaticResource NIRAMotionEase}"/>
+                                        </DoubleAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
+                                            </ControlTemplate.Triggers>
                                         </ControlTemplate>
                                     </Button.Template>
                                 </Button>
+
+                                <Grid Grid.Column="1" Margin="10,0,8,0"
+                                      VerticalAlignment="Center">
+                                    <TextBox x:Name="MessageInput"
+                                             Style="{StaticResource ComposerTextBoxStyle}"
+                                             Text="{Binding MessageInput, UpdateSourceTrigger=PropertyChanged}"
+                                             PreviewKeyDown="MessageInput_PreviewKeyDown"
+                                             HorizontalAlignment="Stretch"
+                                             ToolTip="Enter to send. Shift+Enter for a new line."/>
+                                    <TextBlock Text="Message NIRA..."
+                                               Padding="5,0"
+                                               FontSize="13"
+                                               VerticalAlignment="Center"
+                                               Foreground="{DynamicResource NIRAMutedBrush}"
+                                               IsHitTestVisible="False">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding MessageInput}" Value="">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding MessageInput}" Value="{x:Null}">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </Grid>
+
+                                <Button Grid.Column="2" Width="38" Height="38"
+                                        VerticalAlignment="Center"
+                                        Style="{StaticResource SendButtonStyle}"
+                                        ToolTip="Send message (Enter)"
+                                        AutomationProperties.Name="Send message"
+                                        Command="{Binding SendCommand}">
+                                    <Path Width="18" Height="18" Stretch="Uniform" Fill="White"
+                                          Data="M2,2 L21,12 L2,22 L5,14 L13,12 L5,10 Z"/>
+                                </Button>
                             </Grid>
-                        </Grid>
-                        <Grid Grid.Row="1" Margin="2,10,2,0">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                            <StackPanel Orientation="Horizontal">
-                                <Button Style="{StaticResource TopActionButtonStyle}" Height="32" Padding="12,0" Content="Deep Think"
-                                        Tag="Think deeply about this. Start by asking me what problem I want to reason through."
-                                        Click="QuickPrompt_Click"/>
-                                <Button Style="{StaticResource TopActionButtonStyle}" Height="32" Padding="12,0" Content="Search"
-                                        Tag="Help me search and research something. Ask what I want to investigate."
-                                        Click="QuickPrompt_Click"/>
-                                <Button Style="{StaticResource TopActionButtonStyle}" Height="32" Padding="12,0" Content="Browse"
-                                        Tag="Help me browse or inspect something on the PC or web. Ask what I need."
-                                        Click="QuickPrompt_Click"/>
-                                <Button Style="{StaticResource TopActionButtonStyle}" Height="32" Padding="12,0" Content="Create Image"
-                                        Tag="Help me create an image. Ask what I want it to look like."
-                                        Click="QuickPrompt_Click"/>
-                                <Button Style="{StaticResource TopActionButtonStyle}" Height="32" Padding="12,0" Content="Analyze File"
-                                        Tag="Help me analyze a file. Ask me to provide the file or explain what I need checked."
-                                        Click="QuickPrompt_Click"/>
-                            </StackPanel>
-                            <TextBlock Grid.Column="1" Text="Press Enter to send  •  Shift + Enter for new line"
-                                       VerticalAlignment="Center" FontSize="9.5" Foreground="{DynamicResource NIRAMutedBrush}"/>
-                        </Grid>
+                        </Border>
+
+                        <!-- Selected attachments are removable local references with richer previews. -->
+                        <ScrollViewer Grid.Row="1"
+                                      Margin="2,7,2,0"
+                                      MaxHeight="68"
+                                      HorizontalScrollBarVisibility="Auto"
+                                      VerticalScrollBarVisibility="Disabled">
+                            <ScrollViewer.Style>
+                                <Style TargetType="ScrollViewer">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding HasComposerAttachments}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </ScrollViewer.Style>
+                            <ItemsControl ItemsSource="{Binding ComposerAttachments}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,0,6,0" ToolTip="{Binding FullPath}">
+                                            <!-- Images: the only visual is the thumbnail, plus a tiny remove control. -->
+                                            <Border Width="58" Height="58" CornerRadius="10" ClipToBounds="True"
+                                                    Background="{DynamicResource NIRAComposerBadgeBrush}"
+                                                    BorderBrush="{DynamicResource NIRAComposerEdgeBrush}" BorderThickness="1">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsImage}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <Image Source="{Binding PreviewPath}" Width="58" Height="58" Stretch="UniformToFill"/>
+                                            </Border>
+                                            <!-- Documents: restrained compact type icon + filename. -->
+                                            <Border Height="58" MinWidth="146" MaxWidth="222" CornerRadius="10"
+                                                    Background="{DynamicResource NIRAComposerBadgeBrush}"
+                                                    BorderBrush="{DynamicResource NIRAComposerEdgeBrush}" BorderThickness="1">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsImage}" Value="True">
+                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <Grid Margin="9,6,23,6">
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="36"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                                    <Border Width="32" Height="36" CornerRadius="7"
+                                                            Background="{DynamicResource NIRAChipBrush}"
+                                                            BorderBrush="{DynamicResource NIRAComposerEdgeBrush}" BorderThickness="1">
+                                                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                                                            <TextBlock Text="{Binding TypeGlyph}" FontFamily="Segoe UI Symbol" FontSize="15"
+                                                                       HorizontalAlignment="Center" Foreground="{DynamicResource NIRABlueBrush}"/>
+                                                            <TextBlock Text="{Binding ExtensionLabel}" FontSize="7.3" FontWeight="SemiBold"
+                                                                       HorizontalAlignment="Center" Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                                                        </StackPanel>
+                                                    </Border>
+                                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="6,0,0,0">
+                                                        <TextBlock Text="{Binding FileName}" MaxWidth="140" FontSize="11" FontWeight="SemiBold"
+                                                                   TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding TypeLabel}" MaxWidth="140" FontSize="9"
+                                                                   Foreground="{DynamicResource NIRASecondaryBrush}" TextTrimming="CharacterEllipsis"/>
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Border>
+                                            <Button Content="×" Width="18" Height="18" HorizontalAlignment="Right"
+                                                    VerticalAlignment="Top" Margin="0,2,2,0" FontSize="13"
+                                                    Background="#B9122745" BorderBrush="#807FA9D6" BorderThickness="1"
+                                                    Foreground="White" Cursor="Hand" Tag="{Binding}"
+                                                    AutomationProperties.Name="Remove attachment" Click="RemoveComposerAttachment_Click"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+
                     </Grid>
                 </ContentControl>
             </Grid>
@@ -12989,27 +13538,27 @@ public partial class CredentialPromptWindow : Window
                     <Button Style="{StaticResource CompactSidebarToolButtonStyle}"
                             Tag="Summarize what I provide next. Preserve the important details and keep the result concise."
                             ToolTip="Summarize" Click="QuickPrompt_Click">
-                        <TextBlock Text="≡" FontSize="19" Foreground="{DynamicResource NIRABlueBrush}"/>
+                        <Path Width="17" Height="17" Data="M3,5 H17 M3,10 H17 M3,15 H13" Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1.6" StrokeStartLineCap="Round"/>
                     </Button>
                     <Button Style="{StaticResource CompactSidebarToolButtonStyle}"
                             Tag="Analyze what I provide next. Find the important patterns, problems, tradeoffs, and actionable insights."
                             ToolTip="Analyze" Click="QuickPrompt_Click">
-                        <TextBlock Text="▥" FontSize="16" Foreground="{DynamicResource NIRACyanBrush}"/>
+                        <Path Width="17" Height="17" Data="M3,16 L3,10 L6,10 L6,16 M9,16 L9,4 L12,4 L12,16 M15,16 L15,7 L18,7 L18,16" Stroke="{DynamicResource NIRACyanBrush}" StrokeThickness="1.4" StrokeLineJoin="Round"/>
                     </Button>
                     <Button Style="{StaticResource CompactSidebarToolButtonStyle}"
                             Tag="Help me create something. Ask what I want to make and then help me produce it."
-                            ToolTip="Create" Click="QuickPrompt_Click">
+                            ToolTip="Create" Click="QuickPrompt_Click" Visibility="Collapsed">
                         <TextBlock Text="✦" FontSize="17" Foreground="{DynamicResource NIRAVioletBrush}"/>
                     </Button>
                     <Button Style="{StaticResource CompactSidebarToolButtonStyle}"
                             Tag="Help me make a practical plan. Ask what outcome I want, then break it into useful steps and dependencies."
-                            ToolTip="Plan" Click="QuickPrompt_Click">
+                            ToolTip="Plan" Click="QuickPrompt_Click" Visibility="Collapsed">
                         <TextBlock Text="☷" FontSize="16" Foreground="{DynamicResource NIRABlueBrush}"/>
                     </Button>
                     <Button Style="{StaticResource CompactSidebarToolButtonStyle}"
                             Tag="Help me research a topic. Ask what I want to know and what kind of sources or depth I need."
                             ToolTip="Research" Click="QuickPrompt_Click">
-                        <TextBlock Text="⌕" FontSize="18" Foreground="{DynamicResource NIRACyanBrush}"/>
+                        <Path Width="18" Height="18" Data="M10,3 A7,7 0 1 1 3,10 A7,7 0 0 1 10,3 M15,15 L21,21" Stroke="{DynamicResource NIRACyanBrush}" StrokeThickness="1.7" StrokeStartLineCap="Round"/>
                     </Button>
                 </StackPanel>
             </ContentControl>
@@ -13034,23 +13583,23 @@ public partial class CredentialPromptWindow : Window
 
                         <Button Style="{StaticResource GlassQuickButtonStyle}" Tag="Summarize what I provide next. Preserve the important details and keep the result concise." Click="QuickPrompt_Click">
                             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="52"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                                <Border Width="40" Height="40" CornerRadius="20" Background="#140F4C9A" BorderBrush="#446AA8FF" BorderThickness="1" VerticalAlignment="Center"><TextBlock Text="≡" FontSize="21" Foreground="{DynamicResource NIRABlueBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+                                <Border Width="40" Height="40" CornerRadius="20" Background="#140F4C9A" BorderBrush="#446AA8FF" BorderThickness="1" VerticalAlignment="Center"><Path Width="18" Height="18" Data="M3,5 H17 M3,10 H17 M3,15 H13" Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1.6" StrokeStartLineCap="Round"/></Border>
                                 <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Summarize" FontSize="11.5" FontWeight="SemiBold"/><TextBlock Text="Condense and clarify content" FontSize="10" Foreground="{DynamicResource NIRASecondaryBrush}"/></StackPanel>
                             </Grid>
                         </Button>
                         <Button Style="{StaticResource GlassQuickButtonStyle}" Tag="Analyze what I provide next. Find the important patterns, problems, tradeoffs, and actionable insights." Click="QuickPrompt_Click">
                             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="52"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                                <Border Width="40" Height="40" CornerRadius="20" Background="#140B8CC6" BorderBrush="#4474CCFF" BorderThickness="1" VerticalAlignment="Center"><TextBlock Text="▥" FontSize="18" Foreground="{DynamicResource NIRACyanBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+                                <Border Width="40" Height="40" CornerRadius="20" Background="#140B8CC6" BorderBrush="#4474CCFF" BorderThickness="1" VerticalAlignment="Center"><Path Width="18" Height="18" Data="M3,16 L3,10 L6,10 L6,16 M9,16 L9,4 L12,4 L12,16 M15,16 L15,7 L18,7 L18,16" Stroke="{DynamicResource NIRACyanBrush}" StrokeThickness="1.4" StrokeLineJoin="Round"/></Border>
                                 <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Analyze" FontSize="11.5" FontWeight="SemiBold"/><TextBlock Text="Find insights and patterns" FontSize="10" Foreground="{DynamicResource NIRASecondaryBrush}"/></StackPanel>
                             </Grid>
                         </Button>
-                        <Button Style="{StaticResource GlassQuickButtonStyle}" Tag="Help me create something. Ask what I want to make and then help me produce it." Click="QuickPrompt_Click">
+                        <Button Style="{StaticResource GlassQuickButtonStyle}" Tag="Help me create something. Ask what I want to make and then help me produce it." Click="QuickPrompt_Click" Visibility="Collapsed">
                             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="52"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                                 <Border Width="40" Height="40" CornerRadius="20" Background="#14136CFF" BorderBrush="#6289FFFF" BorderThickness="1" VerticalAlignment="Center"><TextBlock Text="✦" FontSize="18" Foreground="{DynamicResource NIRAVioletBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
                                 <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Create" FontSize="11.5" FontWeight="SemiBold"/><TextBlock Text="Generate content and ideas" FontSize="10" Foreground="{DynamicResource NIRASecondaryBrush}"/></StackPanel>
                             </Grid>
                         </Button>
-                        <Button Style="{StaticResource GlassQuickButtonStyle}" Tag="Help me make a practical plan. Ask what outcome I want, then break it into useful steps and dependencies." Click="QuickPrompt_Click">
+                        <Button Style="{StaticResource GlassQuickButtonStyle}" Tag="Help me make a practical plan. Ask what outcome I want, then break it into useful steps and dependencies." Click="QuickPrompt_Click" Visibility="Collapsed">
                             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="52"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                                 <Border Width="40" Height="40" CornerRadius="20" Background="#142655C8" BorderBrush="#617DFFFF" BorderThickness="1" VerticalAlignment="Center"><TextBlock Text="☷" FontSize="18" Foreground="{DynamicResource NIRABlueBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
                                 <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Plan" FontSize="11.5" FontWeight="SemiBold"/><TextBlock Text="Break down and organize" FontSize="10" Foreground="{DynamicResource NIRASecondaryBrush}"/></StackPanel>
@@ -13058,7 +13607,7 @@ public partial class CredentialPromptWindow : Window
                         </Button>
                         <Button Style="{StaticResource GlassQuickButtonStyle}" Tag="Help me research a topic. Ask what I want to know and what kind of sources or depth I need." Click="QuickPrompt_Click" Margin="0,0,0,2">
                             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="52"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                                <Border Width="40" Height="40" CornerRadius="20" Background="#140B7A88" BorderBrush="#589AD4F8" BorderThickness="1" VerticalAlignment="Center"><TextBlock Text="⌕" FontSize="20" Foreground="{DynamicResource NIRACyanBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+                                <Border Width="40" Height="40" CornerRadius="20" Background="#140B7A88" BorderBrush="#589AD4F8" BorderThickness="1" VerticalAlignment="Center"><Path Width="19" Height="19" Data="M10,3 A7,7 0 1 1 3,10 A7,7 0 0 1 10,3 M15,15 L21,21" Stroke="{DynamicResource NIRACyanBrush}" StrokeThickness="1.7" StrokeStartLineCap="Round"/></Border>
                                 <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Research" FontSize="11.5" FontWeight="SemiBold"/><TextBlock Text="Explore and compare sources" FontSize="10" Foreground="{DynamicResource NIRASecondaryBrush}"/></StackPanel>
                             </Grid>
                         </Button>
@@ -13071,12 +13620,18 @@ public partial class CredentialPromptWindow : Window
                         <Grid Margin="0,0,0,10">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <TextBlock Text="PAST CHATS" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource NIRABlueBrush}"/>
-                            <Button Grid.Column="1" Content="↻" ToolTip="Refresh past chats" Padding="5,0" Click="RefreshPastChats_Click"
-                                    FontSize="14" Background="Transparent" BorderThickness="0" Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                            <Button Grid.Column="1" ToolTip="Refresh past chats" Padding="5,0" Click="RefreshPastChats_Click"
+                                    Width="27" Height="27" Cursor="Hand"
+                                    Style="{StaticResource SidebarHeaderIconButtonStyle}">
+                                <Path Width="14" Height="14" Stretch="Uniform"
+                                      Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                      StrokeThickness="1.7" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                                      Data="M18,8 A7.5,7.5 0 1 0 19,13 M18,3 L18,9 L12,9"/>
+                            </Button>
                         </Grid>
                         <TextBox x:Name="PastChatFilterBox" TextChanged="PastChatFilter_TextChanged"
                                  ToolTip="Filter saved chats by their opening message"
-                                 Height="30" Margin="0,0,0,5" Padding="9,5" FontSize="10.5"
+                                 Height="28" Margin="0,0,0,6" Padding="9,4" FontSize="10.2"
                                  Background="{DynamicResource NIRAGlassTintBrush}"
                                  Foreground="White"
                                  BorderBrush="{DynamicResource NIRAGlassBorderBrush}" BorderThickness="1"/>
@@ -13087,7 +13642,7 @@ public partial class CredentialPromptWindow : Window
                         </Grid>
                         <TextBlock x:Name="NoPastChatsText" Text="No past chats yet. They appear after NIRA restarts."
                                    TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource NIRAMutedBrush}"/>
-                        <ScrollViewer MaxHeight="310" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <ScrollViewer MaxHeight="430" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                             <StackPanel x:Name="PastChatsListPanel"/>
                         </ScrollViewer>
                         <Border x:Name="PastChatAttachStrip" Visibility="Collapsed" Margin="0,10,0,0"
@@ -13107,6 +13662,12 @@ public partial class CredentialPromptWindow : Window
                 </ContentControl>
             </StackPanel>
         </Grid>
+        <!-- Soft modal context: darkens the owner while a NIRA utility window is open.
+             No outlined frame, no effect on the existing HALO/ECLIPSE images. -->
+        <Border x:Name="UtilityWindowScrim"
+                Grid.RowSpan="2" Panel.ZIndex="900"
+                Background="#F201040A" Opacity="0"
+                Visibility="Visible" IsHitTestVisible="False"/>
     </Grid>
 </Window>
 ```
@@ -13401,6 +13962,20 @@ public partial class MainWindow : Window
     private void PermissionToast_OpenFullPermissionsRequested() =>
         OpenPermissions(showRequests: true);
 
+    private void RefreshUtilityWindowScrim()
+    {
+        bool visible = (_settingsWindow is { IsVisible: true, WindowState: not WindowState.Minimized }) ||
+                       (_permissionsWindow is { IsVisible: true, WindowState: not WindowState.Minimized });
+        UtilityWindowScrim.BeginAnimation(OpacityProperty,
+            new DoubleAnimation
+            {
+                To = visible ? 0.91 : 0.0,
+                Duration = TimeSpan.FromMilliseconds(visible ? 320 : 255),
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+                FillBehavior = FillBehavior.HoldEnd
+            }, HandoffBehavior.SnapshotAndReplace);
+    }
+
     private void PermissionsButton_Click(
         object sender,
         RoutedEventArgs e) =>
@@ -13431,10 +14006,15 @@ public partial class MainWindow : Window
                     Owner = this
                 };
 
+            _settingsWindow.StateChanged += (_, _) => RefreshUtilityWindowScrim();
             _settingsWindow.Closed += (_, _) =>
+            {
                 _settingsWindow = null;
+                RefreshUtilityWindowScrim();
+            };
 
             _settingsWindow.Show();
+            RefreshUtilityWindowScrim();
             return;
         }
 
@@ -13449,6 +14029,7 @@ public partial class MainWindow : Window
         }
 
         _settingsWindow.Activate();
+        RefreshUtilityWindowScrim();
     }
 
     private void OpenPermissions(bool showRequests)
@@ -13482,9 +14063,11 @@ public partial class MainWindow : Window
 
             _permissionsWindow.MarkManualSession();
 
+            _permissionsWindow.StateChanged += (_, _) => RefreshUtilityWindowScrim();
             _permissionsWindow.Closed += (_, _) =>
             {
                 _permissionsWindow = null;
+                RefreshUtilityWindowScrim();
                 _permissionToast?.SetSuspended(false);
 
                 if (_settingsService?.Current.PermissionNotificationsEnabled ?? true)
@@ -13501,6 +14084,7 @@ public partial class MainWindow : Window
         }
 
         _permissionsWindow.MarkManualSession();
+        RefreshUtilityWindowScrim();
 
         if (showRequests)
         {
@@ -13588,6 +14172,8 @@ public partial class MainWindow : Window
         RefreshThemeSensitiveActivityCards();
     }
 
+    private bool? _lastThemeGlyphWasHalo;
+
     private void UpdateThemeModeButtons()
     {
         bool isHalo =
@@ -13605,8 +14191,13 @@ public partial class MainWindow : Window
         ThemeModeText.Text =
             isHalo ? "HALO" : "ECLIPSE";
 
-        ThemeModeIcon.Text =
-            isHalo ? "☼" : "◐";
+        ThemeModeIcon.Text = string.Empty;
+
+        // Animate only an actual theme transition, never on startup or a repeated update.
+        bool animateGlyph = _lastThemeGlyphWasHalo.HasValue &&
+                            _lastThemeGlyphWasHalo.Value != isHalo;
+        NIRAThemeGlyph.Apply(ThemeModeVector, isHalo, animateGlyph);
+        _lastThemeGlyphWasHalo = isHalo;
 
         ThemeModeButton.Background =
             (Brush)Application.Current.Resources["NIRAChipBrush"];
@@ -13620,9 +14211,7 @@ public partial class MainWindow : Window
                 : (Brush)Application.Current.Resources["NIRAVioletGlow"];
 
         ThemeModeOrb.BorderBrush =
-            isHalo
-                ? (Brush)Application.Current.Resources["NIRACyanBrush"]
-                : (Brush)Application.Current.Resources["NIRAVioletBrush"];
+            (Brush)Application.Current.Resources["NIRAGlassBorderBrush"];
     }
 
     private void RefreshThemeSensitiveActivityCards()
@@ -13650,10 +14239,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        TimeSpan duration = TimeSpan.FromMilliseconds(220);
-        CubicEase easing = new()
+        TimeSpan duration = TimeSpan.FromMilliseconds(390);
+        SineEase easing = new()
         {
-            EasingMode = EasingMode.EaseOut
+            EasingMode = EasingMode.EaseInOut
         };
 
         BackgroundEclipse.BeginAnimation(
@@ -14030,6 +14619,10 @@ public partial class MainWindow : Window
             ? openBranches
             : _branchService.CurrentBranches
                 .Where(branch => branch.IsResolved &&
+                    // Explicitly cancelled work is no longer a visible active
+                    // responsibility. Preserve its durable audit record; don't
+                    // keep a CANCELLED card in the live presence sidebar.
+                    branch.Status != NIRABranchStatus.Cancelled &&
                     DateTimeOffset.UtcNow - (branch.ResolvedAt ?? branch.UpdatedAt) <
                         TimeSpan.FromHours(2))
                 .OrderByDescending(branch => branch.ResolvedAt ?? branch.UpdatedAt)
@@ -15863,75 +16456,126 @@ public partial class MainWindow : Window
     }
 
 
-    private void SetLeftSidebarCollapsed(
-        bool collapsed)
+    private bool _leftSidebarTransitioning;
+    private bool _rightSidebarTransitioning;
+
+    // Sidebar transitions are independent of cognition and never block message input.
+    private async void SetLeftSidebarCollapsed(bool collapsed)
     {
-        if (_leftSidebarCollapsed == collapsed)
+        if (_leftSidebarCollapsed == collapsed || _leftSidebarTransitioning) return;
+        _leftSidebarTransitioning = true;
+        try
         {
-            return;
+            FrameworkElement leaving = collapsed ? LeftSidebarExpandedHost : LeftSidebarCompactHost;
+            await FadeSidebarOutAsync(leaving);
+            _leftSidebarCollapsed = collapsed;
+            leaving.Visibility = Visibility.Collapsed;
+            FrameworkElement arriving = collapsed ? LeftSidebarCompactHost : LeftSidebarExpandedHost;
+            arriving.Visibility = Visibility.Collapsed;
+            await AnimateSidebarWidthAsync(LeftSidebarColumn,
+                collapsed ? LeftSidebarCollapsedWidth : LeftSidebarExpandedWidth);
+            arriving.Visibility = Visibility.Visible;
+            AnimateSidebarReveal(arriving, fromX: -10);
+            SidebarLayoutChanged?.Invoke(this, EventArgs.Empty);
         }
-
-        _leftSidebarCollapsed =
-            collapsed;
-
-        LeftSidebarColumn.Width =
-            new GridLength(
-                collapsed
-                    ? LeftSidebarCollapsedWidth
-                    : LeftSidebarExpandedWidth);
-
-        LeftSidebarExpandedHost.Visibility =
-            collapsed
-                ? Visibility.Collapsed
-                : Visibility.Visible;
-
-        LeftSidebarCompactHost.Visibility =
-            collapsed
-                ? Visibility.Visible
-                : Visibility.Collapsed;
-
-        SidebarLayoutChanged?.Invoke(
-            this,
-            EventArgs.Empty);
-
-        MessageInput.Focus();
+        finally
+        {
+            _leftSidebarTransitioning = false;
+            MessageInput.Focus();
+        }
     }
 
-
-    private void SetRightSidebarCollapsed(
-        bool collapsed)
+    private async void SetRightSidebarCollapsed(bool collapsed)
     {
-        if (_rightSidebarCollapsed == collapsed)
+        if (_rightSidebarCollapsed == collapsed || _rightSidebarTransitioning) return;
+        _rightSidebarTransitioning = true;
+        try
         {
-            return;
+            FrameworkElement leaving = collapsed ? RightSidebarExpandedHost : RightSidebarCompactHost;
+            await FadeSidebarOutAsync(leaving);
+            _rightSidebarCollapsed = collapsed;
+            leaving.Visibility = Visibility.Collapsed;
+            FrameworkElement arriving = collapsed ? RightSidebarCompactHost : RightSidebarExpandedHost;
+            arriving.Visibility = Visibility.Collapsed;
+            await AnimateSidebarWidthAsync(RightSidebarColumn,
+                collapsed ? RightSidebarCollapsedWidth : RightSidebarExpandedWidth);
+            arriving.Visibility = Visibility.Visible;
+            AnimateSidebarReveal(arriving, fromX: 10);
+            SidebarLayoutChanged?.Invoke(this, EventArgs.Empty);
         }
-
-        _rightSidebarCollapsed =
-            collapsed;
-
-        RightSidebarColumn.Width =
-            new GridLength(
-                collapsed
-                    ? RightSidebarCollapsedWidth
-                    : RightSidebarExpandedWidth);
-
-        RightSidebarExpandedHost.Visibility =
-            collapsed
-                ? Visibility.Collapsed
-                : Visibility.Visible;
-
-        RightSidebarCompactHost.Visibility =
-            collapsed
-                ? Visibility.Visible
-                : Visibility.Collapsed;
-
-        SidebarLayoutChanged?.Invoke(
-            this,
-            EventArgs.Empty);
-
-        MessageInput.Focus();
+        finally
+        {
+            _rightSidebarTransitioning = false;
+            MessageInput.Focus();
+        }
     }
 
+    private static Task FadeSidebarOutAsync(FrameworkElement panel)
+    {
+        panel.BeginAnimation(OpacityProperty, new DoubleAnimation
+        {
+            To = 0.30,
+            Duration = TimeSpan.FromMilliseconds(110),
+            EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
+            FillBehavior = FillBehavior.Stop
+        }, HandoffBehavior.SnapshotAndReplace);
+        // A bounded delay guarantees layout finishes even when the UI is occluded.
+        return Task.Delay(115);
+    }
+
+    private static Task AnimateSidebarWidthAsync(ColumnDefinition column, double targetWidth)
+    {
+        double startWidth = column.ActualWidth;
+        if (Math.Abs(startWidth - targetWidth) < 0.5)
+        {
+            column.Width = new GridLength(targetWidth);
+            return Task.CompletedTask;
+        }
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var timer = new System.Windows.Threading.DispatcherTimer(
+            System.Windows.Threading.DispatcherPriority.Render)
+        {
+            Interval = TimeSpan.FromMilliseconds(16)
+        };
+        EventHandler? tick = null;
+        tick = (_, _) =>
+        {
+            double progress = Math.Clamp(watch.Elapsed.TotalMilliseconds / 230.0, 0.0, 1.0);
+            // Cubic ease-out, explicit width interpolation rather than abrupt GridLength jump.
+            double eased = 1 - Math.Pow(1 - progress, 3);
+            column.Width = new GridLength(startWidth + (targetWidth - startWidth) * eased);
+            if (progress >= 1.0)
+            {
+                timer.Stop();
+                timer.Tick -= tick;
+                column.Width = new GridLength(targetWidth);
+                completion.TrySetResult(true);
+            }
+        };
+        timer.Tick += tick;
+        timer.Start();
+        return completion.Task;
+    }
+
+    private static void AnimateSidebarReveal(FrameworkElement panel, double fromX)
+    {
+        panel.BeginAnimation(OpacityProperty, null);
+        panel.Opacity = 1.0;
+        panel.BeginAnimation(OpacityProperty, new DoubleAnimation(0.34, 1.0, TimeSpan.FromMilliseconds(270))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+            FillBehavior = FillBehavior.Stop
+        });
+        var translate = new TranslateTransform(fromX, 0);
+        panel.RenderTransform = translate;
+        translate.BeginAnimation(TranslateTransform.XProperty,
+            new DoubleAnimation(fromX, 0, TimeSpan.FromMilliseconds(270))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+                FillBehavior = FillBehavior.Stop
+            });
+    }
 
     // =========================================================
     // MINIMIZE
@@ -16158,6 +16802,62 @@ public partial class MainWindow : Window
             _viewModel.AttachPastChat(session.SessionId, session.Title);
             MessageInput.Focus();
         }
+    }
+
+    // Composer attachments: explicit user selection, not silent filesystem discovery.
+    private async void AttachFilesButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button addButton || !addButton.IsEnabled)
+            return;
+
+        // Let the eased click pulse finish before the native
+        // modal file dialog takes over the WPF dispatcher. No model call or
+        // attachment processing runs during this visual-only delay.
+        addButton.IsEnabled = false;
+        try
+        {
+            await Task.Delay(290);
+            var dialog = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Attach to NIRA",
+                Filter = "All supported files|*.*|Images|*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp|Documents|*.pdf;*.docx;*.txt;*.md;*.csv;*.json;*.xlsx",
+                Multiselect = true,
+                CheckFileExists = true
+            };
+            if (dialog.ShowDialog(this) == true)
+            {
+                _viewModel.AddComposerAttachments(dialog.FileNames);
+                MessageInput.Focus();
+            }
+        }
+        finally
+        {
+            addButton.IsEnabled = true;
+        }
+    }
+
+    private void RemoveComposerAttachment_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.Button button &&
+            button.Tag is NIRAComposerAttachment attachment)
+            _viewModel.RemoveComposerAttachment(attachment);
+    }
+
+    private void ComposerPanel_PreviewDragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop)
+            ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void ComposerPanel_Drop(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetData(DataFormats.FileDrop) is string[] paths)
+        {
+            _viewModel.AddComposerAttachments(paths);
+            MessageInput.Focus();
+        }
+        e.Handled = true;
     }
 
     private void MessageInput_PreviewKeyDown(
@@ -17409,6 +18109,7 @@ public sealed class NIRAUtilityBackdropBorder : Border
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
+using System.Windows.Media;
 
 namespace NIRAAgent.UI;
 
@@ -17422,13 +18123,68 @@ internal sealed class NIRAWorkAreaWindowGuard : IDisposable
     private const uint MonitorDefaultToNearest = 0x00000002;
 
     private readonly Window _window;
+    private readonly bool _fitNormalWindow;
+    private bool _normalWindowFitted;
     private HwndSource? _source;
     private bool _disposed;
 
-    public NIRAWorkAreaWindowGuard(Window window)
+    public NIRAWorkAreaWindowGuard(Window window, bool fitNormalWindow = false)
     {
         _window = window ?? throw new ArgumentNullException(nameof(window));
+        _fitNormalWindow = fitNormalWindow;
         _window.SourceInitialized += Window_SourceInitialized;
+        if (_fitNormalWindow)
+            _window.Loaded += Window_Loaded;
+    }
+
+    private void Window_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (_normalWindowFitted || _disposed) return;
+        // After WPF has selected the owner monitor, before entrance animation.
+        FitNormalWindowToCurrentMonitor();
+    }
+
+    private void FitNormalWindowToCurrentMonitor()
+    {
+        if (!_fitNormalWindow || _normalWindowFitted || _window.WindowState != WindowState.Normal)
+            return;
+
+        IntPtr hwnd = new WindowInteropHelper(_window).Handle;
+        if (hwnd == IntPtr.Zero) return;
+        IntPtr monitor = MonitorFromWindow(hwnd, MonitorDefaultToNearest);
+        if (monitor == IntPtr.Zero) return;
+
+        NativeMonitorInfo info = new() { CbSize = Marshal.SizeOf<NativeMonitorInfo>() };
+        if (!GetMonitorInfo(monitor, ref info)) return;
+
+        // Win32 monitor rectangles are device pixels, whereas WPF Window dimensions
+        // are DIPs. Use the ACTUAL presentation-source transform for current DPI.
+        Matrix fromDevice = _source?.CompositionTarget?.TransformFromDevice ?? Matrix.Identity;
+        Point topLeft = fromDevice.Transform(new Point(info.WorkArea.Left, info.WorkArea.Top));
+        Point bottomRight = fromDevice.Transform(new Point(info.WorkArea.Right, info.WorkArea.Bottom));
+        double workWidth = bottomRight.X - topLeft.X;
+        double workHeight = bottomRight.Y - topLeft.Y;
+        if (workWidth < 360 || workHeight < 320) return;
+
+        // Limit the opening height to 84% of usable space. Unlike a fixed 780-DIP
+        // window this still fits 768p laptops, higher DPI, and a relocated taskbar.
+        double marginX = Math.Min(28, workWidth * 0.025);
+        double marginY = Math.Min(24, workHeight * 0.03);
+        double targetWidth = Math.Min(_window.Width, workWidth - 2 * marginX);
+        double targetHeight = Math.Min(_window.Height,
+            Math.Min(workHeight * 0.84, workHeight - 2 * marginY));
+
+        // Fixed XAML minima must not defeat the available-screen calculation.
+        _window.MinWidth = Math.Min(_window.MinWidth, targetWidth);
+        _window.MinHeight = Math.Min(_window.MinHeight, targetHeight);
+        _window.MaxWidth = workWidth;
+        _window.MaxHeight = workHeight;
+        _window.WindowStartupLocation = WindowStartupLocation.Manual;
+        _window.Width = targetWidth;
+        _window.Height = targetHeight;
+        _window.Left = topLeft.X + (workWidth - targetWidth) / 2;
+        _window.Top = topLeft.Y + (workHeight - targetHeight) / 2;
+        _normalWindowFitted = true;
     }
 
     private void Window_SourceInitialized(object? sender, EventArgs e)
@@ -17489,6 +18245,8 @@ internal sealed class NIRAWorkAreaWindowGuard : IDisposable
         _disposed = true;
 
         _window.SourceInitialized -= Window_SourceInitialized;
+        if (_fitNormalWindow)
+            _window.Loaded -= Window_Loaded;
         if (_source != null)
         {
             _source.RemoveHook(WindowProc);
@@ -18504,8 +19262,8 @@ public sealed class PastChatWindow : Window
         Title="NIRA Permissions"
         Width="1180"
         Height="780"
-        MinWidth="960"
-        MinHeight="640"
+        MinWidth="760"
+        MinHeight="455"
         WindowStartupLocation="CenterOwner"
         WindowStyle="None"
         ResizeMode="CanResize"
@@ -18534,8 +19292,8 @@ public sealed class PastChatWindow : Window
                         <Grid ClipToBounds="True">
                             <ui:NIRAUtilityBackdropBorder Margin="-18" BlurRadius="14" BackdropOpacity="0.72"/>
                             <Border Background="{DynamicResource NIRAGlassTintBrush}"
-                                    BorderBrush="{DynamicResource NIRAGlassBorderBrush}"
-                                    BorderThickness="1"
+                                    BorderBrush="{DynamicResource NIRAGlassBorderStrongBrush}"
+                                    BorderThickness="1.4"
                                     CornerRadius="18">
                                 <ContentPresenter Margin="{TemplateBinding Padding}"/>
                             </Border>
@@ -18552,8 +19310,8 @@ public sealed class PastChatWindow : Window
                         <Grid ClipToBounds="True">
                             <ui:NIRAUtilityBackdropBorder Margin="-20" BlurRadius="16" BackdropOpacity="0.78"/>
                             <Border Background="{DynamicResource NIRAGlassStrongTintBrush}"
-                                    BorderBrush="{DynamicResource NIRAGlassBorderStrongBrush}"
-                                    BorderThickness="1"
+                                    BorderBrush="{DynamicResource NIRAFocusBorderBrush}"
+                                    BorderThickness="1.5"
                                     CornerRadius="19">
                                 <ContentPresenter Margin="{TemplateBinding Padding}"/>
                             </Border>
@@ -18584,15 +19342,40 @@ public sealed class PastChatWindow : Window
                         <Border x:Name="Root" Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="11">
+                                CornerRadius="11" RenderTransformOrigin="0.5,0.5">
+                            <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
+                                <Trigger.EnterActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Root" Storyboard.TargetProperty="Opacity" To="0.88" Duration="0:0:0.22">
+                                        <DoubleAnimation.EasingFunction><CubicEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction>
+                                    </DoubleAnimation>
+                                </Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                <Trigger.ExitActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Root" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.26">
+                                        <DoubleAnimation.EasingFunction><CubicEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction>
+                                    </DoubleAnimation>
+                                </Storyboard></BeginStoryboard></Trigger.ExitActions>
                                 <Setter TargetName="Root" Property="Background" Value="{DynamicResource NIRACardHoverBrush}"/>
                                 <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
                                 <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
                             </Trigger>
+                            <EventTrigger RoutedEvent="Button.Click">
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Root" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)">
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1"/>
+                                    </DoubleAnimationUsingKeyFrames>
+                                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Root" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)">
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1"/>
+                                    </DoubleAnimationUsingKeyFrames>
+                                </Storyboard></BeginStoryboard>
+                            </EventTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -18655,7 +19438,7 @@ public sealed class PastChatWindow : Window
     <Grid x:Name="RootShell">
         <Image x:Name="UtilityBackgroundEclipse" Source="Assets/nira-utility-eclipse.png" Stretch="UniformToFill" Opacity="1" IsHitTestVisible="False"/>
         <Image x:Name="UtilityBackgroundHalo" Source="Assets/nira-utility-halo.png" Stretch="UniformToFill" Opacity="0" IsHitTestVisible="False"/>
-        <Rectangle Fill="{DynamicResource NIRABackdropVeilBrush}" Opacity="0.42" IsHitTestVisible="False"/>
+        <Rectangle Fill="{DynamicResource NIRABackdropVeilBrush}" Opacity="0.58" IsHitTestVisible="False"/>
 
         <Grid>
             <Grid.RowDefinitions>
@@ -18671,15 +19454,12 @@ public sealed class PastChatWindow : Window
                 <Grid Margin="18,0,12,0">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <Grid Width="40" Height="40" Margin="0,0,13,0">
-                            <Ellipse Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1.4" Opacity="0.8"/>
-                            <Ellipse Margin="6" Stroke="{DynamicResource NIRACyanBrush}" StrokeThickness="1.2" Opacity="0.9"/>
-                            <Path Width="15" Height="15" Stretch="Uniform" Fill="{DynamicResource NIRACyanBrush}"
-                                  Data="M7.5,0 C4.4,0 2,2.3 2,5.3 V7 H1 V15 H14 V7 H13 V5.3 C13,2.3 10.6,0 7.5,0 Z M7.5,2 C9.5,2 11,3.4 11,5.3 V7 H4 V5.3 C4,3.4 5.5,2 7.5,2 Z"/>
-                        </Grid>
+                        <Image Width="40" Height="40" Margin="0,0,13,0"
+                               Source="Assets/Nira-Icon.png" Stretch="Uniform"
+                               RenderOptions.BitmapScalingMode="HighQuality"/>
                         <StackPanel>
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="NIRA" FontFamily="Bahnschrift SemiCondensed" FontSize="23" FontWeight="SemiBold"/>
+                                <TextBlock Text="NIRA" FontFamily="Segoe UI Variable Display, Segoe UI" FontSize="22" FontWeight="SemiBold"/>
                                 <TextBlock Text=" / PERMISSIONS" Margin="7,7,0,0" FontSize="9" FontWeight="SemiBold" Foreground="{DynamicResource NIRASecondaryBrush}"/>
                             </StackPanel>
                             <TextBlock Text="ACCESS CONTROL · APPROVALS · AUDIT" Margin="1,0,0,0" FontSize="7.5" Foreground="{DynamicResource NIRAMutedBrush}"/>
@@ -18687,12 +19467,6 @@ public sealed class PastChatWindow : Window
                     </StackPanel>
 
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                        <Border Height="36" Padding="12,0" Margin="0,0,8,0" Background="{DynamicResource NIRAChipBrush}" BorderBrush="{DynamicResource NIRAGlassBorderBrush}" BorderThickness="1" CornerRadius="11">
-                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <Ellipse Width="6" Height="6" Fill="{DynamicResource NIRAGreenBrush}" Margin="0,0,7,0"/>
-                                <TextBlock Text="RUNTIME LIVE" FontSize="8.5" FontWeight="SemiBold"/>
-                            </StackPanel>
-                        </Border>
                         <Button Style="{StaticResource PermissionWindowControl}" Click="PermissionsMinimize_Click" shell:WindowChrome.IsHitTestVisibleInChrome="True">
                             <Path Width="12" Height="1" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.4" Data="M0,0 L12,0"/>
                         </Button>
@@ -18890,6 +19664,7 @@ public sealed class PastChatWindow : Window
                 </Grid>
             </Grid>
         </Grid>
+
     </Grid>
 </Window>
 ```
@@ -18918,6 +19693,7 @@ public partial class PermissionsWindow : Window
     private readonly NIRAScopedCapabilityAuthorizer _authorizer;
     private readonly NIRACapabilityApprovalBroker _broker;
     private bool _closed;
+    private bool? _lastBackgroundWasHalo;
     private int _refreshQueued;
     private bool _manualSession;
     private bool _autoCloseAfterDecision;
@@ -18934,7 +19710,7 @@ public partial class PermissionsWindow : Window
         _store = store;
         _authorizer = authorizer;
         _broker = broker;
-        _workAreaGuard = new NIRAWorkAreaWindowGuard(this);
+        _workAreaGuard = new NIRAWorkAreaWindowGuard(this, fitNormalWindow: true);
 
         Loaded += PermissionsWindow_Loaded;
         _store.Changed += QueueRefresh;
@@ -18969,8 +19745,11 @@ public partial class PermissionsWindow : Window
     private void UpdateThemePresentation()
     {
         bool halo = NIRAThemeManager.CurrentMode == NIRAThemeMode.Halo;
-        UtilityBackgroundEclipse.Opacity = halo ? 0.0 : 1.0;
-        UtilityBackgroundHalo.Opacity = halo ? 1.0 : 0.0;
+        bool transition = _lastBackgroundWasHalo.HasValue &&
+                          _lastBackgroundWasHalo.Value != halo;
+        NIRAThemeGlyph.ApplyBackdrop(UtilityBackgroundEclipse, UtilityBackgroundHalo,
+            halo, transition);
+        _lastBackgroundWasHalo = halo;
     }
 
     /// <summary>
@@ -21753,8 +22532,8 @@ public static class NIRAStyledChatText
         Title="NIRA Settings"
         Width="1080"
         Height="760"
-        MinWidth="900"
-        MinHeight="620"
+        MinWidth="660"
+        MinHeight="430"
         WindowStartupLocation="CenterOwner"
         WindowStyle="None"
         ResizeMode="CanResize"
@@ -21783,8 +22562,8 @@ public static class NIRAStyledChatText
                         <Grid ClipToBounds="True">
                             <ui:NIRAUtilityBackdropBorder Margin="-18" BlurRadius="14" BackdropOpacity="0.72"/>
                             <Border Background="{DynamicResource NIRAGlassTintBrush}"
-                                    BorderBrush="{DynamicResource NIRAGlassBorderBrush}"
-                                    BorderThickness="1"
+                                    BorderBrush="{DynamicResource NIRAGlassBorderStrongBrush}"
+                                    BorderThickness="1.4"
                                     CornerRadius="18">
                                 <ContentPresenter Margin="{TemplateBinding Padding}"/>
                             </Border>
@@ -21801,8 +22580,8 @@ public static class NIRAStyledChatText
                         <Grid ClipToBounds="True">
                             <ui:NIRAUtilityBackdropBorder Margin="-20" BlurRadius="16" BackdropOpacity="0.78"/>
                             <Border Background="{DynamicResource NIRAGlassStrongTintBrush}"
-                                    BorderBrush="{DynamicResource NIRAGlassBorderStrongBrush}"
-                                    BorderThickness="1"
+                                    BorderBrush="{DynamicResource NIRAFocusBorderBrush}"
+                                    BorderThickness="1.5"
                                     CornerRadius="19">
                                 <ContentPresenter Margin="{TemplateBinding Padding}"/>
                             </Border>
@@ -21840,15 +22619,40 @@ public static class NIRAStyledChatText
                         <Border x:Name="Chrome" Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="11">
+                                CornerRadius="11" RenderTransformOrigin="0.5,0.5">
+                            <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
+                                <Trigger.EnterActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Chrome" Storyboard.TargetProperty="Opacity" To="0.88" Duration="0:0:0.22">
+                                        <DoubleAnimation.EasingFunction><CubicEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction>
+                                    </DoubleAnimation>
+                                </Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                <Trigger.ExitActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Chrome" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.26">
+                                        <DoubleAnimation.EasingFunction><CubicEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction>
+                                    </DoubleAnimation>
+                                </Storyboard></BeginStoryboard></Trigger.ExitActions>
                                 <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource NIRACardHoverBrush}"/>
                                 <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
                                 <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
                             </Trigger>
+                            <EventTrigger RoutedEvent="Button.Click">
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Chrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)">
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1"/>
+                                    </DoubleAnimationUsingKeyFrames>
+                                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Chrome" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)">
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1"/>
+                                    </DoubleAnimationUsingKeyFrames>
+                                </Storyboard></BeginStoryboard>
+                            </EventTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -21876,7 +22680,7 @@ public static class NIRAStyledChatText
                Stretch="UniformToFill"
                Opacity="0"
                IsHitTestVisible="False"/>
-        <Rectangle Fill="{DynamicResource NIRABackdropVeilBrush}" Opacity="0.42" IsHitTestVisible="False"/>
+        <Rectangle Fill="{DynamicResource NIRABackdropVeilBrush}" Opacity="0.58" IsHitTestVisible="False"/>
 
         <Grid>
             <Grid.RowDefinitions>
@@ -21898,14 +22702,12 @@ public static class NIRAStyledChatText
                     </Grid.ColumnDefinitions>
 
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <Grid Width="40" Height="40" Margin="0,0,13,0">
-                            <Ellipse Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1.4" Opacity="0.8"/>
-                            <Ellipse Margin="5" Stroke="{DynamicResource NIRACyanBrush}" StrokeThickness="1.1" Opacity="0.9"/>
-                            <Ellipse Margin="13" Fill="{DynamicResource NIRACyanBrush}" Opacity="0.9"/>
-                        </Grid>
+                        <Image Width="40" Height="40" Margin="0,0,13,0"
+                               Source="Assets/Nira-Icon.png" Stretch="Uniform"
+                               RenderOptions.BitmapScalingMode="HighQuality"/>
                         <StackPanel VerticalAlignment="Center">
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="NIRA" FontFamily="Bahnschrift SemiCondensed" FontSize="23" FontWeight="SemiBold"/>
+                                <TextBlock Text="NIRA" FontFamily="Segoe UI Variable Display, Segoe UI" FontSize="22" FontWeight="SemiBold"/>
                                 <TextBlock Text=" / SETTINGS" Margin="7,7,0,0" FontSize="9" FontWeight="SemiBold" Foreground="{DynamicResource NIRASecondaryBrush}"/>
                             </StackPanel>
                             <TextBlock Text="PERSONALIZE BEHAVIOR · PRESENCE · INTERFACE"
@@ -21916,7 +22718,7 @@ public static class NIRAStyledChatText
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                         <Button x:Name="ThemeToggleButton"
                                 Content="ECLIPSE"
-                                Width="144" Height="38" Margin="0,0,8,0"
+                                Width="150" Height="38" Margin="0,0,8,0"
                                 Background="{DynamicResource NIRAChipBrush}"
                                 BorderBrush="{DynamicResource NIRAGlassBorderBrush}"
                                 BorderThickness="1"
@@ -21932,13 +22734,24 @@ public static class NIRAStyledChatText
                                             CornerRadius="12">
                                         <Grid Margin="12,0">
                                             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                                            <Grid Width="24" Height="24" VerticalAlignment="Center">
-                                                <Ellipse Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1"/>
-                                                <Ellipse Margin="7" Fill="{DynamicResource NIRACyanBrush}"/>
+                                            <Grid Width="27" Height="27" VerticalAlignment="Center">
+                                                <Ellipse Width="25" Height="25" Stroke="{DynamicResource NIRASecondaryBrush}"
+                                                         StrokeThickness="0.9" Opacity="0.50"/>
+                                                <Path Width="27" Height="27" Stretch="Uniform"
+                                                      Data="M2,17 C3,8 18,3 25,11 M2,17 C9,25 23,18 25,11"
+                                                      Stroke="{DynamicResource NIRACyanBrush}" StrokeThickness="1.15"
+                                                      Fill="Transparent" Opacity="0.9"/>
+                                                <Ellipse Width="5" Height="5" Fill="{DynamicResource NIRACyanBrush}"/>
+                                                <Path x:Name="SettingsThemeVector" Width="23" Height="23"
+                                                      VerticalAlignment="Center" HorizontalAlignment="Center"
+                                                      Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1.8"
+                                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                      StrokeLineJoin="Round" Fill="Transparent"
+                                                      Data="M12,2.2 C17.6,2.2 21.8,6.5 21.8,12"/>
                                             </Grid>
                                             <StackPanel Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center">
                                                 <TextBlock Text="{Binding Content, RelativeSource={RelativeSource TemplatedParent}}" FontSize="9.5" FontWeight="SemiBold"/>
-                                                <TextBlock Text="SWITCH THEME" FontSize="6.5" Foreground="{DynamicResource NIRAMutedBrush}"/>
+                                                <TextBlock Text="APPEARANCE" FontSize="7.5" Foreground="{DynamicResource NIRAMutedBrush}"/>
                                             </StackPanel>
                                         </Grid>
                                     </Border>
@@ -21981,12 +22794,42 @@ public static class NIRAStyledChatText
                         </StackPanel>
 
                         <StackPanel Grid.Row="1">
-                            <Border Style="{StaticResource SettingsNavLabel}" Background="{DynamicResource NIRACardHoverBrush}"><TextBlock Text="◈  Appearance" FontWeight="SemiBold"/></Border>
-                            <Border Style="{StaticResource SettingsNavLabel}"><TextBlock Text="◉  Voice"/></Border>
-                            <Border Style="{StaticResource SettingsNavLabel}"><TextBlock Text="◎  Presence"/></Border>
-                            <Border Style="{StaticResource SettingsNavLabel}"><TextBlock Text="◇  Attention"/></Border>
-                            <Border Style="{StaticResource SettingsNavLabel}"><TextBlock Text="○  Notifications"/></Border>
-                            <Border Style="{StaticResource SettingsNavLabel}"><TextBlock Text="▦  Interface"/></Border>
+                            <Border Style="{StaticResource SettingsNavLabel}" Background="{DynamicResource NIRACardHoverBrush}"><StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Path Width="16" Height="16" Stretch="Uniform" Data="M3,17 L9,3 L15,17 Z M17,4 L19,4 M17,8 L22,8 M17,12 L21,12"
+                                      Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1.5" Fill="Transparent"
+                                      StrokeStartLineCap="Round" StrokeLineJoin="Round"/>
+                                <TextBlock Text="Appearance" Margin="12,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                            </StackPanel></Border>
+                            <Border Style="{StaticResource SettingsNavLabel}"><StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Path Width="16" Height="16" Stretch="Uniform" Data="M9,3 A3,3 0 0 1 15,3 V12 A3,3 0 0 1 9,12 Z M5,10 V12 A7,7 0 0 0 19,12 V10 M12,19 V23 M8,23 H16"
+                                      Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1.5" Fill="Transparent"
+                                      StrokeStartLineCap="Round" StrokeLineJoin="Round"/>
+                                <TextBlock Text="Voice" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel></Border>
+                            <Border Style="{StaticResource SettingsNavLabel}"><StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Path Width="16" Height="16" Stretch="Uniform" Data="M12,4 A4,4 0 1 0 12,12 A4,4 0 1 0 12,4 M4,22 V20 A8,8 0 0 1 20,20 V22"
+                                      Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1.5" Fill="Transparent"
+                                      StrokeStartLineCap="Round" StrokeLineJoin="Round"/>
+                                <TextBlock Text="Presence" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel></Border>
+                            <Border Style="{StaticResource SettingsNavLabel}"><StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Path Width="16" Height="16" Stretch="Uniform" Data="M12,3 A9,9 0 1 1 12,21 A9,9 0 1 1 12,3 M12,8 V13 L16,15"
+                                      Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1.5" Fill="Transparent"
+                                      StrokeStartLineCap="Round" StrokeLineJoin="Round"/>
+                                <TextBlock Text="Attention" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel></Border>
+                            <Border Style="{StaticResource SettingsNavLabel}"><StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Path Width="16" Height="16" Stretch="Uniform" Data="M7,9 A5,5 0 0 1 17,9 V14 L19,17 H5 L7,14 Z M10,19 H14"
+                                      Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1.5" Fill="Transparent"
+                                      StrokeStartLineCap="Round" StrokeLineJoin="Round"/>
+                                <TextBlock Text="Notifications" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel></Border>
+                            <Border Style="{StaticResource SettingsNavLabel}"><StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Path Width="16" Height="16" Stretch="Uniform" Data="M3,4 H21 V20 H3 Z M3,9 H21 M10,9 V20"
+                                      Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1.5" Fill="Transparent"
+                                      StrokeStartLineCap="Round" StrokeLineJoin="Round"/>
+                                <TextBlock Text="Interface" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel></Border>
                         </StackPanel>
 
                         <Border Grid.Row="2" Padding="11" CornerRadius="12" Background="{DynamicResource NIRAChipBrush}" BorderBrush="{DynamicResource NIRAGlassBorderBrush}" BorderThickness="1">
@@ -22116,6 +22959,7 @@ public static class NIRAStyledChatText
                 </Grid>
             </Grid>
         </Grid>
+
     </Grid>
 </Window>
 ```
@@ -22130,6 +22974,7 @@ public static class NIRAStyledChatText
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Shapes;
 
 using NIRAAgent.Settings;
 using NIRAAgent.UI.Theming;
@@ -22142,13 +22987,15 @@ public partial class SettingsWindow : Window
     private readonly NIRAWorkAreaWindowGuard _workAreaGuard;
     private bool _loading;
     private bool _closed;
+    private bool? _lastThemeGlyphWasHalo;
+    private bool? _lastBackgroundWasHalo;
 
     public SettingsWindow(NIRARuntimeSettingsService settings)
     {
         InitializeComponent();
 
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
-        _workAreaGuard = new NIRAWorkAreaWindowGuard(this);
+        _workAreaGuard = new NIRAWorkAreaWindowGuard(this, fitNormalWindow: true);
 
         VoiceEngineBox.ItemsSource = Enum.GetValues<NIRAVoiceEngineMode>();
 
@@ -22186,10 +23033,22 @@ public partial class SettingsWindow : Window
     private void UpdateThemePresentation()
     {
         bool halo = NIRAThemeManager.CurrentMode == NIRAThemeMode.Halo;
-        UtilityBackgroundEclipse.Opacity = halo ? 0.0 : 1.0;
-        UtilityBackgroundHalo.Opacity = halo ? 1.0 : 0.0;
+        bool transition = _lastBackgroundWasHalo.HasValue &&
+                          _lastBackgroundWasHalo.Value != halo;
+        NIRAThemeGlyph.ApplyBackdrop(UtilityBackgroundEclipse, UtilityBackgroundHalo,
+            halo, transition);
+        _lastBackgroundWasHalo = halo;
         ThemeToggleButton.Content = halo ? "HALO" : "ECLIPSE";
         CurrentThemeText.Text = halo ? "HALO" : "ECLIPSE";
+
+        ThemeToggleButton.ApplyTemplate();
+        if (ThemeToggleButton.Template.FindName("SettingsThemeVector", ThemeToggleButton) is Path icon)
+        {
+            bool changed = _lastThemeGlyphWasHalo.HasValue &&
+                           _lastThemeGlyphWasHalo.Value != halo;
+            NIRAThemeGlyph.Apply(icon, halo, changed);
+        }
+        _lastThemeGlyphWasHalo = halo;
     }
 
     private void ThemeToggleButton_Click(object sender, RoutedEventArgs e)
@@ -22479,6 +23338,14 @@ public partial class SettingsWindow : Window
     <SolidColorBrush x:Key="NIRABackdropVeilBrush" Color="#0E020611"/>
     <SolidColorBrush x:Key="NIRAActivityCardBrush" Color="#220C1830"/>
 
+    <!-- Theme-aware chat/composer surfaces; designed for contrast over the artwork. -->
+    <SolidColorBrush x:Key="NIRAUserBubbleFillBrush" Color="#D817365C"/>
+    <SolidColorBrush x:Key="NIRAUserBubbleEdgeBrush" Color="#7E6FA5DA"/>
+    <SolidColorBrush x:Key="NIRAUserBubbleGlowBrush" Color="#24488CE2"/>
+    <SolidColorBrush x:Key="NIRAComposerFillBrush" Color="#E0121D38"/>
+    <SolidColorBrush x:Key="NIRAComposerEdgeBrush" Color="#7A6B97C8"/>
+    <SolidColorBrush x:Key="NIRAComposerBadgeBrush" Color="#48152C54"/>
+
     <LinearGradientBrush x:Key="NIRAWindowGradient" StartPoint="0,0" EndPoint="1,1">
         <GradientStop Color="#050817" Offset="0"/>
         <GradientStop Color="#09112A" Offset="0.45"/>
@@ -22526,7 +23393,7 @@ public partial class SettingsWindow : Window
     <Style TargetType="Window">
         <Setter Property="Background" Value="{DynamicResource NIRABackgroundBrush}"/>
         <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
-        <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI"/>
+        <Setter Property="FontFamily" Value="Aptos, Segoe UI Variable Text, Segoe UI"/>
         <Setter Property="FontSize" Value="13"/>
         <Setter Property="TextOptions.TextFormattingMode" Value="Display"/>
     </Style>
@@ -22982,7 +23849,101 @@ public static class NIRAMotion
 
 ---
 
-## 48. `NIRAAgent.UI\Theming\NIRAThemeManager.cs`
+## 48. `NIRAAgent.UI\Theming\NIRAThemeGlyph.cs`
+
+**File:** `NIRAAgent.UI\Theming\NIRAThemeGlyph.cs`
+
+```csharp
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Shapes;
+
+namespace NIRAAgent.UI.Theming;
+
+/// <summary>
+/// The same crisp, font-independent Halo / Eclipse glyph is used in
+/// the main window and Settings. Only appearance is changed here.
+/// </summary>
+internal static class NIRAThemeGlyph
+{
+    // Orbital phase marks. The matching concentric-ring housing is drawn by
+    // the main-window and Settings XAML; these marks are the moving accents.
+    // No sun rays, font icons, or generic crescent placeholder.
+    private static readonly Geometry HaloGlyph = Geometry.Parse(
+        "M12,2.2 C17.6,2.2 21.8,6.5 21.8,12 " +
+        "C21.8,17.5 17.6,21.8 12,21.8 " +
+        "M12,21.8 C6.5,21.8 2.2,17.5 2.2,12 " +
+        "M7.2,12 L16.8,12 M12,7.2 L12,16.8");
+
+    private static readonly Geometry EclipseGlyph = Geometry.Parse(
+        "M12,2.2 C17.6,2.2 21.8,6.5 21.8,12 " +
+        "C21.8,17.5 17.6,21.8 12,21.8 " +
+        "M12,21.8 C6.5,21.8 2.2,17.5 2.2,12 " +
+        "M7.1,8.4 C8.8,15.0 15.0,17.1 17.5,16.4 " +
+        "M7.1,8.4 C10.2,8.8 15.8,8.3 17.5,16.4");
+
+    public static void ApplyBackdrop(Image eclipse, Image haloLayer, bool halo, bool animate)
+    {
+        double eclipseTarget = halo ? 0.0 : 1.0;
+        double haloTarget = halo ? 1.0 : 0.0;
+        if (!animate)
+        {
+            eclipse.BeginAnimation(UIElement.OpacityProperty, null);
+            haloLayer.BeginAnimation(UIElement.OpacityProperty, null);
+            eclipse.Opacity = eclipseTarget;
+            haloLayer.Opacity = haloTarget;
+            return;
+        }
+
+        var easing = new SineEase { EasingMode = EasingMode.EaseInOut };
+        var duration = TimeSpan.FromMilliseconds(390);
+        eclipse.BeginAnimation(UIElement.OpacityProperty,
+            new DoubleAnimation(eclipse.Opacity, eclipseTarget, duration)
+            {
+                EasingFunction = easing
+            }, HandoffBehavior.SnapshotAndReplace);
+        haloLayer.BeginAnimation(UIElement.OpacityProperty,
+            new DoubleAnimation(haloLayer.Opacity, haloTarget, duration)
+            {
+                EasingFunction = easing
+            }, HandoffBehavior.SnapshotAndReplace);
+    }
+
+    public static void Apply(Path icon, bool halo, bool animate)
+    {
+        icon.BeginAnimation(UIElement.OpacityProperty, null);
+        icon.Data = halo ? HaloGlyph : EclipseGlyph;
+        icon.Opacity = 1.0;
+        icon.RenderTransformOrigin = new Point(0.5, 0.5);
+
+        RotateTransform rotation = icon.RenderTransform as RotateTransform
+            ?? new RotateTransform();
+        icon.RenderTransform = rotation;
+        rotation.BeginAnimation(RotateTransform.AngleProperty, null);
+        rotation.Angle = 0;
+        if (!animate) return;
+
+        var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
+        icon.BeginAnimation(UIElement.OpacityProperty,
+            new DoubleAnimation(0.24, 1.0, TimeSpan.FromMilliseconds(360))
+            {
+                EasingFunction = easing
+            }, HandoffBehavior.SnapshotAndReplace);
+        rotation.BeginAnimation(RotateTransform.AngleProperty,
+            new DoubleAnimation(halo ? -60.0 : 60.0, 0.0,
+                TimeSpan.FromMilliseconds(490))
+            {
+                EasingFunction = easing
+            }, HandoffBehavior.SnapshotAndReplace);
+    }
+}
+```
+
+---
+
+## 49. `NIRAAgent.UI\Theming\NIRAThemeManager.cs`
 
 **File:** `NIRAAgent.UI\Theming\NIRAThemeManager.cs`
 
@@ -23097,6 +24058,12 @@ public static class NIRAThemeManager
         SetBrush("NIRATopBarTintBrush", "#2009111E");
         SetBrush("NIRABackdropVeilBrush", "#0E020611");
         SetBrush("NIRAActivityCardBrush", "#220C1830");
+        SetBrush("NIRAUserBubbleFillBrush", "#D817365C");
+        SetBrush("NIRAUserBubbleEdgeBrush", "#7E6FA5DA");
+        SetBrush("NIRAUserBubbleGlowBrush", "#24488CE2");
+        SetBrush("NIRAComposerFillBrush", "#E0121D38");
+        SetBrush("NIRAComposerEdgeBrush", "#7A6B97C8");
+        SetBrush("NIRAComposerBadgeBrush", "#48152C54");
 
         SetLinearGradient("NIRAWindowGradient", "#050817", "#09112A", "#0B1435");
         SetLinearGradient("NIRANeonLine", "#001468FF", "#801468FF", "#8000E5FF", "#0000E5FF");
@@ -23139,6 +24106,12 @@ public static class NIRAThemeManager
         SetBrush("NIRATopBarTintBrush", "#90F5FAFF");
         SetBrush("NIRABackdropVeilBrush", "#06FFFFFF");
         SetBrush("NIRAActivityCardBrush", "#7AFFFFFF");
+        SetBrush("NIRAUserBubbleFillBrush", "#EFF0F6FF");
+        SetBrush("NIRAUserBubbleEdgeBrush", "#A7BFE5F6");
+        SetBrush("NIRAUserBubbleGlowBrush", "#264585D8");
+        SetBrush("NIRAComposerFillBrush", "#F6FBFFFF");
+        SetBrush("NIRAComposerEdgeBrush", "#A7BDD9F0");
+        SetBrush("NIRAComposerBadgeBrush", "#ECF3FCFF");
 
         SetLinearGradient("NIRAWindowGradient", "#F4F7FD", "#EEF4FC", "#E5F0FF");
         SetLinearGradient("NIRANeonLine", "#001468FF", "#401468FF", "#3000A7D1", "#0000A7D1");
@@ -23244,7 +24217,7 @@ public static class NIRAThemeManager
 
 ---
 
-## 49. `NIRAAgent.UI\Typing\NIRATypingIndicator.cs`
+## 50. `NIRAAgent.UI\Typing\NIRATypingIndicator.cs`
 
 **File:** `NIRAAgent.UI\Typing\NIRATypingIndicator.cs`
 
@@ -23604,7 +24577,7 @@ public sealed class NIRATypingIndicator : FrameworkElement
 
 ---
 
-## 50. `NIRAAgent.UI\Typing\TypingStyle.cs`
+## 51. `NIRAAgent.UI\Typing\TypingStyle.cs`
 
 **File:** `NIRAAgent.UI\Typing\TypingStyle.cs`
 
@@ -23619,7 +24592,7 @@ public enum TypingStyle
 
 ---
 
-## 51. `NIRAAgent.UI\ViewModels\AsyncRelayCommand.cs`
+## 52. `NIRAAgent.UI\ViewModels\AsyncRelayCommand.cs`
 
 **File:** `NIRAAgent.UI\ViewModels\AsyncRelayCommand.cs`
 
@@ -23679,7 +24652,7 @@ public sealed class AsyncRelayCommand : ICommand
 
 ---
 
-## 52. `NIRAAgent.UI\ViewModels\ChatMessageTemplateSelector.cs`
+## 53. `NIRAAgent.UI\ViewModels\ChatMessageTemplateSelector.cs`
 
 **File:** `NIRAAgent.UI\ViewModels\ChatMessageTemplateSelector.cs`
 
@@ -23720,7 +24693,7 @@ public sealed class ChatMessageTemplateSelector : DataTemplateSelector
 
 ---
 
-## 53. `NIRAAgent.UI\ViewModels\ChatMessageViewModel.cs`
+## 54. `NIRAAgent.UI\ViewModels\ChatMessageViewModel.cs`
 
 **File:** `NIRAAgent.UI\ViewModels\ChatMessageViewModel.cs`
 
@@ -24073,7 +25046,7 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
 
 ---
 
-## 54. `NIRAAgent.UI\ViewModels\MainWindowViewModel.cs`
+## 55. `NIRAAgent.UI\ViewModels\MainWindowViewModel.cs`
 
 **File:** `NIRAAgent.UI\ViewModels\MainWindowViewModel.cs`
 
@@ -24084,6 +25057,7 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
 
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
 
@@ -24164,6 +25138,40 @@ public sealed class MainWindowViewModel
     } =
         new();
 
+
+    // Local references selected explicitly in the composer. No binary upload or
+    // automatic trust assertion; existing authorized capabilities decide inspection.
+    public ObservableCollection<NIRAComposerAttachment> ComposerAttachments { get; } = new();
+    public bool HasComposerAttachments => ComposerAttachments.Count > 0;
+    private const int MaximumComposerAttachments = 12;
+
+    public int AddComposerAttachments(IEnumerable<string> paths)
+    {
+        int added = 0;
+        foreach (string? raw in paths)
+        {
+            if (ComposerAttachments.Count >= MaximumComposerAttachments) break;
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+            string path;
+            try { path = Path.GetFullPath(raw); }
+            catch (Exception) { continue; }
+            if (!File.Exists(path) || ComposerAttachments.Any(x =>
+                string.Equals(x.FullPath, path, StringComparison.OrdinalIgnoreCase))) continue;
+            try
+            {
+                var info = new FileInfo(path);
+                ComposerAttachments.Add(new NIRAComposerAttachment(path, info.Name));
+                added++;
+            }
+            catch (Exception) { /* Unavailable file: never pretend it was attached. */ }
+        }
+        return added;
+    }
+
+    public void RemoveComposerAttachment(NIRAComposerAttachment? attachment)
+    {
+        if (attachment != null) ComposerAttachments.Remove(attachment);
+    }
 
     public event Action<NIRAVisualArtifact>?
         VisualArtifactReceived;
@@ -24254,7 +25262,7 @@ public sealed class MainWindowViewModel
     public bool CanSend =>
         !_shutdown.IsCancellationRequested &&
         _activeUserTurns < MaximumQueuedUserTurns &&
-        !string.IsNullOrWhiteSpace(MessageInput);
+        (!string.IsNullOrWhiteSpace(MessageInput) || ComposerAttachments.Count > 0);
 
 
     public ICommand SendCommand =>
@@ -24291,6 +25299,13 @@ public sealed class MainWindowViewModel
                 nameof(settings));
 
 
+        ComposerAttachments.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(HasComposerAttachments));
+            OnPropertyChanged(nameof(CanSend));
+            _sendCommand.RaiseCanExecuteChanged();
+        };
+
         _settings.Changed +=
             Settings_Changed;
 
@@ -24318,16 +25333,21 @@ public sealed class MainWindowViewModel
 
     private async Task SendMessageAsync()
     {
-        string input =
-            MessageInput.Trim();
-
-
-        if (string.IsNullOrWhiteSpace(
-                input))
-        {
+        string userText = MessageInput.Trim();
+        NIRAComposerAttachment[] attachments = ComposerAttachments.ToArray();
+        if (string.IsNullOrWhiteSpace(userText) && attachments.Length == 0)
             return;
-        }
 
+        // Attachment paths are user-selected local references. This is NOT a
+        // model-vision upload, document extraction or verified file observation.
+        // NIRA must use its existing authorized capabilities to inspect a path.
+        string input = attachments.Length == 0
+            ? userText
+            : (string.IsNullOrWhiteSpace(userText)
+                ? "Please help me with the local files I selected."
+                : userText) + "\n\n[User-selected local file references — paths only; contents not provided]\n" +
+              string.Join("\n", attachments.Select(a => "- " + a.FullPath)) +
+              "\n[Use available authorized capabilities to inspect if needed. Do not claim to have seen file contents without an actual observation.]";
 
         // A past chat is a one-turn explicit source, never merged into this transcript.
         Guid? attachedPastChatSessionId = _attachedPastChatSessionId;
@@ -24347,6 +25367,7 @@ public sealed class MainWindowViewModel
         _voiceQueue.Interrupt();
 
         MessageInput = string.Empty;
+        ComposerAttachments.Clear();
         OnPropertyChanged(nameof(CanSend));
         _sendCommand.RaiseCanExecuteChanged();
 
@@ -24354,7 +25375,9 @@ public sealed class MainWindowViewModel
         ChatMessageViewModel userMessage =
             new(
                 "user",
-                input);
+                attachments.Length == 0 ? userText :
+                    (string.IsNullOrWhiteSpace(userText) ? "" : userText + "\n") +
+                    string.Join("  ", attachments.Select(a => "📎 " + a.FileName)));
 
 
         Messages.Add(
@@ -24992,11 +26015,52 @@ public sealed class MainWindowViewModel
         }
     }
 }
+
+
+/// <summary>
+/// Composer-only local file reference. The model gets only the path until the
+/// separate content/vision ingestion stage is implemented.
+/// </summary>
+public sealed record NIRAComposerAttachment(string FullPath, string FileName)
+{
+    private string ExtensionLower => Path.GetExtension(FileName).ToLowerInvariant();
+
+    public bool IsImage => ExtensionLower is ".png" or ".jpg" or ".jpeg" or ".webp" or ".gif" or ".bmp";
+    // Do not ask WPF image decoders to open PDF or other non-image attachments.
+    public string? PreviewPath => IsImage ? FullPath : null;
+    public bool IsAudio => ExtensionLower is ".mp3" or ".wav" or ".m4a" or ".flac" or ".aac";
+    public bool IsSpreadsheet => ExtensionLower is ".xlsx" or ".xls" or ".csv";
+    public bool IsCodeOrData => ExtensionLower is ".json" or ".xml" or ".yaml" or ".yml" or ".md" or ".txt" or ".cs" or ".py";
+    public bool IsPdf => ExtensionLower is ".pdf";
+
+    public string ExtensionLabel
+    {
+        get
+        {
+            string ext = Path.GetExtension(FileName);
+            return string.IsNullOrWhiteSpace(ext) ? "FILE" : ext.TrimStart('.').ToUpperInvariant();
+        }
+    }
+
+    public string TypeGlyph =>
+        IsImage ? "▣" :
+        IsAudio ? "♪" :
+        IsSpreadsheet ? "▤" :
+        IsPdf ? "▥" :
+        IsCodeOrData ? "≣" : "•";
+
+    public string TypeLabel =>
+        IsImage ? "Image preview" :
+        IsAudio ? "Audio reference" :
+        IsSpreadsheet ? "Spreadsheet or table" :
+        IsPdf ? "PDF document" :
+        IsCodeOrData ? "Document or data" : "Attached file";
+}
 ```
 
 ---
 
-## 55. `NIRAAgent.UI\ViewModels\NIRAVisualAnnotationRenderer.cs`
+## 56. `NIRAAgent.UI\ViewModels\NIRAVisualAnnotationRenderer.cs`
 
 **File:** `NIRAAgent.UI\ViewModels\NIRAVisualAnnotationRenderer.cs`
 
@@ -25063,7 +26127,7 @@ public static class NIRAVisualAnnotationRenderer
 
 ---
 
-## 56. `NIRAAgent.UI\ViewModels\VisualArtifactViewModel.cs`
+## 57. `NIRAAgent.UI\ViewModels\VisualArtifactViewModel.cs`
 
 **File:** `NIRAAgent.UI\ViewModels\VisualArtifactViewModel.cs`
 
@@ -25177,7 +26241,7 @@ public sealed class VisualArtifactViewModel
 
 ---
 
-## 57. `NIRAAgent.UI\Vision\WindowsScreenCaptureBackend.cs`
+## 58. `NIRAAgent.UI\Vision\WindowsScreenCaptureBackend.cs`
 
 **File:** `NIRAAgent.UI\Vision\WindowsScreenCaptureBackend.cs`
 
@@ -26226,7 +27290,7 @@ public sealed class WindowsScreenCaptureBackend
 
 ---
 
-## 58. `NIRAAgent.UI\Visuals\NIRAVisualArtifactToastWindow.xaml`
+## 59. `NIRAAgent.UI\Visuals\NIRAVisualArtifactToastWindow.xaml`
 
 **File:** `NIRAAgent.UI\Visuals\NIRAVisualArtifactToastWindow.xaml`
 
@@ -26440,7 +27504,7 @@ public sealed class WindowsScreenCaptureBackend
 
 ---
 
-## 59. `NIRAAgent.UI\Visuals\NIRAVisualArtifactToastWindow.xaml.cs`
+## 60. `NIRAAgent.UI\Visuals\NIRAVisualArtifactToastWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\Visuals\NIRAVisualArtifactToastWindow.xaml.cs`
 
@@ -26884,7 +27948,7 @@ public partial class NIRAVisualArtifactToastWindow : Window
 
 ---
 
-## 60. `NIRAAgent.UI\Visuals\NIRAVisualArtifactViewerWindow.xaml`
+## 61. `NIRAAgent.UI\Visuals\NIRAVisualArtifactViewerWindow.xaml`
 
 **File:** `NIRAAgent.UI\Visuals\NIRAVisualArtifactViewerWindow.xaml`
 
@@ -26960,7 +28024,7 @@ public partial class NIRAVisualArtifactToastWindow : Window
 
 ---
 
-## 61. `NIRAAgent.UI\Visuals\NIRAVisualArtifactViewerWindow.xaml.cs`
+## 62. `NIRAAgent.UI\Visuals\NIRAVisualArtifactViewerWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\Visuals\NIRAVisualArtifactViewerWindow.xaml.cs`
 
@@ -27015,7 +28079,7 @@ public partial class NIRAVisualArtifactViewerWindow : Window
 
 ---
 
-## 62. `NIRAAgent.UI\Visuals\NIRAVisualToastPlacementService.cs`
+## 63. `NIRAAgent.UI\Visuals\NIRAVisualToastPlacementService.cs`
 
 **File:** `NIRAAgent.UI\Visuals\NIRAVisualToastPlacementService.cs`
 
@@ -27432,7 +28496,7 @@ public sealed class NIRAVisualToastPlacementService
 
 ---
 
-## 63. `NIRAAgent\Agent\State\NIRAStateService.cs`
+## 64. `NIRAAgent\Agent\State\NIRAStateService.cs`
 
 **File:** `NIRAAgent\Agent\State\NIRAStateService.cs`
 
@@ -27759,7 +28823,7 @@ public sealed class NIRAStateService
 
 ---
 
-## 64. `NIRAAgent\AI\Cognition\NIRACharacterDeliveryPolicy.cs`
+## 65. `NIRAAgent\AI\Cognition\NIRACharacterDeliveryPolicy.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRACharacterDeliveryPolicy.cs`
 
@@ -27807,14 +28871,30 @@ internal static class NIRACharacterDeliveryPolicy
     // state did not meaningfully change delivery, a second stylistic cloud call
     // would not add character fidelity. Deep/tool/task drafts remain conservative
     // because they are never marked safe by the conversational fast-path policy.
+    // Compatibility overload for prior policies/tests; without the trusted
+    // Executive review receipt, non-social tasks still require realization.
     public static bool RequiresOptimizedFidelityPass(
         NIRACognitionDecision decision, string finalDraft,
-        bool hasOutstandingCognitionWork, bool authoritativeCharacterShift)
+        bool hasOutstandingCognitionWork, bool authoritativeCharacterShift) =>
+        RequiresOptimizedFidelityPass(decision, finalDraft,
+            hasOutstandingCognitionWork, authoritativeCharacterShift, false);
+
+    public static bool RequiresOptimizedFidelityPass(
+        NIRACognitionDecision decision, string finalDraft,
+        bool hasOutstandingCognitionWork, bool authoritativeCharacterShift,
+        bool independentlyReviewed)
     {
         if (!RequiresFidelityPass(decision, finalDraft, hasOutstandingCognitionWork))
             return false;
-        return !decision.ConversationOnly || !decision.ReplyReady ||
-               !decision.CharacterReady || authoritativeCharacterShift;
+        // No model flag alone allows skipping verification. First-turn
+        // conversation/knowledge must pass the Executive's trusted fast-path;
+        // observed work must be independently completed and reviewed first.
+        // After either boundary, a stable already-character-ready final reply
+        // gains nothing from a second expensive wording call.
+        return !(decision.ConversationOnly || decision.SelfContainedAnswer ||
+                 independentlyReviewed) ||
+               !decision.ReplyReady || !decision.CharacterReady ||
+               authoritativeCharacterShift;
     }
 
     public static NIRACharacterDeliveryAssessment Assess(
@@ -28104,7 +29184,7 @@ internal readonly record struct NIRACharacterDeliveryAssessment(
 
 ---
 
-## 65. `NIRAAgent\AI\Cognition\NIRACognitionContext.cs`
+## 66. `NIRAAgent\AI\Cognition\NIRACognitionContext.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRACognitionContext.cs`
 
@@ -28348,7 +29428,7 @@ public sealed record NIRACognitionContext
 
 ---
 
-## 66. `NIRAAgent\AI\Cognition\NIRACognitionContextBuilder.cs`
+## 67. `NIRAAgent\AI\Cognition\NIRACognitionContextBuilder.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRACognitionContextBuilder.cs`
 
@@ -29394,7 +30474,7 @@ public sealed class NIRACognitionContextBuilder
 
 ---
 
-## 67. `NIRAAgent\AI\Cognition\NIRACognitionContracts.cs`
+## 68. `NIRAAgent\AI\Cognition\NIRACognitionContracts.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRACognitionContracts.cs`
 
@@ -29414,6 +30494,7 @@ using NIRAAgent.Voice;
 using NIRAAgent.Tools;
 using NIRAAgent.Artifacts;
 using NIRAAgent.Presentation;
+using NIRAAgent.Self.Model;
 
 namespace NIRAAgent.AI.Cognition;
 
@@ -29535,6 +30616,13 @@ public sealed record NIRACognitionDecision
     // allowing a one-call public response; action/verification runs stay reviewed.
     public bool ConversationOnly { get; init; }
 
+    // Model-proposed class for a purely self-contained explanation using existing
+    // general knowledge. Unlike conversationOnly, it may contain technical
+    // facts, but may NOT depend on live evidence, verification, tools, history,
+    // obligations, or external app state. The Executive applies the same strict
+    // empty-action/evidence checks before admitting a single-call result.
+    public bool SelfContainedAnswer { get; init; }
+
     // True only when the fresh user event contains source-grounded novelty
     // worth the unified experience-formation pass (for example a durable
     // user fact/preference or meaningful outcome). Future obligations are
@@ -29550,6 +30638,13 @@ public sealed record NIRACognitionDecision
     // reminder or reschedule) and the authoritative commitment layer must run
     // before NIRA tells the user that obligation is stored/scheduled.
     public bool ReviewCommitment { get; init; }
+
+    // Optional structured obligation proposal authored by the SAME main
+    // cognition call. The trusted self-model validates grounded evidence,
+    // temporal semantics and permissions before any persistence. If absent or
+    // rejected, the existing formation model remains the conservative fallback.
+    public IReadOnlyList<NIRACommitmentFormationProposal> CommitmentProposals { get; init; } =
+        Array.Empty<NIRACommitmentFormationProposal>();
 
     public IReadOnlyList<NIRAConversationSearchRequest> ConversationSearches { get; init; }
         = Array.Empty<NIRAConversationSearchRequest>();
@@ -29770,7 +30865,7 @@ public sealed record NIRACognitionAppraisalProposal
 
 ---
 
-## 68. `NIRAAgent\AI\Cognition\NIRACognitionPromptCompiler.cs`
+## 69. `NIRAAgent\AI\Cognition\NIRACognitionPromptCompiler.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRACognitionPromptCompiler.cs`
 
@@ -29978,6 +31073,15 @@ internal static class NIRACognitionPromptCompiler
         Include an exact short verbatim evidenceQuote from THIS message.
         Never interpret quoted examples, negations or questions as requests
         to cancel. Do not also emit lifecycle proposals for this operation.
+        In a follow-up such as an omitted-noun command, first resolve "that" or
+        "it" against the immediate conversation and current open work. When
+        the referent is clearly an open or blocked branch and the fresh user
+        is instructing you to remove it, issue CancelOneBranch in controlRequests
+        (the runtime checks the actual branch). This is an ACTION, not casual
+        conversation. If you have not received an authoritative control receipt,
+        never say a branch was removed, hidden, cleared or cancelled. If the
+        first message merely complains about how a branch looks, respond to
+        the feedback without pretending to have changed any system state.
         Format: "controlRequests":[{"operation":"CancelAllBranchesAndCommitments",
         "evidenceQuote":"exact words from current user","branchId":null}].
 
@@ -30024,6 +31128,36 @@ internal static class NIRACognitionPromptCompiler
         existing facts, memory recall, greeting, and ordinary task planning is NOT
         new lived experience and requires no memory review. Do not infer new facts
         from NIRA's own reply.
+
+        TIME-BOUND OBLIGATIONS: To save a full additional memory-formation
+        LLM call, the SAME initial cognition response MAY supply one
+        commitmentProposals item when reviewCommitment=true. Example:
+        {"action":"Create","summary":"Remind user to check the report",
+         "evidenceSource":"NIRAReply","evidenceQuote":"I'll remind you",
+         "temporal":{"mode":"Exact","relativeDelaySeconds":120,
+                     "originalExpression":"in two minutes"},
+         "confidence":0.95,"reason":"User requested timed reminder"}.
+        evidenceQuote MUST be a verbatim substring of the ACTUAL reply;
+        relativeDelaySeconds comes from the user's specified duration, never
+        from a guessed current clock. Use a normalized short summary and
+        correct enum strings; the trusted self-model rejects unsupported
+        evidence, duplicates and invalid schedules. If you cannot supply
+        a valid proposal, emit [] and let the existing formation pass reason.
+        Never claim a reminder was persisted merely because you proposed it.
+        The runtime will authoritatively check persistence before delivery.
+
+        VERIFIED REMINDER WAKE (internal event only): On TemporalCommitmentDue,
+        NIRA decides whether to deliver the reminder now or defer based on
+        the authoritative schedule and user situation. If you actually deliver
+        a one-off reminder in a Complete reply, you MAY include:
+        {"action":"Complete","commitmentId":"exact event GUID",
+         "evidenceSource":"NIRAReply","evidenceQuote":"exact reply fragment",
+         "confidence":0.95,"reason":"Delivered current due reminder"}
+        in commitmentProposals without a separate memory-formation call.
+        The Executive requires the EXACT wake ID and validates the reply quote
+        and persisted lifecycle. Never mark deferred or unspoken work complete.
+        For recurring commitments do not resolve the whole obligation: one
+        delivery is only one occurrence. When in doubt, emit [] for fallback.
 
         FUTURE OBLIGATIONS / REMINDERS: reviewCommitment is a separate terminal
         signal. Set reviewCommitment=true ONLY when NIRA's FINAL reply actually
@@ -30166,7 +31300,8 @@ internal static class NIRACognitionPromptCompiler
          "speech":"separate spoken wording or empty to use reply",
          "displayBlocks":[],
          "replyReady":true,"characterReady":true,
-         "conversationOnly":false,
+         "conversationOnly":false,"selfContainedAnswer":false,
+         "commitmentProposals":[],
          "reviewExperience":false,"reviewCommitment":false,
          "novelExperienceEvidence":"","memorySearches":[],"conversationSearches":[],
          "replyPresentation":"Natural|PreserveExact",
@@ -30180,6 +31315,19 @@ internal static class NIRACognitionPromptCompiler
          "vocalIntent":{"warmth":0.0,"energy":0.0,"tension":0.0,
            "playfulness":0.0,"confidence":0.0,"tenderness":0.0,
            "surprise":0.0,"pace":1.0}}
+        SELF-CONTAINED ONE-CALL KNOWLEDGE: Set selfContainedAnswer=true only for a
+        complete stand-alone explanation supported by general reasoning without
+        external evidence, new memory, task continuation, current PC/app state,
+        numbers drawn from a live system, actions, or promises. Return the FULL
+        technically precise answer as NIRA in the first call with replyReady=true
+        and characterReady=true. Avoid misleading technical analogies and false
+        concurrency or reliability guarantees; state material uncertainty. Do NOT use for safety-critical or uncertain
+        claims, personal history, ongoing work, or a task that genuinely benefits
+        from tools or independent verification. conversationOnly and
+        selfContainedAnswer are mutually exclusive; when in doubt, set both false.
+        The runtime still validates its actual work/evidence state and all
+        action arrays; these fields never grant authority or prove correctness.
+
         CONVERSATION-ONLY ONE-CALL DELIVERY: Set conversationOnly=true ONLY when
         the current user turn is purely interpersonal conversation (greeting,
         personal reaction or casual check-in) and the answer neither claims a
@@ -30317,6 +31465,13 @@ internal static class NIRACognitionPromptCompiler
             unambiguous explicit request. No simultaneous goal/branch proposals.
             Runtime exclusively selects CURRENT open records and confirms writes.
             Never execute quoted examples or negated cancellation requests.
+            Resolve short follow-up action commands using the immediate
+            conversation: if a clear preceding referent is an open or blocked
+            branch and the user now instructs its removal, this is a typed
+            CancelOneBranch control request, not interpersonal-only chat.
+            Successful-looking conversational wording is never proof of a
+            mutation: do not tell the user something is gone until the runtime
+            returns the control receipt. Complaints alone are not commands.
 
             SCREEN / SPOKEN PRESENTATION: "reply" is for on-screen reading;
             "speech" is for natural voice (may be empty for brief conversation).
@@ -30360,10 +31515,10 @@ internal static class NIRACognitionPromptCompiler
             acknowledgements and useful content without generic appeasement, routine
             offers of help, or customer-service conflict management. Set
             characterReady=true only when that wording already reflects NIRA from the
-            supplied pre-commit state. The Executive always performs one bounded,
-            presentation-only realization for terminal Natural replies using NIRA's
-            current authoritative state, even when that state did not move.
-            PreserveExact is not rewritten. Cognition must still draft NIRA's own
+            supplied pre-commit state. The Executive verifies completion and
+            post-interaction character state. A character-ready verified answer
+            can be delivered directly while state is stable; otherwise it may
+            need a separate realization. PreserveExact is not rewritten. Cognition must still draft NIRA's own
             credible voice; never postpone identity to the expression pass.
             Set reviewExperience=true ONLY for a novel, user-supplied fact,
             preference, or grounded meaningful outcome. For a user event, set
@@ -30628,6 +31783,7 @@ internal static class NIRACognitionPromptCompiler
             "replyReady": true|false,
             "characterReady": true|false,
             "conversationOnly": true|false,
+            "selfContainedAnswer": true|false,
             "speech": "optional natural spoken version of reply",
             "displayBlocks": [{"type":"heading|text|card|metric|table|chart|code|details|list|quote|timeline|checklist|progress|tabs|followups",
               "title":"","text":"","unit":"","language":"",
@@ -30640,6 +31796,10 @@ internal static class NIRACognitionPromptCompiler
             Never infer ISO calendar dates from weekday names alone.
             "reviewExperience": true|false,
             "reviewCommitment": true|false,
+            "commitmentProposals": [{"action":"Create","summary":"...",
+                 "evidenceSource":"NIRAReply","evidenceQuote":"exact reply fragment",
+                 "temporal":{"mode":"Exact","relativeDelaySeconds":120},
+                 "confidence":0.95,"reason":"..."}],
             "novelExperienceEvidence": "exact short quote from current user input or empty",
             "conversationSearches": [{"query":"description of prior exchange",
                  "maximumResults":6,"currentSessionOnly":false,
@@ -31231,11 +32391,9 @@ internal static class NIRACognitionPromptCompiler
 
             if (requiredNames.Count > 0)
             {
-                b.Append(" | REQUIRED_ARGUMENT_KEYS=")
-                    .Append(string.Join(",", requiredNames));
-                // Use the exact current registered parameter names as a compact
-                // structural guide. This is a template, NOT a filled-in request;
-                // values must still be grounded and runtime-validated.
+                // requiredArguments includes the complete exact required key
+                // set; duplicating it in REQUIRED_ARGUMENT_KEYS wasted prompt
+                // tokens every turn. This remains runtime-derived and typed.
                 b.Append(" | requiredArguments={")
                     .Append(string.Join(",", requiredNames.Select(name =>
                         "\"" + name + "\":<value>")))
@@ -31570,7 +32728,7 @@ internal static class NIRACognitionPromptCompiler
 
 ---
 
-## 69. `NIRAAgent\AI\Cognition\NIRACognitionService.cs`
+## 70. `NIRAAgent\AI\Cognition\NIRACognitionService.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRACognitionService.cs`
 
@@ -31596,6 +32754,7 @@ using NIRAAgent.Voice;
 using NIRAAgent.Tools;
 using NIRAAgent.Artifacts;
 using NIRAAgent.Presentation;
+using NIRAAgent.Self.Model;
 
 namespace NIRAAgent.AI.Cognition;
 
@@ -31744,6 +32903,8 @@ public sealed class NIRACognitionService
         _compactContract = LoadPromptFile("cognition_contract.yaml");
 
         Debug.WriteLine($"[DeepRouting] READY | Revision={NIRAModelSelection.RoutingRevision} | " +
+            $"AdaptiveRole={NIRAModelSelection.AdaptiveRoleName} | " +
+            $"DeepWorkRole={NIRAModelSelection.DeepWorkRoleName} | " +
             $"Primary={NIRAModelSelection.Primary} | Deep={NIRAModelSelection.Deep} | " +
             "Mode=SharedExecutiveMultiRound");
 
@@ -34181,10 +35342,13 @@ public sealed class NIRACognitionService
             ReplyReady = ReadValue(root, "replyReady", false),
             CharacterReady = ReadValue(root, "characterReady", false),
             ConversationOnly = ReadValue(root, "conversationOnly", false),
+            SelfContainedAnswer = ReadValue(root, "selfContainedAnswer", false),
             ReviewExperience = ReadValue(root, "reviewExperience", false),
             NovelExperienceEvidence = ReadValue(root, "novelExperienceEvidence", string.Empty)
                 ?? string.Empty,
             ReviewCommitment = ReadValue(root, "reviewCommitment", false),
+            CommitmentProposals = ReadArrayItems<NIRACommitmentFormationProposal>(
+                root, "commitmentProposals").Take(2).ToArray(),
 
             MemorySearches = ReadArrayItems<NIRAMemorySearchRequest>(
                 root,
@@ -34730,7 +35894,7 @@ internal sealed class NIRABranchEvidenceSourceJsonConverter
 
 ---
 
-## 70. `NIRAAgent\AI\Cognition\NIRAConversationFastPath.cs`
+## 71. `NIRAAgent\AI\Cognition\NIRAConversationFastPath.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRAConversationFastPath.cs`
 
@@ -34754,7 +35918,8 @@ public static class NIRAConversationFastPath
     {
         return firstUserCycle && !hasTrustedWorkEvidence &&
             !hasPendingOwnedTask && !embeddedApplication &&
-            d.ConversationOnly && d.ReplyReady && d.CharacterReady &&
+            (d.ConversationOnly ^ d.SelfContainedAnswer) &&
+            d.ReplyReady && d.CharacterReady &&
             d.State == NIRACognitionState.Complete && d.EmitReply &&
             d.ReplyPresentation == NIRAReplyPresentationMode.Natural &&
             !string.IsNullOrWhiteSpace(d.Reply) &&
@@ -34769,14 +35934,15 @@ public static class NIRAConversationFastPath
             d.DynamicToolProposals.Count == 0 && d.DynamicToolInvocations.Count == 0 &&
             d.VisualPresentations.Count == 0 &&
             string.IsNullOrWhiteSpace(d.ProgressUpdate) &&
-            d.RuntimeContractDiagnostics.Count == 0;
+            d.RuntimeContractDiagnostics.Count == 0 &&
+            d.CommitmentProposals.Count == 0;
     }
 }
 ```
 
 ---
 
-## 71. `NIRAAgent\AI\Cognition\NIRAProductionContinuityPolicy.cs`
+## 72. `NIRAAgent\AI\Cognition\NIRAProductionContinuityPolicy.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRAProductionContinuityPolicy.cs`
 
@@ -34891,7 +36057,7 @@ public static class NIRAProductionContinuityPolicy
 
 ---
 
-## 72. `NIRAAgent\AI\Cognition\NIRAPublicCharacterDelivery.cs`
+## 73. `NIRAAgent\AI\Cognition\NIRAPublicCharacterDelivery.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRAPublicCharacterDelivery.cs`
 
@@ -35021,7 +36187,7 @@ public static class NIRAPublicCharacterDelivery
 
 ---
 
-## 73. `NIRAAgent\AI\Cognition\NIRAResponseRealizationService.cs`
+## 74. `NIRAAgent\AI\Cognition\NIRAResponseRealizationService.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRAResponseRealizationService.cs`
 
@@ -36325,7 +37491,7 @@ public sealed record NIRAResponseRealizationRequest
 
 ---
 
-## 74. `NIRAAgent\AI\Cognition\NIRAScopedApplicationPromptCatalog.cs`
+## 75. `NIRAAgent\AI\Cognition\NIRAScopedApplicationPromptCatalog.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRAScopedApplicationPromptCatalog.cs`
 
@@ -36498,7 +37664,7 @@ internal readonly record struct NIRAScopedPromptSelection(
 
 ---
 
-## 75. `NIRAAgent\AI\Cognition\NIRATaskCompletionReviewService.cs`
+## 76. `NIRAAgent\AI\Cognition\NIRATaskCompletionReviewService.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRATaskCompletionReviewService.cs`
 
@@ -36952,7 +38118,7 @@ public sealed record NIRATaskCompletionReview(
 
 ---
 
-## 76. `NIRAAgent\AI\Ollama\NIRAModelSelection.cs`
+## 77. `NIRAAgent\AI\Ollama\NIRAModelSelection.cs`
 
 **File:** `NIRAAgent\AI\Ollama\NIRAModelSelection.cs`
 
@@ -36961,6 +38127,14 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 
 namespace NIRAAgent.AI.Ollama;
+
+// Stable semantic roles belong to NIRA/ELVARA, never to the cloud model provider.
+// They describe why a reasoning resource is selected, not a second personality.
+public enum NIRAReasoningRole
+{
+    Adaptive,
+    DeepWork
+}
 
 // NIRA has one identity and runtime. These are interchangeable reasoning
 // resources, not separate agents or character/memory owners.
@@ -36975,10 +38149,31 @@ public static class NIRAModelSelection
     public static string Primary => Resolve("NIRA_OLLAMA_PRIMARY_MODEL", PrimaryDefault);
     public static string Deep => Resolve("NIRA_OLLAMA_DEEP_MODEL", DeepDefault);
 
-    // A run selects its reasoning model by persisted delegation state, never
+    // Stable product/runtime role identities. Changing the underlying provider
+    // or version never renames NIRA or changes her character and shared Executive.
+    public const string AdaptiveRoleName = "NIRA Adaptive";
+    public const string DeepWorkRoleName = "NIRA Deep Work";
+
+    public static string NameForRole(NIRAReasoningRole role) => role switch
+    {
+        NIRAReasoningRole.Adaptive => AdaptiveRoleName,
+        NIRAReasoningRole.DeepWork => DeepWorkRoleName,
+        _ => throw new ArgumentOutOfRangeException(nameof(role))
+    };
+
+    // Provider selection and role naming stay separate. Compatibility accessors
+    // Primary/Deep remain intact for existing response/vision/memory consumers.
+    public static string ModelForRole(NIRAReasoningRole role) => role switch
+    {
+        NIRAReasoningRole.Adaptive => Primary,
+        NIRAReasoningRole.DeepWork => Deep,
+        _ => throw new ArgumentOutOfRangeException(nameof(role))
+    };
+
+    // A run selects its reasoning resource by persisted delegation state, never
     // by user text, tool names, or an additional classifier LLM call.
     public static string ForCognition(bool deepRunActive) =>
-        deepRunActive ? Deep : Primary;
+        ModelForRole(deepRunActive ? NIRAReasoningRole.DeepWork : NIRAReasoningRole.Adaptive);
 
     private static string Resolve(string variable, string fallback)
     {
@@ -37200,7 +38395,7 @@ public static class NIRAModelSelection
 
 ---
 
-## 77. `NIRAAgent\AI\Ollama\NIRAOllamaApiKeyService.cs`
+## 78. `NIRAAgent\AI\Ollama\NIRAOllamaApiKeyService.cs`
 
 **File:** `NIRAAgent\AI\Ollama\NIRAOllamaApiKeyService.cs`
 
@@ -38059,7 +39254,7 @@ public sealed class NIRAOllamaApiKeyService : IDisposable
 
 ---
 
-## 78. `NIRAAgent\AI\Ollama\ollamaClient.cs`
+## 79. `NIRAAgent\AI\Ollama\ollamaClient.cs`
 
 **File:** `NIRAAgent\AI\Ollama\ollamaClient.cs`
 
@@ -38595,7 +39790,7 @@ public sealed class OllamaClient : IDisposable
 
 ---
 
-## 79. `NIRAAgent\Artifacts\NIRAVisualArtifactContracts.cs`
+## 80. `NIRAAgent\Artifacts\NIRAVisualArtifactContracts.cs`
 
 **File:** `NIRAAgent\Artifacts\NIRAVisualArtifactContracts.cs`
 
@@ -38897,7 +40092,7 @@ public sealed record NIRAVisualArtifact
 
 ---
 
-## 80. `NIRAAgent\Artifacts\NIRAVisualArtifactService.cs`
+## 81. `NIRAAgent\Artifacts\NIRAVisualArtifactService.cs`
 
 **File:** `NIRAAgent\Artifacts\NIRAVisualArtifactService.cs`
 
@@ -39497,7 +40692,7 @@ public sealed class NIRAVisualArtifactService
 
 ---
 
-## 81. `NIRAAgent\Authorization\NIRAAuthorityContracts.cs`
+## 82. `NIRAAgent\Authorization\NIRAAuthorityContracts.cs`
 
 **File:** `NIRAAgent\Authorization\NIRAAuthorityContracts.cs`
 
@@ -39636,7 +40831,7 @@ public sealed record NIRAAuthorityAuditRow
 
 ---
 
-## 82. `NIRAAgent\Authorization\NIRAAuthorityExecutionContext.cs`
+## 83. `NIRAAgent\Authorization\NIRAAuthorityExecutionContext.cs`
 
 **File:** `NIRAAgent\Authorization\NIRAAuthorityExecutionContext.cs`
 
@@ -39710,7 +40905,7 @@ public sealed class NIRAAuthorityExecutionContextAccessor
 
 ---
 
-## 83. `NIRAAgent\Authorization\NIRAAuthorityExecutionProfiles.cs`
+## 84. `NIRAAgent\Authorization\NIRAAuthorityExecutionProfiles.cs`
 
 **File:** `NIRAAgent\Authorization\NIRAAuthorityExecutionProfiles.cs`
 
@@ -40189,7 +41384,7 @@ public static class NIRAAuthorityExecutionProfiles
 
 ---
 
-## 84. `NIRAAgent\Authorization\NIRAAuthorityStore.cs`
+## 85. `NIRAAgent\Authorization\NIRAAuthorityStore.cs`
 
 **File:** `NIRAAgent\Authorization\NIRAAuthorityStore.cs`
 
@@ -40487,7 +41682,7 @@ public sealed class NIRAAuthorityStore
 
 ---
 
-## 85. `NIRAAgent\Authorization\NIRACapabilityApprovalBroker.cs`
+## 86. `NIRAAgent\Authorization\NIRACapabilityApprovalBroker.cs`
 
 **File:** `NIRAAgent\Authorization\NIRACapabilityApprovalBroker.cs`
 
@@ -40557,7 +41752,7 @@ public sealed class NIRACapabilityApprovalBroker
 
 ---
 
-## 86. `NIRAAgent\Authorization\NIRACapabilityRequestPolicy.cs`
+## 87. `NIRAAgent\Authorization\NIRACapabilityRequestPolicy.cs`
 
 **File:** `NIRAAgent\Authorization\NIRACapabilityRequestPolicy.cs`
 
@@ -41302,7 +42497,7 @@ public sealed class NIRACapabilityRequestPolicy
 
 ---
 
-## 87. `NIRAAgent\Authorization\NIRACredentialBroker.cs`
+## 88. `NIRAAgent\Authorization\NIRACredentialBroker.cs`
 
 **File:** `NIRAAgent\Authorization\NIRACredentialBroker.cs`
 
@@ -41598,7 +42793,7 @@ public sealed class NIRACredentialBroker
 
 ---
 
-## 88. `NIRAAgent\Authorization\NIRACredentialContracts.cs`
+## 89. `NIRAAgent\Authorization\NIRACredentialContracts.cs`
 
 **File:** `NIRAAgent\Authorization\NIRACredentialContracts.cs`
 
@@ -41659,7 +42854,7 @@ public sealed record NIRACredentialPromptResponse
 
 ---
 
-## 89. `NIRAAgent\Authorization\NIRACredentialStore.cs`
+## 90. `NIRAAgent\Authorization\NIRACredentialStore.cs`
 
 **File:** `NIRAAgent\Authorization\NIRACredentialStore.cs`
 
@@ -42258,7 +43453,7 @@ public sealed class NIRACredentialStore
 
 ---
 
-## 90. `NIRAAgent\Authorization\NIRARiskAdaptiveAuthority.cs`
+## 91. `NIRAAgent\Authorization\NIRARiskAdaptiveAuthority.cs`
 
 **File:** `NIRAAgent\Authorization\NIRARiskAdaptiveAuthority.cs`
 
@@ -42478,7 +43673,7 @@ public static class NIRARiskAdaptiveAuthority
 
 ---
 
-## 91. `NIRAAgent\Authorization\NIRAScopedCapabilityAuthorizer.cs`
+## 92. `NIRAAgent\Authorization\NIRAScopedCapabilityAuthorizer.cs`
 
 **File:** `NIRAAgent\Authorization\NIRAScopedCapabilityAuthorizer.cs`
 
@@ -43376,7 +44571,7 @@ public sealed class NIRAScopedCapabilityAuthorizer : INIRACapabilityAuthorizer
 
 ---
 
-## 92. `NIRAAgent\Branches\NIRABranchContracts.cs`
+## 93. `NIRAAgent\Branches\NIRABranchContracts.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchContracts.cs`
 
@@ -43874,7 +45069,7 @@ public sealed record NIRABranchResultEvent
 
 ---
 
-## 93. `NIRAAgent\Branches\NIRABranchRunnerService.cs`
+## 94. `NIRAAgent\Branches\NIRABranchRunnerService.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchRunnerService.cs`
 
@@ -45119,7 +46314,7 @@ public sealed class NIRABranchRunnerService
 
 ---
 
-## 94. `NIRAAgent\Branches\NIRABranchService.cs`
+## 95. `NIRAAgent\Branches\NIRABranchService.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchService.cs`
 
@@ -47248,7 +48443,7 @@ public sealed class NIRABranchService
 
 ---
 
-## 95. `NIRAAgent\Branches\NIRABranchStore.cs`
+## 96. `NIRAAgent\Branches\NIRABranchStore.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchStore.cs`
 
@@ -48228,7 +49423,7 @@ public sealed class NIRABranchStore
 
 ---
 
-## 96. `NIRAAgent\Branches\NIRABranchWorkContracts.cs`
+## 97. `NIRAAgent\Branches\NIRABranchWorkContracts.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchWorkContracts.cs`
 
@@ -48663,7 +49858,7 @@ public sealed record NIRABranchWorkResultEvent
 
 ---
 
-## 97. `NIRAAgent\Branches\NIRABranchWorkLoopGuard.cs`
+## 98. `NIRAAgent\Branches\NIRABranchWorkLoopGuard.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchWorkLoopGuard.cs`
 
@@ -48867,7 +50062,7 @@ internal static class NIRABranchWorkLoopGuard
 
 ---
 
-## 98. `NIRAAgent\Branches\NIRABranchWorkReconsiderationService.cs`
+## 99. `NIRAAgent\Branches\NIRABranchWorkReconsiderationService.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchWorkReconsiderationService.cs`
 
@@ -49271,7 +50466,7 @@ public sealed class NIRABranchWorkReconsiderationService
 
 ---
 
-## 99. `NIRAAgent\Branches\NIRABranchWorkService.cs`
+## 100. `NIRAAgent\Branches\NIRABranchWorkService.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchWorkService.cs`
 
@@ -50618,7 +51813,7 @@ public sealed class NIRABranchWorkService
 
 ---
 
-## 100. `NIRAAgent\Branches\NIRABranchWorkStore.cs`
+## 101. `NIRAAgent\Branches\NIRABranchWorkStore.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchWorkStore.cs`
 
@@ -51171,7 +52366,7 @@ public sealed class NIRABranchWorkStore
 
 ---
 
-## 101. `NIRAAgent\Browser\NIRABrowserActionJournal.cs`
+## 102. `NIRAAgent\Browser\NIRABrowserActionJournal.cs`
 
 **File:** `NIRAAgent\Browser\NIRABrowserActionJournal.cs`
 
@@ -51289,7 +52484,7 @@ internal sealed class NIRABrowserActionJournal
 
 ---
 
-## 102. `NIRAAgent\Browser\NIRABrowserContracts.cs`
+## 103. `NIRAAgent\Browser\NIRABrowserContracts.cs`
 
 **File:** `NIRAAgent\Browser\NIRABrowserContracts.cs`
 
@@ -51560,7 +52755,7 @@ public sealed record NIRABrowserDownloadResult
 
 ---
 
-## 103. `NIRAAgent\Browser\NIRABrowserService.cs`
+## 104. `NIRAAgent\Browser\NIRABrowserService.cs`
 
 **File:** `NIRAAgent\Browser\NIRABrowserService.cs`
 
@@ -51581,6 +52776,13 @@ using NIRAAgent.Authorization;
 using NIRAAgent.Goals;
 
 namespace NIRAAgent.Browser;
+
+// The browser has not performed a selection when the requested native option
+// is absent at preflight. Do not classify this as an uncertain dispatched write.
+public sealed class NIRABrowserOptionUnavailableException : InvalidOperationException
+{
+    public NIRABrowserOptionUnavailableException(string message) : base(message) { }
+}
 
 // =============================================================
 // NIRA-MANAGED BROWSER RUNTIME
@@ -51729,6 +52931,60 @@ public sealed class NIRABrowserService : IAsyncDisposable
             Path.Combine(_browserRoot, "dispatch", "browser-dispatch.db"));
     }
 
+    private BrowserTypeLaunchPersistentContextOptions CreateLaunchOptions(
+        bool headed, string? channel = null) => new()
+    {
+        Channel = channel,
+        Headless = !headed,
+        AcceptDownloads = true,
+        DownloadsPath = _downloadsRoot,
+        ArtifactsDir = _artifactsRoot,
+        ViewportSize = new ViewportSize
+        {
+            Width = DefaultViewportWidth,
+            Height = DefaultViewportHeight
+        }
+    };
+
+    private static bool IsBundledChromiumMissing(string error) =>
+        !string.IsNullOrEmpty(error) &&
+        error.Contains("Executable doesn't exist at", StringComparison.OrdinalIgnoreCase);
+
+    // Read-only discovery from standard installed-browser locations. There is
+    // no process execution, download, registry mutation, or user profile reuse.
+    private static IReadOnlyList<string> FindInstalledBrowserChannels()
+    {
+        if (!OperatingSystem.IsWindows())
+            return Array.Empty<string>();
+
+        return DiscoverInstalledBrowserChannels(new[]
+        {
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
+        });
+    }
+
+    // Parameterized discovery allows an offline regression to verify both the
+    // supported browser names and the fallback preference without launching.
+    private static IReadOnlyList<string> DiscoverInstalledBrowserChannels(
+        IEnumerable<string> installationRoots)
+    {
+        var channels = new List<string>();
+        foreach ((string channel, string vendor, string product, string executable) in new[]
+        {
+            ("chrome", "Google", "Chrome", "chrome.exe"),
+            ("msedge", "Microsoft", "Edge", "msedge.exe")
+        })
+        {
+            if (installationRoots.Any(root =>
+                !string.IsNullOrWhiteSpace(root) &&
+                File.Exists(Path.Combine(root, vendor, product, "Application", executable))))
+                channels.Add(channel);
+        }
+        return channels;
+    }
+
     public async Task<NIRABrowserSessionSnapshot> OpenAsync(
         string? profile,
         bool headed,
@@ -51764,31 +53020,50 @@ public sealed class NIRABrowserService : IAsyncDisposable
 
                 Directory.CreateDirectory(userDataDir);
 
+                // Prefer the exact Chromium revision installed for this
+                // Playwright package. If its browser bundle has not been
+                // installed, a verified system Chrome/Edge installation is
+                // a supported fallback. Both use NIRA's isolated profile;
+                // NEVER attach to the user's ordinary browser profile.
                 try
                 {
-                    _context =
-                        await _playwright.Chromium.LaunchPersistentContextAsync(
-                            userDataDir,
-                            new BrowserTypeLaunchPersistentContextOptions
-                            {
-                                Headless = !headed,
-                                AcceptDownloads = true,
-                                DownloadsPath = _downloadsRoot,
-                                ArtifactsDir = _artifactsRoot,
-                                ViewportSize = new ViewportSize
-                                {
-                                    Width = DefaultViewportWidth,
-                                    Height = DefaultViewportHeight
-                                }
-                            });
+                    _context = await _playwright.Chromium.LaunchPersistentContextAsync(
+                        userDataDir, CreateLaunchOptions(headed));
                 }
-                catch (PlaywrightException ex) when (
-                    ex.Message.Contains("Executable doesn't exist", StringComparison.OrdinalIgnoreCase) ||
-                    ex.Message.Contains("browserType.launchPersistentContext", StringComparison.OrdinalIgnoreCase))
+                catch (PlaywrightException ex) when (IsBundledChromiumMissing(ex.Message))
                 {
-                    throw new InvalidOperationException(
-                        "Playwright Chromium is not installed for this NIRA build. Build the project, then run the generated playwright.ps1 install chromium command once.",
-                        ex);
+                    foreach (string channel in FindInstalledBrowserChannels())
+                    {
+                        try
+                        {
+                            _context = await _playwright.Chromium.LaunchPersistentContextAsync(
+                                userDataDir, CreateLaunchOptions(headed, channel));
+                            Debug.WriteLine(
+                                $"[Browser] SYSTEM_BROWSER_FALLBACK | Channel={channel} | " +
+                                "Profile=NIRA-isolated | BundledChromium=Missing");
+                            break;
+                        }
+                        catch (PlaywrightException fallbackError)
+                        {
+                            // A failed channel must never claim a live session.
+                            // Try the next known installed channel, then provide
+                            // the official version-matched installation option.
+                            Debug.WriteLine(
+                                $"[Browser] SYSTEM_BROWSER_FALLBACK_FAILED | Channel={channel} | " +
+                                $"ErrorType={fallbackError.GetType().Name}");
+                        }
+                    }
+
+                    if (_context == null)
+                    {
+                        throw new InvalidOperationException(
+                            "Playwright's bundled Chromium is missing and no installed " +
+                            "Chrome/Edge fallback could start. From the NIRA-AGENT root, " +
+                            "run: powershell -ExecutionPolicy Bypass -File " +
+                            @".\NIRAAgent\bin\Debug\net10.0\playwright.ps1 install chromium" +
+                            ". Then retry the browser task. A browser install is a one-time " +
+                            "setup operation; NIRA did not download or install anything.", ex);
+                    }
                 }
 
                 _sessionId = Guid.NewGuid();
@@ -53421,6 +54696,24 @@ public sealed class NIRABrowserService : IAsyncDisposable
         }
     }
 
+    // Pure option validation, exercised independently by offline regressions.
+    // Do not normalize case or translate labels: selection is exact by contract.
+    private static bool HasSelectableOption(string[][] available, string requested, bool byLabel) =>
+        available.Any(fields => fields.Length > (byLabel ? 1 : 0) &&
+            string.Equals(fields[byLabel ? 1 : 0], requested, StringComparison.Ordinal));
+
+    private static string BoundSelectField(string[] fields, int index) =>
+        index < fields.Length ? BoundOptionForDiagnostic(fields[index]) : "";
+
+    private static string BoundOptionForDiagnostic(string? value) =>
+        (value ?? "").Replace('\n', ' ').Replace('\r', ' ').Replace('\'', ' ')
+            .Substring(0, Math.Min((value ?? "").Length, 96));
+
+    private static Task<string[][]> ReadLiveSelectOptionsAsync(ILocator locator) =>
+        locator.EvaluateAsync<string[][]>(
+            "el => el instanceof HTMLSelectElement ? " +
+            "Array.from(el.options).map(o => [o.value, o.label]) : []");
+
     public async Task<NIRABrowserPageSnapshot> SelectAsync(
         Guid? pageId,
         string elementRef,
@@ -53441,6 +54734,38 @@ public sealed class NIRABrowserService : IAsyncDisposable
             EnsureNoUncertainAction(id, page);
             ILocator locator = await ValidateGroundedActionTargetAsync(id, page, cleanRef);
             string beforeUrl = page.Url;
+
+            // The requested value/label must exist in the LIVE DOM, not merely
+            // in a prior inspection or in the model's proposed arguments.
+            // Playwright otherwise waits for the impossible option for the full
+            // 30-second action timeout, hiding a precise input mismatch.
+            // Allow a brief refresh for asynchronously populated dropdowns;
+            // never silently choose a different option or submit the form.
+            string[][] availableOptions = await ReadLiveSelectOptionsAsync(locator);
+            if (!HasSelectableOption(availableOptions, option, byLabel))
+            {
+                // Some forms populate options asynchronously after inspection.
+                // Refresh briefly, but don't incur the full default 30s timeout.
+                for (int probe = 0; probe < 3 &&
+                    !HasSelectableOption(availableOptions, option, byLabel); probe++)
+                {
+                    await Task.Delay(750, cancellationToken);
+                    availableOptions = await ReadLiveSelectOptionsAsync(locator);
+                }
+                if (!HasSelectableOption(availableOptions, option, byLabel))
+                {
+                    string observed = string.Join("; ", availableOptions.Take(10)
+                        .Select(values =>
+                            $"value='{BoundSelectField(values, 0)}', label='{BoundSelectField(values, 1)}'"));
+                    throw new NIRABrowserOptionUnavailableException(
+                        "The requested dropdown option was not present in the current page. " +
+                        "No option was selected and no form was submitted. " +
+                        $"MatchBy={(byLabel ? "label" : "value")}; Requested='{BoundOptionForDiagnostic(option)}'; " +
+                        $"ObservedOptions=[{observed}]. Inspect the current form and available " +
+                        "options before choosing a different one. A previous website action " +
+                        "may already have succeeded; this dropdown failure does not undo it.");
+                }
+            }
 
             if (byLabel)
             {
@@ -56123,7 +57448,7 @@ public sealed class NIRABrowserService : IAsyncDisposable
 
 ---
 
-## 104. `NIRAAgent\Browser\NIRABrowserSiteKnowledgeStore.cs`
+## 105. `NIRAAgent\Browser\NIRABrowserSiteKnowledgeStore.cs`
 
 **File:** `NIRAAgent\Browser\NIRABrowserSiteKnowledgeStore.cs`
 
@@ -56567,7 +57892,7 @@ internal sealed class NIRABrowserSiteKnowledgeStore
 
 ---
 
-## 105. `NIRAAgent\Capabilities\ApplicationCapabilityHandlers.cs`
+## 106. `NIRAAgent\Capabilities\ApplicationCapabilityHandlers.cs`
 
 **File:** `NIRAAgent\Capabilities\ApplicationCapabilityHandlers.cs`
 
@@ -58999,7 +60324,7 @@ public sealed class NIRAApplicationResolveCapabilityHandler
 
 ---
 
-## 106. `NIRAAgent\Capabilities\BrowserCapabilityHandlers.cs`
+## 107. `NIRAAgent\Capabilities\BrowserCapabilityHandlers.cs`
 
 **File:** `NIRAAgent\Capabilities\BrowserCapabilityHandlers.cs`
 
@@ -62406,7 +63731,7 @@ public sealed class NIRABrowserUploadCapabilityHandler : INIRACapabilityHandler
 
 ---
 
-## 107. `NIRAAgent\Capabilities\FilesystemCapabilityHandlers.cs`
+## 108. `NIRAAgent\Capabilities\FilesystemCapabilityHandlers.cs`
 
 **File:** `NIRAAgent\Capabilities\FilesystemCapabilityHandlers.cs`
 
@@ -63625,7 +64950,7 @@ public sealed class NIRADirectoryCreateCapabilityHandler
 
 ---
 
-## 108. `NIRAAgent\Capabilities\HttpCapabilityHandlers.cs`
+## 109. `NIRAAgent\Capabilities\HttpCapabilityHandlers.cs`
 
 **File:** `NIRAAgent\Capabilities\HttpCapabilityHandlers.cs`
 
@@ -64403,7 +65728,7 @@ public sealed class NIRAHttpDownloadCapabilityHandler
 
 ---
 
-## 109. `NIRAAgent\Capabilities\NIRACapabilityArguments.cs`
+## 110. `NIRAAgent\Capabilities\NIRACapabilityArguments.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRACapabilityArguments.cs`
 
@@ -64853,7 +66178,7 @@ internal static class NIRACapabilityArguments
 
 ---
 
-## 110. `NIRAAgent\Capabilities\NIRACapabilityContracts.cs`
+## 111. `NIRAAgent\Capabilities\NIRACapabilityContracts.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRACapabilityContracts.cs`
 
@@ -65716,7 +67041,7 @@ public interface INIRACapabilityAuthorizer
 
 ---
 
-## 111. `NIRAAgent\Capabilities\NIRACapabilityProcessRunner.cs`
+## 112. `NIRAAgent\Capabilities\NIRACapabilityProcessRunner.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRACapabilityProcessRunner.cs`
 
@@ -65797,7 +67122,7 @@ internal static class NIRACapabilityProcessRunner
 
 ---
 
-## 112. `NIRAAgent\Capabilities\NIRACapabilityRegistry.cs`
+## 113. `NIRAAgent\Capabilities\NIRACapabilityRegistry.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRACapabilityRegistry.cs`
 
@@ -65891,7 +67216,7 @@ public sealed class NIRACapabilityRegistry
 
 ---
 
-## 113. `NIRAAgent\Capabilities\NIRACapabilityService.cs`
+## 114. `NIRAAgent\Capabilities\NIRACapabilityService.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRACapabilityService.cs`
 
@@ -65900,12 +67225,17 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using NIRAAgent.Authorization;
+using NIRAAgent.Browser;
 
 namespace NIRAAgent.Capabilities;
 
 public sealed class NIRACapabilityService
 {
     private const int MaximumResultOutputCharacters = 24000;
+    private static bool IsCertainNoEffectBrowserPreflight(string capabilityId, Exception exception) =>
+        capabilityId == NIRACapabilityIds.BrowserSelect &&
+        exception is NIRABrowserOptionUnavailableException;
+
     private readonly NIRACapabilityRegistry _registry;
     private readonly INIRACapabilityAuthorizer _authorizer;
     private readonly NIRACapabilityRequestPolicy _policy;
@@ -66188,6 +67518,11 @@ public sealed class NIRACapabilityService
         }
         catch (Exception ex)
         {
+            // A native dropdown option mismatch is rejected inside the browser
+            // BEFORE Playwright attempts selection. This proven preflight case
+            // has zero side effects; do not mark it as an uncertain browser
+            // mutation or force the model into unnecessary 30-second recovery.
+            bool preflightNoEffect = IsCertainNoEffectBrowserPreflight(request.CapabilityId, ex);
             if (request.CapabilityId.StartsWith("browser.", StringComparison.OrdinalIgnoreCase))
             {
                 // Log NAMES, never values: URLs may carry tokens and credential
@@ -66200,9 +67535,9 @@ public sealed class NIRACapabilityService
                     $"ArgumentNames={argumentNames} | ExceptionType={ex.GetType().Name}");
             }
             result = Make(dispatched ? NIRACapabilityResultStatus.Failed : NIRACapabilityResultStatus.Rejected,
-                ex.Message + (dispatched && risk != NIRACapabilityRisk.Observe
+                ex.Message + (dispatched && risk != NIRACapabilityRisk.Observe && !preflightNoEffect
                     ? " Partial effects may remain; inspect before retrying." : "")) with
-            { OutcomeUncertain = dispatched && risk != NIRACapabilityRisk.Observe };
+            { OutcomeUncertain = dispatched && risk != NIRACapabilityRisk.Observe && !preflightNoEffect };
             if (!attempt.HasValue)
             {
                 // Malformed/rejected attempts get a minimal record, without their
@@ -66621,7 +67956,7 @@ public sealed class NIRACapabilityService
 
 ---
 
-## 114. `NIRAAgent\Capabilities\NIRAFileLocationCapabilityHandler.cs`
+## 115. `NIRAAgent\Capabilities\NIRAFileLocationCapabilityHandler.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRAFileLocationCapabilityHandler.cs`
 
@@ -66929,7 +68264,7 @@ public sealed class NIRAFileLocationCapabilityHandler : INIRACapabilityHandler
 
 ---
 
-## 115. `NIRAAgent\Capabilities\NIRAStage9CapabilityAuthorizer.cs`
+## 116. `NIRAAgent\Capabilities\NIRAStage9CapabilityAuthorizer.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRAStage9CapabilityAuthorizer.cs`
 
@@ -66970,7 +68305,7 @@ public sealed class NIRAStage9CapabilityAuthorizer
 
 ---
 
-## 116. `NIRAAgent\Capabilities\NIRATemporalRelationCapabilityHandler.cs`
+## 117. `NIRAAgent\Capabilities\NIRATemporalRelationCapabilityHandler.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRATemporalRelationCapabilityHandler.cs`
 
@@ -67065,7 +68400,7 @@ public sealed class NIRATemporalRelationCapabilityHandler : INIRACapabilityHandl
 
 ---
 
-## 117. `NIRAAgent\Capabilities\ProcessCapabilityHandlers.cs`
+## 118. `NIRAAgent\Capabilities\ProcessCapabilityHandlers.cs`
 
 **File:** `NIRAAgent\Capabilities\ProcessCapabilityHandlers.cs`
 
@@ -67567,7 +68902,7 @@ public sealed class NIRAProcessStopCapabilityHandler
 
 ---
 
-## 118. `NIRAAgent\Capabilities\ShellCapabilityHandler.cs`
+## 119. `NIRAAgent\Capabilities\ShellCapabilityHandler.cs`
 
 **File:** `NIRAAgent\Capabilities\ShellCapabilityHandler.cs`
 
@@ -67745,7 +69080,7 @@ public sealed class NIRAShellExecuteCapabilityHandler
 
 ---
 
-## 119. `NIRAAgent\Capabilities\SystemStorageCapabilityHandler.cs`
+## 120. `NIRAAgent\Capabilities\SystemStorageCapabilityHandler.cs`
 
 **File:** `NIRAAgent\Capabilities\SystemStorageCapabilityHandler.cs`
 
@@ -67968,7 +69303,7 @@ public sealed class NIRASystemStorageListCapabilityHandler
 
 ---
 
-## 120. `NIRAAgent\Capabilities\VisionCapabilityHandlers.cs`
+## 121. `NIRAAgent\Capabilities\VisionCapabilityHandlers.cs`
 
 **File:** `NIRAAgent\Capabilities\VisionCapabilityHandlers.cs`
 
@@ -68749,7 +70084,7 @@ public sealed class NIRAVisualInspectCapabilityHandler
 
 ---
 
-## 121. `NIRAAgent\Character\Appraisal\NIRACharacterExperienceAppraisal.cs`
+## 122. `NIRAAgent\Character\Appraisal\NIRACharacterExperienceAppraisal.cs`
 
 **File:** `NIRAAgent\Character\Appraisal\NIRACharacterExperienceAppraisal.cs`
 
@@ -68846,7 +70181,7 @@ public sealed record NIRACharacterExperienceAppraisal
 
 ---
 
-## 122. `NIRAAgent\Character\Appraisal\NIRAInteractionAppraisal.cs`
+## 123. `NIRAAgent\Character\Appraisal\NIRAInteractionAppraisal.cs`
 
 **File:** `NIRAAgent\Character\Appraisal\NIRAInteractionAppraisal.cs`
 
@@ -69006,7 +70341,7 @@ public sealed record NIRAInteractionAppraisal
 
 ---
 
-## 123. `NIRAAgent\Character\Appraisal\NIRASocialMeaning.cs`
+## 124. `NIRAAgent\Character\Appraisal\NIRASocialMeaning.cs`
 
 **File:** `NIRAAgent\Character\Appraisal\NIRASocialMeaning.cs`
 
@@ -69184,7 +70519,7 @@ public readonly record struct NIRASocialMeaning(
 
 ---
 
-## 124. `NIRAAgent\Character\Dynamics\NIRACharacterDynamicsService.cs`
+## 125. `NIRAAgent\Character\Dynamics\NIRACharacterDynamicsService.cs`
 
 **File:** `NIRAAgent\Character\Dynamics\NIRACharacterDynamicsService.cs`
 
@@ -70812,7 +72147,7 @@ public sealed class NIRACharacterDynamicsService
 
 ---
 
-## 125. `NIRAAgent\Character\History\NIRASocialEvent.cs`
+## 126. `NIRAAgent\Character\History\NIRASocialEvent.cs`
 
 **File:** `NIRAAgent\Character\History\NIRASocialEvent.cs`
 
@@ -71020,7 +72355,7 @@ public sealed record NIRASocialEvent
 
 ---
 
-## 126. `NIRAAgent\Character\History\NIRASocialHistoryService.cs`
+## 127. `NIRAAgent\Character\History\NIRASocialHistoryService.cs`
 
 **File:** `NIRAAgent\Character\History\NIRASocialHistoryService.cs`
 
@@ -71673,7 +73008,7 @@ public sealed class NIRASocialHistoryService
 
 ---
 
-## 127. `NIRAAgent\Character\History\NIRASocialHistorySnapshot.cs`
+## 128. `NIRAAgent\Character\History\NIRASocialHistorySnapshot.cs`
 
 **File:** `NIRAAgent\Character\History\NIRASocialHistorySnapshot.cs`
 
@@ -71718,7 +73053,7 @@ public sealed record NIRASocialHistorySnapshot
 
 ---
 
-## 128. `NIRAAgent\Character\History\NIRASocialTopicKeys.cs`
+## 129. `NIRAAgent\Character\History\NIRASocialTopicKeys.cs`
 
 **File:** `NIRAAgent\Character\History\NIRASocialTopicKeys.cs`
 
@@ -71895,7 +73230,7 @@ public static class NIRASocialTopicKeys
 
 ---
 
-## 129. `NIRAAgent\Character\Interaction\NIRAInteractionContext.cs`
+## 130. `NIRAAgent\Character\Interaction\NIRAInteractionContext.cs`
 
 **File:** `NIRAAgent\Character\Interaction\NIRAInteractionContext.cs`
 
@@ -71992,7 +73327,7 @@ public sealed record NIRAInteractionContext
 
 ---
 
-## 130. `NIRAAgent\Character\Interaction\NIRAInteractionContextBuilder.cs`
+## 131. `NIRAAgent\Character\Interaction\NIRAInteractionContextBuilder.cs`
 
 **File:** `NIRAAgent\Character\Interaction\NIRAInteractionContextBuilder.cs`
 
@@ -72225,7 +73560,7 @@ public sealed class NIRAInteractionContextBuilder
 
 ---
 
-## 131. `NIRAAgent\Character\Interaction\NIRAInteractionObservationService.cs`
+## 132. `NIRAAgent\Character\Interaction\NIRAInteractionObservationService.cs`
 
 **File:** `NIRAAgent\Character\Interaction\NIRAInteractionObservationService.cs`
 
@@ -72481,7 +73816,7 @@ public sealed class NIRAInteractionObservationService
 
 ---
 
-## 132. `NIRAAgent\Character\NIRACharacterContextFormatter.cs`
+## 133. `NIRAAgent\Character\NIRACharacterContextFormatter.cs`
 
 **File:** `NIRAAgent\Character\NIRACharacterContextFormatter.cs`
 
@@ -72869,7 +74204,7 @@ public static class NIRACharacterContextFormatter
 
 ---
 
-## 133. `NIRAAgent\Character\State\NIRAAttitudeService.cs`
+## 134. `NIRAAgent\Character\State\NIRAAttitudeService.cs`
 
 **File:** `NIRAAgent\Character\State\NIRAAttitudeService.cs`
 
@@ -73119,7 +74454,7 @@ public sealed class NIRAAttitudeService
 
 ---
 
-## 134. `NIRAAgent\Character\State\NIRAAttitudeState.cs`
+## 135. `NIRAAgent\Character\State\NIRAAttitudeState.cs`
 
 **File:** `NIRAAgent\Character\State\NIRAAttitudeState.cs`
 
@@ -73190,7 +74525,7 @@ public readonly record struct NIRAAttitudeState(
 
 ---
 
-## 135. `NIRAAgent\Character\State\NIRACharacterPersistenceService.cs`
+## 136. `NIRAAgent\Character\State\NIRACharacterPersistenceService.cs`
 
 **File:** `NIRAAgent\Character\State\NIRACharacterPersistenceService.cs`
 
@@ -73375,7 +74710,7 @@ public sealed class NIRACharacterPersistenceService
 
 ---
 
-## 136. `NIRAAgent\Character\State\NIRACharacterSnapshot.cs`
+## 137. `NIRAAgent\Character\State\NIRACharacterSnapshot.cs`
 
 **File:** `NIRAAgent\Character\State\NIRACharacterSnapshot.cs`
 
@@ -73433,7 +74768,7 @@ public readonly record struct NIRACharacterSnapshot(
 
 ---
 
-## 137. `NIRAAgent\Character\State\NIRACharacterStateService.cs`
+## 138. `NIRAAgent\Character\State\NIRACharacterStateService.cs`
 
 **File:** `NIRAAgent\Character\State\NIRACharacterStateService.cs`
 
@@ -73703,7 +75038,7 @@ public sealed class NIRACharacterStateService
 
 ---
 
-## 138. `NIRAAgent\Character\State\NIRACharacterStateStore.cs`
+## 139. `NIRAAgent\Character\State\NIRACharacterStateStore.cs`
 
 **File:** `NIRAAgent\Character\State\NIRACharacterStateStore.cs`
 
@@ -74259,7 +75594,7 @@ public sealed class NIRACharacterStateStore
 
 ---
 
-## 139. `NIRAAgent\Character\State\NIRAMoodState.cs`
+## 140. `NIRAAgent\Character\State\NIRAMoodState.cs`
 
 **File:** `NIRAAgent\Character\State\NIRAMoodState.cs`
 
@@ -74352,7 +75687,7 @@ public readonly record struct NIRAMoodState(
 
 ---
 
-## 140. `NIRAAgent\Character\State\NIRARelationshipState.cs`
+## 141. `NIRAAgent\Character\State\NIRARelationshipState.cs`
 
 **File:** `NIRAAgent\Character\State\NIRARelationshipState.cs`
 
@@ -74457,7 +75792,7 @@ public readonly record struct NIRARelationshipState(
 
 ---
 
-## 141. `NIRAAgent\Character\State\NIRASituationState.cs`
+## 142. `NIRAAgent\Character\State\NIRASituationState.cs`
 
 **File:** `NIRAAgent\Character\State\NIRASituationState.cs`
 
@@ -74515,7 +75850,7 @@ public readonly record struct NIRASituationState(
 
 ---
 
-## 142. `NIRAAgent\Conversation\ConversationManager.cs`
+## 143. `NIRAAgent\Conversation\ConversationManager.cs`
 
 **File:** `NIRAAgent\Conversation\ConversationManager.cs`
 
@@ -75586,7 +76921,7 @@ public sealed record ConversationContextSnapshot
 
 ---
 
-## 143. `NIRAAgent\Conversation\ConversationPendingTask.cs`
+## 144. `NIRAAgent\Conversation\ConversationPendingTask.cs`
 
 **File:** `NIRAAgent\Conversation\ConversationPendingTask.cs`
 
@@ -75602,7 +76937,7 @@ public sealed record ConversationPendingTask(
 
 ---
 
-## 144. `NIRAAgent\Conversation\NIRAConversationArchiveStore.cs`
+## 145. `NIRAAgent\Conversation\NIRAConversationArchiveStore.cs`
 
 **File:** `NIRAAgent\Conversation\NIRAConversationArchiveStore.cs`
 
@@ -76896,7 +78231,7 @@ public sealed record NIRAArchivedChatTurn(Guid MessageId, string Role, string Co
 
 ---
 
-## 145. `NIRAAgent\Conversation\NIRAConversationSearchRequest.cs`
+## 146. `NIRAAgent\Conversation\NIRAConversationSearchRequest.cs`
 
 **File:** `NIRAAgent\Conversation\NIRAConversationSearchRequest.cs`
 
@@ -76943,7 +78278,7 @@ public sealed record NIRAArchivedConversationHit(
 
 ---
 
-## 146. `NIRAAgent\Embodiment\Body\NIRABodyCommand.cs`
+## 147. `NIRAAgent\Embodiment\Body\NIRABodyCommand.cs`
 
 **File:** `NIRAAgent\Embodiment\Body\NIRABodyCommand.cs`
 
@@ -77131,7 +78466,7 @@ public sealed record NIRABodyCommand
 
 ---
 
-## 147. `NIRAAgent\Embodiment\Body\NIRABodyCommandService.cs`
+## 148. `NIRAAgent\Embodiment\Body\NIRABodyCommandService.cs`
 
 **File:** `NIRAAgent\Embodiment\Body\NIRABodyCommandService.cs`
 
@@ -77279,7 +78614,7 @@ public sealed class NIRABodyCommandService
 
 ---
 
-## 148. `NIRAAgent\Embodiment\Body\NIRABodyControllerService.cs`
+## 149. `NIRAAgent\Embodiment\Body\NIRABodyControllerService.cs`
 
 **File:** `NIRAAgent\Embodiment\Body\NIRABodyControllerService.cs`
 
@@ -77511,7 +78846,7 @@ public sealed class NIRABodyControllerService
 
 ---
 
-## 149. `NIRAAgent\Embodiment\Body\NIRABodyPlacementService.cs`
+## 150. `NIRAAgent\Embodiment\Body\NIRABodyPlacementService.cs`
 
 **File:** `NIRAAgent\Embodiment\Body\NIRABodyPlacementService.cs`
 
@@ -77790,7 +79125,7 @@ public sealed class NIRABodyPlacementService
 
 ---
 
-## 150. `NIRAAgent\Embodiment\Body\NIRABodyPlacementStore.cs`
+## 151. `NIRAAgent\Embodiment\Body\NIRABodyPlacementStore.cs`
 
 **File:** `NIRAAgent\Embodiment\Body\NIRABodyPlacementStore.cs`
 
@@ -78057,7 +79392,7 @@ public sealed class NIRABodyPlacementStore
 
 ---
 
-## 151. `NIRAAgent\Embodiment\NIRABlobPresetId.cs`
+## 152. `NIRAAgent\Embodiment\NIRABlobPresetId.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRABlobPresetId.cs`
 
@@ -78083,7 +79418,7 @@ public enum NIRABlobPresetId
 
 ---
 
-## 152. `NIRAAgent\Embodiment\NIRABlobPresetLibrary.cs`
+## 153. `NIRAAgent\Embodiment\NIRABlobPresetLibrary.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRABlobPresetLibrary.cs`
 
@@ -78277,7 +79612,7 @@ public static class NIRABlobPresetLibrary
 
 ---
 
-## 153. `NIRAAgent\Embodiment\NIRABlobStyleCatalog.cs`
+## 154. `NIRAAgent\Embodiment\NIRABlobStyleCatalog.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRABlobStyleCatalog.cs`
 
@@ -78357,7 +79692,7 @@ public static class NIRABlobStyleCatalog
 
 ---
 
-## 154. `NIRAAgent\Embodiment\NIRABlobStyleId.cs`
+## 155. `NIRAAgent\Embodiment\NIRABlobStyleId.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRABlobStyleId.cs`
 
@@ -78381,7 +79716,7 @@ public enum NIRABlobStyleId
 
 ---
 
-## 155. `NIRAAgent\Embodiment\NIRABlobStyleOption.cs`
+## 156. `NIRAAgent\Embodiment\NIRABlobStyleOption.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRABlobStyleOption.cs`
 
@@ -78402,7 +79737,7 @@ public sealed record NIRABlobStyleOption(
 
 ---
 
-## 156. `NIRAAgent\Embodiment\NIRAVisualExpressionIds.cs`
+## 157. `NIRAAgent\Embodiment\NIRAVisualExpressionIds.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRAVisualExpressionIds.cs`
 
@@ -78437,7 +79772,7 @@ public static class NIRAVisualExpressionIds
 
 ---
 
-## 157. `NIRAAgent\Embodiment\NIRAVisualFormIds.cs`
+## 158. `NIRAAgent\Embodiment\NIRAVisualFormIds.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRAVisualFormIds.cs`
 
@@ -78479,7 +79814,7 @@ public static class NIRAVisualFormIds
 
 ---
 
-## 158. `NIRAAgent\Embodiment\NIRAVisualIntent.cs`
+## 159. `NIRAAgent\Embodiment\NIRAVisualIntent.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRAVisualIntent.cs`
 
@@ -78838,7 +80173,7 @@ public sealed record NIRAVisualIntent
 
 ---
 
-## 159. `NIRAAgent\Embodiment\NIRAVisualIntentService.cs`
+## 160. `NIRAAgent\Embodiment\NIRAVisualIntentService.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRAVisualIntentService.cs`
 
@@ -80357,7 +81692,7 @@ public sealed class NIRAVisualIntentService
 
 ---
 
-## 160. `NIRAAgent\Goals\NIRAGoalContracts.cs`
+## 161. `NIRAAgent\Goals\NIRAGoalContracts.cs`
 
 **File:** `NIRAAgent\Goals\NIRAGoalContracts.cs`
 
@@ -80720,7 +82055,7 @@ public sealed record NIRAGoalApplyResult
 
 ---
 
-## 161. `NIRAAgent\Goals\NIRAGoalSchedulerService.cs`
+## 162. `NIRAAgent\Goals\NIRAGoalSchedulerService.cs`
 
 **File:** `NIRAAgent\Goals\NIRAGoalSchedulerService.cs`
 
@@ -80814,7 +82149,7 @@ public sealed class NIRAGoalSchedulerService : BackgroundService
 
 ---
 
-## 162. `NIRAAgent\Goals\NIRAGoalService.cs`
+## 163. `NIRAAgent\Goals\NIRAGoalService.cs`
 
 **File:** `NIRAAgent\Goals\NIRAGoalService.cs`
 
@@ -82098,7 +83433,7 @@ public sealed class NIRAGoalService : IHostedService
 
 ---
 
-## 163. `NIRAAgent\Goals\NIRAGoalStore.cs`
+## 164. `NIRAAgent\Goals\NIRAGoalStore.cs`
 
 **File:** `NIRAAgent\Goals\NIRAGoalStore.cs`
 
@@ -82628,7 +83963,7 @@ public sealed class NIRAGoalStore
 
 ---
 
-## 164. `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIClient.cs`
+## 165. `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIClient.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIClient.cs`
 
@@ -83098,7 +84433,7 @@ public sealed record TradeAIReadResult
 
 ---
 
-## 165. `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIReadCapabilityHandler.cs`
+## 166. `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIReadCapabilityHandler.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIReadCapabilityHandler.cs`
 
@@ -83637,7 +84972,7 @@ public sealed class TradeAIReadCapabilityHandler
 
 ---
 
-## 166. `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeContracts.cs`
+## 167. `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeContracts.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeContracts.cs`
 
@@ -83885,7 +85220,7 @@ public sealed record NIRABridgeErrorResponse
 
 ---
 
-## 167. `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeCredentialStore.cs`
+## 168. `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeCredentialStore.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeCredentialStore.cs`
 
@@ -84284,7 +85619,7 @@ public sealed class NIRABridgeCredentialStore
 
 ---
 
-## 168. `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeOptions.cs`
+## 169. `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeOptions.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeOptions.cs`
 
@@ -84328,7 +85663,7 @@ public static class NIRABridgeOptions
 
 ---
 
-## 169. `NIRAAgent\Integrations\Elvara\Bridge\NIRALocalBridgeService.cs`
+## 170. `NIRAAgent\Integrations\Elvara\Bridge\NIRALocalBridgeService.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\Bridge\NIRALocalBridgeService.cs`
 
@@ -85400,7 +86735,7 @@ public sealed class NIRALocalBridgeService
 
 ---
 
-## 170. `NIRAAgent\Integrations\Elvara\ElvaraAppDescriptor.cs`
+## 171. `NIRAAgent\Integrations\Elvara\ElvaraAppDescriptor.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\ElvaraAppDescriptor.cs`
 
@@ -85476,7 +86811,7 @@ public sealed record ElvaraAppDescriptor
 
 ---
 
-## 171. `NIRAAgent\Integrations\Elvara\ElvaraAppRegistry.cs`
+## 172. `NIRAAgent\Integrations\Elvara\ElvaraAppRegistry.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\ElvaraAppRegistry.cs`
 
@@ -85664,7 +86999,7 @@ public sealed class ElvaraAppRegistry
 
 ---
 
-## 172. `NIRAAgent\Integrations\Elvara\NIRAExternalAppContext.cs`
+## 173. `NIRAAgent\Integrations\Elvara\NIRAExternalAppContext.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\NIRAExternalAppContext.cs`
 
@@ -85730,7 +87065,7 @@ public sealed record NIRAExternalAppContext
 
 ---
 
-## 173. `NIRAAgent\Memory\LongTerm\NIRACognitionMemoryFormatter.cs`
+## 174. `NIRAAgent\Memory\LongTerm\NIRACognitionMemoryFormatter.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRACognitionMemoryFormatter.cs`
 
@@ -86448,7 +87783,7 @@ public static class NIRACognitionMemoryFormatter
 
 ---
 
-## 174. `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryService.cs`
+## 175. `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryService.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryService.cs`
 
@@ -87890,7 +89225,7 @@ public sealed class NIRALongTermMemoryService
 
 ---
 
-## 175. `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryStore.cs`
+## 176. `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryStore.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryStore.cs`
 
@@ -90659,7 +91994,7 @@ internal sealed record NIRAStoredMemory(
 
 ---
 
-## 176. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociation.cs`
+## 177. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociation.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociation.cs`
 
@@ -90733,7 +92068,7 @@ internal sealed record NIRAStoredMemoryAssociationProfile(
 
 ---
 
-## 177. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationProfile.cs`
+## 178. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationProfile.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationProfile.cs`
 
@@ -91148,7 +92483,7 @@ public sealed record NIRAMemoryAssociationProfile
 
 ---
 
-## 178. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationService.cs`
+## 179. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationService.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationService.cs`
 
@@ -91920,7 +93255,7 @@ public sealed class NIRAMemoryAssociationService
 
 ---
 
-## 179. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociativeIndexStore.cs`
+## 180. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociativeIndexStore.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociativeIndexStore.cs`
 
@@ -93587,7 +94922,7 @@ public sealed class NIRAMemoryAssociativeIndexStore
 
 ---
 
-## 180. `NIRAAgent\Memory\LongTerm\NIRAMemoryCandidate.cs`
+## 181. `NIRAAgent\Memory\LongTerm\NIRAMemoryCandidate.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryCandidate.cs`
 
@@ -93767,7 +95102,7 @@ public sealed record NIRAMemoryCandidate
 
 ---
 
-## 181. `NIRAAgent\Memory\LongTerm\NIRAMemoryConfidencePolicy.cs`
+## 182. `NIRAAgent\Memory\LongTerm\NIRAMemoryConfidencePolicy.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryConfidencePolicy.cs`
 
@@ -93979,7 +95314,7 @@ public static class NIRAMemoryConfidencePolicy
 
 ---
 
-## 182. `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidation.cs`
+## 183. `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidation.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidation.cs`
 
@@ -94062,7 +95397,7 @@ public sealed record NIRAMemoryConsolidationResult
 
 ---
 
-## 183. `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidator.cs`
+## 184. `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidator.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidator.cs`
 
@@ -95320,7 +96655,7 @@ public sealed class NIRAMemoryConsolidator
 
 ---
 
-## 184. `NIRAAgent\Memory\LongTerm\NIRAMemoryContextService.cs`
+## 185. `NIRAAgent\Memory\LongTerm\NIRAMemoryContextService.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryContextService.cs`
 
@@ -95533,7 +96868,7 @@ public sealed class NIRAMemoryContextService
 
 ---
 
-## 185. `NIRAAgent\Memory\LongTerm\NIRAMemoryContextSnapshot.cs`
+## 186. `NIRAAgent\Memory\LongTerm\NIRAMemoryContextSnapshot.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryContextSnapshot.cs`
 
@@ -95608,7 +96943,7 @@ public sealed record NIRAMemoryContextSnapshot
 
 ---
 
-## 186. `NIRAAgent\Memory\LongTerm\NIRAMemoryEvidence.cs`
+## 187. `NIRAAgent\Memory\LongTerm\NIRAMemoryEvidence.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryEvidence.cs`
 
@@ -95691,7 +97026,7 @@ public sealed record NIRAMemoryEvidence
 
 ---
 
-## 187. `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationContext.cs`
+## 188. `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationContext.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationContext.cs`
 
@@ -96153,7 +97488,7 @@ public sealed record NIRAMemoryFormationResult
 
 ---
 
-## 188. `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationService.cs`
+## 189. `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationService.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationService.cs`
 
@@ -97127,7 +98462,7 @@ public sealed class NIRAMemoryFormationService
 
 ---
 
-## 189. `NIRAAgent\Memory\LongTerm\NIRAMemoryKind.cs`
+## 190. `NIRAAgent\Memory\LongTerm\NIRAMemoryKind.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryKind.cs`
 
@@ -97207,7 +98542,7 @@ public enum NIRAMemorySourceType
 
 ---
 
-## 190. `NIRAAgent\Memory\LongTerm\NIRAMemoryKnowledgeEntry.cs`
+## 191. `NIRAAgent\Memory\LongTerm\NIRAMemoryKnowledgeEntry.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryKnowledgeEntry.cs`
 
@@ -97239,7 +98574,7 @@ public sealed record NIRAMemoryKnowledgeEntry
 
 ---
 
-## 191. `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceReport.cs`
+## 192. `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceReport.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceReport.cs`
 
@@ -97384,7 +98719,7 @@ public sealed record NIRAMemoryMaintenanceReport
 
 ---
 
-## 192. `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceService.cs`
+## 193. `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceService.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceService.cs`
 
@@ -97993,7 +99328,7 @@ public sealed class NIRAMemoryMaintenanceService
 
 ---
 
-## 193. `NIRAAgent\Memory\LongTerm\NIRAMemoryRecord.cs`
+## 194. `NIRAAgent\Memory\LongTerm\NIRAMemoryRecord.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryRecord.cs`
 
@@ -98309,7 +99644,7 @@ public sealed record NIRAMemoryRecord
 
 ---
 
-## 194. `NIRAAgent\Memory\LongTerm\NIRAMemorySearchRequest.cs`
+## 195. `NIRAAgent\Memory\LongTerm\NIRAMemorySearchRequest.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemorySearchRequest.cs`
 
@@ -98534,7 +99869,7 @@ public sealed record NIRAMemorySearchRequest
 
 ---
 
-## 195. `NIRAAgent\Memory\LongTerm\NIRAMemorySearchResult.cs`
+## 196. `NIRAAgent\Memory\LongTerm\NIRAMemorySearchResult.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemorySearchResult.cs`
 
@@ -98640,7 +99975,7 @@ public sealed record NIRAMemorySearchResult
 
 ---
 
-## 196. `NIRAAgent\Memory\LongTerm\NIRASensitiveMemoryPolicy.cs`
+## 197. `NIRAAgent\Memory\LongTerm\NIRASensitiveMemoryPolicy.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRASensitiveMemoryPolicy.cs`
 
@@ -98810,7 +100145,7 @@ public static class NIRASensitiveMemoryPolicy
 
 ---
 
-## 197. `NIRAAgent\Mind\NIRAActiveTurnLedger.cs`
+## 198. `NIRAAgent\Mind\NIRAActiveTurnLedger.cs`
 
 **File:** `NIRAAgent\Mind\NIRAActiveTurnLedger.cs`
 
@@ -98909,7 +100244,9 @@ public sealed class NIRAActiveTurnLedger
             if (recent is null || recent.EndedAtUtc is null ||
                 DateTimeOffset.UtcNow - recent.EndedAtUtc.Value > TimeSpan.FromMinutes(10))
                 return string.Empty;
-            return "RECENT AUTHORITATIVE USER WORK STATE (not currently active): " +
+            return "CURRENT FOREGROUND USER WORK: none active in this runtime " +
+                "snapshot. This says nothing about separate branch/goal work. " +
+                "RECENT AUTHORITATIVE USER WORK STATE (not currently active): " +
                 recent.Objective + " — " +
                 (recent.State == NIRAActiveTurnState.Stopped
                     ? "Stopped before processing finished."
@@ -98964,7 +100301,7 @@ public sealed record NIRAActiveWorkObservation(string Context, string ObservedId
 
 ---
 
-## 198. `NIRAAgent\Mind\NIRABackgroundProcessor.cs`
+## 199. `NIRAAgent\Mind\NIRABackgroundProcessor.cs`
 
 **File:** `NIRAAgent\Mind\NIRABackgroundProcessor.cs`
 
@@ -99084,11 +100421,12 @@ public sealed class NIRABackgroundProcessor
 
 ---
 
-## 199. `NIRAAgent\Mind\NIRAExecutive.cs`
+## 200. `NIRAAgent\Mind\NIRAExecutive.cs`
 
 **File:** `NIRAAgent\Mind\NIRAExecutive.cs`
 
 ```csharp
+using NIRAAgent.Temporal;
 /*
  * filename: NIRAExecutive.cs
  */
@@ -100058,6 +101396,7 @@ public sealed class NIRAExecutive
         bool completionReviewConfirmedComplete = false;
         bool formationAppliedBeforeReply = false;
         bool preReviewCommitmentSucceeded = false;
+        bool directTemporalWakeVerified = false;
         bool secureSignInReturned = false;
         bool siteLinkOpened = false;
         string? lastObservedLoginRoute = null;
@@ -103572,6 +104911,42 @@ public sealed class NIRAExecutive
                 decision.EmitReply &&
                 !string.IsNullOrWhiteSpace(decision.Reply);
 
+            // Due reminders already include an authoritative commitment ID.
+            // Gemma may decide to DELIVER and include a structured Complete
+            // proposal in the SAME cognition call. We don't need a separate
+            // experience-formation model merely to transition that known ID.
+            // Do not complete a deferred, unsent, or recurring occurrence.
+            if (string.Equals(mindEvent.Name, "TemporalCommitmentDue",
+                    StringComparison.Ordinal) &&
+                decision.State == NIRACognitionState.Complete &&
+                decision.EmitReply && !string.IsNullOrWhiteSpace(decision.Reply) &&
+                mindEvent.Metadata.TryGetValue("commitmentId", out string? dueId) &&
+                Guid.TryParse(dueId, out Guid dueGuid))
+            {
+                NIRACommitmentFormationProposal[] dueTransitions =
+                    decision.CommitmentProposals
+                        .Where(p => p.Action == NIRACommitmentProposalAction.Complete &&
+                            p.EvidenceSource == NIRACommitmentEvidenceSource.NIRAReply &&
+                            Guid.TryParse(p.CommitmentId, out Guid proposalGuid) &&
+                            proposalGuid == dueGuid &&
+                            !string.IsNullOrWhiteSpace(p.EvidenceQuote) &&
+                            decision.Reply.Contains(p.EvidenceQuote, StringComparison.Ordinal))
+                        .Take(1).ToArray();
+                if (dueTransitions.Length == 1)
+                {
+                    int verifiedChanges = await _selfModel.ApplyCommitmentProposalsAsync(
+                        mindEvent, decision.Reply, dueTransitions, cancellationToken);
+                    if (verifiedChanges > 0)
+                    {
+                        directTemporalWakeVerified = true;
+                        formationAppliedBeforeReply = true;
+                        Debug.WriteLine($"[TemporalCommitment] DIRECT_WAKE | " +
+                            $"Run={runId:D} | VerifiedChanges={verifiedChanges} | " +
+                            "ExtraModelCalls=0");
+                    }
+                }
+            }
+
             // FUTURE OBLIGATION: PERSIST BEFORE OBJECTIVE REVIEW.
             // Temporal reminders belong to the authoritative self-model, NOT
             // a made-up timer capability and NOT a fresh persistent goal.
@@ -103589,15 +104964,39 @@ public sealed class NIRAExecutive
                 // claim or an unrelated previously scheduled reminder.
                 Dictionary<Guid, NIRACommitmentState> commitmentsBefore =
                     _selfModel.CurrentCommitments.ToDictionary(item => item.Id);
-                memoryFormationCalls++;
-                int appliedCommitmentChanges = await ApplyMemoryFormationAsync(
-                    runId,
-                    mindEvent,
-                    interaction?.Event,
-                    latestContext,
-                    decision,
-                    decision.Reply,
-                    cancellationToken);
+                int appliedCommitmentChanges = 0;
+                // Fast structured path: the SAME cognition result may include
+                // a grounded commitment and relative-time proposal. The real
+                // self-model is still the sole persistence authority. Do not
+                // invent a parser or accept the model's success claim.
+                NIRACommitmentFormationProposal[] directReminders =
+                    decision.CommitmentProposals
+                        .Where(p => p.Action == NIRACommitmentProposalAction.Create &&
+                            p.EvidenceSource == NIRACommitmentEvidenceSource.NIRAReply &&
+                            p.Temporal is { Mode: not NIRATemporalTimingMode.None } &&
+                            !string.IsNullOrWhiteSpace(p.EvidenceQuote) &&
+                            decision.Reply.Contains(p.EvidenceQuote, StringComparison.Ordinal))
+                        .Take(1)
+                        .ToArray();
+                if (directReminders.Length == 1)
+                {
+                    appliedCommitmentChanges =
+                        await _selfModel.ApplyCommitmentProposalsAsync(
+                            mindEvent, decision.Reply, directReminders,
+                            cancellationToken);
+                    Debug.WriteLine($"[TemporalCommitment] DIRECT_PROPOSAL | " +
+                        $"Run={runId:D} | Accepted={appliedCommitmentChanges} | ExtraModelCalls=0");
+                }
+                if (appliedCommitmentChanges <= 0)
+                {
+                    // Older/partial model responses remain compatible: no
+                    // speculative scheduling if the structured proposal is
+                    // absent or rejected. Original formation remains intact.
+                    memoryFormationCalls++;
+                    appliedCommitmentChanges = await ApplyMemoryFormationAsync(
+                        runId, mindEvent, interaction?.Event, latestContext,
+                        decision, decision.Reply, cancellationToken);
+                }
 
                 formationAppliedBeforeReply = true;
                 preReviewCommitmentSucceeded = appliedCommitmentChanges > 0;
@@ -103663,9 +105062,10 @@ public sealed class NIRAExecutive
             // including replies following a successful state-changing action.
             // Failed persistence is blocked by trusted runtime evidence above,
             // rather than repeatedly asking an LLM to schedule a nonexistent tool.
-            // The single Gemma cognition call is already a character-complete
-            // interpersonal reply. Skip a redundant independent objective review
-            // ONLY for a shape-checked, evidence-free first-turn conversation.
+            // Gemma can produce the final character-ready answer in one call for
+            // a shape-checked, evidence-free first-turn conversation or a truly
+            // self-contained knowledge explanation. No tools, commitments, prior
+            // objectives, or evidence-dependent claims are authorized by flags.
             // No tool, action, reminder or factual task can opt in via a flag alone.
             bool directConversation = userTerminalDraft &&
                 NIRAConversationFastPath.CanUseDirectReply(
@@ -103681,7 +105081,7 @@ public sealed class NIRAExecutive
             {
                 completionReviewConfirmedComplete = true;
                 Debug.WriteLine($"[ConversationFastPath] REVIEW_SKIPPED | Run={runId:D} | " +
-                    "Reason=VerifiedInterpersonalDecision | ExtraModelCalls=0");
+                    $"Reason={(decision.SelfContainedAnswer ? "StandaloneKnowledge" : "VerifiedInterpersonalDecision")} | ExtraModelCalls=0");
             }
 
             if (userTerminalDraft &&
@@ -104090,7 +105490,7 @@ public sealed class NIRAExecutive
                     +
                     completionReviewCalls
                     +
-                    (formationAppliedBeforeReply ? 1 : 0);
+                    memoryFormationCalls;
 
                 bool terminalNaturalReply =
                     decision.ReplyPresentation ==
@@ -104116,8 +105516,9 @@ public sealed class NIRAExecutive
                 bool shouldRealize =
                     NIRACharacterDeliveryPolicy.RequiresOptimizedFidelityPass(
                         decision, reply, hasOutstandingCognitionWork,
-                        authoritativeCharacterShift: characterDelivery.RequiresRealization ||
-                            !directConversation);
+                        authoritativeCharacterShift: characterDelivery.RequiresRealization,
+                        independentlyReviewed: completionReviewConfirmedComplete ||
+                            directTemporalWakeVerified);
 
                 bool directCharacterDelivery =
                     terminalNaturalReply && !shouldRealize;
@@ -107400,7 +108801,7 @@ public sealed class NIRAExecutive
 
 ---
 
-## 200. `NIRAAgent\Mind\NIRAInternalWorkGate.cs`
+## 201. `NIRAAgent\Mind\NIRAInternalWorkGate.cs`
 
 **File:** `NIRAAgent\Mind\NIRAInternalWorkGate.cs`
 
@@ -107535,7 +108936,7 @@ public sealed class NIRAInternalWorkGate
 
 ---
 
-## 201. `NIRAAgent\Mind\NIRAMindActivityTracker.cs`
+## 202. `NIRAAgent\Mind\NIRAMindActivityTracker.cs`
 
 **File:** `NIRAAgent\Mind\NIRAMindActivityTracker.cs`
 
@@ -107683,7 +109084,7 @@ public sealed class NIRAMindActivityTracker
 
 ---
 
-## 202. `NIRAAgent\Mind\NIRAMindEvent.cs`
+## 203. `NIRAAgent\Mind\NIRAMindEvent.cs`
 
 **File:** `NIRAAgent\Mind\NIRAMindEvent.cs`
 
@@ -108405,7 +109806,7 @@ public sealed record NIRAMindEvent
 
 ---
 
-## 203. `NIRAAgent\Mind\NIRAMindRuntime.cs`
+## 204. `NIRAAgent\Mind\NIRAMindRuntime.cs`
 
 **File:** `NIRAAgent\Mind\NIRAMindRuntime.cs`
 
@@ -108935,7 +110336,7 @@ public sealed class NIRAMindRuntime
 
 ---
 
-## 204. `NIRAAgent\Mind\NIRAOutputChunk.cs`
+## 205. `NIRAAgent\Mind\NIRAOutputChunk.cs`
 
 **File:** `NIRAAgent\Mind\NIRAOutputChunk.cs`
 
@@ -109016,7 +110417,7 @@ public sealed record NIRAOutputChunk
 
 ---
 
-## 205. `NIRAAgent\Mind\NIRAOutputDispatcher.cs`
+## 206. `NIRAAgent\Mind\NIRAOutputDispatcher.cs`
 
 **File:** `NIRAAgent\Mind\NIRAOutputDispatcher.cs`
 
@@ -109123,7 +110524,7 @@ public sealed class NIRAOutputDispatcher
 
 ---
 
-## 206. `NIRAAgent\NIRAAgent.csproj`
+## 207. `NIRAAgent\NIRAAgent.csproj`
 
 **File:** `NIRAAgent\NIRAAgent.csproj`
 
@@ -109246,7 +110647,7 @@ public sealed class NIRAOutputDispatcher
 
 ---
 
-## 207. `NIRAAgent\PC\Awareness\NIRAPresenceService.cs`
+## 208. `NIRAAgent\PC\Awareness\NIRAPresenceService.cs`
 
 **File:** `NIRAAgent\PC\Awareness\NIRAPresenceService.cs`
 
@@ -109658,7 +111059,7 @@ public sealed class NIRAPresenceService
 
 ---
 
-## 208. `NIRAAgent\PC\Awareness\PcAwarenessService.cs`
+## 209. `NIRAAgent\PC\Awareness\PcAwarenessService.cs`
 
 **File:** `NIRAAgent\PC\Awareness\PcAwarenessService.cs`
 
@@ -110460,7 +111861,7 @@ public sealed class PcAwarenessService
 
 ---
 
-## 209. `NIRAAgent\PC\Awareness\PcContextFormatter.cs`
+## 210. `NIRAAgent\PC\Awareness\PcContextFormatter.cs`
 
 **File:** `NIRAAgent\PC\Awareness\PcContextFormatter.cs`
 
@@ -110662,7 +112063,7 @@ public static class PcContextFormatter
 
 ---
 
-## 210. `NIRAAgent\PC\Awareness\PcWorldState.cs`
+## 211. `NIRAAgent\PC\Awareness\PcWorldState.cs`
 
 **File:** `NIRAAgent\PC\Awareness\PcWorldState.cs`
 
@@ -111239,7 +112640,7 @@ public readonly record struct PcRectangle(
 
 ---
 
-## 211. `NIRAAgent\PC\Awareness\PcWorldStateService.cs`
+## 212. `NIRAAgent\PC\Awareness\PcWorldStateService.cs`
 
 **File:** `NIRAAgent\PC\Awareness\PcWorldStateService.cs`
 
@@ -111679,7 +113080,7 @@ public sealed class PcWorldStateService
 
 ---
 
-## 212. `NIRAAgent\Perception\AttentionManager.cs`
+## 213. `NIRAAgent\Perception\AttentionManager.cs`
 
 **File:** `NIRAAgent\Perception\AttentionManager.cs`
 
@@ -112424,7 +113825,7 @@ public sealed class AttentionManager
 
 ---
 
-## 213. `NIRAAgent\Perception\CompanionTimerService.cs`
+## 214. `NIRAAgent\Perception\CompanionTimerService.cs`
 
 **File:** `NIRAAgent\Perception\CompanionTimerService.cs`
 
@@ -112597,7 +113998,7 @@ public sealed class CompanionTimerService
 
 ---
 
-## 214. `NIRAAgent\Perception\PcMonitorService.cs`
+## 215. `NIRAAgent\Perception\PcMonitorService.cs`
 
 **File:** `NIRAAgent\Perception\PcMonitorService.cs`
 
@@ -112795,7 +114196,7 @@ public sealed class PcMonitorService
 
 ---
 
-## 215. `NIRAAgent\Perception\PerceptionAnalyzer.cs`
+## 216. `NIRAAgent\Perception\PerceptionAnalyzer.cs`
 
 **File:** `NIRAAgent\Perception\PerceptionAnalyzer.cs`
 
@@ -113189,7 +114590,7 @@ public sealed class PerceptionAnalyzer
 
 ---
 
-## 216. `NIRAAgent\Perception\PerceptionEvent.cs`
+## 217. `NIRAAgent\Perception\PerceptionEvent.cs`
 
 **File:** `NIRAAgent\Perception\PerceptionEvent.cs`
 
@@ -113264,7 +114665,7 @@ public sealed class PerceptionEvent
 
 ---
 
-## 217. `NIRAAgent\Piper\Models\en_US-hfc_female-medium.onnx.json`
+## 218. `NIRAAgent\Piper\Models\en_US-hfc_female-medium.onnx.json`
 
 **File:** `NIRAAgent\Piper\Models\en_US-hfc_female-medium.onnx.json`
 
@@ -113781,7 +115182,7 @@ public sealed class PerceptionEvent
 
 ---
 
-## 218. `NIRAAgent\Presentation\NIRADualChannelResponse.cs`
+## 219. `NIRAAgent\Presentation\NIRADualChannelResponse.cs`
 
 **File:** `NIRAAgent\Presentation\NIRADualChannelResponse.cs`
 
@@ -114020,7 +115421,7 @@ public static class NIRAPresentationPolicy
 
 ---
 
-## 219. `NIRAAgent\Presentation\NIRARichBlockJsonReader.cs`
+## 220. `NIRAAgent\Presentation\NIRARichBlockJsonReader.cs`
 
 **File:** `NIRAAgent\Presentation\NIRARichBlockJsonReader.cs`
 
@@ -114437,7 +115838,7 @@ public static class NIRARichBlockJsonReader
 
 ---
 
-## 220. `NIRAAgent\Presentation\NIRAVerifiedFilePresentation.cs`
+## 221. `NIRAAgent\Presentation\NIRAVerifiedFilePresentation.cs`
 
 **File:** `NIRAAgent\Presentation\NIRAVerifiedFilePresentation.cs`
 
@@ -114561,7 +115962,7 @@ public static class NIRAVerifiedFilePresentation
 
 ---
 
-## 221. `NIRAAgent\Prompt\cognition.yaml`
+## 222. `NIRAAgent\Prompt\cognition.yaml`
 
 **File:** `NIRAAgent\Prompt\cognition.yaml`
 
@@ -115436,7 +116837,7 @@ first_call_grounding_and_continuity:
 
 ---
 
-## 222. `NIRAAgent\Prompt\cognition_contract.yaml`
+## 223. `NIRAAgent\Prompt\cognition_contract.yaml`
 
 **File:** `NIRAAgent\Prompt\cognition_contract.yaml`
 
@@ -115468,7 +116869,9 @@ instructions: |
              "replyReady": false,
              "characterReady": false,
              "conversationOnly": false,
+             "selfContainedAnswer": false,
              "reviewCommitment": false,
+             "commitmentProposals": [],
              "decisionSummary": "short operational status only",
              "deepReasoningRequest": null,
              "progressUpdate": "optional short user-visible status while continuing; no secrets",
@@ -115496,6 +116899,30 @@ instructions: |
                "pace": 1.0
              }
            }
+
+           STRUCTURED COMMITMENT EFFICIENCY: When reviewCommitment=true for
+           an accepted future reminder, optionally put one grounded proposal
+           into commitmentProposals IN THIS SAME decision. Use action=Create,
+           evidenceSource=NIRAReply, evidenceQuote=an EXACT contiguous excerpt
+           of the proposed reply accepting the reminder, summary=what to remind,
+           confidence (0..1), and temporal={"mode":"Exact",
+           "relativeDelaySeconds":120,"originalExpression":"in two minutes"}
+           for a 2-minute reminder. Other valid temporal semantics may use
+           targetLocalDate/localTime or recurrence as the trusted scheduler
+           supports. The authoritative self-model validates proposal evidence,
+           schedule and storage. If uncertain emit [] and allow existing
+           separate formation fallback. A proposal never equals a saved event.
+           For ordinary chat, no future promise, or unrelated tool work, use [].
+
+           TEMPORAL WAKE DELIVERY: For an internal TemporalCommitmentDue event,
+           if NIRA actually emits the reminder in a Complete reply, it may
+           attach one commitmentProposals item with action=Complete,
+           commitmentId=the EXACT authoritative event commitmentId,
+           evidenceSource=NIRAReply, evidenceQuote=exact substring of final
+           reply, and high confidence. The self-model validates and persists
+           the transition without a second memory-formation LLM call. If
+           deferred, silent, uncertain, or recurring, don't mark the entire
+           obligation completed; return [] and use the established fallback.
 
            FUTURE-OBLIGATION HANDOFF: reviewCommitment is REQUIRED in every
            terminal JSON decision. Set reviewCommitment=true only when the
@@ -115541,6 +116968,16 @@ instructions: |
            or merely making conflict easier to resolve is NOT repair by itself. If the
            CURRENT user event contains no actual repair act, set repair=0. Existing
            relationship can resolve ambiguity but cannot reverse clear current evidence.
+
+           SELF-CONTAINED ANSWER OPT-IN: selfContainedAnswer=true applies only
+           to a complete, general-knowledge explanation requiring no live
+           observations, user-specific facts, memory retrieval, tools,
+           permission, state changes, scheduling, work status, or verification.
+           Provide the accurate, complete answer and final NIRA character wording
+           now (replyReady=true, characterReady=true). Do not use it for uncertain
+           factual claims or substantial research. It may not coexist with
+           conversationOnly=true. The Executive independently checks the full
+           proposal shape and actual work/evidence before skipping any calls.
 
            CONVERSATION-ONLY OPT-IN: conversationOnly=true applies only to
            interpersonal dialogue with NO independent fact check, tool, action,
@@ -115961,7 +117398,7 @@ one_call_tool_routing:
 
 ---
 
-## 223. `NIRAAgent\Prompt\elvara_tradeai.yaml`
+## 224. `NIRAAgent\Prompt\elvara_tradeai.yaml`
 
 **File:** `NIRAAgent\Prompt\elvara_tradeai.yaml`
 
@@ -116016,7 +117453,7 @@ instructions: |
 
 ---
 
-## 224. `NIRAAgent\Prompt\memory_formation.yaml`
+## 225. `NIRAAgent\Prompt\memory_formation.yaml`
 
 **File:** `NIRAAgent\Prompt\memory_formation.yaml`
 
@@ -116358,7 +117795,7 @@ learned_procedural_skills:
 
 ---
 
-## 225. `NIRAAgent\Prompt\memory_recall.yaml`
+## 226. `NIRAAgent\Prompt\memory_recall.yaml`
 
 **File:** `NIRAAgent\Prompt\memory_recall.yaml`
 
@@ -116421,7 +117858,7 @@ full_mode_search_bound:
 
 ---
 
-## 226. `NIRAAgent\Prompt\nira_personality.yaml`
+## 227. `NIRAAgent\Prompt\nira_personality.yaml`
 
 **File:** `NIRAAgent\Prompt\nira_personality.yaml`
 
@@ -116849,7 +118286,7 @@ truth:
 
 ---
 
-## 227. `NIRAAgent\Prompt\response_realization.yaml`
+## 228. `NIRAAgent\Prompt\response_realization.yaml`
 
 **File:** `NIRAAgent\Prompt\response_realization.yaml`
 
@@ -116984,7 +118421,7 @@ output:
 
 ---
 
-## 228. `NIRAAgent\Self\Model\NIRARuntimeSelfKnowledgeProvider.cs`
+## 229. `NIRAAgent\Self\Model\NIRARuntimeSelfKnowledgeProvider.cs`
 
 **File:** `NIRAAgent\Self\Model\NIRARuntimeSelfKnowledgeProvider.cs`
 
@@ -117280,7 +118717,7 @@ public sealed class NIRARuntimeSelfKnowledgeProvider
 
 ---
 
-## 229. `NIRAAgent\Self\Model\NIRASelfModelContracts.cs`
+## 230. `NIRAAgent\Self\Model\NIRASelfModelContracts.cs`
 
 **File:** `NIRAAgent\Self\Model\NIRASelfModelContracts.cs`
 
@@ -117974,7 +119411,7 @@ public sealed record NIRACommitmentApplyResult
 
 ---
 
-## 230. `NIRAAgent\Self\Model\NIRASelfModelService.cs`
+## 231. `NIRAAgent\Self\Model\NIRASelfModelService.cs`
 
 **File:** `NIRAAgent\Self\Model\NIRASelfModelService.cs`
 
@@ -119937,7 +121374,7 @@ public sealed class NIRASelfModelService
 
 ---
 
-## 231. `NIRAAgent\Self\Model\NIRASelfModelStore.cs`
+## 232. `NIRAAgent\Self\Model\NIRASelfModelStore.cs`
 
 **File:** `NIRAAgent\Self\Model\NIRASelfModelStore.cs`
 
@@ -121708,7 +123145,7 @@ public sealed class NIRASelfModelStore
 
 ---
 
-## 232. `NIRAAgent\Self\Preferences\NIRASelfPreferenceMemorySyncService.cs`
+## 233. `NIRAAgent\Self\Preferences\NIRASelfPreferenceMemorySyncService.cs`
 
 **File:** `NIRAAgent\Self\Preferences\NIRASelfPreferenceMemorySyncService.cs`
 
@@ -122288,7 +123725,7 @@ public enum NIRASelfPreferenceMemorySyncAction
 
 ---
 
-## 233. `NIRAAgent\Self\Preferences\NIRASelfPreferenceService.cs`
+## 234. `NIRAAgent\Self\Preferences\NIRASelfPreferenceService.cs`
 
 **File:** `NIRAAgent\Self\Preferences\NIRASelfPreferenceService.cs`
 
@@ -123471,7 +124908,7 @@ public sealed class NIRASelfPreferenceService
 
 ---
 
-## 234. `NIRAAgent\Self\Preferences\NIRASelfPreferenceState.cs`
+## 235. `NIRAAgent\Self\Preferences\NIRASelfPreferenceState.cs`
 
 **File:** `NIRAAgent\Self\Preferences\NIRASelfPreferenceState.cs`
 
@@ -123872,7 +125309,7 @@ public sealed record NIRASelfPreferenceApplyResult
 
 ---
 
-## 235. `NIRAAgent\Self\Preferences\NIRASelfPreferenceStore.cs`
+## 236. `NIRAAgent\Self\Preferences\NIRASelfPreferenceStore.cs`
 
 **File:** `NIRAAgent\Self\Preferences\NIRASelfPreferenceStore.cs`
 
@@ -125093,7 +126530,7 @@ public sealed class NIRASelfPreferenceStore
 
 ---
 
-## 236. `NIRAAgent\Self\Preferences\NIRATemporaryOpinionState.cs`
+## 237. `NIRAAgent\Self\Preferences\NIRATemporaryOpinionState.cs`
 
 **File:** `NIRAAgent\Self\Preferences\NIRATemporaryOpinionState.cs`
 
@@ -125367,7 +126804,7 @@ public readonly record struct NIRATemporaryOpinionSnapshot(
 
 ---
 
-## 237. `NIRAAgent\Semantic\INIRASemanticEncoder.cs`
+## 238. `NIRAAgent\Semantic\INIRASemanticEncoder.cs`
 
 **File:** `NIRAAgent\Semantic\INIRASemanticEncoder.cs`
 
@@ -125387,7 +126824,7 @@ public interface INIRASemanticEncoder
 
 ---
 
-## 238. `NIRAAgent\Semantic\MiniLmSemanticEncoder.cs`
+## 239. `NIRAAgent\Semantic\MiniLmSemanticEncoder.cs`
 
 **File:** `NIRAAgent\Semantic\MiniLmSemanticEncoder.cs`
 
@@ -126126,7 +127563,7 @@ public sealed class MiniLmSemanticEncoder
 
 ---
 
-## 239. `NIRAAgent\Semantic\Models\all-MiniLM-L6-v2\vocab.txt`
+## 240. `NIRAAgent\Semantic\Models\all-MiniLM-L6-v2\vocab.txt`
 
 **File:** `NIRAAgent\Semantic\Models\all-MiniLM-L6-v2\vocab.txt`
 
@@ -156657,7 +158094,7 @@ necessitated
 
 ---
 
-## 240. `NIRAAgent\Semantic\NIRASemanticMemoryService.cs`
+## 241. `NIRAAgent\Semantic\NIRASemanticMemoryService.cs`
 
 **File:** `NIRAAgent\Semantic\NIRASemanticMemoryService.cs`
 
@@ -156991,7 +158428,7 @@ public sealed class NIRASemanticMemoryService
 
 ---
 
-## 241. `NIRAAgent\Semantic\NIRASemanticObservation.cs`
+## 242. `NIRAAgent\Semantic\NIRASemanticObservation.cs`
 
 **File:** `NIRAAgent\Semantic\NIRASemanticObservation.cs`
 
@@ -157119,7 +158556,7 @@ public sealed record NIRASemanticObservation
 
 ---
 
-## 242. `NIRAAgent\Semantic\NIRASemanticSimilarity.cs`
+## 243. `NIRAAgent\Semantic\NIRASemanticSimilarity.cs`
 
 **File:** `NIRAAgent\Semantic\NIRASemanticSimilarity.cs`
 
@@ -157228,7 +158665,7 @@ public static class NIRASemanticSimilarity
 
 ---
 
-## 243. `NIRAAgent\Semantic\NIRAWordPieceTokenizer.cs`
+## 244. `NIRAAgent\Semantic\NIRAWordPieceTokenizer.cs`
 
 **File:** `NIRAAgent\Semantic\NIRAWordPieceTokenizer.cs`
 
@@ -157731,7 +159168,7 @@ internal readonly record struct NIRATokenizedInput(
 
 ---
 
-## 244. `NIRAAgent\Semantic\SemanticEmbedding.cs`
+## 245. `NIRAAgent\Semantic\SemanticEmbedding.cs`
 
 **File:** `NIRAAgent\Semantic\SemanticEmbedding.cs`
 
@@ -157782,7 +159219,7 @@ public sealed class SemanticEmbedding
 
 ---
 
-## 245. `NIRAAgent\Settings\NIRARuntimeSettingsService.cs`
+## 246. `NIRAAgent\Settings\NIRARuntimeSettingsService.cs`
 
 **File:** `NIRAAgent\Settings\NIRARuntimeSettingsService.cs`
 
@@ -158042,7 +159479,7 @@ public sealed class NIRARuntimeSettingsService
 
 ---
 
-## 246. `NIRAAgent\Skills\NIRALearnedSkillContracts.cs`
+## 247. `NIRAAgent\Skills\NIRALearnedSkillContracts.cs`
 
 **File:** `NIRAAgent\Skills\NIRALearnedSkillContracts.cs`
 
@@ -158373,7 +159810,7 @@ public sealed record NIRALearnedSkillMutationResult
 
 ---
 
-## 247. `NIRAAgent\Skills\NIRALearnedSkillService.cs`
+## 248. `NIRAAgent\Skills\NIRALearnedSkillService.cs`
 
 **File:** `NIRAAgent\Skills\NIRALearnedSkillService.cs`
 
@@ -159941,7 +161378,7 @@ public sealed class NIRALearnedSkillService
 
 ---
 
-## 248. `NIRAAgent\Skills\NIRALearnedSkillStore.cs`
+## 249. `NIRAAgent\Skills\NIRALearnedSkillStore.cs`
 
 **File:** `NIRAAgent\Skills\NIRALearnedSkillStore.cs`
 
@@ -160542,7 +161979,7 @@ public sealed class NIRALearnedSkillStore
 
 ---
 
-## 249. `NIRAAgent\Temporal\NIRATemporalCommitmentReasoner.cs`
+## 250. `NIRAAgent\Temporal\NIRATemporalCommitmentReasoner.cs`
 
 **File:** `NIRAAgent\Temporal\NIRATemporalCommitmentReasoner.cs`
 
@@ -160768,7 +162205,7 @@ public sealed class NIRATemporalCommitmentReasoner
 
 ---
 
-## 250. `NIRAAgent\Temporal\NIRATemporalCommitmentReconciliationService.cs`
+## 251. `NIRAAgent\Temporal\NIRATemporalCommitmentReconciliationService.cs`
 
 **File:** `NIRAAgent\Temporal\NIRATemporalCommitmentReconciliationService.cs`
 
@@ -160949,7 +162386,7 @@ public sealed class NIRATemporalCommitmentReconciliationService
 
 ---
 
-## 251. `NIRAAgent\Temporal\NIRATemporalCommitmentSchedulerService.cs`
+## 252. `NIRAAgent\Temporal\NIRATemporalCommitmentSchedulerService.cs`
 
 **File:** `NIRAAgent\Temporal\NIRATemporalCommitmentSchedulerService.cs`
 
@@ -161144,7 +162581,7 @@ public sealed class NIRATemporalCommitmentSchedulerService
 
 ---
 
-## 252. `NIRAAgent\Temporal\NIRATemporalContracts.cs`
+## 253. `NIRAAgent\Temporal\NIRATemporalContracts.cs`
 
 **File:** `NIRAAgent\Temporal\NIRATemporalContracts.cs`
 
@@ -162451,7 +163888,7 @@ public sealed class NIRATemporalContextService
 
 ---
 
-## 253. `NIRAAgent\Tools\NIRADynamicToolContracts.cs`
+## 254. `NIRAAgent\Tools\NIRADynamicToolContracts.cs`
 
 **File:** `NIRAAgent\Tools\NIRADynamicToolContracts.cs`
 
@@ -162937,7 +164374,7 @@ public sealed record NIRADynamicToolExecutionResult
 
 ---
 
-## 254. `NIRAAgent\Tools\NIRADynamicToolExecutor.cs`
+## 255. `NIRAAgent\Tools\NIRADynamicToolExecutor.cs`
 
 **File:** `NIRAAgent\Tools\NIRADynamicToolExecutor.cs`
 
@@ -163819,7 +165256,7 @@ public sealed class NIRADynamicToolExecutor
 
 ---
 
-## 255. `NIRAAgent\Tools\NIRADynamicToolService.cs`
+## 256. `NIRAAgent\Tools\NIRADynamicToolService.cs`
 
 **File:** `NIRAAgent\Tools\NIRADynamicToolService.cs`
 
@@ -164472,7 +165909,7 @@ public sealed class NIRADynamicToolService
 
 ---
 
-## 256. `NIRAAgent\Tools\NIRADynamicToolStore.cs`
+## 257. `NIRAAgent\Tools\NIRADynamicToolStore.cs`
 
 **File:** `NIRAAgent\Tools\NIRADynamicToolStore.cs`
 
@@ -165762,7 +167199,7 @@ public sealed class NIRADynamicToolStore
 
 ---
 
-## 257. `NIRAAgent\Tools\NIRADynamicToolValidator.cs`
+## 258. `NIRAAgent\Tools\NIRADynamicToolValidator.cs`
 
 **File:** `NIRAAgent\Tools\NIRADynamicToolValidator.cs`
 
@@ -166156,7 +167593,7 @@ public sealed class NIRADynamicToolValidator
 
 ---
 
-## 258. `NIRAAgent\Vision\NIRAVisualEvidenceContracts.cs`
+## 259. `NIRAAgent\Vision\NIRAVisualEvidenceContracts.cs`
 
 **File:** `NIRAAgent\Vision\NIRAVisualEvidenceContracts.cs`
 
@@ -166672,7 +168109,7 @@ public interface INIRAScreenCaptureBackend
 
 ---
 
-## 259. `NIRAAgent\Vision\NIRAVisualEvidenceService.cs`
+## 260. `NIRAAgent\Vision\NIRAVisualEvidenceService.cs`
 
 **File:** `NIRAAgent\Vision\NIRAVisualEvidenceService.cs`
 
@@ -168368,7 +169805,7 @@ public sealed class NIRAVisualEvidenceService
 
 ---
 
-## 260. `NIRAAgent\Vision\NIRAVisualObservationContracts.cs`
+## 261. `NIRAAgent\Vision\NIRAVisualObservationContracts.cs`
 
 **File:** `NIRAAgent\Vision\NIRAVisualObservationContracts.cs`
 
@@ -168455,7 +169892,7 @@ public sealed record NIRAVisualObservation
 
 ---
 
-## 261. `NIRAAgent\Vision\NIRAVisualUnderstandingService.cs`
+## 262. `NIRAAgent\Vision\NIRAVisualUnderstandingService.cs`
 
 **File:** `NIRAAgent\Vision\NIRAVisualUnderstandingService.cs`
 
@@ -169174,7 +170611,7 @@ public sealed class NIRAVisualUnderstandingService
 
 ---
 
-## 262. `NIRAAgent\Voice\AdaptiveVoiceService.cs`
+## 263. `NIRAAgent\Voice\AdaptiveVoiceService.cs`
 
 **File:** `NIRAAgent\Voice\AdaptiveVoiceService.cs`
 
@@ -169289,7 +170726,7 @@ public sealed class AdaptiveVoiceService
 
 ---
 
-## 263. `NIRAAgent\Voice\Groq\GroqOrpheusVoiceService.cs`
+## 264. `NIRAAgent\Voice\Groq\GroqOrpheusVoiceService.cs`
 
 **File:** `NIRAAgent\Voice\Groq\GroqOrpheusVoiceService.cs`
 
@@ -170338,7 +171775,7 @@ public sealed class GroqOrpheusVoiceService
 
 ---
 
-## 264. `NIRAAgent\Voice\Groq\GroqVocalDirectionMapper.cs`
+## 265. `NIRAAgent\Voice\Groq\GroqVocalDirectionMapper.cs`
 
 **File:** `NIRAAgent\Voice\Groq\GroqVocalDirectionMapper.cs`
 
@@ -170614,7 +172051,7 @@ public static class GroqVocalDirectionMapper
 
 ---
 
-## 265. `NIRAAgent\Voice\IVoiceService.cs`
+## 266. `NIRAAgent\Voice\IVoiceService.cs`
 
 **File:** `NIRAAgent\Voice\IVoiceService.cs`
 
@@ -170648,7 +172085,7 @@ public interface IVoiceService
 
 ---
 
-## 266. `NIRAAgent\Voice\NIRAVocalIntent.cs`
+## 267. `NIRAAgent\Voice\NIRAVocalIntent.cs`
 
 **File:** `NIRAAgent\Voice\NIRAVocalIntent.cs`
 
@@ -170735,7 +172172,7 @@ public readonly record struct NIRAVocalIntent(
 
 ---
 
-## 267. `NIRAAgent\Voice\NIRAVoiceExpression.cs`
+## 268. `NIRAAgent\Voice\NIRAVoiceExpression.cs`
 
 **File:** `NIRAAgent\Voice\NIRAVoiceExpression.cs`
 
@@ -170848,7 +172285,7 @@ public readonly record struct NIRAVoiceExpression(
 
 ---
 
-## 268. `NIRAAgent\Voice\NIRAVoiceExpressionService.cs`
+## 269. `NIRAAgent\Voice\NIRAVoiceExpressionService.cs`
 
 **File:** `NIRAAgent\Voice\NIRAVoiceExpressionService.cs`
 
@@ -171156,7 +172593,7 @@ public sealed class NIRAVoiceExpressionService
 
 ---
 
-## 269. `NIRAAgent\Voice\PiperVoiceService.cs`
+## 270. `NIRAAgent\Voice\PiperVoiceService.cs`
 
 **File:** `NIRAAgent\Voice\PiperVoiceService.cs`
 
@@ -171693,7 +173130,7 @@ public sealed class PiperVoiceService
 
 ---
 
-## 270. `NIRAAgent\Voice\PreparedVoiceAudio.cs`
+## 271. `NIRAAgent\Voice\PreparedVoiceAudio.cs`
 
 **File:** `NIRAAgent\Voice\PreparedVoiceAudio.cs`
 
@@ -171860,7 +173297,7 @@ public sealed class PreparedVoiceAudio
 
 ---
 
-## 271. `NIRAAgent\Voice\SpeechChunker.cs`
+## 272. `NIRAAgent\Voice\SpeechChunker.cs`
 
 **File:** `NIRAAgent\Voice\SpeechChunker.cs`
 
@@ -172673,7 +174110,7 @@ public sealed class SpeechChunker
 
 ---
 
-## 272. `NIRAAgent\Voice\SpeechTextSanitizer.cs`
+## 273. `NIRAAgent\Voice\SpeechTextSanitizer.cs`
 
 **File:** `NIRAAgent\Voice\SpeechTextSanitizer.cs`
 
@@ -172929,7 +174366,7 @@ public static partial class SpeechTextSanitizer
 
 ---
 
-## 273. `NIRAAgent\Voice\VoiceAudioPlayer.cs`
+## 274. `NIRAAgent\Voice\VoiceAudioPlayer.cs`
 
 **File:** `NIRAAgent\Voice\VoiceAudioPlayer.cs`
 
@@ -173043,7 +174480,7 @@ public sealed class VoiceAudioPlayer
 
 ---
 
-## 274. `NIRAAgent\Voice\VoiceQueue.cs`
+## 275. `NIRAAgent\Voice\VoiceQueue.cs`
 
 **File:** `NIRAAgent\Voice\VoiceQueue.cs`
 
@@ -174143,7 +175580,7 @@ public sealed class VoiceQueue
 
 ---
 
-## 275. `NIRAAgent\Voice\VoiceUtterance.cs`
+## 276. `NIRAAgent\Voice\VoiceUtterance.cs`
 
 **File:** `NIRAAgent\Voice\VoiceUtterance.cs`
 

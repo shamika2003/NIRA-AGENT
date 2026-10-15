@@ -16,6 +16,89 @@ Console.WriteLine($"[DeepRouting] REGRESSION | Revision={NIRAModelSelection.Rout
     $"Assembly={typeof(NIRAModelSelection).Assembly.Location}");
 Console.WriteLine("[ConcurrentMind] REGRESSION | Revision=NIRA-CONCURRENT-20261014-S4-ADAPTIVE");
 
+Check("Browser fallback is reserved for a genuinely missing Playwright executable", () =>
+{
+    MethodInfo method = typeof(NIRABrowserService).GetMethod(
+        "IsBundledChromiumMissing", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new Exception("Missing precise Playwright fallback guard");
+    bool Missing(string message) => (bool)(method.Invoke(null, new object[] { message }) ?? false);
+    if (!Missing("Executable doesn't exist at C:\\Users\\test\\ms-playwright\\chromium-1234\\chrome.exe") ||
+        Missing("browserType.launchPersistentContext: Target page has been closed") ||
+        Missing("Navigation timeout exceeded") || Missing(""))
+        throw new Exception("Unrelated browser launch failures must not be mistaken for missing Chromium");
+});
+
+Check("Browser fallback selects installed Chrome then Edge without other programs", () =>
+{
+    MethodInfo method = typeof(NIRABrowserService).GetMethod(
+        "DiscoverInstalledBrowserChannels", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new Exception("Missing installed browser fallback discovery");
+    string root = Path.Combine(Path.GetTempPath(), "nira-browser-fallback-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        string chrome = Path.Combine(root, "Google", "Chrome", "Application", "chrome.exe");
+        string edge = Path.Combine(root, "Microsoft", "Edge", "Application", "msedge.exe");
+        Directory.CreateDirectory(Path.GetDirectoryName(chrome)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(edge)!);
+        File.WriteAllText(chrome, "offline regression marker");
+        File.WriteAllText(edge, "offline regression marker");
+        var channels = (IReadOnlyList<string>)(method.Invoke(null, new object[] { new[] { root } })
+            ?? throw new Exception("No discovered channel result"));
+        if (!channels.SequenceEqual(new[] { "chrome", "msedge" }))
+            throw new Exception("Installed system browser channel order or restrictions changed");
+    }
+    finally
+    {
+        if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+    }
+});
+
+Check("Browser select preflight requires an exact available value or label", () =>
+{
+    MethodInfo method = typeof(NIRABrowserService).GetMethod(
+        "HasSelectableOption", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new Exception("Missing exact dropdown option preflight");
+    string[][] options = { new[] { "C01", "Object Oriented Design" }, new[] { "C02", "Database Systems" } };
+    bool Has(string option, bool byLabel) =>
+        (bool)(method.Invoke(null, new object[] { options, option, byLabel }) ?? false);
+    if (!Has("C01", false) || !Has("Database Systems", true) ||
+        Has("Object Oriented Design", false) || Has("C01", true) ||
+        Has("Unknown", false) || Has("c01", false))
+        throw new Exception("Browser option selection is not exact or the label/value modes were confused");
+});
+
+Check("Unavailable native browser option has a typed no-effect outcome", () =>
+{
+    Exception option = new NIRABrowserOptionUnavailableException("No matching value");
+    if (option is not InvalidOperationException || option is OperationCanceledException)
+        throw new Exception("Preflight option mismatch must be distinguishable from dispatched uncertainty");
+    MethodInfo policy = typeof(NIRACapabilityService).GetMethod(
+        "IsCertainNoEffectBrowserPreflight", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new Exception("Missing no-effect capability outcome classifier");
+    bool Certain(string capability, Exception e) =>
+        (bool)(policy.Invoke(null, new object[] { capability, e }) ?? false);
+    if (!Certain(NIRACapabilityIds.BrowserSelect, option) ||
+        Certain(NIRACapabilityIds.BrowserClick, option) ||
+        Certain(NIRACapabilityIds.BrowserSelect, new TimeoutException("Selection timed out")))
+        throw new Exception("Only absent native dropdown options are provably no-effect browser preflights");
+});
+
+Check("Cancellation contract handles clear referential requests without claiming unexecuted work", () =>
+{
+    var type = typeof(NIRACognitionService).Assembly.GetType(
+        "NIRAAgent.AI.Cognition.NIRACognitionPromptCompiler")
+        ?? throw new Exception("Missing production prompt compiler");
+    MethodInfo system = type.GetMethod("BootstrapSystem", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)
+        ?? throw new Exception("Missing production bootstrap guidance");
+    string? promptFile = LocatePromptFolder();
+    if (promptFile == null) throw new Exception("Missing authoritative prompt folder");
+    string personality = File.ReadAllText(Path.Combine(promptFile, "nira_personality.yaml"));
+    string compiled = (string?)system.Invoke(null, new object[] { personality }) ?? "";
+    if (!compiled.Contains("referent is clearly an open or blocked branch", StringComparison.Ordinal) ||
+        !compiled.Contains("never say a branch was removed", StringComparison.Ordinal))
+        throw new Exception("Control request completion claims are not guarded in bootstrap");
+});
+
 Check("Capability identity ignores transient request IDs and explanations", () =>
 {
     var first = Request("elvara.tradeai.read", """{"resource":"signals","symbol":"EURUSD"}""");
@@ -178,6 +261,18 @@ Check("Delegated runs use Ultra without a new classifier", () =>
 {
     Equal(NIRAModelSelection.Primary, NIRAModelSelection.ForCognition(false));
     Equal(NIRAModelSelection.Deep, NIRAModelSelection.ForCognition(true));
+});
+
+Check("NIRA's branded cognition roles are stable and provider independent", () =>
+{
+    Equal("NIRA Adaptive", NIRAModelSelection.NameForRole(NIRAReasoningRole.Adaptive));
+    Equal("NIRA Deep Work", NIRAModelSelection.NameForRole(NIRAReasoningRole.DeepWork));
+    Equal(NIRAModelSelection.Primary, NIRAModelSelection.ModelForRole(NIRAReasoningRole.Adaptive));
+    Equal(NIRAModelSelection.Deep, NIRAModelSelection.ModelForRole(NIRAReasoningRole.DeepWork));
+    Equal(NIRAModelSelection.ForCognition(false),
+        NIRAModelSelection.ModelForRole(NIRAReasoningRole.Adaptive));
+    Equal(NIRAModelSelection.ForCognition(true),
+        NIRAModelSelection.ModelForRole(NIRAReasoningRole.DeepWork));
 });
 
 Check("Deep specialist can request multiple ordinary registered tools", () =>

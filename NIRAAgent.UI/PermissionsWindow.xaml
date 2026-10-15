@@ -6,8 +6,8 @@
         Title="NIRA Permissions"
         Width="1180"
         Height="780"
-        MinWidth="960"
-        MinHeight="640"
+        MinWidth="760"
+        MinHeight="455"
         WindowStartupLocation="CenterOwner"
         WindowStyle="None"
         ResizeMode="CanResize"
@@ -36,8 +36,8 @@
                         <Grid ClipToBounds="True">
                             <ui:NIRAUtilityBackdropBorder Margin="-18" BlurRadius="14" BackdropOpacity="0.72"/>
                             <Border Background="{DynamicResource NIRAGlassTintBrush}"
-                                    BorderBrush="{DynamicResource NIRAGlassBorderBrush}"
-                                    BorderThickness="1"
+                                    BorderBrush="{DynamicResource NIRAGlassBorderStrongBrush}"
+                                    BorderThickness="1.4"
                                     CornerRadius="18">
                                 <ContentPresenter Margin="{TemplateBinding Padding}"/>
                             </Border>
@@ -54,8 +54,8 @@
                         <Grid ClipToBounds="True">
                             <ui:NIRAUtilityBackdropBorder Margin="-20" BlurRadius="16" BackdropOpacity="0.78"/>
                             <Border Background="{DynamicResource NIRAGlassStrongTintBrush}"
-                                    BorderBrush="{DynamicResource NIRAGlassBorderStrongBrush}"
-                                    BorderThickness="1"
+                                    BorderBrush="{DynamicResource NIRAFocusBorderBrush}"
+                                    BorderThickness="1.5"
                                     CornerRadius="19">
                                 <ContentPresenter Margin="{TemplateBinding Padding}"/>
                             </Border>
@@ -86,16 +86,60 @@
                         <Border x:Name="Root" Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="11">
+                                CornerRadius="11" RenderTransformOrigin="0.5,0.5">
+                            <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
+                                <Trigger.EnterActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Root" Storyboard.TargetProperty="Opacity" To="0.88" Duration="0:0:0.22">
+                                        <DoubleAnimation.EasingFunction><CubicEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction>
+                                    </DoubleAnimation>
+                                </Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                <Trigger.ExitActions><BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Root" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.26">
+                                        <DoubleAnimation.EasingFunction><CubicEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction>
+                                    </DoubleAnimation>
+                                </Storyboard></BeginStoryboard></Trigger.ExitActions>
                                 <Setter TargetName="Root" Property="Background" Value="{DynamicResource NIRACardHoverBrush}"/>
                                 <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
                                 <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
                             </Trigger>
+                            <EventTrigger RoutedEvent="Button.Click">
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace"><Storyboard>
+                                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Root" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)">
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1"/>
+                                    </DoubleAnimationUsingKeyFrames>
+                                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Root" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)">
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.955"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="1.022"/>
+                                        <EasingDoubleKeyFrame KeyTime="0:0:0.28" Value="1"/>
+                                    </DoubleAnimationUsingKeyFrames>
+                                </Storyboard></BeginStoryboard>
+                            </EventTrigger>
                         </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="PermissionTabsStyle" TargetType="TabControl">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabControl">
+                        <Grid KeyboardNavigation.TabNavigation="Local" ClipToBounds="False">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <TabPanel Grid.Row="0" IsItemsHost="True" Margin="0,0,0,5"
+                                      KeyboardNavigation.TabIndex="1" Background="Transparent"/>
+                            <ContentPresenter Grid.Row="1" ContentSource="SelectedContent"
+                                              Margin="0" KeyboardNavigation.TabIndex="2"/>
+                        </Grid>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -104,15 +148,17 @@
         <Style x:Key="PermissionTabItemStyle" TargetType="TabItem">
             <Setter Property="Foreground" Value="{DynamicResource NIRASecondaryBrush}"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Padding" Value="18,9"/>
-            <Setter Property="Margin" Value="0,0,7,0"/>
+            <Setter Property="Padding" Value="15,9"/>
+            <Setter Property="Margin" Value="0,0,8,2"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="TabItem">
                         <Border x:Name="TabChrome" Background="{DynamicResource NIRAChipBrush}"
                                 BorderBrush="{DynamicResource NIRAGlassBorderBrush}"
                                 BorderThickness="1" CornerRadius="11">
-                            <ContentPresenter ContentSource="Header" Margin="{TemplateBinding Padding}" HorizontalAlignment="Center"/>
+                            <ContentPresenter ContentSource="Header" Margin="{TemplateBinding Padding}"
+                                              HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              RecognizesAccessKey="True"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsSelected" Value="True">
@@ -131,7 +177,7 @@
 
         <Style x:Key="PermissionRequestItem" TargetType="ListBoxItem">
             <Setter Property="Margin" Value="0,0,0,7"/>
-            <Setter Property="Padding" Value="11,9"/>
+            <Setter Property="Padding" Value="13,12"/>
             <Setter Property="Background" Value="#0BFFFFFF"/>
             <Setter Property="BorderBrush" Value="{DynamicResource NIRAGlassBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
@@ -143,6 +189,9 @@
                             <ContentPresenter/>
                         </Border>
                         <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ItemRoot" Property="BorderBrush" Value="{DynamicResource NIRAGlassBorderStrongBrush}"/>
+                            </Trigger>
                             <Trigger Property="IsSelected" Value="True">
                                 <Setter TargetName="ItemRoot" Property="Background" Value="{DynamicResource NIRACardHoverBrush}"/>
                                 <Setter TargetName="ItemRoot" Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
@@ -152,12 +201,57 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        <Style x:Key="PermissionAuditRow" TargetType="DataGridRow">
+            <Setter Property="Height" Value="44"/>
+            <Setter Property="Background" Value="{DynamicResource NIRAChipBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource NIRAGlassBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="0,0,0,1"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource NIRACardHoverBrush}"/>
+                </Trigger>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource NIRACardHoverBrush}"/>
+                    <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
+                    <Setter Property="BorderBrush" Value="{DynamicResource NIRAFocusBorderBrush}"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="PermissionAuditCell" TargetType="DataGridCell">
+            <Setter Property="Padding" Value="12,7"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="Transparent"/>
+                    <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="PermissionAuditHeader" TargetType="DataGridColumnHeader">
+            <Setter Property="Height" Value="38"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding" Value="12,8"/>
+            <Setter Property="Background" Value="{DynamicResource NIRAChipBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource NIRAGlassBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="0,0,1,1"/>
+        </Style>
+        <Style x:Key="PermissionAuditText" TargetType="TextBlock">
+            <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="ToolTip" Value="{Binding Text, RelativeSource={RelativeSource Self}}"/>
+        </Style>
     </Window.Resources>
 
     <Grid x:Name="RootShell">
         <Image x:Name="UtilityBackgroundEclipse" Source="Assets/nira-utility-eclipse.png" Stretch="UniformToFill" Opacity="1" IsHitTestVisible="False"/>
         <Image x:Name="UtilityBackgroundHalo" Source="Assets/nira-utility-halo.png" Stretch="UniformToFill" Opacity="0" IsHitTestVisible="False"/>
-        <Rectangle Fill="{DynamicResource NIRABackdropVeilBrush}" Opacity="0.42" IsHitTestVisible="False"/>
+        <Rectangle Fill="{DynamicResource NIRABackdropVeilBrush}" Opacity="0.58" IsHitTestVisible="False"/>
 
         <Grid>
             <Grid.RowDefinitions>
@@ -173,15 +267,12 @@
                 <Grid Margin="18,0,12,0">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <Grid Width="40" Height="40" Margin="0,0,13,0">
-                            <Ellipse Stroke="{DynamicResource NIRABlueBrush}" StrokeThickness="1.4" Opacity="0.8"/>
-                            <Ellipse Margin="6" Stroke="{DynamicResource NIRACyanBrush}" StrokeThickness="1.2" Opacity="0.9"/>
-                            <Path Width="15" Height="15" Stretch="Uniform" Fill="{DynamicResource NIRACyanBrush}"
-                                  Data="M7.5,0 C4.4,0 2,2.3 2,5.3 V7 H1 V15 H14 V7 H13 V5.3 C13,2.3 10.6,0 7.5,0 Z M7.5,2 C9.5,2 11,3.4 11,5.3 V7 H4 V5.3 C4,3.4 5.5,2 7.5,2 Z"/>
-                        </Grid>
+                        <Image Width="40" Height="40" Margin="0,0,13,0"
+                               Source="Assets/Nira-Icon.png" Stretch="Uniform"
+                               RenderOptions.BitmapScalingMode="HighQuality"/>
                         <StackPanel>
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="NIRA" FontFamily="Bahnschrift SemiCondensed" FontSize="23" FontWeight="SemiBold"/>
+                                <TextBlock Text="NIRA" FontFamily="Segoe UI Variable Display, Segoe UI" FontSize="22" FontWeight="SemiBold"/>
                                 <TextBlock Text=" / PERMISSIONS" Margin="7,7,0,0" FontSize="9" FontWeight="SemiBold" Foreground="{DynamicResource NIRASecondaryBrush}"/>
                             </StackPanel>
                             <TextBlock Text="ACCESS CONTROL · APPROVALS · AUDIT" Margin="1,0,0,0" FontSize="7.5" Foreground="{DynamicResource NIRAMutedBrush}"/>
@@ -189,12 +280,6 @@
                     </StackPanel>
 
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                        <Border Height="36" Padding="12,0" Margin="0,0,8,0" Background="{DynamicResource NIRAChipBrush}" BorderBrush="{DynamicResource NIRAGlassBorderBrush}" BorderThickness="1" CornerRadius="11">
-                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <Ellipse Width="6" Height="6" Fill="{DynamicResource NIRAGreenBrush}" Margin="0,0,7,0"/>
-                                <TextBlock Text="RUNTIME LIVE" FontSize="8.5" FontWeight="SemiBold"/>
-                            </StackPanel>
-                        </Border>
                         <Button Style="{StaticResource PermissionWindowControl}" Click="PermissionsMinimize_Click" shell:WindowChrome.IsHitTestVisibleInChrome="True">
                             <Path Width="12" Height="1" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.4" Data="M0,0 L12,0"/>
                         </Button>
@@ -227,7 +312,7 @@
                     </Border>
                 </Grid>
 
-                <TabControl x:Name="Tabs" Grid.Row="2" Background="Transparent" BorderThickness="0">
+                <TabControl x:Name="Tabs" Grid.Row="2" Style="{StaticResource PermissionTabsStyle}" Background="Transparent" BorderThickness="0">
                     <TabControl.Resources>
                         <Style TargetType="TabItem" BasedOn="{StaticResource PermissionTabItemStyle}"/>
                     </TabControl.Resources>
@@ -308,8 +393,23 @@
                         <Grid Margin="0,14,0,0">
                             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="14"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
 
-                            <ContentControl Style="{StaticResource PermissionGlassCard}">
-                                <Grid Margin="18,16">
+                            <!-- Show actual saved grants immediately. Expand only when a new folder grant is needed. -->
+                            <Expander x:Name="GrantAccessExpander" IsExpanded="False"
+                                      Foreground="{DynamicResource NIRATextBrush}">
+                                <Expander.Header>
+                                    <Border Background="{DynamicResource NIRAChipBrush}"
+                                            BorderBrush="{DynamicResource NIRAGlassBorderBrush}"
+                                            BorderThickness="1" CornerRadius="11" Padding="12,9">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="Grant project-folder access" FontWeight="SemiBold"/>
+                                            <TextBlock Text="  ·  Expand to add a grant" FontSize="10"
+                                                       VerticalAlignment="Center"
+                                                       Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                                        </StackPanel>
+                                    </Border>
+                                </Expander.Header>
+                                <ContentControl Style="{StaticResource PermissionGlassCard}" Margin="0,8,0,0">
+                                <Grid Margin="18,14">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                     <StackPanel>
                                         <TextBlock Text="Grant project-folder access" FontSize="16" FontWeight="SemiBold"/>
@@ -330,11 +430,21 @@
                                     </StackPanel>
                                     <Button Grid.Column="1" Content="Grant access" Width="124" Style="{StaticResource NIRAPrimaryButtonStyle}" VerticalAlignment="Bottom" Click="GrantFolder_Click"/>
                                 </Grid>
-                            </ContentControl>
+                                </ContentControl>
+                            </Expander>
 
                             <ContentControl Grid.Row="2" Style="{StaticResource PermissionGlassCardStrong}">
-                                <Grid Margin="14">
-                                    <ListBox x:Name="ScopesList" Background="Transparent" BorderThickness="0" ItemContainerStyle="{StaticResource PermissionRequestItem}">
+                                <Grid Margin="14,12">
+                                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="9"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                                    <DockPanel Grid.Row="0">
+                                        <TextBlock Text="Active saved grants" FontSize="15" FontWeight="SemiBold"/>
+                                        <TextBlock x:Name="GrantListCount" Text="0 active" Margin="12,3,0,0"
+                                                   FontSize="10" Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                                    </DockPanel>
+                                    <ListBox x:Name="ScopesList" Grid.Row="2" Background="Transparent"
+                                             BorderThickness="0" ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                             ItemContainerStyle="{StaticResource PermissionRequestItem}">
                                         <ListBox.ItemTemplate>
                                             <DataTemplate>
                                                 <StackPanel Margin="0,1">
@@ -362,14 +472,23 @@
                                 <Grid Margin="14">
                                     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="10"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                                     <TextBlock Text="Latest authorization and execution records" FontSize="15" FontWeight="SemiBold"/>
-                                    <DataGrid Grid.Row="2" x:Name="AuditGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+                                    <DataGrid Grid.Row="2" x:Name="AuditGrid" AutoGenerateColumns="False" IsReadOnly="True"
+                                              CanUserAddRows="False" CanUserDeleteRows="False" CanUserResizeRows="False"
+                                              HeadersVisibility="Column" RowHeight="44" ColumnHeaderHeight="38"
+                                              GridLinesVisibility="None" SelectionUnit="FullRow" SelectionMode="Single"
+                                              RowStyle="{StaticResource PermissionAuditRow}"
+                                              CellStyle="{StaticResource PermissionAuditCell}"
+                                              ColumnHeaderStyle="{StaticResource PermissionAuditHeader}"
+                                              AlternationCount="2" Background="Transparent" BorderThickness="0"
+                                              ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                              ScrollViewer.VerticalScrollBarVisibility="Auto">
                                         <DataGrid.Columns>
-                                            <DataGridTextColumn Header="UTC time" Binding="{Binding TimeUtc}" Width="170"/>
-                                            <DataGridTextColumn Header="Capability" Binding="{Binding Capability}" Width="150"/>
-                                            <DataGridTextColumn Header="Result" Binding="{Binding Status}" Width="130"/>
-                                            <DataGridTextColumn Header="Target" Binding="{Binding Target}" Width="260"/>
-                                            <DataGridTextColumn Header="Evidence" Binding="{Binding Detail}" Width="320"/>
-                                            <DataGridTextColumn Header="Scope" Binding="{Binding ScopeId}" Width="240"/>
+                                            <DataGridTextColumn Header="UTC time" ElementStyle="{StaticResource PermissionAuditText}" Binding="{Binding TimeUtc}" Width="156"/>
+                                            <DataGridTextColumn Header="Capability" ElementStyle="{StaticResource PermissionAuditText}" Binding="{Binding Capability}" Width="1.05*" MinWidth="115"/>
+                                            <DataGridTextColumn Header="Result" ElementStyle="{StaticResource PermissionAuditText}" Binding="{Binding Status}" Width="100"/>
+                                            <DataGridTextColumn Header="Target" ElementStyle="{StaticResource PermissionAuditText}" Binding="{Binding Target}" Width="1.4*" MinWidth="145"/>
+                                            <DataGridTextColumn Header="Evidence" ElementStyle="{StaticResource PermissionAuditText}" Binding="{Binding Detail}" Width="1.7*" MinWidth="180"/>
+                                            <DataGridTextColumn Header="Scope" ElementStyle="{StaticResource PermissionAuditText}" Binding="{Binding ScopeId}" Width="1.05*" MinWidth="130"/>
                                         </DataGrid.Columns>
                                     </DataGrid>
                                 </Grid>
@@ -392,5 +511,6 @@
                 </Grid>
             </Grid>
         </Grid>
+
     </Grid>
 </Window>

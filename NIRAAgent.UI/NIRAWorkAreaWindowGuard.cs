@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
+using System.Windows.Media;
 
 namespace NIRAAgent.UI;
 
@@ -14,13 +15,68 @@ internal sealed class NIRAWorkAreaWindowGuard : IDisposable
     private const uint MonitorDefaultToNearest = 0x00000002;
 
     private readonly Window _window;
+    private readonly bool _fitNormalWindow;
+    private bool _normalWindowFitted;
     private HwndSource? _source;
     private bool _disposed;
 
-    public NIRAWorkAreaWindowGuard(Window window)
+    public NIRAWorkAreaWindowGuard(Window window, bool fitNormalWindow = false)
     {
         _window = window ?? throw new ArgumentNullException(nameof(window));
+        _fitNormalWindow = fitNormalWindow;
         _window.SourceInitialized += Window_SourceInitialized;
+        if (_fitNormalWindow)
+            _window.Loaded += Window_Loaded;
+    }
+
+    private void Window_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (_normalWindowFitted || _disposed) return;
+        // After WPF has selected the owner monitor, before entrance animation.
+        FitNormalWindowToCurrentMonitor();
+    }
+
+    private void FitNormalWindowToCurrentMonitor()
+    {
+        if (!_fitNormalWindow || _normalWindowFitted || _window.WindowState != WindowState.Normal)
+            return;
+
+        IntPtr hwnd = new WindowInteropHelper(_window).Handle;
+        if (hwnd == IntPtr.Zero) return;
+        IntPtr monitor = MonitorFromWindow(hwnd, MonitorDefaultToNearest);
+        if (monitor == IntPtr.Zero) return;
+
+        NativeMonitorInfo info = new() { CbSize = Marshal.SizeOf<NativeMonitorInfo>() };
+        if (!GetMonitorInfo(monitor, ref info)) return;
+
+        // Win32 monitor rectangles are device pixels, whereas WPF Window dimensions
+        // are DIPs. Use the ACTUAL presentation-source transform for current DPI.
+        Matrix fromDevice = _source?.CompositionTarget?.TransformFromDevice ?? Matrix.Identity;
+        Point topLeft = fromDevice.Transform(new Point(info.WorkArea.Left, info.WorkArea.Top));
+        Point bottomRight = fromDevice.Transform(new Point(info.WorkArea.Right, info.WorkArea.Bottom));
+        double workWidth = bottomRight.X - topLeft.X;
+        double workHeight = bottomRight.Y - topLeft.Y;
+        if (workWidth < 360 || workHeight < 320) return;
+
+        // Limit the opening height to 84% of usable space. Unlike a fixed 780-DIP
+        // window this still fits 768p laptops, higher DPI, and a relocated taskbar.
+        double marginX = Math.Min(28, workWidth * 0.025);
+        double marginY = Math.Min(24, workHeight * 0.03);
+        double targetWidth = Math.Min(_window.Width, workWidth - 2 * marginX);
+        double targetHeight = Math.Min(_window.Height,
+            Math.Min(workHeight * 0.84, workHeight - 2 * marginY));
+
+        // Fixed XAML minima must not defeat the available-screen calculation.
+        _window.MinWidth = Math.Min(_window.MinWidth, targetWidth);
+        _window.MinHeight = Math.Min(_window.MinHeight, targetHeight);
+        _window.MaxWidth = workWidth;
+        _window.MaxHeight = workHeight;
+        _window.WindowStartupLocation = WindowStartupLocation.Manual;
+        _window.Width = targetWidth;
+        _window.Height = targetHeight;
+        _window.Left = topLeft.X + (workWidth - targetWidth) / 2;
+        _window.Top = topLeft.Y + (workHeight - targetHeight) / 2;
+        _normalWindowFitted = true;
     }
 
     private void Window_SourceInitialized(object? sender, EventArgs e)
@@ -81,6 +137,8 @@ internal sealed class NIRAWorkAreaWindowGuard : IDisposable
         _disposed = true;
 
         _window.SourceInitialized -= Window_SourceInitialized;
+        if (_fitNormalWindow)
+            _window.Loaded -= Window_Loaded;
         if (_source != null)
         {
             _source.RemoveHook(WindowProc);
@@ -130,4 +188,3 @@ internal sealed class NIRAWorkAreaWindowGuard : IDisposable
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetMonitorInfo(IntPtr monitor, ref NativeMonitorInfo info);
 }
-

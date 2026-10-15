@@ -2,12 +2,17 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using NIRAAgent.Authorization;
+using NIRAAgent.Browser;
 
 namespace NIRAAgent.Capabilities;
 
 public sealed class NIRACapabilityService
 {
     private const int MaximumResultOutputCharacters = 24000;
+    private static bool IsCertainNoEffectBrowserPreflight(string capabilityId, Exception exception) =>
+        capabilityId == NIRACapabilityIds.BrowserSelect &&
+        exception is NIRABrowserOptionUnavailableException;
+
     private readonly NIRACapabilityRegistry _registry;
     private readonly INIRACapabilityAuthorizer _authorizer;
     private readonly NIRACapabilityRequestPolicy _policy;
@@ -290,6 +295,11 @@ public sealed class NIRACapabilityService
         }
         catch (Exception ex)
         {
+            // A native dropdown option mismatch is rejected inside the browser
+            // BEFORE Playwright attempts selection. This proven preflight case
+            // has zero side effects; do not mark it as an uncertain browser
+            // mutation or force the model into unnecessary 30-second recovery.
+            bool preflightNoEffect = IsCertainNoEffectBrowserPreflight(request.CapabilityId, ex);
             if (request.CapabilityId.StartsWith("browser.", StringComparison.OrdinalIgnoreCase))
             {
                 // Log NAMES, never values: URLs may carry tokens and credential
@@ -302,9 +312,9 @@ public sealed class NIRACapabilityService
                     $"ArgumentNames={argumentNames} | ExceptionType={ex.GetType().Name}");
             }
             result = Make(dispatched ? NIRACapabilityResultStatus.Failed : NIRACapabilityResultStatus.Rejected,
-                ex.Message + (dispatched && risk != NIRACapabilityRisk.Observe
+                ex.Message + (dispatched && risk != NIRACapabilityRisk.Observe && !preflightNoEffect
                     ? " Partial effects may remain; inspect before retrying." : "")) with
-            { OutcomeUncertain = dispatched && risk != NIRACapabilityRisk.Observe };
+            { OutcomeUncertain = dispatched && risk != NIRACapabilityRisk.Observe && !preflightNoEffect };
             if (!attempt.HasValue)
             {
                 // Malformed/rejected attempts get a minimal record, without their

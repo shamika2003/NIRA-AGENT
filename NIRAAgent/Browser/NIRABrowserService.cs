@@ -15,6 +15,13 @@ using NIRAAgent.Goals;
 
 namespace NIRAAgent.Browser;
 
+// The browser has not performed a selection when the requested native option
+// is absent at preflight. Do not classify this as an uncertain dispatched write.
+public sealed class NIRABrowserOptionUnavailableException : InvalidOperationException
+{
+    public NIRABrowserOptionUnavailableException(string message) : base(message) { }
+}
+
 // =============================================================
 // NIRA-MANAGED BROWSER RUNTIME
 //
@@ -162,6 +169,60 @@ public sealed class NIRABrowserService : IAsyncDisposable
             Path.Combine(_browserRoot, "dispatch", "browser-dispatch.db"));
     }
 
+    private BrowserTypeLaunchPersistentContextOptions CreateLaunchOptions(
+        bool headed, string? channel = null) => new()
+    {
+        Channel = channel,
+        Headless = !headed,
+        AcceptDownloads = true,
+        DownloadsPath = _downloadsRoot,
+        ArtifactsDir = _artifactsRoot,
+        ViewportSize = new ViewportSize
+        {
+            Width = DefaultViewportWidth,
+            Height = DefaultViewportHeight
+        }
+    };
+
+    private static bool IsBundledChromiumMissing(string error) =>
+        !string.IsNullOrEmpty(error) &&
+        error.Contains("Executable doesn't exist at", StringComparison.OrdinalIgnoreCase);
+
+    // Read-only discovery from standard installed-browser locations. There is
+    // no process execution, download, registry mutation, or user profile reuse.
+    private static IReadOnlyList<string> FindInstalledBrowserChannels()
+    {
+        if (!OperatingSystem.IsWindows())
+            return Array.Empty<string>();
+
+        return DiscoverInstalledBrowserChannels(new[]
+        {
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
+        });
+    }
+
+    // Parameterized discovery allows an offline regression to verify both the
+    // supported browser names and the fallback preference without launching.
+    private static IReadOnlyList<string> DiscoverInstalledBrowserChannels(
+        IEnumerable<string> installationRoots)
+    {
+        var channels = new List<string>();
+        foreach ((string channel, string vendor, string product, string executable) in new[]
+        {
+            ("chrome", "Google", "Chrome", "chrome.exe"),
+            ("msedge", "Microsoft", "Edge", "msedge.exe")
+        })
+        {
+            if (installationRoots.Any(root =>
+                !string.IsNullOrWhiteSpace(root) &&
+                File.Exists(Path.Combine(root, vendor, product, "Application", executable))))
+                channels.Add(channel);
+        }
+        return channels;
+    }
+
     public async Task<NIRABrowserSessionSnapshot> OpenAsync(
         string? profile,
         bool headed,
@@ -197,31 +258,50 @@ public sealed class NIRABrowserService : IAsyncDisposable
 
                 Directory.CreateDirectory(userDataDir);
 
+                // Prefer the exact Chromium revision installed for this
+                // Playwright package. If its browser bundle has not been
+                // installed, a verified system Chrome/Edge installation is
+                // a supported fallback. Both use NIRA's isolated profile;
+                // NEVER attach to the user's ordinary browser profile.
                 try
                 {
-                    _context =
-                        await _playwright.Chromium.LaunchPersistentContextAsync(
-                            userDataDir,
-                            new BrowserTypeLaunchPersistentContextOptions
-                            {
-                                Headless = !headed,
-                                AcceptDownloads = true,
-                                DownloadsPath = _downloadsRoot,
-                                ArtifactsDir = _artifactsRoot,
-                                ViewportSize = new ViewportSize
-                                {
-                                    Width = DefaultViewportWidth,
-                                    Height = DefaultViewportHeight
-                                }
-                            });
+                    _context = await _playwright.Chromium.LaunchPersistentContextAsync(
+                        userDataDir, CreateLaunchOptions(headed));
                 }
-                catch (PlaywrightException ex) when (
-                    ex.Message.Contains("Executable doesn't exist", StringComparison.OrdinalIgnoreCase) ||
-                    ex.Message.Contains("browserType.launchPersistentContext", StringComparison.OrdinalIgnoreCase))
+                catch (PlaywrightException ex) when (IsBundledChromiumMissing(ex.Message))
                 {
-                    throw new InvalidOperationException(
-                        "Playwright Chromium is not installed for this NIRA build. Build the project, then run the generated playwright.ps1 install chromium command once.",
-                        ex);
+                    foreach (string channel in FindInstalledBrowserChannels())
+                    {
+                        try
+                        {
+                            _context = await _playwright.Chromium.LaunchPersistentContextAsync(
+                                userDataDir, CreateLaunchOptions(headed, channel));
+                            Debug.WriteLine(
+                                $"[Browser] SYSTEM_BROWSER_FALLBACK | Channel={channel} | " +
+                                "Profile=NIRA-isolated | BundledChromium=Missing");
+                            break;
+                        }
+                        catch (PlaywrightException fallbackError)
+                        {
+                            // A failed channel must never claim a live session.
+                            // Try the next known installed channel, then provide
+                            // the official version-matched installation option.
+                            Debug.WriteLine(
+                                $"[Browser] SYSTEM_BROWSER_FALLBACK_FAILED | Channel={channel} | " +
+                                $"ErrorType={fallbackError.GetType().Name}");
+                        }
+                    }
+
+                    if (_context == null)
+                    {
+                        throw new InvalidOperationException(
+                            "Playwright's bundled Chromium is missing and no installed " +
+                            "Chrome/Edge fallback could start. From the NIRA-AGENT root, " +
+                            "run: powershell -ExecutionPolicy Bypass -File " +
+                            @".\NIRAAgent\bin\Debug\net10.0\playwright.ps1 install chromium" +
+                            ". Then retry the browser task. A browser install is a one-time " +
+                            "setup operation; NIRA did not download or install anything.", ex);
+                    }
                 }
 
                 _sessionId = Guid.NewGuid();
@@ -1854,6 +1934,24 @@ public sealed class NIRABrowserService : IAsyncDisposable
         }
     }
 
+    // Pure option validation, exercised independently by offline regressions.
+    // Do not normalize case or translate labels: selection is exact by contract.
+    private static bool HasSelectableOption(string[][] available, string requested, bool byLabel) =>
+        available.Any(fields => fields.Length > (byLabel ? 1 : 0) &&
+            string.Equals(fields[byLabel ? 1 : 0], requested, StringComparison.Ordinal));
+
+    private static string BoundSelectField(string[] fields, int index) =>
+        index < fields.Length ? BoundOptionForDiagnostic(fields[index]) : "";
+
+    private static string BoundOptionForDiagnostic(string? value) =>
+        (value ?? "").Replace('\n', ' ').Replace('\r', ' ').Replace('\'', ' ')
+            .Substring(0, Math.Min((value ?? "").Length, 96));
+
+    private static Task<string[][]> ReadLiveSelectOptionsAsync(ILocator locator) =>
+        locator.EvaluateAsync<string[][]>(
+            "el => el instanceof HTMLSelectElement ? " +
+            "Array.from(el.options).map(o => [o.value, o.label]) : []");
+
     public async Task<NIRABrowserPageSnapshot> SelectAsync(
         Guid? pageId,
         string elementRef,
@@ -1874,6 +1972,38 @@ public sealed class NIRABrowserService : IAsyncDisposable
             EnsureNoUncertainAction(id, page);
             ILocator locator = await ValidateGroundedActionTargetAsync(id, page, cleanRef);
             string beforeUrl = page.Url;
+
+            // The requested value/label must exist in the LIVE DOM, not merely
+            // in a prior inspection or in the model's proposed arguments.
+            // Playwright otherwise waits for the impossible option for the full
+            // 30-second action timeout, hiding a precise input mismatch.
+            // Allow a brief refresh for asynchronously populated dropdowns;
+            // never silently choose a different option or submit the form.
+            string[][] availableOptions = await ReadLiveSelectOptionsAsync(locator);
+            if (!HasSelectableOption(availableOptions, option, byLabel))
+            {
+                // Some forms populate options asynchronously after inspection.
+                // Refresh briefly, but don't incur the full default 30s timeout.
+                for (int probe = 0; probe < 3 &&
+                    !HasSelectableOption(availableOptions, option, byLabel); probe++)
+                {
+                    await Task.Delay(750, cancellationToken);
+                    availableOptions = await ReadLiveSelectOptionsAsync(locator);
+                }
+                if (!HasSelectableOption(availableOptions, option, byLabel))
+                {
+                    string observed = string.Join("; ", availableOptions.Take(10)
+                        .Select(values =>
+                            $"value='{BoundSelectField(values, 0)}', label='{BoundSelectField(values, 1)}'"));
+                    throw new NIRABrowserOptionUnavailableException(
+                        "The requested dropdown option was not present in the current page. " +
+                        "No option was selected and no form was submitted. " +
+                        $"MatchBy={(byLabel ? "label" : "value")}; Requested='{BoundOptionForDiagnostic(option)}'; " +
+                        $"ObservedOptions=[{observed}]. Inspect the current form and available " +
+                        "options before choosing a different one. A previous website action " +
+                        "may already have succeeded; this dropdown failure does not undo it.");
+                }
+            }
 
             if (byLabel)
             {

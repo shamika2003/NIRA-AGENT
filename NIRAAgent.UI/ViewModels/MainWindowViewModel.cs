@@ -4,6 +4,7 @@
 
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
 
@@ -84,6 +85,40 @@ public sealed class MainWindowViewModel
     } =
         new();
 
+
+    // Local references selected explicitly in the composer. No binary upload or
+    // automatic trust assertion; existing authorized capabilities decide inspection.
+    public ObservableCollection<NIRAComposerAttachment> ComposerAttachments { get; } = new();
+    public bool HasComposerAttachments => ComposerAttachments.Count > 0;
+    private const int MaximumComposerAttachments = 12;
+
+    public int AddComposerAttachments(IEnumerable<string> paths)
+    {
+        int added = 0;
+        foreach (string? raw in paths)
+        {
+            if (ComposerAttachments.Count >= MaximumComposerAttachments) break;
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+            string path;
+            try { path = Path.GetFullPath(raw); }
+            catch (Exception) { continue; }
+            if (!File.Exists(path) || ComposerAttachments.Any(x =>
+                string.Equals(x.FullPath, path, StringComparison.OrdinalIgnoreCase))) continue;
+            try
+            {
+                var info = new FileInfo(path);
+                ComposerAttachments.Add(new NIRAComposerAttachment(path, info.Name));
+                added++;
+            }
+            catch (Exception) { /* Unavailable file: never pretend it was attached. */ }
+        }
+        return added;
+    }
+
+    public void RemoveComposerAttachment(NIRAComposerAttachment? attachment)
+    {
+        if (attachment != null) ComposerAttachments.Remove(attachment);
+    }
 
     public event Action<NIRAVisualArtifact>?
         VisualArtifactReceived;
@@ -174,7 +209,7 @@ public sealed class MainWindowViewModel
     public bool CanSend =>
         !_shutdown.IsCancellationRequested &&
         _activeUserTurns < MaximumQueuedUserTurns &&
-        !string.IsNullOrWhiteSpace(MessageInput);
+        (!string.IsNullOrWhiteSpace(MessageInput) || ComposerAttachments.Count > 0);
 
 
     public ICommand SendCommand =>
@@ -211,6 +246,13 @@ public sealed class MainWindowViewModel
                 nameof(settings));
 
 
+        ComposerAttachments.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(HasComposerAttachments));
+            OnPropertyChanged(nameof(CanSend));
+            _sendCommand.RaiseCanExecuteChanged();
+        };
+
         _settings.Changed +=
             Settings_Changed;
 
@@ -238,16 +280,21 @@ public sealed class MainWindowViewModel
 
     private async Task SendMessageAsync()
     {
-        string input =
-            MessageInput.Trim();
-
-
-        if (string.IsNullOrWhiteSpace(
-                input))
-        {
+        string userText = MessageInput.Trim();
+        NIRAComposerAttachment[] attachments = ComposerAttachments.ToArray();
+        if (string.IsNullOrWhiteSpace(userText) && attachments.Length == 0)
             return;
-        }
 
+        // Attachment paths are user-selected local references. This is NOT a
+        // model-vision upload, document extraction or verified file observation.
+        // NIRA must use its existing authorized capabilities to inspect a path.
+        string input = attachments.Length == 0
+            ? userText
+            : (string.IsNullOrWhiteSpace(userText)
+                ? "Please help me with the local files I selected."
+                : userText) + "\n\n[User-selected local file references — paths only; contents not provided]\n" +
+              string.Join("\n", attachments.Select(a => "- " + a.FullPath)) +
+              "\n[Use available authorized capabilities to inspect if needed. Do not claim to have seen file contents without an actual observation.]";
 
         // A past chat is a one-turn explicit source, never merged into this transcript.
         Guid? attachedPastChatSessionId = _attachedPastChatSessionId;
@@ -267,6 +314,7 @@ public sealed class MainWindowViewModel
         _voiceQueue.Interrupt();
 
         MessageInput = string.Empty;
+        ComposerAttachments.Clear();
         OnPropertyChanged(nameof(CanSend));
         _sendCommand.RaiseCanExecuteChanged();
 
@@ -274,7 +322,9 @@ public sealed class MainWindowViewModel
         ChatMessageViewModel userMessage =
             new(
                 "user",
-                input);
+                attachments.Length == 0 ? userText :
+                    (string.IsNullOrWhiteSpace(userText) ? "" : userText + "\n") +
+                    string.Join("  ", attachments.Select(a => "📎 " + a.FileName)));
 
 
         Messages.Add(
@@ -911,4 +961,45 @@ public sealed class MainWindowViewModel
                 NIRAVoiceExpression.Neutral;
         }
     }
+}
+
+
+/// <summary>
+/// Composer-only local file reference. The model gets only the path until the
+/// separate content/vision ingestion stage is implemented.
+/// </summary>
+public sealed record NIRAComposerAttachment(string FullPath, string FileName)
+{
+    private string ExtensionLower => Path.GetExtension(FileName).ToLowerInvariant();
+
+    public bool IsImage => ExtensionLower is ".png" or ".jpg" or ".jpeg" or ".webp" or ".gif" or ".bmp";
+    // Do not ask WPF image decoders to open PDF or other non-image attachments.
+    public string? PreviewPath => IsImage ? FullPath : null;
+    public bool IsAudio => ExtensionLower is ".mp3" or ".wav" or ".m4a" or ".flac" or ".aac";
+    public bool IsSpreadsheet => ExtensionLower is ".xlsx" or ".xls" or ".csv";
+    public bool IsCodeOrData => ExtensionLower is ".json" or ".xml" or ".yaml" or ".yml" or ".md" or ".txt" or ".cs" or ".py";
+    public bool IsPdf => ExtensionLower is ".pdf";
+
+    public string ExtensionLabel
+    {
+        get
+        {
+            string ext = Path.GetExtension(FileName);
+            return string.IsNullOrWhiteSpace(ext) ? "FILE" : ext.TrimStart('.').ToUpperInvariant();
+        }
+    }
+
+    public string TypeGlyph =>
+        IsImage ? "▣" :
+        IsAudio ? "♪" :
+        IsSpreadsheet ? "▤" :
+        IsPdf ? "▥" :
+        IsCodeOrData ? "≣" : "•";
+
+    public string TypeLabel =>
+        IsImage ? "Image preview" :
+        IsAudio ? "Audio reference" :
+        IsSpreadsheet ? "Spreadsheet or table" :
+        IsPdf ? "PDF document" :
+        IsCodeOrData ? "Document or data" : "Attached file";
 }

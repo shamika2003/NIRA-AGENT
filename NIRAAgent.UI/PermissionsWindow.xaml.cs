@@ -15,6 +15,7 @@ public partial class PermissionsWindow : Window
     private readonly NIRAScopedCapabilityAuthorizer _authorizer;
     private readonly NIRACapabilityApprovalBroker _broker;
     private bool _closed;
+    private bool? _lastBackgroundWasHalo;
     private int _refreshQueued;
     private bool _manualSession;
     private bool _autoCloseAfterDecision;
@@ -31,7 +32,7 @@ public partial class PermissionsWindow : Window
         _store = store;
         _authorizer = authorizer;
         _broker = broker;
-        _workAreaGuard = new NIRAWorkAreaWindowGuard(this);
+        _workAreaGuard = new NIRAWorkAreaWindowGuard(this, fitNormalWindow: true);
 
         Loaded += PermissionsWindow_Loaded;
         _store.Changed += QueueRefresh;
@@ -66,8 +67,11 @@ public partial class PermissionsWindow : Window
     private void UpdateThemePresentation()
     {
         bool halo = NIRAThemeManager.CurrentMode == NIRAThemeMode.Halo;
-        UtilityBackgroundEclipse.Opacity = halo ? 0.0 : 1.0;
-        UtilityBackgroundHalo.Opacity = halo ? 1.0 : 0.0;
+        bool transition = _lastBackgroundWasHalo.HasValue &&
+                          _lastBackgroundWasHalo.Value != halo;
+        NIRAThemeGlyph.ApplyBackdrop(UtilityBackgroundEclipse, UtilityBackgroundHalo,
+            halo, transition);
+        _lastBackgroundWasHalo = halo;
     }
 
     /// <summary>
@@ -144,6 +148,7 @@ public partial class PermissionsWindow : Window
             var scopes = _store.ReadScopes().Where(x => x.Active).ToArray();
             ScopesList.ItemsSource = scopes;
             ScopesList.SelectedItem = scopes.FirstOrDefault(x => x.Id == selectedScope);
+            GrantListCount.Text = $"{scopes.Length} active";
 
             AuditGrid.ItemsSource = _store.ReadAudit();
             StatusText.Text = $"{requests.Count} pending request(s) / {scopes.Length} active saved grant(s)";
@@ -577,4 +582,3 @@ public partial class PermissionsWindow : Window
         }
     }
 }
-

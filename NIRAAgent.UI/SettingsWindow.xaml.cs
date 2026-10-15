@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Shapes;
 
 using NIRAAgent.Settings;
 using NIRAAgent.UI.Theming;
@@ -13,13 +14,15 @@ public partial class SettingsWindow : Window
     private readonly NIRAWorkAreaWindowGuard _workAreaGuard;
     private bool _loading;
     private bool _closed;
+    private bool? _lastThemeGlyphWasHalo;
+    private bool? _lastBackgroundWasHalo;
 
     public SettingsWindow(NIRARuntimeSettingsService settings)
     {
         InitializeComponent();
 
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
-        _workAreaGuard = new NIRAWorkAreaWindowGuard(this);
+        _workAreaGuard = new NIRAWorkAreaWindowGuard(this, fitNormalWindow: true);
 
         VoiceEngineBox.ItemsSource = Enum.GetValues<NIRAVoiceEngineMode>();
 
@@ -57,10 +60,22 @@ public partial class SettingsWindow : Window
     private void UpdateThemePresentation()
     {
         bool halo = NIRAThemeManager.CurrentMode == NIRAThemeMode.Halo;
-        UtilityBackgroundEclipse.Opacity = halo ? 0.0 : 1.0;
-        UtilityBackgroundHalo.Opacity = halo ? 1.0 : 0.0;
+        bool transition = _lastBackgroundWasHalo.HasValue &&
+                          _lastBackgroundWasHalo.Value != halo;
+        NIRAThemeGlyph.ApplyBackdrop(UtilityBackgroundEclipse, UtilityBackgroundHalo,
+            halo, transition);
+        _lastBackgroundWasHalo = halo;
         ThemeToggleButton.Content = halo ? "HALO" : "ECLIPSE";
         CurrentThemeText.Text = halo ? "HALO" : "ECLIPSE";
+
+        ThemeToggleButton.ApplyTemplate();
+        if (ThemeToggleButton.Template.FindName("SettingsThemeVector", ThemeToggleButton) is Path icon)
+        {
+            bool changed = _lastThemeGlyphWasHalo.HasValue &&
+                           _lastThemeGlyphWasHalo.Value != halo;
+            NIRAThemeGlyph.Apply(icon, halo, changed);
+        }
+        _lastThemeGlyphWasHalo = halo;
     }
 
     private void ThemeToggleButton_Click(object sender, RoutedEventArgs e)
@@ -275,6 +290,48 @@ public partial class SettingsWindow : Window
     private void Close_Click(object sender, RoutedEventArgs e) =>
         Close();
 
+    // The sidebar is real section navigation (not passive decorative Borders).
+    // All headings are in the one live settings scroll viewer: no duplicate settings state.
+    private void SettingsNavigation_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button button || button.Tag is not string section)
+            return;
+
+        FrameworkElement target = section switch
+        {
+            "Appearance" => AppearanceSection,
+            "Voice" => VoiceSection,
+            "Presence" => PresenceSection,
+            "Attention" => AttentionSection,
+            "Notifications" => NotificationsSection,
+            "Interface" => InterfaceSection,
+            _ => AppearanceSection
+        };
+
+        if (SettingsContentPanel.IsLoaded && target.IsLoaded)
+        {
+            double offset = target.TransformToAncestor(SettingsContentPanel)
+                .Transform(new Point(0, 0)).Y;
+            SettingsContentScroll.ScrollToVerticalOffset(
+                Math.Clamp(offset - 6, 0, SettingsContentScroll.ScrollableHeight));
+        }
+        else
+        {
+            target.BringIntoView();
+        }
+
+        foreach (Button nav in new[] { AppearanceNavButton, VoiceNavButton,
+            PresenceNavButton, AttentionNavButton, NotificationsNavButton, InterfaceNavButton })
+        {
+            bool selected = ReferenceEquals(nav, button);
+            nav.SetResourceReference(Control.BackgroundProperty,
+                selected ? "NIRACardHoverBrush" : "NIRAChipBrush");
+            nav.SetResourceReference(Control.BorderBrushProperty,
+                selected ? "NIRAFocusBorderBrush" : "NIRAGlassBorderBrush");
+            nav.FontWeight = selected ? FontWeights.SemiBold : FontWeights.Normal;
+        }
+    }
+
     private void SettingsWindow_Closed(object? sender, EventArgs e)
     {
         _closed = true;
@@ -285,4 +342,3 @@ public partial class SettingsWindow : Window
         Closed -= SettingsWindow_Closed;
     }
 }
-

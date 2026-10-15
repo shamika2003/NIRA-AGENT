@@ -201,6 +201,15 @@ internal static class NIRACognitionPromptCompiler
         Include an exact short verbatim evidenceQuote from THIS message.
         Never interpret quoted examples, negations or questions as requests
         to cancel. Do not also emit lifecycle proposals for this operation.
+        In a follow-up such as an omitted-noun command, first resolve "that" or
+        "it" against the immediate conversation and current open work. When
+        the referent is clearly an open or blocked branch and the fresh user
+        is instructing you to remove it, issue CancelOneBranch in controlRequests
+        (the runtime checks the actual branch). This is an ACTION, not casual
+        conversation. If you have not received an authoritative control receipt,
+        never say a branch was removed, hidden, cleared or cancelled. If the
+        first message merely complains about how a branch looks, respond to
+        the feedback without pretending to have changed any system state.
         Format: "controlRequests":[{"operation":"CancelAllBranchesAndCommitments",
         "evidenceQuote":"exact words from current user","branchId":null}].
 
@@ -584,6 +593,13 @@ internal static class NIRACognitionPromptCompiler
             unambiguous explicit request. No simultaneous goal/branch proposals.
             Runtime exclusively selects CURRENT open records and confirms writes.
             Never execute quoted examples or negated cancellation requests.
+            Resolve short follow-up action commands using the immediate
+            conversation: if a clear preceding referent is an open or blocked
+            branch and the user now instructs its removal, this is a typed
+            CancelOneBranch control request, not interpersonal-only chat.
+            Successful-looking conversational wording is never proof of a
+            mutation: do not tell the user something is gone until the runtime
+            returns the control receipt. Complaints alone are not commands.
 
             SCREEN / SPOKEN PRESENTATION: "reply" is for on-screen reading;
             "speech" is for natural voice (may be empty for brief conversation).

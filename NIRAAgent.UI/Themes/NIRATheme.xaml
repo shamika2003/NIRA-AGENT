@@ -54,6 +54,14 @@
     <SolidColorBrush x:Key="NIRABackdropVeilBrush" Color="#0E020611"/>
     <SolidColorBrush x:Key="NIRAActivityCardBrush" Color="#220C1830"/>
 
+    <!-- Theme-aware chat/composer surfaces; designed for contrast over the artwork. -->
+    <SolidColorBrush x:Key="NIRAUserBubbleFillBrush" Color="#D817365C"/>
+    <SolidColorBrush x:Key="NIRAUserBubbleEdgeBrush" Color="#7E6FA5DA"/>
+    <SolidColorBrush x:Key="NIRAUserBubbleGlowBrush" Color="#24488CE2"/>
+    <SolidColorBrush x:Key="NIRAComposerFillBrush" Color="#E0121D38"/>
+    <SolidColorBrush x:Key="NIRAComposerEdgeBrush" Color="#7A6B97C8"/>
+    <SolidColorBrush x:Key="NIRAComposerBadgeBrush" Color="#48152C54"/>
+
     <LinearGradientBrush x:Key="NIRAWindowGradient" StartPoint="0,0" EndPoint="1,1">
         <GradientStop Color="#050817" Offset="0"/>
         <GradientStop Color="#09112A" Offset="0.45"/>
@@ -101,7 +109,7 @@
     <Style TargetType="Window">
         <Setter Property="Background" Value="{DynamicResource NIRABackgroundBrush}"/>
         <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
-        <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI"/>
+        <Setter Property="FontFamily" Value="Aptos, Segoe UI Variable Text, Segoe UI"/>
         <Setter Property="FontSize" Value="13"/>
         <Setter Property="TextOptions.TextFormattingMode" Value="Display"/>
     </Style>
