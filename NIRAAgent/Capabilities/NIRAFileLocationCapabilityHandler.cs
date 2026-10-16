@@ -23,7 +23,7 @@ public sealed class NIRAFileLocationCapabilityHandler : INIRACapabilityHandler
         {
             Id = NIRACapabilityIds.FileLocate,
             Description =
-                "Find a filesystem file or folder by exact object name with bounded observation-only traversal. " +
+                "Find a filesystem file or folder by exact name or explicit contains-name match with bounded observation-only traversal. " +
                 "For installed-application identity/location by human application name, prefer application.resolve; " +
                 "do not guess conventional installation roots and use this as a substitute for Windows application discovery. " +
                 "Use a grounded absolute root when one is known. If no root is supplied, the " +
@@ -35,8 +35,9 @@ public sealed class NIRAFileLocationCapabilityHandler : INIRACapabilityHandler
             Parameters = new[]
             {
                 Parameter("root", "string", false, "Optional grounded absolute directory. Omit for scope=CurrentUserFolder or for a whole-PC search."),
-                Parameter("scope", "string", false, "Optional CurrentUserFolder resolves exactly one OS-owned current-user known directory (Documents, Downloads, Desktop, Pictures, Music, Videos). Omit for unchanged exact-name discovery."),
-                Parameter("name", "string", true, "Exact file or folder name, not a wildcard or path."),
+                Parameter("scope", "string", false, "CurrentUserFolder resolves an exact OS known folder or discovers an ordinary named item within current-user content; CurrentUserContent searches current-user known directories. Omit for whole-PC/root behavior."),
+                Parameter("name", "string", true, "File/folder name or name fragment when matchMode=Contains. No wildcard or path."),
+                Parameter("matchMode", "string", false, "Exact (default) or Contains (case-insensitive substring of filename). Must be explicit to broaden name matching."),
                 Parameter("kind", "string", false, "Directory (folder), File or Either (both). Default Either. Use these values, not arbitrary kinds."),
                 Parameter("maxDepth", "integer", false, "Child-directory depth, 0-6; default 3 for a known root, 6 for whole-PC search."),
                 Parameter("maxEntries", "integer", false, "Maximum entries examined per search root, 1-12000; default 1000 for a known root, 8000 for whole-PC search."),
@@ -56,6 +57,12 @@ public sealed class NIRAFileLocationCapabilityHandler : INIRACapabilityHandler
             NIRACapabilityArguments.GetOptionalString(request, "root", 32760);
         string name = NIRACapabilityArguments.RequireString(request, "name", 255).Trim();
         string? scope = NIRACapabilityArguments.GetOptionalString(request, "scope", 40);
+        string matchMode = (NIRACapabilityArguments.GetOptionalString(request, "matchMode", 40)
+            ?? "Exact").Trim();
+        if (!matchMode.Equals("Exact", StringComparison.OrdinalIgnoreCase) &&
+            !matchMode.Equals("Contains", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("matchMode must be Exact or Contains.");
+        bool containsName = matchMode.Equals("Contains", StringComparison.OrdinalIgnoreCase);
         string kind = (NIRACapabilityArguments.GetOptionalString(request, "kind", 32)
             ?? "Either").Trim();
         // Canonicalize common *meaning-equivalent* labels without broadening the
@@ -69,10 +76,13 @@ public sealed class NIRAFileLocationCapabilityHandler : INIRACapabilityHandler
         else if (kind.Equals("Both", StringComparison.OrdinalIgnoreCase) ||
             kind.Equals("Any", StringComparison.OrdinalIgnoreCase))
             kind = "Either";
+        // Multi-folder discovery uses a smaller default budget than a deliberate
+        // whole-drive search; the caller can still explicitly increase bounds.
+        bool limitedUserContent = scope?.Equals("CurrentUserContent", StringComparison.OrdinalIgnoreCase) == true;
         int maxDepth = NIRACapabilityArguments.GetInteger(
-            request, "maxDepth", string.IsNullOrWhiteSpace(requestedRoot) ? 6 : 3, 0, 6);
+            request, "maxDepth", limitedUserContent ? 4 : string.IsNullOrWhiteSpace(requestedRoot) ? 6 : 3, 0, 6);
         int maxEntries = NIRACapabilityArguments.GetInteger(
-            request, "maxEntries", string.IsNullOrWhiteSpace(requestedRoot) ? 8000 : 1000, 1, 12000);
+            request, "maxEntries", limitedUserContent ? 2000 : string.IsNullOrWhiteSpace(requestedRoot) ? 8000 : 1000, 1, 12000);
         int maxMatches = NIRACapabilityArguments.GetInteger(request, "maxMatches", 20, 1, 50);
 
         // A name is deliberately one path segment: the model cannot use this
@@ -84,14 +94,20 @@ public sealed class NIRAFileLocationCapabilityHandler : INIRACapabilityHandler
             throw new ArgumentException("name must be a single exact file or directory name.");
         // Opt-in OS-owned location, not a search through other users' folders.
         // Default filesystem.locate behavior and all legacy callers are untouched.
-        if (!string.IsNullOrWhiteSpace(scope))
+        if (!string.IsNullOrWhiteSpace(scope) &&
+            !string.IsNullOrWhiteSpace(requestedRoot))
+            throw new ArgumentException("A known-folder scope cannot also specify root.");
+        bool currentFolderScope =
+            scope?.Equals("CurrentUserFolder", StringComparison.OrdinalIgnoreCase) == true;
+        // A known Windows folder is an identity lookup, but models also use this
+        // scope for ordinary *named* directories inside the user profile.
+        // Do not throw merely because a name is not one of six OS identities:
+        // safely fall back to bounded discovery within CURRENT user content.
+        if (currentFolderScope && !containsName &&
+            NIRACapabilityArguments.IsCurrentUserKnownFolderName(name) &&
+            (kind.Equals("Directory", StringComparison.OrdinalIgnoreCase) ||
+             kind.Equals("Either", StringComparison.OrdinalIgnoreCase)))
         {
-            if (!scope.Equals("CurrentUserFolder", StringComparison.OrdinalIgnoreCase) ||
-                !string.IsNullOrWhiteSpace(requestedRoot))
-                throw new ArgumentException("scope must be CurrentUserFolder with no root.");
-            if (!kind.Equals("Directory", StringComparison.OrdinalIgnoreCase) &&
-                !kind.Equals("Either", StringComparison.OrdinalIgnoreCase))
-                throw new ArgumentException("CurrentUserFolder can only resolve directories.");
             string folder = ResolveCurrentUserFolder(name);
             return Task.FromResult(new NIRACapabilityHandlerResult
             {
@@ -101,9 +117,31 @@ public sealed class NIRAFileLocationCapabilityHandler : INIRACapabilityHandler
                 ChangedSystemState = false
             });
         }
+        bool userContentScope =
+            currentFolderScope ||
+            scope?.Equals("CurrentUserContent", StringComparison.OrdinalIgnoreCase) == true;
+        if (!string.IsNullOrWhiteSpace(scope) && !userContentScope)
+            throw new ArgumentException("scope must be CurrentUserFolder or CurrentUserContent.");
 
         string[] roots;
-        if (string.IsNullOrWhiteSpace(requestedRoot))
+        if (userContentScope)
+        {
+            // Only the CURRENT Windows user's resolved locations; no guessing
+            // other users' folders or silently broadening into whole-drive search.
+            roots = new[] { "Documents", "Downloads", "Desktop", "Pictures", "Music", "Videos" }
+                .Select(folder =>
+                {
+                    try { return ResolveCurrentUserFolder(folder); }
+                    catch (DirectoryNotFoundException) { return null; }
+                })
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Select(path => path!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (roots.Length == 0)
+                throw new DirectoryNotFoundException("No current-user known content folders were available.");
+        }
+        else if (string.IsNullOrWhiteSpace(requestedRoot))
         {
             roots = ResolveWholePcSearchRoots();
 
@@ -204,8 +242,10 @@ public sealed class NIRAFileLocationCapabilityHandler : INIRACapabilityHandler
                         if ((attributes & FileAttributes.ReparsePoint) != 0) continue;
 
                         bool isDirectory = (attributes & FileAttributes.Directory) != 0;
-                        if (string.Equals(Path.GetFileName(entry), name,
-                                StringComparison.OrdinalIgnoreCase) &&
+                        string entryName = Path.GetFileName(entry);
+                        if ((containsName
+                                ? entryName.Contains(name, StringComparison.OrdinalIgnoreCase)
+                                : string.Equals(entryName, name, StringComparison.OrdinalIgnoreCase)) &&
                             (isDirectory ? wantDirectories : wantFiles))
                         {
                             if (isDirectory)
@@ -261,14 +301,15 @@ public sealed class NIRAFileLocationCapabilityHandler : INIRACapabilityHandler
 
         return Task.FromResult(new NIRACapabilityHandlerResult
         {
-            Summary = $"LocationSearch={resolution} | Roots='{rootSummary}' | Name='{name}' | " +
+            Summary = $"LocationSearch={resolution} | Scope={(userContentScope ? "CurrentUserContent" : "RootOrWholePc")} | " +
+                $"MatchMode={(containsName ? "Contains" : "Exact")} | Roots='{rootSummary}' | Name='{name}' | " +
                 $"Kind={kind} | Matches={matches} | Examined={examined} | " +
                 $"UnreadableDirectories={unreadable} | Truncated={truncated} | " +
                 $"TruncatedRoots={truncatedRoots.Count} | MaxEntriesPerRoot={maxEntries} | " +
                 $"MaxDepth={maxDepth}. Results are path observations, not authorization or proof of content.",
             Output =
                 (matches > 0
-                    ? "MatchEvidence=ExactNamePathObservation\n" +
+                    ? (containsName ? "MatchEvidence=BoundedFilenameContainsObservation\n" : "MatchEvidence=ExactNamePathObservation\n") +
                       "FileMetadataIncluded=True\n"
                     : string.Empty) +
                 output.ToString().TrimEnd(),

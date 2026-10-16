@@ -7,6 +7,7 @@ using NIRAAgent.Presentation;
 using NIRAAgent.AI.Ollama;
 using NIRAAgent.AI.Cognition;
 using NIRAAgent.Mind;
+using NIRAAgent.Authorization;
 using NIRAAgent.Memory.LongTerm;
 using NIRAAgent.Character.History;
 
@@ -28,6 +29,42 @@ Check("Browser fallback is reserved for a genuinely missing Playwright executabl
         Missing("browserType.launchPersistentContext: Target page has been closed") ||
         Missing("Navigation timeout exceeded") || Missing(""))
         throw new Exception("Unrelated browser launch failures must not be mistaken for missing Chromium");
+});
+
+Check("Browser challenge evidence distinguishes verified document from rate limits", () =>
+{
+    Type type = typeof(NIRABrowserNavigateCapabilityHandler).Assembly.GetType(
+        "NIRAAgent.Capabilities.NIRABrowserAccessChallengePolicy")
+        ?? throw new Exception("Missing browser access challenge policy");
+    MethodInfo assess = type.GetMethod("Assess", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new Exception("Missing access assessment");
+    string Kind(int? status, string url, string evidence) =>
+        (string)(assess.Invoke(null, new object?[] { status, url, evidence }) ?? "");
+    if (Kind(429, "https://research.example/articles", "Rate limited") != "RateLimited" ||
+        Kind(200, "https://www.google.com/sorry/index", "") != "VerificationDocument" ||
+        Kind(200, "https://other.example/", "Verify you are human before proceeding") != "HumanVerificationRequired" ||
+        Kind(200, "https://university.example/paper", "Actual research paper on Roman concrete") != "" ||
+        Kind(202, "https://research.example/accepted", "Page still rendering") != "")
+        throw new Exception("Verification pages must not be presented as ordinary successful documents");
+});
+
+Check("Browser challenge cooldown is session scoped and expires independently", () =>
+{
+    Type type = typeof(NIRABrowserNavigateCapabilityHandler).Assembly.GetType(
+        "NIRAAgent.Capabilities.NIRABrowserAccessChallengePolicy")
+        ?? throw new Exception("Missing challenge cooldown policy");
+    MethodInfo note = type.GetMethod("NoteChallenge", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new Exception("Missing challenge state recorder");
+    MethodInfo inCooldown = type.GetMethod("InCooldown", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new Exception("Missing challenge cooldown check");
+    Guid a = Guid.NewGuid(), b = Guid.NewGuid();
+    const string origin = "https://research.example/page";
+    note.Invoke(null, new object?[] { a, origin, origin });
+    bool CheckHost(Guid session, string url) =>
+        (bool)(inCooldown.Invoke(null, new object?[] { session, url }) ?? false);
+    if (!CheckHost(a, "https://research.example/different-path") ||
+        CheckHost(a, "https://another.example/") || CheckHost(b, origin))
+        throw new Exception("Cooldown must stop repeat host navigation without blocking unrelated sources or sessions");
 });
 
 Check("Browser fallback selects installed Chrome then Edge without other programs", () =>
@@ -126,6 +163,32 @@ Check("Opt-in newest file listing is source-grounded and legacy listing is stabl
         if (plain.Output.Contains("LastWriteUtc=", StringComparison.Ordinal) ||
             plain.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length != 2)
             throw new Exception("Default legacy listing changed");
+        // The branch runner must be able to request filesOnly by itself.
+        // This used to throw and strand otherwise valid background searches.
+        string folder = Path.Combine(dir, "reports");
+        Directory.CreateDirectory(folder);
+        string filesOnlyArgs = JsonSerializer.Serialize(new { path = dir, filesOnly = true, maxEntries = 1 });
+        var fileOnly = handler.ExecuteAsync(Request(NIRACapabilityIds.DirectoryList, filesOnlyArgs)).GetAwaiter().GetResult();
+        if (!fileOnly.Succeeded || fileOnly.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length != 1 ||
+            !fileOnly.Output.StartsWith("FILE\t", StringComparison.Ordinal) ||
+            fileOnly.Output.Contains("LastWriteUtc=", StringComparison.Ordinal) ||
+            fileOnly.Output.Contains(folder, StringComparison.Ordinal))
+            throw new Exception("Unsorted filesOnly must exclude directories, obey maxEntries and retain legacy output");
+        // Sorting and filtering are also valid individually, and their union
+        // must remain valid; a directory is not silently removed by sorting.
+        var sortedWithFolders = handler.ExecuteAsync(Request(NIRACapabilityIds.DirectoryList,
+            JsonSerializer.Serialize(new { path = dir, sortBy = "LastWriteUtc", maxEntries = 3 })))
+            .GetAwaiter().GetResult();
+        if (!sortedWithFolders.Succeeded || !sortedWithFolders.Output.Contains($"DIR\t{folder}", StringComparison.Ordinal))
+            throw new Exception("Opt-in sorting must retain directories unless filesOnly is true");
+        string foldersOnly = Path.Combine(dir, "only-folders");
+        Directory.CreateDirectory(Path.Combine(foldersOnly, "nested"));
+        var emptyFileList = handler.ExecuteAsync(Request(NIRACapabilityIds.DirectoryList,
+            JsonSerializer.Serialize(new { path = foldersOnly, filesOnly = true, maxEntries = 1 })))
+            .GetAwaiter().GetResult();
+        if (!emptyFileList.Succeeded || !string.IsNullOrEmpty(emptyFileList.Output) ||
+            !emptyFileList.Summary.Contains("ScanComplete=True", StringComparison.Ordinal))
+            throw new Exception("A verified no-match file-only listing must not return directories");
         string invalidArgs = JsonSerializer.Serialize(new { path = dir, sortBy = "NotAnOption" });
         Throws<ArgumentException>(() => handler.ExecuteAsync(Request(NIRACapabilityIds.DirectoryList, invalidArgs)).GetAwaiter().GetResult());
     }
@@ -133,6 +196,279 @@ Check("Opt-in newest file listing is source-grounded and legacy listing is stabl
     {
         if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
     }
+});
+
+Check("Complete delimited numeric reads expose audited arithmetic, not guessed sums", () =>
+{
+    var reader = new NIRAFileReadCapabilityHandler();
+    string root = Path.Combine(Path.GetTempPath(), "nira-numeric-audit-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        Directory.CreateDirectory(root);
+        string csv = Path.Combine(root, "ledger.csv");
+        File.WriteAllText(csv, "Entry,Quantity,Cost\nPens,2,1450\nDelivery,1,2750\nPrinting,1,900\n");
+        var result = reader.ExecuteAsync(Request(NIRACapabilityIds.FileRead,
+            JsonSerializer.Serialize(new { path = csv }))).GetAwaiter().GetResult();
+        if (!result.Succeeded ||
+            !result.Summary.Contains("VerifiedNumericAudit=CompleteDelimitedRead", StringComparison.Ordinal) ||
+            !result.Summary.Contains("Column='Cost',NumericRows=3,Blanks=0,Sum=5100,Min=900,Max=2750", StringComparison.Ordinal) ||
+            !result.Output.Contains("L4: Printing,1,900", StringComparison.Ordinal))
+            throw new Exception("Complete CSV read did not provide correct deterministic arithmetic and original lines");
+        var partial = reader.ExecuteAsync(Request(NIRACapabilityIds.FileRead,
+            JsonSerializer.Serialize(new { path = csv, maxLines = 2 }))).GetAwaiter().GetResult();
+        if (!partial.Summary.Contains("Truncated=True", StringComparison.Ordinal) ||
+            partial.Summary.Contains("VerifiedNumericAudit=", StringComparison.Ordinal))
+            throw new Exception("Partial reads must not pretend to prove a file-wide sum");
+        File.WriteAllText(csv, "Entry,Cost\nPens,1450\nDelivery,unknown\n");
+        var mixed = reader.ExecuteAsync(Request(NIRACapabilityIds.FileRead,
+            JsonSerializer.Serialize(new { path = csv }))).GetAwaiter().GetResult();
+        if (mixed.Summary.Contains("Column='Cost'", StringComparison.Ordinal))
+            throw new Exception("Mixed textual data was incorrectly treated as a numeric total");
+        File.WriteAllText(csv, "Entry,Cost\n\"One, two\",\"1,450\"\nDelivery,2750\n");
+        var quoted = reader.ExecuteAsync(Request(NIRACapabilityIds.FileRead,
+            JsonSerializer.Serialize(new { path = csv }))).GetAwaiter().GetResult();
+        if (!quoted.Summary.Contains("Column='Cost',NumericRows=2,Blanks=0,Sum=4200", StringComparison.Ordinal))
+            throw new Exception("Quoted CSV fields or thousands separators were parsed incorrectly");
+    }
+    finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+});
+
+Check("User-folder relative paths resolve against OS known folders, not app bin", () =>
+{
+    if (!OperatingSystem.IsWindows()) return;
+    string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+    if (!Directory.Exists(documents)) return;
+    string resolved = NIRACapabilityArguments.NormalizePath("Documents\\generic-project\\notes.txt");
+    string expected = Path.GetFullPath(Path.Combine(documents, "generic-project", "notes.txt"));
+    if (!string.Equals(resolved, expected, StringComparison.OrdinalIgnoreCase))
+        throw new Exception("Known-folder relative path was grounded in the wrong directory");
+    string authorized = NIRACapabilityRequestPolicy.NormalizeLocalPath("Documents\\generic-project\\notes.txt");
+    if (!string.Equals(authorized, resolved, StringComparison.OrdinalIgnoreCase))
+        throw new Exception("Authorization and capability execution disagree on resolved path");
+    string ordinary = NIRACapabilityArguments.NormalizePath("ordinary-relative.txt");
+    if (!string.Equals(ordinary, Path.GetFullPath("ordinary-relative.txt"), StringComparison.OrdinalIgnoreCase))
+        throw new Exception("Unrelated relative file paths were unexpectedly redirected");
+});
+
+Check("Named user-content directories are discovered without unknown-folder exceptions", () =>
+{
+    if (!OperatingSystem.IsWindows()) return;
+    string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+    if (!Directory.Exists(documents)) return;
+    string name = "nira-scope-regression-" + Guid.NewGuid().ToString("N");
+    string folder = Path.Combine(documents, name);
+    try
+    {
+        Directory.CreateDirectory(folder);
+        var handler = new NIRAFileLocationCapabilityHandler();
+        var result = handler.ExecuteAsync(Request(NIRACapabilityIds.FileLocate,
+            JsonSerializer.Serialize(new { scope = "CurrentUserFolder", name, kind = "Directory", maxDepth = 2, maxEntries = 4000 })))
+            .GetAwaiter().GetResult();
+        if (!result.Succeeded || !result.Output.Contains(folder, StringComparison.OrdinalIgnoreCase) ||
+            !result.Summary.Contains("Scope=CurrentUserContent", StringComparison.Ordinal))
+            throw new Exception("A named folder inside user Documents was not discovered via bounded fallback");
+    }
+    finally { if (Directory.Exists(folder)) Directory.Delete(folder, true); }
+});
+
+Check("Automatic local observation permits only bounded exact commands", () =>
+{
+    bool Safe(string command)
+    {
+        var op = new NIRAAuthorityOperation
+        {
+            Request = Request(NIRACapabilityIds.ShellExecute,
+                JsonSerializer.Serialize(new { shell = "powershell", command })),
+            Risk = NIRACapabilityRisk.Execute,
+            Fingerprint = "offline"
+        };
+        return NIRARiskAdaptiveAuthority.IsSafeLocalObservation(op);
+    }
+    if (!Safe("Get-Date") || !Safe("Get-NetIPConfiguration") ||
+        !Safe("ping -n 3 example.org") ||
+        !Safe("Test-NetConnection -ComputerName example.org -Port 443") ||
+        Safe("ping example.org; Remove-Item C:\\Temp -Recurse") ||
+        Safe("Get-NetAdapter | Format-List") || Safe("ping example.org -t"))
+        throw new Exception("Safe observations must be narrow, exact and free of command composition");
+});
+
+Check("Complete ranked top-N output is distinct from an incomplete scan", () =>
+{
+    var handler = new NIRADirectoryListCapabilityHandler();
+    string root = Path.Combine(Path.GetTempPath(), "nira-ranking-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, "big.bin"), new string('B', 200));
+        File.WriteAllText(Path.Combine(root, "small.bin"), "x");
+        var result = handler.ExecuteAsync(Request(NIRACapabilityIds.DirectoryList,
+            JsonSerializer.Serialize(new { path = root, sortBy = "SizeBytes", filesOnly = true, maxEntries = 1 })))
+            .GetAwaiter().GetResult();
+        if (!result.Succeeded || !result.Output.Contains("big.bin", StringComparison.Ordinal) ||
+            result.Output.Contains("small.bin", StringComparison.Ordinal) ||
+            !result.Summary.Contains("ResultLimited=True", StringComparison.Ordinal) ||
+            !result.Summary.Contains("ScanComplete=True", StringComparison.Ordinal) ||
+            !result.Summary.Contains("RankingComplete=True", StringComparison.Ordinal) ||
+            result.Summary.Contains("A truncated scan cannot prove", StringComparison.Ordinal))
+            throw new Exception("Top-N clipping incorrectly destroys evidence of the complete ranking");
+    }
+    finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+});
+
+Check("Alphabetical file sorting is available without changing the default listing", () =>
+{
+    var handler = new NIRADirectoryListCapabilityHandler();
+    string path = Path.Combine(Path.GetTempPath(), "nira-sort-name-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        Directory.CreateDirectory(path);
+        File.WriteAllText(Path.Combine(path, "zebra.txt"), "z");
+        File.WriteAllText(Path.Combine(path, "apple.txt"), "a");
+        var result = handler.ExecuteAsync(Request(NIRACapabilityIds.DirectoryList,
+            JsonSerializer.Serialize(new { path, sortBy = "Alphabetical", filesOnly = true })))
+            .GetAwaiter().GetResult();
+        if (!result.Summary.Contains("SortBy=Name", StringComparison.Ordinal) ||
+            result.Output.IndexOf("apple.txt", StringComparison.Ordinal) >
+            result.Output.IndexOf("zebra.txt", StringComparison.Ordinal))
+            throw new Exception("Name alias did not rank the observed file paths alphabetically");
+    }
+    finally { if (Directory.Exists(path)) Directory.Delete(path, true); }
+});
+
+Check("Bounded largest-file sorting preserves legacy paths and does not invent folder totals", () =>
+{
+    var handler = new NIRADirectoryListCapabilityHandler();
+    string root = Path.Combine(Path.GetTempPath(), "nira-file-size-sort-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, "large.txt"), new string('L', 300));
+        File.WriteAllText(Path.Combine(root, "small.txt"), "s");
+        Directory.CreateDirectory(Path.Combine(root, "nested"));
+        var result = handler.ExecuteAsync(Request(NIRACapabilityIds.DirectoryList,
+            JsonSerializer.Serialize(new { path = root, sortBy = "SizeBytes", filesOnly = true, maxEntries = 1 })))
+            .GetAwaiter().GetResult();
+        if (!result.Succeeded || !result.Output.Contains("large.txt", StringComparison.Ordinal) ||
+            result.Output.Contains("small.txt", StringComparison.Ordinal) ||
+            !result.Summary.Contains("SortBy=SizeBytes", StringComparison.Ordinal) ||
+            !result.Summary.Contains("Directory sizes are NOT calculated", StringComparison.Ordinal))
+            throw new Exception("Largest observed FILE ranking is not grounded or bounded");
+        var folders = handler.ExecuteAsync(Request(NIRACapabilityIds.DirectoryList,
+            JsonSerializer.Serialize(new { path = root, sortBy = "Size", maxEntries = 3 })))
+            .GetAwaiter().GetResult();
+        if (!folders.Output.Contains("SizeBytes=NotAggregated", StringComparison.Ordinal))
+            throw new Exception("Folder observations must never masquerade as aggregated size results");
+        var defaultList = handler.ExecuteAsync(Request(NIRACapabilityIds.DirectoryList,
+            JsonSerializer.Serialize(new { path = root }))).GetAwaiter().GetResult();
+        if (defaultList.Output.Contains("SizeBytes=NotAggregated", StringComparison.Ordinal) ||
+            defaultList.Output.Contains("LastWriteUtc=", StringComparison.Ordinal))
+            throw new Exception("Opt-in size sorting changed the default listing format");
+    }
+    finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+});
+
+Check("Directory usage measures cumulative bytes without mutating data", () =>
+{
+    var handler = new NIRADirectoryUsageCapabilityHandler();
+    string root = Path.Combine(Path.GetTempPath(), "nira-usage-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        Directory.CreateDirectory(Path.Combine(root, "A", "nested"));
+        Directory.CreateDirectory(Path.Combine(root, "B"));
+        File.WriteAllText(Path.Combine(root, "A", "nested", "big.bin"), new string('A', 400));
+        File.WriteAllText(Path.Combine(root, "B", "small.bin"), new string('B', 20));
+        File.WriteAllText(Path.Combine(root, "root.dat"), "ROOT");
+        var scan = handler.ExecuteAsync(Request(NIRACapabilityIds.DirectoryUsage,
+            JsonSerializer.Serialize(new { path = root, maxDepth = 3, top = 10 })))
+            .GetAwaiter().GetResult();
+        if (!scan.Succeeded || !scan.Summary.Contains("ScanComplete=True", StringComparison.Ordinal) ||
+            !scan.Summary.Contains("ObservedBytes=424", StringComparison.Ordinal) ||
+            !scan.Output.Contains(Path.Combine(root, "A") + "\t400\t1", StringComparison.Ordinal) ||
+            !scan.Output.Contains(Path.Combine(root, "B") + "\t20\t1", StringComparison.Ordinal))
+            throw new Exception("Usage must aggregate measured descendants and expose exact grouping");
+        var bounded = handler.ExecuteAsync(Request(NIRACapabilityIds.DirectoryUsage,
+            JsonSerializer.Serialize(new { path = root, maxDepth = 1, top = 10 })))
+            .GetAwaiter().GetResult();
+        if (!bounded.Summary.Contains("ScanComplete=False", StringComparison.Ordinal) ||
+            !bounded.Output.Contains("LowerBoundIncomplete", StringComparison.Ordinal))
+            throw new Exception("Incomplete usage scans must never claim full folder sizes");
+        if (new FileInfo(Path.Combine(root, "A", "nested", "big.bin")).Length != 400)
+            throw new Exception("Read-only size observation unexpectedly changed the fixture");
+    }
+    finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+});
+
+Check("Generic filename contains discovery is opt-in, bounded and exact by default", () =>
+{
+    var handler = new NIRAFileLocationCapabilityHandler();
+    string root = Path.Combine(Path.GetTempPath(), "nira-file-contains-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        Directory.CreateDirectory(Path.Combine(root, "reports"));
+        File.WriteAllText(Path.Combine(root, "reports", "invoice-2026-q3.xlsx"), "fixture");
+        File.WriteAllText(Path.Combine(root, "reports", "budget-2026.xlsx"), "fixture2");
+        var exact = handler.ExecuteAsync(Request(NIRACapabilityIds.FileLocate,
+            JsonSerializer.Serialize(new { root, name = "invoice", kind = "File", maxDepth = 2 })))
+            .GetAwaiter().GetResult();
+        if (!exact.Summary.Contains("LocationSearch=NotFound", StringComparison.Ordinal))
+            throw new Exception("Default locate must remain exact-name discovery");
+        var contains = handler.ExecuteAsync(Request(NIRACapabilityIds.FileLocate,
+            JsonSerializer.Serialize(new { root, name = "invoice", matchMode = "Contains", kind = "File", maxDepth = 2 })))
+            .GetAwaiter().GetResult();
+        if (!contains.Succeeded || !contains.Output.Contains("invoice-2026-q3.xlsx", StringComparison.Ordinal) ||
+            contains.Output.Contains("budget-2026.xlsx", StringComparison.Ordinal) ||
+            !contains.Summary.Contains("MatchMode=Contains", StringComparison.Ordinal))
+            throw new Exception("Filename-fragment discovery must return only observed matching file paths");
+        Throws<ArgumentException>(() => handler.ExecuteAsync(Request(NIRACapabilityIds.FileLocate,
+            JsonSerializer.Serialize(new { root, name = "invoice", matchMode = "Regex" }))).GetAwaiter().GetResult());
+    }
+    finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+});
+
+Check("Same-event goal duplicates reject reworded tasks without merging distinct work", () =>
+{
+    Type type = typeof(NIRAAgent.Goals.NIRAGoalService);
+    MethodInfo method = type.GetMethod("SameEventObjectiveEquivalent",
+        BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Public)
+        ?? throw new Exception("Missing same-event goal duplicate guard");
+    bool Same(string a, string b) => (bool)(method.Invoke(null, new object[] { a, b }) ?? false);
+    if (!Same("Review project expense totals and save corrected summary to Inbox",
+              "Review project expense total and save corrected summary to Inbox") ||
+        !Same("Analyze PC storage and recommend cleanup targets",
+              "Analyze PC storage and identify largest files/folders for cleanup recommendations") ||
+        Same("Analyze PC storage and recommend cleanup targets",
+             "Research mammoth cloning technology and verify scientific findings") ||
+        Same("Investigate client marketing strategy and data",
+             "Investigate client finance strategy and data") ||
+        Same("Create an API", "Create an API"))
+        throw new Exception("Same-turn duplicates must be conservative and exclude independent objectives");
+});
+
+Check("Delegated filesystem guidance preserves verified absolute paths", () =>
+{
+    Type compiler = typeof(NIRACognitionService).Assembly.GetType(
+        "NIRAAgent.AI.Cognition.NIRACognitionPromptCompiler")
+        ?? throw new Exception("Missing authoritative cognition prompt compiler");
+    MethodInfo method = compiler.GetMethod("System", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+        ?? throw new Exception("Missing focused cognition compiler");
+    string compiled = (string?)method.Invoke(null, new object[] { "{}", "" }) ?? "";
+    if (!compiled.Contains("Carry the actual absolute path returned by locate", StringComparison.Ordinal) ||
+        !compiled.Contains("filesOnly filters directories independently of sortBy", StringComparison.Ordinal))
+        throw new Exception("The branch must keep verified filesystem locations and independent filters");
+});
+
+Check("Repeated successful read receives one bounded no-dispatch reconsideration", () =>
+{
+    MethodInfo policy = typeof(NIRAExecutive).GetMethod(
+        "ShouldReconsiderRepeatedRead", BindingFlags.Static | BindingFlags.NonPublic)
+        ?? throw new Exception("Missing bounded observation recovery policy");
+    bool CanReplan(bool saturated, bool used, int stalled) =>
+        (bool)(policy.Invoke(null, new object[] { saturated, used, stalled }) ?? false);
+    if (!CanReplan(true, false, 1) ||
+        CanReplan(true, true, 1) ||
+        CanReplan(true, false, 2) ||
+        CanReplan(false, false, 1))
+        throw new Exception("Repeated read recovery is not one-shot or bypasses the no-progress guard");
 });
 
 Check("Nested-only Ultra protocol correction is one-shot and source-safe", () =>
@@ -278,26 +614,60 @@ Check("Process memory sort accepts semantically equivalent aliases", () =>
     if (!handler.ExecuteAsync(descending).GetAwaiter().GetResult().Summary.Contains(
             "SortBy=WorkingSet", StringComparison.Ordinal))
         throw new Exception("Descending memory alias not normalized");
+    var ramUsage = Request("process.list", """{"sortBy":"ram_usage","maxResults":3}""");
+    if (!handler.ExecuteAsync(ramUsage).GetAwaiter().GetResult().Summary.Contains(
+            "SortBy=WorkingSet", StringComparison.Ordinal))
+        throw new Exception("RAM usage alias must remain a valid read-only memory observation");
 });
 
-Check("Opt-in user folder lookup keeps legacy broad discovery unchanged", () =>
+Check("Opt-in named user-folder discovery remains bounded and legacy whole-PC search stays explicit", () =>
 {
     var location = new NIRAFileLocationCapabilityHandler();
     if (!location.Descriptor.Parameters.Any(p => p.Name == "scope") ||
         !location.Descriptor.Parameters.Any(p => p.Name == "root"))
         throw new Exception("Known-folder opt-in descriptor is incomplete");
-    var invalid = Request("filesystem.locate", """{"name":"NotAUserFolder","scope":"CurrentUserFolder","kind":"Directory"}""");
-    try
+
+    // R10 deliberately allows ordinary, unknown folder names under CurrentUserFolder.
+    // They must be searched only within the current user's known content folders;
+    // the absence of a match is an observed result, not a permission to scan drives.
+    if (OperatingSystem.IsWindows())
     {
-        location.ExecuteAsync(invalid).GetAwaiter().GetResult();
-        throw new Exception("Unknown user folder silently fell back to whole-PC discovery");
+        string missingName = "nira-absent-folder-" + Guid.NewGuid().ToString("N");
+        var scoped = Request("filesystem.locate", JsonSerializer.Serialize(new
+        {
+            name = missingName, scope = "CurrentUserFolder", kind = "Directory",
+            maxDepth = 0, maxEntries = 1, maxMatches = 1
+        }));
+        NIRACapabilityHandlerResult scopedResult =
+            location.ExecuteAsync(scoped).GetAwaiter().GetResult();
+        if (!scopedResult.Succeeded ||
+            !scopedResult.Summary.Contains("Scope=CurrentUserContent", StringComparison.Ordinal) ||
+            !scopedResult.Summary.Contains("MatchMode=Exact", StringComparison.Ordinal) ||
+            !scopedResult.Summary.Contains("MaxDepth=0", StringComparison.Ordinal) ||
+            !scopedResult.Summary.Contains("MaxEntriesPerRoot=1", StringComparison.Ordinal) ||
+            scopedResult.Summary.Contains("Scope=RootOrWholePc", StringComparison.Ordinal) ||
+            scopedResult.Summary.Contains("LocationSearch=Unique", StringComparison.Ordinal))
+            throw new Exception("Unknown named user folder escaped its bounded user-content scope");
+
+        // Without opt-in, legacy root/whole-PC discovery still uses its own path.
+        var unscoped = Request("filesystem.locate", JsonSerializer.Serialize(new
+        {
+            name = missingName, kind = "Directory", maxDepth = 0,
+            maxEntries = 1, maxMatches = 1
+        }));
+        NIRACapabilityHandlerResult unscopedResult =
+            location.ExecuteAsync(unscoped).GetAwaiter().GetResult();
+        if (!unscopedResult.Succeeded ||
+            !unscopedResult.Summary.Contains("Scope=RootOrWholePc", StringComparison.Ordinal) ||
+            !unscopedResult.Summary.Contains("MaxEntriesPerRoot=1", StringComparison.Ordinal))
+            throw new Exception("Unscoped legacy locate behavior was unexpectedly redirected");
     }
-    catch (ArgumentException) { }
+
     var conflicting = Request("filesystem.locate", """{"name":"Downloads","root":"C:\\","scope":"CurrentUserFolder"}""");
     try
     {
         location.ExecuteAsync(conflicting).GetAwaiter().GetResult();
-        throw new Exception("Unknown mixed root/scope accepted");
+        throw new Exception("Conflicting root and user scope were accepted");
     }
     catch (ArgumentException) { }
 });
@@ -1160,6 +1530,100 @@ Check("Completed branch proof comes from committed state, not status text", () =
         ?? throw new Exception("Committed branch-state check is missing");
     if (guard.IsStatic)
         throw new Exception("Branch completion still uses a content-only static test");
+});
+
+
+Check("R9 ordered directory pages are stable and have real continuation offsets", () =>
+{
+    var handler = new NIRADirectoryListCapabilityHandler();
+    string root = Path.Combine(Path.GetTempPath(), "nira-r9-pages-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        Directory.CreateDirectory(root);
+        foreach (string name in new[] { "a.txt", "b.txt", "c.txt" })
+            File.WriteAllText(Path.Combine(root, name), name);
+        for (int offset = 0; offset < 3; offset++)
+        {
+            string args = JsonSerializer.Serialize(new { path = root, filesOnly = true,
+                sortBy = "Name", maxEntries = 1, offset });
+            var result = handler.ExecuteAsync(Request(NIRACapabilityIds.DirectoryList, args))
+                .GetAwaiter().GetResult();
+            if (!result.Succeeded || !result.Output.Contains(((char)('a' + offset)) + ".txt",
+                    StringComparison.Ordinal) ||
+                (offset < 2 && !result.Summary.Contains($"NextOffset={offset + 1}",
+                    StringComparison.Ordinal)) ||
+                (offset == 2 && !result.Summary.Contains("NextOffset=None", StringComparison.Ordinal)))
+                throw new Exception("Ranked page is missing, duplicated or has the wrong next offset");
+        }
+        var legacyPage = handler.ExecuteAsync(Request(NIRACapabilityIds.DirectoryList,
+            JsonSerializer.Serialize(new { path = root, filesOnly = true, maxEntries = 1, offset = 1 })))
+            .GetAwaiter().GetResult();
+        if (!legacyPage.Succeeded || legacyPage.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length != 1 ||
+            legacyPage.Output.Contains("LastWriteUtc=", StringComparison.Ordinal))
+            throw new Exception("Legacy file-only paging altered its ordinary output");
+    }
+    finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
+});
+
+Check("R9 JSON escape correction is syntax-only and preserves paths", () =>
+{
+    MethodInfo repair = typeof(NIRACognitionService).GetMethod(
+        "EscapeUnambiguousInvalidJsonBackslashes", BindingFlags.Static | BindingFlags.NonPublic)
+        ?? throw new Exception("Missing bounded JSON escape repair helper");
+    string damaged = "{\"path\":\"C:\\Windows\\System32\",\"state\":\"Complete\"}";
+    string corrected = (string)(repair.Invoke(null, new object[] { damaged }) ?? "");
+    using JsonDocument doc = JsonDocument.Parse(corrected);
+    if (doc.RootElement.GetProperty("path").GetString() != @"C:\Windows\System32" ||
+        doc.RootElement.GetProperty("state").GetString() != "Complete")
+        throw new Exception("Unambiguous escape correction changed the decision's values");
+    string valid = "{\"message\":\"Hello\\nworld\"}";
+    if ((string)repair.Invoke(null, new object[] { valid })! != valid)
+        throw new Exception("Valid JSON string escapes must not be rewritten");
+});
+
+Check("R11 local owner autonomy is prompt-free unless explicitly disabled", () =>
+{
+    MethodInfo method = typeof(NIRAScopedCapabilityAuthorizer).GetMethod(
+        "OwnerAutonomyCovers", BindingFlags.Static | BindingFlags.NonPublic)
+        ?? throw new Exception("Missing local owner autonomy policy");
+    var request = Request(NIRACapabilityIds.ShellExecute,
+        JsonSerializer.Serialize(new { shell = "powershell", command = "Get-Date" }));
+    var safe = new NIRAAuthorityOperation { Request = request,
+        Risk = NIRACapabilityRisk.Execute, Fingerprint = "regression" };
+    var destructive = safe with { Risk = NIRACapabilityRisk.Destructive };
+    string? original = Environment.GetEnvironmentVariable("NIRA_OWNER_AUTONOMY");
+    try
+    {
+        bool Covers(NIRAAuthorityOperation op) => (bool)(method.Invoke(null, new object[] { op }) ?? false);
+        Environment.SetEnvironmentVariable("NIRA_OWNER_AUTONOMY", null);
+        if (!Covers(safe) || !Covers(destructive))
+            throw new Exception("Owner's prompt-free local default was ignored");
+        foreach (string enabled in new[] { "trusted", "full" })
+        {
+            Environment.SetEnvironmentVariable("NIRA_OWNER_AUTONOMY", enabled);
+            if (!Covers(destructive))
+                throw new Exception($"Prompt-free alias {enabled} was ignored");
+        }
+        foreach (string disabled in new[] { "prompt", "interactive", "ask", "off", "false", "0" })
+        {
+            Environment.SetEnvironmentVariable("NIRA_OWNER_AUTONOMY", disabled);
+            if (Covers(safe) || Covers(destructive))
+                throw new Exception($"Explicit interactive selection {disabled} was ignored");
+        }
+    }
+    finally { Environment.SetEnvironmentVariable("NIRA_OWNER_AUTONOMY", original); }
+});
+
+Check("R11 inspected browser references are stable for live nodes only", () =>
+{
+    FieldInfo scriptField = typeof(NIRABrowserService).GetField(
+        "InspectionScript", BindingFlags.Static | BindingFlags.NonPublic)
+        ?? throw new Exception("Missing browser inspection script");
+    string script = (string)(scriptField.GetRawConstantValue() ?? "");
+    if (!script.Contains("new WeakMap()", StringComparison.Ordinal) ||
+        !script.Contains("refState.nodes.get(el)", StringComparison.Ordinal) ||
+        !script.Contains("refState.nodes.set(el, ref)", StringComparison.Ordinal))
+        throw new Exception("Browser inspection no longer preserves per-node refs");
 });
 
 Console.WriteLine($"REGRESSION CHECKS: {passed} passed, {failed} failed");

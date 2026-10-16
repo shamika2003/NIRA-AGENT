@@ -117,6 +117,20 @@ public sealed class NIRAScopedCapabilityAuthorizer : INIRACapabilityAuthorizer
             };
         }
 
+        // Locally chosen owner autonomy is a persistent application policy,
+        // NEVER model-supplied or inferred from a user message, web page, memory,
+        // branch, or tool result. This is the explicit no-approval mode selected
+        // by the person running NIRA on their own machine.
+        if (OwnerAutonomyCovers(operation))
+        {
+            Debug.WriteLine($"[Authorization] OWNER_AUTONOMY | Id={descriptor.Id} | " +
+                $"Risk={risk} | Audited=True");
+            return Allow(operation, "Local device owner enabled autonomous execution.") with
+            {
+                AuthorityBasis = "LocalOwnerAutonomy"
+            };
+        }
+
         // A denial is a result, not an invitation to re-open the same prompt
         // on the following cognition cycle or background branch wake.
         string denialKey = BuildDenialKey(operation);
@@ -231,6 +245,11 @@ public sealed class NIRAScopedCapabilityAuthorizer : INIRACapabilityAuthorizer
                     "The approved request does not match the request to dispatch."));
         }
 
+        if (decision.AuthorityBasis == "LocalOwnerAutonomy" &&
+            !OwnerAutonomyCovers(operation))
+            return Task.FromResult(NIRACapabilityAuthorizationDecision.RequireAuthorization(
+                "Local owner autonomy mode was disabled before dispatch."));
+
         if (decision.DerivedFromDirectUserRequest &&
             (decision.AuthorityBasis != NIRARiskAdaptiveAuthority.DirectTaskBasis ||
              !NIRARiskAdaptiveAuthority.IsDirectUserDelegatedAction(
@@ -254,6 +273,25 @@ public sealed class NIRAScopedCapabilityAuthorizer : INIRACapabilityAuthorizer
         }
 
         return Task.FromResult(decision);
+    }
+
+    private static bool OwnerAutonomyCovers(NIRAAuthorityOperation operation)
+    {
+        // The local owner's selected policy is prompt-free by default. This is
+        // an application-side policy, never a model-supplied permission grant.
+        // Existing values "full" and "trusted" are accepted as prompt-free
+        // aliases to avoid surprising prompts after configuration upgrades.
+        // Operators can explicitly restore interactive review by setting
+        // NIRA_OWNER_AUTONOMY=prompt (or off) before launching the process.
+        // Windows account permissions, request validation, task cancellation,
+        // browser grounding, and action auditing remain intact.
+        string? configured = Environment.GetEnvironmentVariable("NIRA_OWNER_AUTONOMY");
+        return !string.Equals(configured, "prompt", StringComparison.OrdinalIgnoreCase) &&
+               !string.Equals(configured, "interactive", StringComparison.OrdinalIgnoreCase) &&
+               !string.Equals(configured, "ask", StringComparison.OrdinalIgnoreCase) &&
+               !string.Equals(configured, "off", StringComparison.OrdinalIgnoreCase) &&
+               !string.Equals(configured, "false", StringComparison.OrdinalIgnoreCase) &&
+               !string.Equals(configured, "0", StringComparison.OrdinalIgnoreCase);
     }
 
     private bool IsGoalOpen(Guid goalId) =>
@@ -887,4 +925,3 @@ public sealed class NIRAScopedCapabilityAuthorizer : INIRACapabilityAuthorizer
         return root;
     }
 }
-

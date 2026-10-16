@@ -342,34 +342,47 @@ internal static class NIRACapabilityArguments
     }
 
 
-    public static string NormalizePath(
-        string path)
+    // Resolve explicit current-user known-folder prefixes against the OS location,
+    // including OneDrive/enterprise redirection. Never interpret Documents\... as
+    // a child of NIRA's application bin directory. Ordinary relative paths and
+    // already absolute paths keep their existing semantics.
+    public static string NormalizePath(string path)
     {
-        if (string.IsNullOrWhiteSpace(
-                path))
+        if (string.IsNullOrWhiteSpace(path))
+            throw new InvalidOperationException("A filesystem path is required.");
+
+        string expanded = Environment.ExpandEnvironmentVariables(path.Trim());
+        if (!Path.IsPathFullyQualified(expanded))
         {
-            throw new InvalidOperationException(
-                "A filesystem path is required.");
+            string slashNormalized = expanded.Replace('\\', '/');
+            string first = slashNormalized.Split('/', 2)[0];
+            string? resolved = null;
+            if (first == "~")
+                resolved = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            else if (IsCurrentUserKnownFolderName(first))
+                resolved = NIRAFileLocationCapabilityHandler.ResolveCurrentUserFolder(first);
+
+            if (!string.IsNullOrWhiteSpace(resolved))
+            {
+                string remainder = slashNormalized.Length == first.Length
+                    ? string.Empty : slashNormalized[(first.Length + 1)..];
+                expanded = string.IsNullOrEmpty(remainder)
+                    ? resolved : Path.Combine(resolved, remainder.Replace('/', Path.DirectorySeparatorChar));
+            }
         }
-
-
-        string fullPath =
-            Path.GetFullPath(
-                Environment.ExpandEnvironmentVariables(
-                    path.Trim()));
-
-
-        if (fullPath.Length >
-            32760)
-        {
-            throw new InvalidOperationException(
-                "Filesystem path is too long.");
-        }
-
-
+        string fullPath = Path.GetFullPath(expanded);
+        if (fullPath.Length > 32760)
+            throw new InvalidOperationException("Filesystem path is too long.");
         return fullPath;
     }
 
+    internal static bool IsCurrentUserKnownFolderName(string name) =>
+        name.Equals("Desktop", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals("Documents", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals("Downloads", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals("Pictures", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals("Music", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals("Videos", StringComparison.OrdinalIgnoreCase);
 
     public static string Truncate(
         string? value,
@@ -439,5 +452,3 @@ internal static class NIRACapabilityArguments
         return false;
     }
 }
-
-

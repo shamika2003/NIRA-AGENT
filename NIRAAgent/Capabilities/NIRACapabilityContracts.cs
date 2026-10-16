@@ -55,6 +55,9 @@ public static class NIRACapabilityIds
     public const string FileLocate =
         "filesystem.locate";
 
+    public const string DirectoryUsage =
+        "filesystem.usage";
+
 
     public const string FileMetadata =
         "filesystem.metadata";

@@ -21,7 +21,7 @@ public sealed class NIRAFileReadCapabilityHandler
                 NIRACapabilityIds.FileRead,
 
             Description =
-                "Read a bounded text window from a file with line numbers and file metadata.",
+                "Read a bounded text window from a file with line numbers and metadata; a complete CSV/TSV read additionally reports exact audited numeric-column totals when unambiguous.",
 
             DefaultRisk =
                 NIRACapabilityRisk.Observe,
@@ -111,6 +111,9 @@ public sealed class NIRAFileReadCapabilityHandler
         bool truncated =
             false;
 
+        // Only the actual complete, bounded text read may be audited. A page
+        // or character-limited read is never represented as a file-wide total.
+        List<string> rawLines = new();
 
         await using FileStream stream =
             new(
@@ -185,7 +188,7 @@ public sealed class NIRAFileReadCapabilityHandler
 
             output.AppendLine(
                 rendered);
-
+            rawLines.Add(line);
 
             includedLines++;
 
@@ -217,6 +220,16 @@ public sealed class NIRAFileReadCapabilityHandler
         string summary =
             $"Read {includedLines} line(s) from '{path}' starting at line {startLine}. " +
             $"Length={file.Length} bytes | LastWriteUtc={file.LastWriteTimeUtc:O} | Truncated={truncated}.";
+
+        // Deterministic numeric evidence supplements (never replaces) raw file
+        // content. It is completely generic: no project, column name, or fixture
+        // is assumed. Skip ambiguous columns instead of inventing a sum.
+        if (startLine == 1 && !truncated && file.Length <= 500_000)
+        {
+            string? audit = NIRADelimitedNumericAudit.TryAudit(path, rawLines);
+            if (audit is not null)
+                summary += " " + audit;
+        }
 
 
         return new NIRACapabilityHandlerResult
@@ -274,9 +287,10 @@ public sealed class NIRADirectoryListCapabilityHandler
                     Parameter("path", "string", true, "Directory path."),
                     Parameter("pattern", "string", false, "Filesystem search pattern such as *.cs. Default *."),
                     Parameter("recursive", "boolean", false, "Whether to recurse into child directories. Default false."),
-                    Parameter("maxEntries", "integer", false, "Maximum entries. Default 200, maximum 1000."),
-                    Parameter("sortBy", "string", false, "Optional LastWriteUtc: return newest modified entries first. Default none preserves legacy order and format."),
-                    Parameter("filesOnly", "boolean", false, "When sortBy=LastWriteUtc, omit folders from the result. Default false.")
+                    Parameter("maxEntries", "integer", false, "Maximum entries per page. Default 200, maximum 1000."),
+                    Parameter("offset", "integer", false, "Optional zero-based page offset (default 0). For a limited result, use NextOffset to read the next page; do not repeat offset 0."),
+                    Parameter("sortBy", "string", false, "Optional LastWriteUtc (newest), SizeBytes (largest individual files), or Name (alphabetical). Directories do NOT have aggregated sizes; filesystem.usage measures them. Default none preserves legacy order and format."),
+                    Parameter("filesOnly", "boolean", false, "Omit folders independently of sortBy. Default false; legacy output unchanged when omitted.")
                 }
         };
 
@@ -323,13 +337,29 @@ public sealed class NIRADirectoryListCapabilityHandler
                 1000);
 
 
+        int offset = NIRACapabilityArguments.GetInteger(request, "offset", 0, 0, 20000);
+
         string? sortBy = NIRACapabilityArguments.GetOptionalString(request, "sortBy", 40);
         bool filesOnly = NIRACapabilityArguments.GetBoolean(request, "filesOnly");
-        if (!string.IsNullOrWhiteSpace(sortBy) &&
-            !sortBy.Equals("LastWriteUtc", StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException("sortBy must be LastWriteUtc when supplied.");
-        if (filesOnly && string.IsNullOrWhiteSpace(sortBy))
-            throw new ArgumentException("filesOnly requires sortBy=LastWriteUtc.");
+        // Only proven-equivalent ranking labels are accepted. No arbitrary
+        // sort expression is interpreted or executed.
+        string sortToken = new string((sortBy ?? string.Empty)
+            .Where(char.IsLetterOrDigit).ToArray());
+        if (sortToken.Equals("LastWriteUtc", StringComparison.OrdinalIgnoreCase) ||
+            sortToken.Equals("Modified", StringComparison.OrdinalIgnoreCase) ||
+            sortToken.Equals("ModifiedTime", StringComparison.OrdinalIgnoreCase))
+            sortBy = "LastWriteUtc";
+        else if (sortToken.Equals("Size", StringComparison.OrdinalIgnoreCase) ||
+                 sortToken.Equals("SizeBytes", StringComparison.OrdinalIgnoreCase) ||
+                 sortToken.Equals("FileSize", StringComparison.OrdinalIgnoreCase) ||
+                 sortToken.Equals("SizeDescending", StringComparison.OrdinalIgnoreCase))
+            sortBy = "SizeBytes";
+        else if (sortToken.Equals("Name", StringComparison.OrdinalIgnoreCase) ||
+                 sortToken.Equals("FileName", StringComparison.OrdinalIgnoreCase) ||
+                 sortToken.Equals("Alphabetical", StringComparison.OrdinalIgnoreCase))
+            sortBy = "Name";
+        else if (!string.IsNullOrWhiteSpace(sortBy))
+            throw new ArgumentException("sortBy must be LastWriteUtc, SizeBytes, or Name when supplied.");
 
         if (!Directory.Exists(
                 path))
@@ -393,24 +423,39 @@ public sealed class NIRADirectoryListCapabilityHandler
                 catch (IOException) { unavailable++; }
             }
 
-            var ranked = observed.OrderByDescending(e => e.ModifiedUtc)
-                .ThenBy(e => e.Path, StringComparer.OrdinalIgnoreCase)
-                .Take(maxEntries).ToArray();
+            var ranked = (sortBy switch
+            {
+                "SizeBytes" => observed.OrderByDescending(e => e.IsDirectory ? -1L : e.SizeBytes)
+                    .ThenBy(e => e.Path, StringComparer.OrdinalIgnoreCase),
+                "Name" => observed.OrderBy(e => e.Path, StringComparer.OrdinalIgnoreCase),
+                _ => observed.OrderByDescending(e => e.ModifiedUtc)
+                    .ThenBy(e => e.Path, StringComparer.OrdinalIgnoreCase)
+            }).Skip(offset).Take(maxEntries).ToArray();
             StringBuilder rankedOutput = new();
             foreach (var entry in ranked)
             {
                 if (entry.IsDirectory)
-                    rankedOutput.AppendLine($"DIR\t{entry.Path}\tLastWriteUtc={entry.ModifiedUtc:O}");
+                    rankedOutput.AppendLine(sortBy == "SizeBytes"
+                        ? $"DIR\t{entry.Path}\tLastWriteUtc={entry.ModifiedUtc:O}\tSizeBytes=NotAggregated"
+                        : $"DIR\t{entry.Path}\tLastWriteUtc={entry.ModifiedUtc:O}");
                 else
                     rankedOutput.AppendLine($"FILE\t{entry.SizeBytes}\t{entry.Path}\tLastWriteUtc={entry.ModifiedUtc:O}");
             }
             return Task.FromResult(new NIRACapabilityHandlerResult
             {
-                Summary = $"Enumerated {ranked.Length} newest entr(y/ies) under '{path}'. " +
-                    $"SortBy=LastWriteUtc | FilesOnly={filesOnly} | Scanned={scanned} | " +
-                    $"Truncated={scanTruncated || observed.Count > maxEntries} | " +
-                    $"ScanComplete={!scanTruncated && unavailable == 0} | Unreadable={unavailable}. " +
-                    "A truncated scan cannot prove the global newest entries.",
+                Summary = $"Enumerated {ranked.Length} ranked entr(y/ies) under '{path}'. " +
+                    $"SortBy={sortBy} | FilesOnly={filesOnly} | Scanned={scanned} | " +
+                    $"Truncated={scanTruncated || observed.Count > offset + ranked.Length} | " +
+                    $"ResultLimited={observed.Count > offset + ranked.Length} | " +
+                    $"Offset={offset} | NextOffset={(observed.Count > offset + ranked.Length ? (offset + ranked.Length).ToString() : "None")} | " +
+                    $"ScanComplete={!scanTruncated && unavailable == 0} | " +
+                    $"RankingComplete={!scanTruncated && unavailable == 0} | Unreadable={unavailable}. " +
+                    (sortBy == "SizeBytes"
+                        ? "Directory sizes are NOT calculated; this ranks individual file sizes. "
+                        : string.Empty) +
+                    (!scanTruncated && unavailable == 0
+                        ? "The ranking is complete for the scanned scope. When NextOffset is present, request that offset only if more results are needed; do not repeat the same page."
+                        : "The scan was incomplete; the top-ranked entries may not represent the full requested scope."),
                 Output = rankedOutput.ToString().TrimEnd(),
                 ChangedSystemState = false
             });
@@ -427,6 +472,11 @@ public sealed class NIRADirectoryListCapabilityHandler
         bool truncated =
             false;
 
+        // A file-only query could otherwise traverse arbitrarily many folders
+        // before finding maxEntries files. Keep the legacy listing unchanged.
+        const int maximumFilteredScan = 20000;
+        int filteredScanned = 0;
+        int skipped = 0;
 
         foreach (
             string entry
@@ -437,6 +487,12 @@ public sealed class NIRADirectoryListCapabilityHandler
         {
             cancellationToken.ThrowIfCancellationRequested();
 
+            if (filesOnly && filteredScanned >= maximumFilteredScan)
+            {
+                truncated = true;
+                break;
+            }
+            filteredScanned++;
 
             if (count >=
                 maxEntries)
@@ -452,11 +508,18 @@ public sealed class NIRADirectoryListCapabilityHandler
             if (Directory.Exists(
                     entry))
             {
+                // File filtering is independent of chronological ordering.
+                // Excluded directories do not consume maxEntries.
+                if (filesOnly)
+                    continue;
+
+                if (skipped++ < offset) continue;
                 output.AppendLine(
                     $"DIR\t{entry}");
             }
             else
             {
+                if (skipped++ < offset) continue;
                 FileInfo file =
                     new(
                         entry);
@@ -475,7 +538,8 @@ public sealed class NIRADirectoryListCapabilityHandler
             new NIRACapabilityHandlerResult
             {
                 Summary =
-                    $"Enumerated {count} entry/entries under '{path}'. Recursive={recursive} | Pattern='{pattern}' | Truncated={truncated}.",
+                    $"Enumerated {count} entry/entries under '{path}'. Recursive={recursive} | Pattern='{pattern}' | Truncated={truncated} | Offset={offset} | NextOffset={(truncated ? (offset + count).ToString() : "None")}." +
+                    (filesOnly ? $" FilesOnly=True | Scanned={filteredScanned} | ScanComplete={!truncated}." : string.Empty),
 
                 Output =
                     output.ToString().TrimEnd(),

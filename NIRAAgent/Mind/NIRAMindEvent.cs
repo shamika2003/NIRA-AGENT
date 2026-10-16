@@ -423,7 +423,9 @@ public sealed record NIRAMindEvent
                         result.Status.ToString(),
 
                     ["workKind"] =
-                        result.Kind.ToString()
+                        result.Kind.ToString(),
+
+                    ["branchObjective"] = result.BranchObjective
                 }
         };
     }
@@ -711,4 +713,3 @@ public sealed record NIRAMindEvent
             """;
     }
 }
-

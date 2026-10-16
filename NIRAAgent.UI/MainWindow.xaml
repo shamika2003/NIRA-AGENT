@@ -342,6 +342,14 @@
                     </EventTrigger>
                 </StackPanel.Triggers>
 
+                <!-- A stable, runtime-owned reply source remains visible even
+                     when concurrent turns finish in a different order. -->
+                <TextBlock x:Name="ReplySourceText" Text="{Binding ReplyToText}"
+                           Visibility="Collapsed" FontSize="11"
+                           Margin="8,0,8,5" TextTrimming="CharacterEllipsis"
+                           Foreground="{DynamicResource NIRASecondaryBrush}"
+                           Opacity="0.84"/>
+
                 <!-- Assistant prose is full-width and borderless. Actual rich
                      visuals retain their own themed surfaces where helpful. -->
                 <Grid HorizontalAlignment="Stretch">
@@ -467,6 +475,9 @@
             </StackPanel>
 
             <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding HasReplySource}" Value="True">
+                    <Setter TargetName="ReplySourceText" Property="Visibility" Value="Visible"/>
+                </DataTrigger>
                 <DataTrigger Binding="{Binding HasRichElements}" Value="True">
                     <Setter TargetName="AssistantRichBlocks" Property="Visibility" Value="Visible"/>
                 </DataTrigger>

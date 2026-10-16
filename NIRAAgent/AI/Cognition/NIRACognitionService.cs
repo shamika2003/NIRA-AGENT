@@ -534,7 +534,44 @@ public sealed class NIRACognitionService
             };
         }
 
-        NIRACognitionDecision result = ParseDecision(raw);
+        NIRACognitionDecision result;
+        try
+        {
+            result = ParseDecision(raw);
+        }
+        catch (InvalidOperationException ex) when
+            (ex.Message.Contains("malformed JSON", StringComparison.Ordinal) &&
+             raw.Length is > 0 and <= 16000)
+        {
+            // Exactly one isolated syntax-only retry. The repair response has
+            // no authority; all capability proposals still require parsing,
+            // Executive validation and authorization before dispatch.
+            const string repairSystem =
+                "Repair only the JSON syntax of this NIRA decision. Return one " +
+                "JSON object, no prose or markdown. Do not invent actions, " +
+                "results, paths, credentials or permission. Preserve intended " +
+                "fields and values. Escape literal Windows path backslashes.";
+            Debug.WriteLine($"[Cognition] PRIMARY_JSON_REPAIR | Run={context.RunId:D} | Cycle={context.Cycle}");
+            string repaired = await _ollama.ChatAsync(NIRAModelSelection.Primary,
+                repairSystem, raw, cancellationToken, jsonMode: true);
+            try
+            {
+                result = ParseDecision(repaired);
+            }
+            catch (Exception retryEx) when (retryEx is InvalidOperationException or JsonException)
+            {
+                Debug.WriteLine($"[Cognition] PRIMARY_JSON_REPAIR_FAILED | Run={context.RunId:D} | " +
+                    $"Cause={retryEx.GetType().Name}");
+                return new NIRACognitionDecision
+                {
+                    State = NIRACognitionState.Blocked,
+                    EmitReply = true,
+                    Reply = "I couldn't reliably interpret that last reasoning step, " +
+                        "so I didn't execute it. I can't confirm the requested result.",
+                    DecisionSummary = "Malformed model decision after one isolated syntax repair."
+                };
+            }
+        }
         if (justDelegated && deepState is { FirstAppraisal: not null } first &&
             context.Event.Source == NIRAAgent.Mind.NIRAMindEventSource.User &&
             !string.IsNullOrWhiteSpace(first.FirstEvidenceQuote) &&
@@ -2247,6 +2284,44 @@ public sealed class NIRACognitionService
     }
 
 
+    // Repair only unambiguously invalid escape sequences inside JSON strings.
+    // For example a Windows path with C:\\Windows emitted as C:\Windows contains
+    // an illegal JSON \W escape; preserve the literal path separator rather
+    // than letting a harmless model-formatting mistake end the entire turn.
+    // Do not reinterpret valid escapes (\n, \t, \uXXXX) or guess a malformed
+    // structure. The complete result still passes ordinary contract checks.
+    internal static string EscapeUnambiguousInvalidJsonBackslashes(string json)
+    {
+        if (string.IsNullOrEmpty(json) || json.Length > 32000) return json;
+        var output = new StringBuilder(json.Length + 32);
+        bool inString = false;
+        for (int index = 0; index < json.Length; index++)
+        {
+            char current = json[index];
+            if (current == '"')
+            {
+                inString = !inString;
+                output.Append(current);
+                continue;
+            }
+            if (current == '\\' && inString && index + 1 < json.Length)
+            {
+                char next = json[index + 1];
+                if (next is '"' or '\\' or '/' or 'b' or 'f' or 'n' or 'r' or 't' or 'u')
+                {
+                    output.Append(current).Append(next);
+                    index++;
+                    continue;
+                }
+                // A backslash followed by any other character is invalid JSON.
+                output.Append('\\').Append('\\');
+                continue;
+            }
+            output.Append(current);
+        }
+        return output.ToString();
+    }
+
     private NIRACognitionDecision ParseDecision(
         string raw)
     {
@@ -2267,6 +2342,7 @@ public sealed class NIRACognitionService
             // outside JSON strings; never guess missing fields, structure,
             // tool arguments or credential content. One parse, no LLM loop.
             string normalized = NormalizeUnambiguousJsonDecimals(json);
+            normalized = EscapeUnambiguousInvalidJsonBackslashes(normalized);
             if (string.Equals(normalized, json, StringComparison.Ordinal))
                 throw new InvalidOperationException(
                     "The reasoning model returned malformed JSON. No proposed actions were executed; retry the task with a new decision rather than repeating an unknown action.", invalidJson);

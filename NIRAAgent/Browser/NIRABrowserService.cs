@@ -4549,6 +4549,18 @@ public sealed class NIRABrowserService : IAsyncDisposable
             }
           }
 
+          // Reinspecting the same document must not invalidate a second
+          // action in the same planned batch. Retain opaque refs for the SAME
+          // live DOM nodes; never carry them to a different document. The
+          // per-document WeakMap doesn't keep detached elements alive.
+          const refStateKey = Symbol.for('nira.inspection.element-identity.v1');
+          let refState = window[refStateKey];
+          if (!refState || !refState.nodes || !refState.prefix) {
+            refState = { prefix: token, counter: 0, nodes: new WeakMap() };
+            Object.defineProperty(window, refStateKey, {
+              value: refState, enumerable: false, configurable: false
+            });
+          }
           document.querySelectorAll('[data-NIRA-ref]').forEach(el => el.removeAttribute('data-NIRA-ref'));
 
           const selector = [
@@ -4573,7 +4585,11 @@ public sealed class NIRABrowserService : IAsyncDisposable
             if (elements.length >= maxElements) break;
 
             index += 1;
-            const ref = `${token}-${index}`;
+            let ref = refState.nodes.get(el);
+            if (!ref) {
+              ref = `${refState.prefix}-${++refState.counter}`;
+              refState.nodes.set(el, ref);
+            }
             el.setAttribute('data-NIRA-ref', ref);
 
             const tag = el.tagName.toLowerCase();

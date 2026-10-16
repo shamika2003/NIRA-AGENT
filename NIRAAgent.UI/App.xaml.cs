@@ -427,6 +427,10 @@ public partial class App : WpfApplication
                 INIRACapabilityHandler,
                 NIRADirectoryListCapabilityHandler>();
 
+            builder.Services.AddSingleton<
+                INIRACapabilityHandler,
+                NIRADirectoryUsageCapabilityHandler>();
+
 
             builder.Services.AddSingleton<
                 INIRACapabilityHandler,

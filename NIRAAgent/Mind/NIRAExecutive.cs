@@ -857,6 +857,12 @@ public sealed class NIRAExecutive
         int noProgressCycles =
             0;
 
+        // One source-grounded reconsideration when cognition requests exactly
+        // the same *already completed* read. The duplicate is never executed.
+        // Subsequent stagnation retains the existing fail-closed loop guard.
+        bool repeatedReadRecoveryUsed = false;
+        bool partialEvidenceSynthesisUsed = false;
+
         // Malformed model capability objects are never executed. Give cognition
         // one bounded structured correction cycle, then fail closed instead of
         // burning repeated LLM calls on the same invalid decision shape.
@@ -1629,6 +1635,56 @@ public sealed class NIRAExecutive
                 };
             }
 
+            // A serial user turn can execute read-only tools without creating
+            // a persistent goal or branch. Some model decisions instead put
+            // a valid observation inside branchWorkProposals while creating NO
+            // owning branch. Recover the EXACT request as a foreground Observe
+            // capability, rather than repeatedly trying fictitious branch IDs.
+            // Real branches, internal events, mutations and tool invocations
+            // retain their original strict ownership/permission contracts.
+            if (mindEvent.Source == NIRAMindEventSource.User &&
+                decision.State == NIRACognitionState.Continue &&
+                !decision.BranchProposals.Any(p => p.Action == NIRABranchProposalAction.Create) &&
+                decision.BranchWorkProposals.Count > 0)
+            {
+                List<NIRACapabilityRequest> recovered = new();
+                List<NIRABranchWorkProposal> retained = new();
+                foreach (NIRABranchWorkProposal proposal in decision.BranchWorkProposals)
+                {
+                    bool hasGuid = Guid.TryParse(proposal.BranchId, out Guid branchGuid);
+                    bool hasCommittedBranch = hasGuid &&
+                        _branches.TryGetBranch(branchGuid, out NIRABranchState? knownBranch) &&
+                        knownBranch is { IsOpen: true };
+                    bool hasSingleAuthoritativeOwner = hasGuid &&
+                        _goals.TryGetGoal(branchGuid, out NIRAGoalState? branchGoal) &&
+                        branchGoal is { IsOpen: true } &&
+                        _branches.GetForGoal(branchGuid).Count(b =>
+                            b.IsOpen && b.Status == NIRABranchStatus.Active) == 1;
+                    if (!hasCommittedBranch && !hasSingleAuthoritativeOwner &&
+                        proposal.Kind == NIRABranchWorkKind.Capability &&
+                        proposal.CapabilityRequest is { } exactRequest &&
+                        _capabilities.TryValidateReadOnlyRequest(exactRequest, out NIRACapabilityRequest validRead))
+                    {
+                        recovered.Add(validRead);
+                    }
+                    else retained.Add(proposal);
+                }
+                if (recovered.Count > 0)
+                {
+                    decision = decision with
+                    {
+                        BranchWorkProposals = retained,
+                        CapabilityRequests = decision.CapabilityRequests
+                            .Concat(recovered)
+                            .GroupBy(r => r.BuildSignature(), StringComparer.OrdinalIgnoreCase)
+                            .Select(g => g.First()).ToArray()
+                    };
+                    Debug.WriteLine($"[Executive] ORPHAN OBSERVE ROUTED DIRECT | " +
+                        $"Run={runId:D} | Count={recovered.Count} | " +
+                        "NoBranchCreated=True | AuthorizationUnchanged=True");
+                }
+            }
+
             Debug.WriteLine($"[Journey] OWNERSHIP | Run={runId:D} | Cycle={cycle} | " +
                 $"RunSource={(ownedGoalId is null ? "UserTurn" : "GoalEvent")} | " +
                 $"GoalCreates={decision.GoalProposals.Count(p => p.Action == NIRAGoalProposalAction.Create)} | " +
@@ -2263,6 +2319,42 @@ public sealed class NIRAExecutive
                         Confidence = 0.95
                     }
                 }).ToArray();
+            }
+
+            // A model often omits the quote for a terminal goal update even
+            // though it has a useful final answer. Do not make the model redo
+            // the *entire* investigation to repair a bookkeeping quote. Defer
+            // only the malformed user-goal completion until the independent
+            // objective reviewer has accepted its evidence-grounded answer.
+            NIRAGoalProposal[] reviewDeferredUserGoalCompletions = [];
+            if (mindEvent.Source == NIRAMindEventSource.User &&
+                decision.State == NIRACognitionState.Complete &&
+                decision.EmitReply && !string.IsNullOrWhiteSpace(decision.Reply) &&
+                capabilityResultsBySignature.Values.Any(result => result.Succeeded))
+            {
+                reviewDeferredUserGoalCompletions = newGoalProposals.Where(proposal =>
+                    proposal.Action == NIRAGoalProposalAction.Complete &&
+                    Guid.TryParse(proposal.GoalId, out Guid proposedGoalId) &&
+                    proposedGoalId != Guid.Empty &&
+                    (ownedGoalId == proposedGoalId ||
+                     _goals.TryGetGoal(proposedGoalId, out NIRAGoalState? currentGoal) &&
+                     currentGoal?.SourceEventId == mindEvent.Id) &&
+                    !ContainsGroundedQuote(
+                        proposal.EvidenceSource switch
+                        {
+                            NIRAGoalEvidenceSource.CurrentEvent => mindEvent.Content,
+                            NIRAGoalEvidenceSource.NIRAReply => decision.Reply,
+                            NIRAGoalEvidenceSource.CapabilityResult => capabilityEvidence.ToString(),
+                            _ => string.Empty
+                        }, proposal.EvidenceQuote)).ToArray();
+                if (reviewDeferredUserGoalCompletions.Length > 0)
+                {
+                    newGoalProposals = newGoalProposals
+                        .Except(reviewDeferredUserGoalCompletions).ToArray();
+                    Debug.WriteLine($"[Goal] COMPLETION QUOTE DEFERRED | " +
+                        $"Run={runId:D} | Count={reviewDeferredUserGoalCompletions.Length} | " +
+                        "IndependentReviewRequired=True");
+                }
             }
 
             // If a decision resolves a required branch AND its parent goal,
@@ -2902,6 +2994,30 @@ public sealed class NIRAExecutive
                 }
             }
 
+            // A model may accidentally supply the authoritative GOAL GUID
+            // where the BRANCH GUID belongs. Bind only when that exact goal
+            // has exactly one open executable child; never create a branch,
+            // choose among siblings, or alter authorization on this basis.
+            for (int workIndex = 0; workIndex < proposedBranchWork.Count; workIndex++)
+            {
+                NIRABranchWorkProposal proposal = proposedBranchWork[workIndex];
+                if (!Guid.TryParse(proposal.BranchId, out Guid candidateId) ||
+                    _branches.TryGetBranch(candidateId, out _) ||
+                    !_goals.TryGetGoal(candidateId, out NIRAGoalState? candidateBranchGoal) ||
+                    candidateBranchGoal is not { IsOpen: true })
+                    continue;
+                NIRABranchState[] choices = _branches.GetForGoal(candidateId)
+                    .Where(b => b.IsOpen && b.Status == NIRABranchStatus.Active)
+                    .ToArray();
+                if (choices.Length != 1) continue;
+                proposedBranchWork[workIndex] = proposal with
+                {
+                    BranchId = choices[0].Id.ToString("D")
+                };
+                Debug.WriteLine($"[Executive] BRANCH GOAL-ID ALIAS RESOLVED | " +
+                    $"Goal={candidateId:D} | Branch={choices[0].Id:D}");
+            }
+
             NIRABranchWorkProposal[] newBranchWorkProposals =
                 proposedBranchWork
                     .Where(proposal => executedBranchWorkProposals.Add(
@@ -3041,6 +3157,25 @@ public sealed class NIRAExecutive
                 AppendBranchWorkMutationEvidence(
                     executiveEvidence,
                     branchWorkResults);
+
+            // Rejected assignments are not executable work and cannot count
+            // as an active plan in the repeat/no-progress guard. Keep their
+            // rejection reasons in executiveEvidence for a different approach.
+            if (newBranchWorkProposals.Length > 0 &&
+                branchWorkResults.Count == newBranchWorkProposals.Length &&
+                branchWorkResults.All(r => r.Action == NIRABranchWorkApplyAction.Rejected))
+            {
+                decision = decision with
+                {
+                    BranchWorkProposals = Array.Empty<NIRABranchWorkProposal>()
+                };
+                executiveEvidence.AppendLine(
+                    "ORCHESTRATION REJECTED: no branch work was queued. A GOAL " +
+                    "is not a BRANCH. Continue using normal direct capability " +
+                    "requests for serial work, or explicitly create and commit " +
+                    "a branch before assigning work. Never reuse an unbound " +
+                    "placeholder or call rejection a successful action.");
+            }
 
 
             // =====================================================
@@ -4397,6 +4532,35 @@ public sealed class NIRAExecutive
                         $"Cycle={cycle} | NewDispatch=0 | ExactSignature=True | " +
                         $"Risk={exactPreviousObservation!.Risk}");
 
+                // Recover once from a model repeating a verified Observe read.
+                // No capability is dispatched by this branch: the repeated
+                // request was already excluded from newCapabilityRequests.
+                // Preserve the original evidence, avoid false completion and
+                // never turn an unchanged source into an invented second source.
+                if (ShouldReconsiderRepeatedRead(
+                    saturatedSingleObservation, repeatedReadRecoveryUsed, noProgressCycles))
+                {
+                    repeatedReadRecoveryUsed = true;
+                    executiveEvidence.AppendLine();
+                    executiveEvidence.AppendLine(
+                        "AUTHORITATIVE REPEATED READ: The exact Observe capability " +
+                        "request you just proposed already succeeded in this run. " +
+                        "Its original result is in CAPABILITY EVIDENCE. The duplicate " +
+                        "was NOT executed and adds no new evidence. Reconsider the " +
+                        "ORIGINAL user objective ONCE. You may (a) answer from " +
+                        "already verified evidence while clearly stating any " +
+                        "missing information, (b) propose a genuinely DIFFERENT " +
+                        "registered read-only action grounded in observed links " +
+                        "or facts, or (c) explicitly state the remaining blocker. " +
+                        "Never claim unobserved sources, and do not repeat this " +
+                        "or an equivalent unchanged read. A further unproductive " +
+                        "continuation will be stopped by the Executive.");
+                    Debug.WriteLine(
+                        $"[Executive] REPEATED READ REPLAN | Run={runId:D} | " +
+                        $"Cycle={cycle} | Retry=1 | DuplicateDispatched=False");
+                    continue;
+                }
+
                 bool forceTerminal =
                     noProgressCycles >= 2 || saturatedSingleObservation;
 
@@ -4417,12 +4581,37 @@ public sealed class NIRAExecutive
                         DecisionSummary = "Waiting for the authoritative branch-work result."
                     };
                 }
+                else if (forceTerminal && !partialEvidenceSynthesisUsed &&
+                    mindEvent.Source == NIRAMindEventSource.User &&
+                    capabilityResultsBySignature.Values.Any(result => result.Succeeded &&
+                        result.Risk == NIRACapabilityRisk.Observe))
+                {
+                    // A stall is not the same as lack of evidence. Give cognition
+                    // one LAST answer-only synthesis turn over the already
+                    // verified observations before resorting to a fallback.
+                    // No repeated capability was dispatched by the guard.
+                    partialEvidenceSynthesisUsed = true;
+                    executiveEvidence.AppendLine();
+                    executiveEvidence.AppendLine(
+                        "FINAL EVIDENCE SYNTHESIS: Your continuation stalled. " +
+                        "You have already observed read-only data for this user request. " +
+                        "Produce the BEST concrete, truthful user-facing answer NOW. " +
+                        "Report observed items and exact useful values; clearly qualify " +
+                        "unverified matches and incomplete scans. Do not request more " +
+                        "actions, do not output tool diagnostics, and do not claim " +
+                        "unperformed changes. It is acceptable to answer partially " +
+                        "rather than suppressing all useful observed information.");
+                    Debug.WriteLine($"[Executive] BOUNDED EVIDENCE SYNTHESIS | " +
+                        $"Run={runId:D} | Cycle={cycle} | ExtraDispatch=0");
+                    continue;
+                }
                 else if (forceTerminal)
                 {
                     string fallbackReply =
                         BuildNoProgressFallbackReply(
                             decision,
-                            lastCapabilityResult);
+                            lastCapabilityResult,
+                            capabilityResultsBySignature.Values.ToArray());
 
                     (IReadOnlyList<NIRAGoalApplyResult> stoppedGoals,
                      IReadOnlyList<NIRABranchApplyResult> stoppedBranches) =
@@ -4844,6 +5033,32 @@ public sealed class NIRAExecutive
                 }
             }
 
+            // A deferred model goal-completion proposal is bookkeeping only.
+            // Reconcile it AFTER an independent reviewer accepted the final
+            // user result, binding the evidence quote to exact delivered text.
+            // GoalService still enforces completion criteria and dependencies.
+            if (completionReviewConfirmedComplete &&
+                mindEvent.Source == NIRAMindEventSource.User &&
+                decision.State == NIRACognitionState.Complete &&
+                decision.EmitReply && !string.IsNullOrWhiteSpace(decision.Reply) &&
+                reviewDeferredUserGoalCompletions.Length > 0)
+            {
+                NIRAGoalProposal[] reconciled = reviewDeferredUserGoalCompletions
+                    .Select(proposal => proposal with
+                    {
+                        EvidenceSource = NIRAGoalEvidenceSource.NIRAReply,
+                        EvidenceQuote = decision.Reply[..Math.Min(decision.Reply.Length, 240)].Trim(),
+                        EvidenceSummary = "Independently reviewed user-facing result: " +
+                            proposal.EvidenceSummary
+                    }).ToArray();
+                IReadOnlyList<NIRAGoalApplyResult> reconciledResults =
+                    await _goals.ApplyProposalsAsync(mindEvent, decision.Reply,
+                        capabilityEvidence.ToString(), reconciled, cancellationToken);
+                goalResults = goalResults.Concat(reconciledResults).ToArray();
+                Debug.WriteLine($"[Goal] REVIEWED COMPLETION RECONCILED | " +
+                    $"Run={runId:D} | Accepted={reconciledResults.Count(r => r.Changed)}");
+            }
+
             // The independent completion reviewer already spent a model call
             // checking the factual terminal draft against execution evidence.
             // When it explicitly confirms Complete, mark semantic readiness so the
@@ -4924,7 +5139,8 @@ public sealed class NIRAExecutive
                 !goalResults.Any(r => r.Changed && r.Goal?.Status == NIRAGoalStatus.Blocked))
             {
                 string blocker = string.IsNullOrWhiteSpace(decision.Reply)
-                    ? BuildNoProgressFallbackReply(decision, lastCapabilityResult)
+                    ? BuildNoProgressFallbackReply(decision, lastCapabilityResult,
+                        capabilityResultsBySignature.Values.ToArray())
                     : decision.Reply;
                 (IReadOnlyList<NIRAGoalApplyResult> stoppedGoals,
                  IReadOnlyList<NIRABranchApplyResult> stoppedBranches) =
@@ -6526,7 +6742,8 @@ public sealed class NIRAExecutive
 
     private static string BuildNoProgressFallbackReply(
         NIRACognitionDecision decision,
-        NIRACapabilityResult? lastCapabilityResult)
+        NIRACapabilityResult? lastCapabilityResult,
+        IReadOnlyList<NIRACapabilityResult>? observedResults = null)
     {
         // A model may keep saying "done" after only a preparatory action.
         // Its draft reply must never become the safety guard's fallback proof.
@@ -6537,33 +6754,42 @@ public sealed class NIRAExecutive
         }
 
 
-        string summary =
-            string.IsNullOrWhiteSpace(
-                lastCapabilityResult.Summary)
-                ? "No additional runtime detail was available."
-                : lastCapabilityResult.Summary.Trim();
-
-
-        return lastCapabilityResult.Status switch
+        // Never expose raw operation-guard diagnostics as a user-facing
+        // answer. Keep independently verified findings even if the most recent
+        // action failed, was rejected, or needs approval.
+        string issue = lastCapabilityResult.Status switch
         {
             NIRACapabilityResultStatus.AuthorizationRequired =>
-                $"I can't continue that action without authorization. {summary}",
-
+                "The next action needs authorization; I haven't performed it.",
             NIRACapabilityResultStatus.Rejected =>
-                $"I couldn't complete that because the last action was rejected before it could run. {summary}",
-
+                "The most recent action was rejected before it could run.",
             NIRACapabilityResultStatus.Failed =>
-                $"I couldn't complete that because the last action failed. {summary}",
-
-            NIRACapabilityResultStatus.Succeeded =>
-                "The last observation succeeded, but it did not establish the " +
-                "requested end result. " + summary + " I stopped instead of " +
-                "repeating an unchanged operation. Any unverified comparison " +
-                "or missing requested item remains unconfirmed.",
-
-            _ =>
-                $"I couldn't make further progress on that request, so I stopped instead of repeating the same step. {summary}"
+                "The most recent tool operation failed, so the task is not fully verified.",
+            _ => "I couldn't confirm the full requested result."
         };
+
+        // Keep literal source paths from verified filesystem results, never
+        // invent a match, and avoid dumping an entire 200-entry tool transcript.
+        string[] observedPaths = (observedResults ?? Array.Empty<NIRACapabilityResult>())
+            .Where(result => result.Succeeded &&
+                result.CapabilityId.StartsWith("filesystem.", StringComparison.OrdinalIgnoreCase))
+            .SelectMany(result => result.Output.Split('\n',
+                StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+            .Where(line => line.StartsWith("FILE\t", StringComparison.Ordinal) ||
+                line.StartsWith("DIR\t", StringComparison.Ordinal))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(6).ToArray();
+        if (observedPaths.Length == 0)
+            return issue + " I couldn't verify the exact requested result from the available evidence.";
+        return issue + " I did observe these items (not necessarily exact matches):\n" +
+            string.Join("\n", observedPaths.Select(line =>
+            {
+                string[] parts = line.Split('\t', 3);
+                return parts.Length == 3 ? "- " + parts[2] +
+                    (long.TryParse(parts[1], out long size) ? $" ({size:N0} bytes)" : "")
+                    : parts.Length == 2 ? "- " + parts[1] : "- " + line;
+            })) +
+            "\nThese observations alone don't establish any unfinished steps.";
     }
 
 
@@ -8406,4 +8632,9 @@ public sealed class NIRAExecutive
         return restricted;
     }
 
+    // A policy decision over trusted Executive state, not text or capability
+    // names. The already-completed request remains suppressed by the ledger.
+    internal static bool ShouldReconsiderRepeatedRead(
+        bool saturatedObservation, bool alreadyReconsidered, int noProgressCycles) =>
+        saturatedObservation && !alreadyReconsidered && noProgressCycles < 2;
 }

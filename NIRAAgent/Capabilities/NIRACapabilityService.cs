@@ -109,6 +109,27 @@ public sealed class NIRACapabilityService
     }
 
 
+    // Foreground recovery may salvage a model's orphan BRANCH work only if
+    // its exact payload names a registered, currently read-only primitive.
+    // This does NOT execute or authorize the request; normal dispatch still
+    // performs every existing risk, scope and audit check.
+    public bool TryValidateReadOnlyRequest(
+        NIRACapabilityRequest request,
+        out NIRACapabilityRequest normalized)
+    {
+        if (!TryNormalizeAndValidateSchema(request, out normalized, out _))
+            return false;
+        try
+        {
+            return _registry.TryResolve(normalized.CapabilityId, out INIRACapabilityHandler? handler) &&
+                handler != null &&
+                handler.Descriptor.DefaultRisk == NIRACapabilityRisk.Observe &&
+                handler.ResolveRisk(normalized) == NIRACapabilityRisk.Observe;
+        }
+        catch (ArgumentException) { return false; }
+        catch (InvalidOperationException) { return false; }
+    }
+
     public async Task<IReadOnlyList<NIRACapabilityResult>> ExecuteAsync(
         IReadOnlyList<NIRACapabilityRequest> requests, CancellationToken cancellationToken = default)
     {

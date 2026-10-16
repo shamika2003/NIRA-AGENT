@@ -337,6 +337,8 @@ public sealed class MainWindowViewModel
                 string.Empty);
 
 
+        // Keep every concurrent reply visually tied to its actual input.
+        assistantMessage.SetReplySource(userText.Length > 0 ? userText : input);
         // Start with NIRA's living dots only.
         // Text appears later only when the runtime/model emits a real progress update.
         assistantMessage.BeginJourney();
@@ -496,7 +498,7 @@ public sealed class MainWindowViewModel
         if (chunk.Type == NIRAOutputChunkType.Progress)
         {
             if (string.IsNullOrWhiteSpace(chunk.Content)) return;
-            BackgroundResponseState progress = GetOrCreateBackgroundResponse(chunk.RunId);
+            BackgroundResponseState progress = GetOrCreateBackgroundResponse(chunk.RunId, chunk.OriginPrompt);
             if (!progress.Message.HasContent &&
                 !progress.Message.HasRichElements &&
                 !progress.Message.HasVisualArtifacts)
@@ -546,7 +548,7 @@ public sealed class MainWindowViewModel
             {
                 BackgroundResponseState visualResponseState =
                     GetOrCreateBackgroundResponse(
-                        chunk.RunId);
+                        chunk.RunId, chunk.OriginPrompt);
 
                 visualResponseState.Message.AssociateRun(
                     chunk.RunId);
@@ -613,7 +615,7 @@ public sealed class MainWindowViewModel
 
         BackgroundResponseState responseState =
             GetOrCreateBackgroundResponse(
-                chunk.RunId);
+                chunk.RunId, chunk.OriginPrompt);
 
 
         responseState.Message.BeginProgressFadeOut();
@@ -628,12 +630,13 @@ public sealed class MainWindowViewModel
 
 
     private BackgroundResponseState GetOrCreateBackgroundResponse(
-        Guid runId)
+        Guid runId, string originPrompt = "")
     {
         if (_backgroundResponses.TryGetValue(
                 runId,
                 out BackgroundResponseState? existing))
         {
+            existing.Message.SetReplySource(originPrompt, background: true);
             return existing;
         }
 
@@ -644,6 +647,8 @@ public sealed class MainWindowViewModel
 
         message.AssociateRun(
             runId);
+        message.SetReplySource(originPrompt.Length > 0 ? originPrompt :
+            "Autonomous task update", background: true);
 
         message.BeginJourney();
 

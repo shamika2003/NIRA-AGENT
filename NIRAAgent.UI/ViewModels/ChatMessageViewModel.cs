@@ -149,6 +149,20 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         get;
     }
 
+    private string _replyToText = string.Empty;
+    public string ReplyToText => _replyToText;
+    public bool HasReplySource => !string.IsNullOrWhiteSpace(_replyToText);
+    public void SetReplySource(string? request, bool background = false)
+    {
+        if (string.IsNullOrWhiteSpace(request)) return;
+        string text = request.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        if (text.Length > 120) text = text[..120].TrimEnd() + "…";
+        string label = (background ? "Background work · " : "Reply to · ") + text;
+        if (label == _replyToText) return;
+        _replyToText = label;
+        OnPropertyChanged(nameof(ReplyToText));
+        OnPropertyChanged(nameof(HasReplySource));
+    }
 
     public string Content
     {

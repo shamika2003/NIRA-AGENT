@@ -71,6 +71,12 @@ internal static class NIRABrowserCapabilityFormatting
             maxTextCharacters,
             cancellationToken);
 
+        // A known access challenge is terminal page evidence. Waiting for
+        // another DOM snapshot cannot solve a CAPTCHA or a HTTP 429 response.
+        if (NIRABrowserAccessChallengePolicy.Assess(
+                first.Navigation?.MainDocumentHttpStatus, first.Url, first.Text).Length > 0)
+            return first;
+
         // A visible credential form is already meaningful evidence; waiting for
         // it to disappear without an authenticated action would be misleading.
         // Rich documents also do not need the extra observation delay.
@@ -635,6 +641,78 @@ public sealed class NIRABrowserPageSelectCapabilityHandler : INIRACapabilityHand
     }
 }
 
+// HTTP success does not imply document access: a verification page can be 200.
+// This policy classifies only runtime-observed transport, destination and page
+// evidence. It does not solve CAPTCHAs, manipulate fingerprints, or reissue GETs.
+internal static class NIRABrowserAccessChallengePolicy
+{
+    private static readonly object Sync = new();
+    private static readonly Dictionary<(Guid Session, string Host), DateTimeOffset> ChallengedHosts = new();
+    private static readonly TimeSpan RetryCooldown = TimeSpan.FromMinutes(5);
+
+    // Generic signals only; this does not infer site authentication or content.
+    internal static string Assess(int? status, string? finalUrl, string? inspection)
+    {
+        if (status == 429) return "RateLimited";
+        string evidence = inspection ?? string.Empty;
+        bool explicitChallenge =
+            evidence.Contains("unusual traffic", StringComparison.OrdinalIgnoreCase) ||
+            evidence.Contains("verify you are human", StringComparison.OrdinalIgnoreCase) ||
+            evidence.Contains("verify that you are human", StringComparison.OrdinalIgnoreCase) ||
+            evidence.Contains("prove you are human", StringComparison.OrdinalIgnoreCase) ||
+            evidence.Contains("automated queries", StringComparison.OrdinalIgnoreCase) ||
+            evidence.Contains("complete the captcha", StringComparison.OrdinalIgnoreCase) ||
+            evidence.Contains("checking your browser", StringComparison.OrdinalIgnoreCase) ||
+            evidence.Contains("human verification required", StringComparison.OrdinalIgnoreCase);
+        if (explicitChallenge) return "HumanVerificationRequired";
+        // A site can redirect a search to a verification document with HTTP 200.
+        // The final document route is evidence; never use status 200 alone as proof.
+        if (Uri.TryCreate(finalUrl, UriKind.Absolute, out Uri? uri) &&
+            uri.AbsolutePath.Equals("/sorry/index", StringComparison.OrdinalIgnoreCase))
+            return "VerificationDocument";
+        return string.Empty;
+    }
+
+    private static string HostOf(string? absoluteUrl)
+    {
+        if (!Uri.TryCreate(absoluteUrl, UriKind.Absolute, out Uri? uri) ||
+            uri.Scheme is not ("http" or "https")) return string.Empty;
+        return uri.Host.StartsWith("www.", StringComparison.OrdinalIgnoreCase)
+            ? uri.Host[4..].ToLowerInvariant() : uri.Host.ToLowerInvariant();
+    }
+
+    internal static void NoteChallenge(Guid session, string? requestedUrl, string? finalUrl)
+    {
+        lock (Sync)
+        {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            Prune(now);
+            foreach (string host in new[] { HostOf(requestedUrl), HostOf(finalUrl) }
+                .Where(h => h.Length > 0).Distinct(StringComparer.Ordinal))
+                ChallengedHosts[(session, host)] = now;
+        }
+    }
+
+    internal static bool InCooldown(Guid session, string? url)
+    {
+        string host = HostOf(url);
+        if (host.Length == 0) return false;
+        lock (Sync)
+        {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            Prune(now);
+            return ChallengedHosts.ContainsKey((session, host));
+        }
+    }
+
+    private static void Prune(DateTimeOffset now)
+    {
+        foreach (var entry in ChallengedHosts.ToArray())
+            if (now - entry.Value >= RetryCooldown)
+                ChallengedHosts.Remove(entry.Key);
+    }
+}
+
 public sealed class NIRABrowserNavigateCapabilityHandler : INIRACapabilityHandler
 {
     private readonly NIRABrowserService _browser;
@@ -668,6 +746,21 @@ public sealed class NIRABrowserNavigateCapabilityHandler : INIRACapabilityHandle
         // not need a second planning call just to open the missing browser.
         // An explicit pageId must NEVER be rebound to a different/recovered tab.
         NIRABrowserSessionSnapshot live = await _browser.CurrentAsync(cancellationToken);
+        // Stop repeat automated navigation to a host that has just imposed a
+        // challenge in this managed session. Other sites and grounded direct
+        // resources remain available; a later/new session can try again.
+        if (live.IsOpen && NIRABrowserAccessChallengePolicy.InCooldown(live.SessionId, url))
+        {
+            return new NIRACapabilityHandlerResult
+            {
+                Succeeded = false,
+                Summary = "Website access challenge is still in cooldown; no network navigation was attempted.",
+                Output = "ACCESS_GATE=ChallengeCooldown\nAttemptedNavigation=False\n" +
+                    "Do not retry this host now, change automation fingerprints, or solve CAPTCHA programmatically. " +
+                    "Use a grounded different public source, a permitted official API, or ask the user to complete website verification. " +
+                    "If evidence remains unavailable, report the actual research gap."
+            };
+        }
         NIRABrowserPageSnapshot page;
         if (!live.IsOpen && pageId == null)
         {
@@ -686,14 +779,32 @@ public sealed class NIRABrowserNavigateCapabilityHandler : INIRACapabilityHandle
         string destinationEvidence = await NIRABrowserCapabilityFormatting.TryInspectDestinationAsync(
             _browser, page, cancellationToken);
         int? status = page.Navigation?.MainDocumentHttpStatus;
-        bool documentOk = !status.HasValue || status.Value < 400;
+        string accessChallenge = NIRABrowserAccessChallengePolicy.Assess(
+            status, page.Url, destinationEvidence);
+        if (accessChallenge.Length > 0)
+        {
+            NIRABrowserAccessChallengePolicy.NoteChallenge(
+                (await _browser.CurrentAsync(cancellationToken)).SessionId,
+                url, page.Url);
+            Debug.WriteLine($"[BrowserFlow] ACCESS CHALLENGE | Kind={accessChallenge} | Page={page.PageId:D} | HttpStatus={status?.ToString() ?? "unknown"}");
+        }
+        bool documentOk = accessChallenge.Length == 0 && (!status.HasValue || status.Value < 400);
         return new NIRACapabilityHandlerResult
         {
             Succeeded = documentOk, HttpStatusCode = status,
-            Summary = documentOk
-                ? $"Browser navigation observed page {page.PageId:D}. Inspect site state before claiming the user task completed."
-                : $"Browser navigation reached HTTP {status} on page {page.PageId:D}; this is NOT a successful document or proof of login. Inspect page health and the final URL.",
+            Summary = accessChallenge.Length > 0
+                ? $"Observed website access challenge ({accessChallenge}) on page {page.PageId:D}; " +
+                  "the requested document was NOT retrieved. Pause this host and seek legitimate alternative sources or human assistance."
+                : documentOk
+                    ? $"Browser navigation observed page {page.PageId:D}. Inspect site state before claiming the user task completed."
+                    : $"Browser navigation reached HTTP {status} on page {page.PageId:D}; this is NOT a successful document or proof of login. Inspect page health and the final URL.",
             Output = NIRABrowserCapabilityFormatting.Page(page) + destinationEvidence +
+                (accessChallenge.Length == 0 ? string.Empty :
+                    $"\nACCESS_GATE={accessChallenge}\nDocumentRetrieved=False\n" +
+                    "No automated CAPTCHA solution or immediate same-host retry is permitted. " +
+                    "The original objective remains open: use grounded distinct public resources, " +
+                    "authorized provider APIs, or a user-assisted website verification step. " +
+                    "Report only actually retrieved documents, and explain missing sources when blocked.") +
                 NIRABrowserCapabilityFormatting.KnownAccountRoutesForPage(
                     _credentials, page.Url)
         };

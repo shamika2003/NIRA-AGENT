@@ -458,7 +458,24 @@ public sealed class NIRAMindRuntime
                     activeTurn?.Finish(publishedReply);
                 }
 
-                yield return chunk;
+                string origin = mindEvent.Content;
+                if (mindEvent.Source != NIRAMindEventSource.User)
+                {
+                    if (mindEvent.Metadata.TryGetValue("goalObjective", out string? goal) &&
+                        !string.IsNullOrWhiteSpace(goal))
+                        origin = goal;
+                    else if (mindEvent.Metadata.TryGetValue("branchObjective", out string? branch) &&
+                        !string.IsNullOrWhiteSpace(branch))
+                        origin = branch;
+                    else if (mindEvent.Metadata.TryGetValue("commitmentSummary", out string? commitment) &&
+                        !string.IsNullOrWhiteSpace(commitment))
+                        origin = commitment;
+                    else
+                        origin = mindEvent.Name;
+                }
+                origin = origin.Replace('\r', ' ').Replace('\n', ' ').Trim();
+                if (origin.Length > 150) origin = origin[..150].TrimEnd() + "…";
+                yield return chunk with { OriginPrompt = origin };
             }
         }
         finally

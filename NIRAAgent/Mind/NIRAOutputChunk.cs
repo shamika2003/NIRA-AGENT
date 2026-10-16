@@ -50,6 +50,9 @@ public sealed record NIRAOutputChunk
 
 
     // Speech is independently rendered; null/empty preserves legacy Content speech.
+    // Trusted runtime origin, not model-authored display content. Used to
+    // associate independently arriving replies with the originating request.
+    public string OriginPrompt { get; init; } = string.Empty;
     public Guid? ArchiveMessageId { get; init; }
     public string SpeechContent { get; init; } = string.Empty;
     // Spoken status is deliberately distinct from a final response.
@@ -70,7 +73,3 @@ public sealed record NIRAOutputChunk
     } =
         NIRAVoiceExpression.Neutral;
 }
-
-
-
-

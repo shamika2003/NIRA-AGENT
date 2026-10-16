@@ -592,7 +592,11 @@ public sealed class NIRACapabilityRequestPolicy
                 if (part is not ("." or "..") && (part.EndsWith('.') || part.EndsWith(' ')))
                     throw new InvalidOperationException("Paths cannot contain components ending in a dot or space.");
         }
-        string full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(input));
+        // Capability execution and authorization MUST resolve the same path.
+        // In particular, Documents\... belongs to the current user profile,
+        // not to the application's bin directory. Retain the validation above.
+        string full = Path.TrimEndingDirectorySeparator(
+            NIRAAgent.Capabilities.NIRACapabilityArguments.NormalizePath(input));
         if (full.Length > 32760 || full.Contains('%')) throw new InvalidOperationException("Invalid or unresolved filesystem path.");
         if (OperatingSystem.IsWindows() && full.IndexOf(':', 2) >= 0)
             throw new InvalidOperationException("Alternate data streams are not supported by folder grants.");

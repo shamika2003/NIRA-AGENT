@@ -78,7 +78,8 @@ public sealed class NIRAProcessListCapabilityHandler
         string sortToken = new string(sortBy.Where(char.IsLetterOrDigit).ToArray());
         if (sortToken.StartsWith("WorkingSet", StringComparison.OrdinalIgnoreCase) ||
             sortToken.StartsWith("Memory", StringComparison.OrdinalIgnoreCase) ||
-            sortToken.Equals("Ram", StringComparison.OrdinalIgnoreCase))
+            sortToken.StartsWith("Ram", StringComparison.OrdinalIgnoreCase) ||
+            sortToken.Equals("HighestMemory", StringComparison.OrdinalIgnoreCase))
             sortBy = "WorkingSet";
         else if (sortToken.StartsWith("PrivateMemory", StringComparison.OrdinalIgnoreCase))
             sortBy = "PrivateMemory";

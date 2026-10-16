@@ -223,11 +223,39 @@ internal static class NIRACognitionPromptCompiler
         vision.capture is suitable only when the user actually requests a live
         PC/window screenshot or the objective explicitly requires observing it.
 
+        NUMERIC EVIDENCE: For a complete CSV/TSV read, a trusted
+        VerifiedNumericAudit may provide deterministically calculated column
+        sums and extrema. Prefer those values over mental addition; match
+        the requested quantity to the correct column and report any filtering
+        needed. Never claim a partial read establishes a file-wide total.
+        A number from your own previous reply is not authoritative source data.
+        KNOWN-FOLDER PATH CONTINUITY: Carry the exact observed absolute path
+        from earlier capability evidence. A relative path starting with a
+        Windows known-folder label resolves under the current user's actual
+        profile location, not NIRA's application directory. When a known-folder
+        lookup returns a scoped search result for an ordinary named folder,
+        treat it as discovered data, not as an OS known-folder identity.
         CURRENT-USER FOLDER IDENTITY: If the user refers to their personal
         Documents, Downloads, Desktop, Pictures, Music, or Videos folder, use
         filesystem.locate with scope=CurrentUserFolder, kind=Directory, and
         name equal to the OS folder's exact name. That trusted observed path
-        may then be supplied to filesystem.list. Do not search all other
+        may then be supplied to filesystem.list. When the user instead knows
+        a TOPIC or partial filename but not its location, use the separate
+        filesystem.locate scope=CurrentUserContent, matchMode=Contains with
+        a plain name fragment (not a wildcard or folder identity). Search
+        evidence remains bounded and cannot prove global absence if truncated.
+        For large individual files, filesystem.list sortBy=SizeBytes works
+        without claiming to measure aggregate directory sizes.
+        For actual cumulative per-folder usage, use filesystem.usage on a
+        verified folder. It returns bounded observed totals and clearly
+        flags incomplete scans. Do not equate partial lower bounds with
+        complete sizes; narrow a large scope when necessary. A result-limited
+        ranked listing with RankingComplete=True DOES establish the highest
+        ranked returned entries for that scope, even if it omits lower entries.
+        Once the original request can be answered with adequately qualified
+        evidence, finish instead of drilling into unrelated directories.
+        Do not use CurrentUserFolder to search for an arbitrary filename.
+        Do not search all other
         users' Downloads folders or run shell.execute simply to guess the
         path. Omit scope for ordinary filesystem discovery, which is unchanged.
 
@@ -257,6 +285,20 @@ internal static class NIRACognitionPromptCompiler
         Recalled older measurements must be described as historical, not live.
         CURRENT STATUS: live connectivity, recent telemetry, process activity and
         configuration switches are distinct; never equate one with proof of all.
+        Diagnostic evidence has specific scope: ICMP ping loss alone does NOT
+        prove the internet is unavailable (firewalls often block ICMP). For a
+        connectivity diagnosis, cross-check with an independent HTTP/DNS observation
+        when an authorized read method exists; otherwise explain the limitation.
+        A filesystem result limit is different from a scan limit: evaluate
+        ScanComplete/RankingComplete, not the word Truncated alone.
+        FILE FORMAT AND CREATE CONTRACT: Respect the requested file format.
+        Only promise file types supported by currently registered capabilities;
+        a different extension or plain text is not a completed substitute.
+        For a newly requested plain text or Markdown document in ordinary
+        personal folders, use the existing filesystem creation capabilities.
+        Trusted direct user instructions may authorize bounded new-file creation;
+        do not reflexively request separate approval when not required.
+        Existing-file replacement or sensitive actions follow authority policy.
         AUTHORITATIVE CAPABILITIES: never promise an unregistered operation just
         because a different NIRA UI has a larger tool catalog.
 
@@ -577,6 +619,17 @@ internal static class NIRACognitionPromptCompiler
             source is available, ask for the actual image rather than inventing
             observations. For current-user OS folders, use the opt-in
             filesystem.locate scope=CurrentUserFolder, then filesystem.list;
+            search partial filenames ONLY with explicit matchMode=Contains
+            and a grounded root or scope=CurrentUserContent (never wildcard
+            names or arbitrary names passed to CurrentUserFolder);
+            use sortBy=SizeBytes for bounded largest FILES, not folder totals;
+            use filesystem.usage for measured cumulative directory totals
+            (including child folders), and distinguish complete from partial scans;
+            Carry the actual absolute path returned by locate into every
+            subsequent filesystem call AND delegated branch work. Do not
+            replace verified locations with relative folder labels: relative
+            paths are resolved against the agent process directory.
+            filesOnly filters directories independently of sortBy;
             when ranking files by modification time, explicitly request
             filesystem.list sortBy=LastWriteUtc, filesOnly=true and check
             ScanComplete before claiming the overall newest entries;
@@ -874,7 +927,11 @@ internal static class NIRACognitionPromptCompiler
             it with filesystem.list (read-only) before demanding an exact
             absolute path or extension. If the full object name is known but
             its directory is missing, filesystem.locate can search a grounded
-            scope. Do not invent filenames. A style delegated to NIRA ("you
+            scope. For partial names or thematic file discovery, explicitly
+            choose matchMode=Contains and root or CurrentUserContent scope;
+            treat truncated scans as incomplete. Use sortBy=SizeBytes only
+            for individual observed file sizes, never aggregate folder totals.
+            Do not invent filenames. A style delegated to NIRA ("you
             decide" / "surprise me") is not missing user input. If the
             request says backup before editing, discovery -> non-overwriting
             copy -> verified backup -> authorized editing is the order;
@@ -1070,6 +1127,18 @@ internal static class NIRACognitionPromptCompiler
         // This is state owned by NIRA's self-model, not personality prose.
         Add(b, "CURRENT AUTHORITATIVE SELF PULSE", SelfPulse(context.SelfModelContext));
         Add(b, "ORIGINAL OBJECTIVE AND TRUSTED WORK OWNER", Limit(context.OwnedTaskContext, 3600));
+        // A current authoritative state pulse prevents old conversation text
+        // from masquerading as *live* goal or branch status. Expanded views
+        // remain available when the task needs more detail.
+        if (initial)
+        {
+            Add(b, "CURRENT PERSISTED GOAL STATUS (TRUSTED, NOT CHAT HISTORY)",
+                Limit(context.GoalContext, 3200));
+            Add(b, "CURRENT PERSISTED BRANCH STATUS (TRUSTED, NOT CHAT HISTORY)",
+                Limit(context.BranchContext, 1900));
+            Add(b, "CURRENT ASSIGNED BRANCH WORK STATUS (TRUSTED)",
+                Limit(context.BranchWorkContext, 1400));
+        }
         Add(b, "UNRESOLVED USER CLARIFICATION", Limit(context.TaskContinuityContext, 1600));
         // Compact runtime-generated signatures include parameter names/types so
         // straightforward primitives can be requested on cycle 1 without a schema-only call.
@@ -1140,7 +1209,7 @@ internal static class NIRACognitionPromptCompiler
         // clipping nine candidate records to a 3.3K newest-tail fragment hid
         // much of the very material cognition had just requested.
         Add(b, "REQUESTED MEMORY / CONVERSATION SEARCH RESULTS", LatestRecords(context.MemorySearchEvidence, expanded.Contains("evidence") ? 15500 : 11000));
-        b.AppendLine("PATH AND OBSERVATION CONTINUITY: A relative filesystem path is resolved against the running application's working directory, NOT the user's Desktop. When the user refers to a previously created folder or file, reuse a previously verified absolute path from task evidence/history, or locate the target before inspection. Once an untruncated folder listing has been observed, reason from its actual entries. If the requested file was deleted or is not present, explain precisely that comparison is impossible; do not repeat the same directory listing or create speculative background branches to get the same evidence. A progress checklist is a presentation aid, not execution proof: never create an all-unchecked success checklist after verified completion. ");
+        b.AppendLine("PATH AND OBSERVATION CONTINUITY: An ordinary relative filesystem path uses the running application's working directory. Paths explicitly starting with Documents, Downloads, Desktop, Pictures, Music, or Videos are resolved to the current Windows user's OS-owned known folder, including redirection; use absolute observed paths whenever available. When the user refers to a previously created folder or file, reuse a previously verified absolute path from task evidence/history, or locate the target before inspection. Once an untruncated folder listing has been observed, reason from its actual entries. If the requested file was deleted or is not present, explain precisely that comparison is impossible; do not repeat the same directory listing or create speculative background branches to get the same evidence. A progress checklist is a presentation aid, not execution proof: never create an all-unchecked success checklist after verified completion. ");
         b.AppendLine("Omitted context is NOT evidence of absence. Resolve short follow-ups against IMMEDIATE CONVERSATION CONTINUITY before calling them ambiguous. Bounded archive/memory search hits are candidates, not proof that no record exists. PERSISTED SOCIAL CARRYOVER is historical evidence only: it may explain mood/relationship continuity and conversational references, but it is not fresh proof of mutable local-machine state. The CHARACTER DELIVERY ENVELOPE is mandatory for a terminal Natural reply. Do not invent page refs, facts, or authority. If a quick capability signature is sufficient for grounded work, request it directly; otherwise request only the missing context. IMPORTANT: a rejected/malformed capability proposal is NOT an observation. If the Executive reports an outstanding observation contract, do not finish the original check without a real runtime result or an explicit, grounded limitation. Preserve the original objective through repair cycles. FINAL FIDELITY CHECK: answer the CURRENT request and exact current target, never an unrelated earlier request or a different returned symbol. Do not promise unavailable controls or redirect to another NIRA surface for product operations not actually registered there.");
         // Last-mile task anchor is deliberately AFTER large context and evidence.
         // Model must preserve the original request across tool/reasoning cycles;

@@ -30,7 +30,20 @@ public static class NIRARiskAdaptiveAuthority
 
         string command = NIRACapabilityArguments.RequireRawString(
             operation.Request, "command", 12000);
-        return string.Equals(command.Trim(), "Get-Date", StringComparison.OrdinalIgnoreCase);
+        string exact = command.Trim();
+        if (new[] { "Get-Date", "Get-NetIPConfiguration", "Get-NetAdapter",
+                    "Get-DnsClientServerAddress" }
+                .Contains(exact, StringComparer.OrdinalIgnoreCase))
+            return true;
+        // Pure outbound ICMP reachability probes cannot mutate Windows state.
+        // Anchor the WHOLE command; metacharacters, interpolation, redirects,
+        // scripts and composed commands are never implicitly authorized.
+        return Regex.IsMatch(exact,
+            @"^ping(?:\.exe)?(?:[ \t]+-n[ \t]+[1-4])?[ \t]+[a-z0-9][a-z0-9.-]{0,252}$",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) ||
+            Regex.IsMatch(exact,
+            @"^Test-NetConnection[ \t]+-ComputerName[ \t]+[a-z0-9][a-z0-9.-]{0,252}[ \t]+-Port[ \t]+(?:80|443)$",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 
     public static bool IsDirectUserDelegatedAction(
@@ -50,10 +63,82 @@ public static class NIRARiskAdaptiveAuthority
         if (request.Length > 12000)
             return false;
 
+        if (IsBoundedPersonalFileCreation(operation, policy, authorityDirectory, request))
+            return true;
+
         if (operation.Request.CapabilityId == NIRACapabilityIds.FileWrite)
             return IsExplicitNewFile(operation, policy, authorityDirectory, request);
 
         return IsExplicitProjectCommand(operation, policy, authorityDirectory, request);
+    }
+
+    // A trusted direct user instruction to CREATE new work in their ordinary
+    // personal folders is itself sufficient for this bounded operation. This
+    // is NOT a reusable or model-authored grant. Existing files, deletion,
+    // shell execution, hidden profiles, junctions and credential data remain
+    // under the normal approval pipeline.
+    private static bool IsBoundedPersonalFileCreation(
+        NIRAAuthorityOperation operation,
+        NIRACapabilityRequestPolicy policy,
+        string authorityDirectory,
+        string originalRequest)
+    {
+        string id = operation.Request.CapabilityId;
+        bool folderCreate = id == NIRACapabilityIds.DirectoryCreate;
+        bool textCreate = id == NIRACapabilityIds.FileWrite;
+        if ((!folderCreate && !textCreate) ||
+            operation.Risk != NIRACapabilityRisk.Modify ||
+            operation.Paths.Length != 1 || operation.Sensitive ||
+            operation.RequiresExplicitAuthorization)
+            return false;
+
+        // Only an imperative from the CURRENT actual user, not a retrieved
+        // page, stored goal, or worker continuation, can open this lane.
+        if (!Regex.IsMatch(originalRequest,
+            @"\b(?:create|save|write|generate|draft|prepare|make\s+(?:me|a|an|the|new)\b|put\s+(?:it|this|that|the)\b)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) ||
+            Regex.IsMatch(originalRequest,
+                @"\b(?:don't|do not|never|avoid)\s+(?:create|make|save|write|generate|prepare|put|draft|build)\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            return false;
+
+        string target = operation.Paths[0];
+        string personal = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        string[] roots =
+        [
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+            Path.Combine(personal, "Downloads")
+        ];
+        if (roots.All(root => string.IsNullOrWhiteSpace(root) ||
+            !NIRACapabilityRequestPolicy.IsWithin(target, root)))
+            return false;
+        if (!IsSafeTarget(target, Path.GetDirectoryName(target) ?? target,
+                policy, authorityDirectory) ||
+            File.Exists(target) || Directory.Exists(target))
+            return false;
+        if (folderCreate) return true;
+
+        string? parent = Path.GetDirectoryName(target);
+        if (parent == null || !Directory.Exists(parent)) return false;
+        if (textCreate)
+        {
+            string extension = Path.GetExtension(target);
+            if (!new[] { ".txt", ".md", ".csv", ".json", ".xml", ".yml",
+                    ".yaml", ".html", ".css", ".js", ".cs", ".py", ".rtf" }
+                    .Contains(extension, StringComparer.OrdinalIgnoreCase))
+                return false;
+            string mode = NIRACapabilityArguments.GetOptionalString(
+                operation.Request, "mode", 32) ?? "overwrite";
+            if (!mode.Equals("overwrite", StringComparison.OrdinalIgnoreCase) ||
+                NIRACapabilityArguments.GetOptionalString(operation.Request,
+                    "expectedLastWriteUtc", 128) is not null)
+                return false;
+            string content = NIRACapabilityArguments.RequireRawString(
+                operation.Request, "content", 2_000_000);
+            return content.Length <= 40_000;
+        }
+        return false;
     }
 
     private static bool IsExplicitNewFile(
@@ -209,4 +294,3 @@ public static class NIRARiskAdaptiveAuthority
     private static bool IsPartOfIdentifier(char value) =>
         char.IsLetterOrDigit(value) || value is '_' or '-' or '.' or '\\' or '/';
 }
-

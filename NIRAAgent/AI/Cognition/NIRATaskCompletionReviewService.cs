@@ -147,6 +147,12 @@ public sealed class NIRATaskCompletionReviewService
             recommending the available read-only discovery step rather than
             merely asking for more data NIRA can inspect herself. A file
             copy result does not establish Word-document editing support.
+            FILE FORMAT FIDELITY: a created file satisfies an artifact request
+            only if the actual verified format matches the user's specified
+            format. A .txt substitute does NOT complete a .docx request;
+            renaming a plain text file to .docx is not proof of a Word package.
+            A saved path needs a successful capability result. Missing format
+            fidelity is NeedsWork, not Complete.
 
             For a NeedUser draft with a specific user-facing question, distinguish
             WAITING FOR USER INPUT from an unfinished capability task. When an
@@ -193,6 +199,23 @@ public sealed class NIRATaskCompletionReviewService
             Do not recommend rerunning an already successful command/observation merely
             because a different independent path or application result is incomplete.
             Preserve the fact that an independently verified sub-result is complete.
+
+            VERIFIED NUMERIC EVIDENCE: When a complete CSV/TSV file read contains
+            VerifiedNumericAudit=CompleteDelimitedRead, its numeric column sums,
+            minima, maxima and source line numbers are computed deterministically
+            by the runtime, not estimated by NIRA. Compare any claimed totals
+            against the relevant verified numeric column. A mismatch is NeedsWork
+            even if the final answer confidently claims it checked the math.
+            If the audit is unavailable, truncated, mixed, or the requested total
+            requires business-specific filtering, do not infer an exact total from
+            the absence of an audit: require appropriate source-grounded evidence.
+            A numeric column can represent an ID or balance; do not assume all
+            columns should be summed without understanding their meaning.
+            NETWORK EVIDENCE: failure of ICMP echo requests alone does not
+            establish that a machine has no internet connection. Many hosts
+            drop ICMP intentionally. To claim general internet failure, demand
+            independent DNS/TCP/HTTP evidence. Otherwise report only the
+            reachability probe's outcome and the remaining uncertainty.
             Existence is not evidence of contents; contents are not evidence
             of a requested comparison unless that comparison was performed.
             A successful login,

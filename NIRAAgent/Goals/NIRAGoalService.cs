@@ -615,13 +615,17 @@ public sealed class NIRAGoalService : IHostedService
         {
             duplicate = _goals.Values.FirstOrDefault(goal =>
                 goal.IsOpen &&
+                // A single user event must not accumulate reworded copies
+                // while its Executive completes multiple observation cycles.
+                (goal.SourceEventId == mindEvent.Id &&
+                 SameEventObjectiveEquivalent(goal.Objective, proposal.Objective) ||
                 // A fresh user attempt must not deduplicate back onto an
                 // older ACTIVE goal with terminal/incomplete required roots.
                 !staleExecutionGoals.Contains(goal.Id) &&
                 string.Equals(
                     goal.Fingerprint,
                     fingerprint,
-                    StringComparison.OrdinalIgnoreCase));
+                    StringComparison.OrdinalIgnoreCase)));
 
             cancelledEquivalent =
                 _goals.Values
@@ -1202,6 +1206,38 @@ public sealed class NIRAGoalService : IHostedService
         return proposal.EvidenceQuote;
     }
 
+    // Same-turn approximate duplicate suppression is intentionally scoped to
+    // ONE source event. A new user turn is never merged based on word overlap.
+    // The 0.80 containment threshold protects distinct sibling objectives.
+    internal static bool SameEventObjectiveEquivalent(string left, string right)
+    {
+        static HashSet<string> Terms(string value) =>
+            System.Text.RegularExpressions.Regex.Matches(value.ToLowerInvariant(), @"[a-z0-9]+")
+                .Select(match => match.Value)
+                .Where(word => word.Length > 2 && word is not
+                    ("the" or "and" or "for" or "with" or "from" or "that" or "this" or
+                     "into" or "using" or "user" or "current"))
+                // Normalize simple plural endings before token comparison.
+                // "total" and "totals" should not generate parallel goals
+                // for the same user turn; distinct subject tokens remain distinct.
+                .Select(word => word.Length > 4 && word.EndsWith('s') &&
+                    !word.EndsWith("ss", StringComparison.Ordinal) ? word[..^1] : word)
+                .Select(word => word.Length > 7 ? word[..7] : word)
+                .ToHashSet(StringComparer.Ordinal);
+        HashSet<string> a = Terms(left), b = Terms(right);
+        if (a.Count < 4 || b.Count < 4) return false;
+        int common = a.Count(b.Contains);
+        // Two comparable objectives differing by a small, meaningful term
+        // may be genuinely independent (e.g. reports for separate targets).
+        // Fuzzy dedup is reserved for one objective with a substantially
+        // expanded/paraphrased description, never a mere noun substitution.
+        int leftOnly = a.Count - common;
+        int rightOnly = b.Count - common;
+        if (leftOnly > 0 && rightOnly > 0 && leftOnly <= 2 && rightOnly <= 2)
+            return false;
+        return common >= 4 && (double)common / Math.Min(a.Count, b.Count) >= 0.80;
+    }
+
     private static string ComputeFingerprint(string objective)
     {
         string normalized = NormalizeEvidenceText(objective).ToLowerInvariant();
@@ -1273,5 +1309,3 @@ public sealed class NIRAGoalService : IHostedService
             : clean[..maximumLength] + "...";
     }
 }
-
-

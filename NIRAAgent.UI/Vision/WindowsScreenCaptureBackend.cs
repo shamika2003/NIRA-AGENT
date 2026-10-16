@@ -552,8 +552,52 @@ public sealed class WindowsScreenCaptureBackend
 
             if (!rendered)
             {
-                throw LastWin32(
-                    "Windows could not render the requested background window into the capture surface.");
+                // PrintWindow is not implemented reliably by every Windows
+                // application. A live foreground window can instead be read
+                // from desktop pixels, but NEVER substitute pixels from a
+                // covered, minimized, or unrelated background application.
+                PcRectangle desktop = VirtualScreenBounds;
+                bool fullyVisible =
+                    before.Bounds.Left >= desktop.Left &&
+                    before.Bounds.Top >= desktop.Top &&
+                    before.Bounds.Right <= desktop.Right &&
+                    before.Bounds.Bottom <= desktop.Bottom;
+
+                NIRACaptureWindowSnapshot foregroundBefore = ReadWindow(windowHandle);
+                if (GetForegroundWindow() != windowHandle ||
+                    !IsWindowVisible(windowHandle) ||
+                    foregroundBefore.IsMinimized ||
+                    foregroundBefore.ProcessId != before.ProcessId ||
+                    !fullyVisible)
+                {
+                    throw new Win32Exception(
+                        "PrintWindow could not render the target, and the target " +
+                        "is not a fully visible foreground window. No unrelated " +
+                        "desktop pixels were substituted for its evidence.");
+                }
+
+                CapturePngAsync(before.Bounds, fullPath, cancellationToken)
+                    .GetAwaiter().GetResult();
+                NIRACaptureWindowSnapshot foregroundAfter = ReadWindow(windowHandle);
+                if (GetForegroundWindow() != windowHandle ||
+                    foregroundAfter.ProcessId != before.ProcessId ||
+                    foregroundAfter.IsMinimized ||
+                    foregroundAfter.Bounds.Left != before.Bounds.Left ||
+                    foregroundAfter.Bounds.Top != before.Bounds.Top ||
+                    foregroundAfter.Bounds.Right != before.Bounds.Right ||
+                    foregroundAfter.Bounds.Bottom != before.Bounds.Bottom)
+                {
+                    TryDelete(fullPath);
+                    throw new InvalidOperationException(
+                        "The foreground window changed during desktop pixel capture. " +
+                        "The image was discarded rather than misattributed.");
+                }
+
+                return Task.FromResult(new NIRAWindowCaptureBackendResult
+                {
+                    Window = foregroundAfter,
+                    CaptureMethod = "VerifiedForegroundBitBlt(PrintWindowFallback)"
+                });
             }
 
 
@@ -1038,4 +1082,3 @@ public sealed class WindowsScreenCaptureBackend
         public int Bottom;
     }
 }
-
