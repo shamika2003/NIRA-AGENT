@@ -3,14 +3,22 @@
  */
 
 using System.IO;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Threading;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
 using NIRAAgent.Artifacts;
+using NIRAAgent.Diagnostics;
 
 namespace NIRAAgent.UI.ViewModels;
 
-public sealed class VisualArtifactViewModel
+public sealed class VisualArtifactViewModel : INotifyPropertyChanged
 {
     public NIRAVisualArtifact Artifact
     {
@@ -41,6 +49,12 @@ public sealed class VisualArtifactViewModel
     public string LocalPath =>
         Artifact.LocalPath;
 
+    // Source is optional provenance from an already verified visual artifact;
+    // it does not cause a network request or manufacture an image preview.
+    public string SourceUri => Artifact.SourceUri;
+    public bool HasSourceUri => Uri.TryCreate(SourceUri, UriKind.Absolute, out var parsed)
+        && (parsed.Scheme == Uri.UriSchemeHttps || parsed.Scheme == Uri.UriSchemeHttp);
+
 
     public ImageSource? PreviewImage
     {
@@ -50,6 +64,71 @@ public sealed class VisualArtifactViewModel
 
     public bool HasPreview =>
         PreviewImage != null;
+
+    // Never decode a full-resolution image in a WPF binding getter. WPF reads
+    // FullImage during window.Show/layout, on the UI dispatcher; synchronous
+    // file I/O and bitmap decoding here previously froze the entire app.
+    private ImageSource? _fullImage;
+    public ImageSource? FullImage => _fullImage ?? PreviewImage;
+
+    // Called from the viewer's UI dispatcher. Only the expensive decode and
+    // annotation composition run on a worker; the frozen result is delivered
+    // back to the dispatcher, with the low-resolution preview shown meanwhile.
+    public async Task LoadFullImageAsync(CancellationToken cancellationToken = default)
+    {
+        if (_fullImage != null || !HasPreview) return;
+        cancellationToken.ThrowIfCancellationRequested();
+
+        string path = LocalPath;
+        NIRAVisualAnnotation[] annotations = Artifact.Annotations.ToArray();
+        var timer = Stopwatch.StartNew();
+        NIRADiagnosticTrace.Event("IMAGE-VIEWER", "Stage=DecodeStart");
+
+        ImageSource? decoded = await Task.Run(() =>
+            NIRAVisualAnnotationRenderer.Render(
+                TryLoadPreview(path, decodePixelWidth: 1600), annotations),
+            cancellationToken);
+
+        cancellationToken.ThrowIfCancellationRequested();
+        if (decoded == null)
+        {
+            NIRADiagnosticTrace.Event("IMAGE-VIEWER", $"Stage=DecodeUnavailable ElapsedMs={timer.ElapsedMilliseconds}");
+            return;
+        }
+
+        // A continuation from a window Loaded callback normally runs on the
+        // dispatcher. Explicit dispatch also protects future non-UI callers.
+        Dispatcher? dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher != null && !dispatcher.CheckAccess())
+        {
+            await dispatcher.InvokeAsync(() => SetFullImage(decoded),
+                DispatcherPriority.DataBind, cancellationToken);
+        }
+        else
+        {
+            SetFullImage(decoded);
+        }
+        NIRADiagnosticTrace.Event("IMAGE-VIEWER", $"Stage=DecodeReady ElapsedMs={timer.ElapsedMilliseconds}");
+    }
+
+    // Gallery navigation releases large images so inspecting many attachments
+    // does not keep dozens of decoded bitmaps resident on an 8 GB PC.
+    public void ReleaseFullImage()
+    {
+        if (_fullImage == null) return;
+        _fullImage = null;
+        OnPropertyChanged(nameof(FullImage));
+    }
+
+    private void SetFullImage(ImageSource source)
+    {
+        _fullImage = source;
+        OnPropertyChanged(nameof(FullImage));
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+    private void OnPropertyChanged([CallerMemberName] string? propertyName = null) =>
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 
 
     public VisualArtifactViewModel(

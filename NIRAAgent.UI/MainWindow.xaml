@@ -305,14 +305,198 @@
                             BorderThickness="1"
                             CornerRadius="17,17,5,17"
                             SnapsToDevicePixels="True">
-                        <TextBlock Text="{Binding Content}"
-                                   Foreground="{DynamicResource NIRATextBrush}"
-                                   FontSize="14"
-                                   LineHeight="21"
-                                   TextWrapping="Wrap"/>
+                        <StackPanel>
+                            <!-- One-image message: picture and optional message live
+                                 in a single compact, horizontally balanced bubble. -->
+                            <Grid x:Name="UserSingleImageRow" Visibility="Collapsed">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <ItemsControl Grid.Column="0" ItemsSource="{Binding UserImageGalleryTiles}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Width="148" Height="100" CornerRadius="11"
+                                                    ClipToBounds="True" Cursor="Hand"
+                                                    Background="{DynamicResource NIRAComposerBadgeBrush}"
+                                                    BorderBrush="{DynamicResource NIRAComposerEdgeBrush}" BorderThickness="1"
+                                                    MouseLeftButtonUp="UserImageGalleryTile_MouseLeftButtonUp">
+                                                <Image Source="{Binding PreviewImage}" Stretch="UniformToFill"
+                                                       SnapsToDevicePixels="True"/>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock Grid.Column="1" Text="{Binding Content}"
+                                           MaxWidth="330" Margin="13,5,1,3"
+                                           VerticalAlignment="Center" TextWrapping="Wrap"
+                                           FontSize="13" LineHeight="19"
+                                           Foreground="{DynamicResource NIRATextBrush}"/>
+                            </Grid>
+                            <!-- User words and attached visuals are separate: no
+                                 filename line is added for an image. -->
+                            <TextBlock x:Name="UserMessageBody"
+                                       Text="{Binding Content}"
+                                       MaxWidth="620"
+                                       Foreground="{DynamicResource NIRATextBrush}"
+                                       FontSize="14"
+                                       LineHeight="21"
+                                       TextWrapping="Wrap"/>
+
+                            <ItemsControl x:Name="UserMessageImages"
+                                          ItemsSource="{Binding UserImageGalleryTiles}"
+                                          Margin="0,10,0,0">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <StackPanel Orientation="Horizontal"/>
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemContainerStyle>
+                                    <Style TargetType="ContentPresenter">
+                                        <Setter Property="Margin" Value="0,0,8,0"/>
+                                    </Style>
+                                </ItemsControl.ItemContainerStyle>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border x:Name="GalleryTileCard"
+                                                Width="162"
+                                                Height="108"
+                                                CornerRadius="12"
+                                                ClipToBounds="True"
+                                                Cursor="Hand"
+                                                Background="{DynamicResource NIRAGlassStrongTintBrush}"
+                                                BorderBrush="{DynamicResource NIRAComposerEdgeBrush}"
+                                                BorderThickness="1"
+                                                MouseLeftButtonUp="UserImageGalleryTile_MouseLeftButtonUp"
+                                                RenderTransformOrigin="0.5,0.5">
+                                            <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
+                                            <Border.Triggers>
+                                                <EventTrigger RoutedEvent="MouseEnter">
+                                                    <BeginStoryboard><Storyboard>
+                                                        <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1.018" Duration="0:0:0.16"/>
+                                                        <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1.018" Duration="0:0:0.16"/>
+                                                    </Storyboard></BeginStoryboard>
+                                                </EventTrigger>
+                                                <EventTrigger RoutedEvent="MouseLeave">
+                                                    <BeginStoryboard><Storyboard>
+                                                        <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1" Duration="0:0:0.20"/>
+                                                        <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1" Duration="0:0:0.20"/>
+                                                    </Storyboard></BeginStoryboard>
+                                                </EventTrigger>
+                                            </Border.Triggers>
+                                            <Grid>
+                                                <Image x:Name="GalleryTileImage"
+                                                       Source="{Binding PreviewImage}"
+                                                       Stretch="UniformToFill"
+                                                       SnapsToDevicePixels="True"/>
+                                                <Border x:Name="GalleryTileShade"
+                                                        Background="#00000000"/>
+                                                <StackPanel x:Name="OverflowBadge"
+                                                            Visibility="Collapsed"
+                                                            HorizontalAlignment="Center"
+                                                            VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding OverflowLabel}"
+                                                               HorizontalAlignment="Center"
+                                                               FontSize="28"
+                                                               FontWeight="SemiBold"
+                                                               Foreground="White"/>
+                                                    <TextBlock Text="more"
+                                                               HorizontalAlignment="Center"
+                                                               Margin="0,2,0,0"
+                                                               FontSize="11"
+                                                               Foreground="#F2F8FF"/>
+                                                </StackPanel>
+                                                <TextBlock x:Name="UserImageUnavailable"
+                                                           Text="Image preview unavailable"
+                                                           Foreground="{DynamicResource NIRASecondaryBrush}"
+                                                           Margin="12"
+                                                           FontSize="11"
+                                                           Visibility="Collapsed"
+                                                           HorizontalAlignment="Center"
+                                                           VerticalAlignment="Center"
+                                                           TextWrapping="Wrap"/>
+                                            </Grid>
+                                        </Border>
+                                        <DataTemplate.Triggers>
+                                            <DataTrigger Binding="{Binding HasPreview}" Value="False">
+                                                <Setter TargetName="UserImageUnavailable" Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsSingleImage}" Value="True">
+                                                <Setter TargetName="GalleryTileCard" Property="Width" Value="190"/>
+                                                <Setter TargetName="GalleryTileCard" Property="Height" Value="116"/>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsOverflowTile}" Value="True">
+                                                <Setter TargetName="GalleryTileShade" Property="Background" Value="#A20A1225"/>
+                                                <Setter TargetName="OverflowBadge" Property="Visibility" Value="Visible"/>
+                                                <Setter TargetName="GalleryTileImage" Property="Effect">
+                                                    <Setter.Value>
+                                                        <BlurEffect Radius="8"/>
+                                                    </Setter.Value>
+                                                </Setter>
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <!-- Non-image attachments remain compact identifiable
+                                 local-file references; content is NOT inferred. -->
+                            <ItemsControl x:Name="UserMessageFiles"
+                                          ItemsSource="{Binding UserFileAttachments}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border MaxWidth="300" MinHeight="42"
+                                                Margin="0,5,8,2" Padding="10,6"
+                                                CornerRadius="9"
+                                                BorderBrush="{DynamicResource NIRAComposerEdgeBrush}"
+                                                BorderThickness="1"
+                                                Background="{DynamicResource NIRAGlassStrongTintBrush}"
+                                                ToolTip="{Binding FullPath}">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="{Binding TypeGlyph}"
+                                                           VerticalAlignment="Center"
+                                                           FontFamily="Segoe UI Symbol"
+                                                           FontSize="18"
+                                                           Foreground="{DynamicResource NIRABlueBrush}"
+                                                           Margin="0,0,9,0"/>
+                                                <StackPanel VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding FileName}" MaxWidth="235"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               FontWeight="SemiBold" FontSize="11"/>
+                                                    <TextBlock Text="{Binding TypeLabel}" MaxWidth="235"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               FontSize="9"
+                                                               Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
                     </Border>
                 </Grid>
             </StackPanel>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding HasSingleUserImage}" Value="True">
+                    <Setter TargetName="UserSingleImageRow" Property="Visibility" Value="Visible"/>
+                    <Setter TargetName="UserMessageBody" Property="Visibility" Value="Collapsed"/>
+                    <Setter TargetName="UserMessageImages" Property="Visibility" Value="Collapsed"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding HasContent}" Value="False">
+                    <Setter TargetName="UserMessageBody" Property="Visibility" Value="Collapsed"/>
+                    <Setter TargetName="UserMessageImages" Property="Margin" Value="0"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding HasUserImages}" Value="False">
+                    <Setter TargetName="UserMessageImages" Property="Visibility" Value="Collapsed"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding HasUserFiles}" Value="False">
+                    <Setter TargetName="UserMessageFiles" Property="Visibility" Value="Collapsed"/>
+                </DataTrigger>
+            </DataTemplate.Triggers>
         </DataTemplate>
 
         <DataTemplate x:Key="AssistantMessageTemplate">
@@ -353,8 +537,20 @@
                 <!-- Assistant prose is full-width and borderless. Actual rich
                      visuals retain their own themed surfaces where helpful. -->
                 <Grid HorizontalAlignment="Stretch">
-                    <Border x:Name="AssistantBubble"
-                            Padding="6,1,8,0"
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="34"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Border Grid.Column="0" Width="27" Height="27"
+                            CornerRadius="14" VerticalAlignment="Top"
+                            Background="{DynamicResource NIRAComposerBadgeBrush}"
+                            BorderBrush="{DynamicResource NIRAComposerEdgeBrush}" BorderThickness="1">
+                        <Image Source="Assets/Nira-Icon.png" Width="23" Height="23"
+                               Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                    </Border>
+                    <Border Grid.Column="1" x:Name="AssistantBubble"
+                            HorizontalAlignment="Stretch"
+                            Padding="0,1,18,2"
                             MinWidth="0"
                             Background="Transparent"
                             BorderThickness="0">
@@ -365,73 +561,121 @@
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
 
-                            <TextBlock x:Name="AssistantContentText"
-                                       Grid.Row="0"
-                                       present:NIRAStyledChatText.Text="{Binding Content}"
-                                       Foreground="{DynamicResource NIRATextBrush}"
-                                       FontSize="14"
-                                       LineHeight="21"
-                                       TextWrapping="Wrap"/>
+                            <!-- Structured prose stays on the background itself. Each
+                                 paragraph, title, bullet, link and code passage gets
+                                 its own readable spacing without a white chat box. -->
+                            <StackPanel x:Name="AssistantContentText"
+                                        Grid.Row="0" HorizontalAlignment="Stretch"
+                                        present:NIRAChatDocument.Text="{Binding Content}"/>
 
                             <ItemsControl x:Name="AssistantRichBlocks" Grid.Row="1"
-                                          ItemsSource="{Binding RichElements}" Visibility="Collapsed"/>
+                                          ItemsSource="{Binding RichElements}" Visibility="Collapsed"
+                                          Margin="0,5,0,5"/>
 
+                            <!-- NIRA's OWN evidence-grounded image results. One sourced
+                                 image is a rich horizontal card; multiple images become
+                                 the same bounded, one-row gallery as user attachments. -->
                             <ItemsControl x:Name="AssistantVisualArtifacts"
                                           Grid.Row="2"
-                                          ItemsSource="{Binding VisualArtifacts}"
-                                          Visibility="Collapsed">
+                                          ItemsSource="{Binding AssistantImageGalleryTiles}"
+                                          Visibility="Collapsed"
+                                          Margin="0,12,0,2">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemContainerStyle>
+                                    <Style TargetType="ContentPresenter">
+                                        <Setter Property="Margin" Value="0,0,7,0"/>
+                                    </Style>
+                                </ItemsControl.ItemContainerStyle>
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Border Margin="0,11,0,0"
-                                                MaxWidth="680"
-                                                Background="{DynamicResource NIRAGlassStrongTintBrush}"
-                                                BorderBrush="#584C91C9"
-                                                BorderThickness="1"
-                                                CornerRadius="13"
-                                                ClipToBounds="True">
-                                            <StackPanel>
-                                                <Grid Background="#FF020711"
-                                                      MinHeight="120"
-                                                      MaxHeight="390">
-                                                    <Image Source="{Binding PreviewImage}"
-                                                           Stretch="Uniform"
-                                                           MaxHeight="390"
-                                                           SnapsToDevicePixels="True"
-                                                           Cursor="Hand"
-                                                           MouseLeftButtonUp="VisualArtifactImage_MouseLeftButtonUp"/>
-
-                                                    <TextBlock x:Name="VisualPreviewUnavailable"
-                                                               Text="Image preview unavailable"
-                                                               HorizontalAlignment="Center"
-                                                               VerticalAlignment="Center"
-                                                               FontSize="12"
-                                                               Foreground="#718DA6"
-                                                               Visibility="Collapsed"/>
+                                        <Grid>
+                                            <Border x:Name="AssistantSingleImageCard"
+                                                    CornerRadius="14" ClipToBounds="True"
+                                                    Background="{DynamicResource NIRAComposerBadgeBrush}"
+                                                    BorderBrush="{DynamicResource NIRAComposerEdgeBrush}"
+                                                    BorderThickness="1" Visibility="Collapsed">
+                                                <Grid Width="520" MaxWidth="520">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="195"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <Border Grid.Column="0" ClipToBounds="True" Background="#FF080E1C"
+                                                            MouseLeftButtonUp="UserImageGalleryTile_MouseLeftButtonUp" Cursor="Hand">
+                                                        <Image Source="{Binding PreviewImage}" Width="195" Height="147"
+                                                               Stretch="UniformToFill" SnapsToDevicePixels="True"/>
+                                                    </Border>
+                                                    <StackPanel Grid.Column="1" Margin="13,12,14,12"
+                                                                VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding Title}" FontSize="13"
+                                                                   FontWeight="SemiBold" TextWrapping="Wrap"
+                                                                   Foreground="{DynamicResource NIRATextBrush}"/>
+                                                        <TextBlock Text="{Binding Caption}" FontSize="11"
+                                                                   Margin="0,6,0,0" TextWrapping="Wrap" MaxHeight="73"
+                                                                   Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                                                        <Button x:Name="AssistantImageSourceButton" Content="Open image source  ↗"
+                                                                Tag="{Binding SourceUri}" ToolTip="Open the verified image's original source"
+                                                                Background="Transparent" BorderThickness="0"
+                                                                Padding="0" Margin="0,8,0,0"
+                                                                HorizontalAlignment="Left"
+                                                                Foreground="{DynamicResource NIRABlueBrush}"
+                                                                Cursor="Hand" FontSize="11" FontWeight="SemiBold"
+                                                                Click="VisualArtifactOpenSource_Click"/>
+                                                    </StackPanel>
                                                 </Grid>
-
-                                                <StackPanel Margin="11,9,11,10">
-                                                    <TextBlock Text="{Binding Title}"
-                                                               FontSize="12"
-                                                               FontWeight="SemiBold"
-                                                               Foreground="#DFF4FF"
-                                                               TextTrimming="CharacterEllipsis"/>
-                                                    <TextBlock x:Name="VisualArtifactCaption"
-                                                               Text="{Binding Caption}"
-                                                               Margin="0,4,0,0"
-                                                               FontSize="11"
-                                                               LineHeight="16"
-                                                               Foreground="#91A8BE"
-                                                               TextWrapping="Wrap"/>
-                                                </StackPanel>
-                                            </StackPanel>
-                                        </Border>
-
+                                            </Border>
+                                            <Border x:Name="AssistantStripTile" Width="164" Height="108"
+                                                    CornerRadius="11" ClipToBounds="True"
+                                                    Background="{DynamicResource NIRAComposerBadgeBrush}"
+                                                    BorderBrush="{DynamicResource NIRAComposerEdgeBrush}"
+                                                    BorderThickness="1" Cursor="Hand"
+                                                    ToolTip="Open NIRA image gallery"
+                                                    MouseLeftButtonUp="UserImageGalleryTile_MouseLeftButtonUp"
+                                                    RenderTransformOrigin="0.5,0.5">
+                                                <Border.RenderTransform><ScaleTransform ScaleX="1" ScaleY="1"/></Border.RenderTransform>
+                                                <Border.Triggers>
+                                                    <EventTrigger RoutedEvent="MouseEnter">
+                                                        <BeginStoryboard><Storyboard>
+                                                            <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1.018" Duration="0:0:0.16"/>
+                                                            <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1.018" Duration="0:0:0.16"/>
+                                                        </Storyboard></BeginStoryboard>
+                                                    </EventTrigger>
+                                                    <EventTrigger RoutedEvent="MouseLeave">
+                                                        <BeginStoryboard><Storyboard>
+                                                            <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1" Duration="0:0:0.20"/>
+                                                            <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1" Duration="0:0:0.20"/>
+                                                        </Storyboard></BeginStoryboard>
+                                                    </EventTrigger>
+                                                </Border.Triggers>
+                                                <Grid>
+                                                    <Image x:Name="AssistantStripImage" Source="{Binding PreviewImage}"
+                                                           Stretch="UniformToFill" SnapsToDevicePixels="True"/>
+                                                    <Border x:Name="AssistantOverflowShade" Background="#00000000"/>
+                                                    <TextBlock x:Name="AssistantOverflowBadge" Visibility="Collapsed"
+                                                               Text="{Binding OverflowLabel}" Foreground="White"
+                                                               FontWeight="SemiBold" FontSize="20"
+                                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Grid>
+                                            </Border>
+                                        </Grid>
                                         <DataTemplate.Triggers>
-                                            <DataTrigger Binding="{Binding HasPreview}" Value="False">
-                                                <Setter TargetName="VisualPreviewUnavailable" Property="Visibility" Value="Visible"/>
+                                            <DataTrigger Binding="{Binding IsSingleImage}" Value="True">
+                                                <Setter TargetName="AssistantSingleImageCard" Property="Visibility" Value="Visible"/>
+                                                <Setter TargetName="AssistantStripTile" Property="Visibility" Value="Collapsed"/>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding HasSourceUri}" Value="False">
+                                                <Setter TargetName="AssistantImageSourceButton" Property="Visibility" Value="Collapsed"/>
                                             </DataTrigger>
                                             <DataTrigger Binding="{Binding HasCaption}" Value="False">
-                                                <Setter TargetName="VisualArtifactCaption" Property="Visibility" Value="Collapsed"/>
+                                                <Setter TargetName="AssistantImageSourceButton" Property="Margin" Value="0,4,0,0"/>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsOverflowTile}" Value="True">
+                                                <Setter TargetName="AssistantOverflowShade" Property="Background" Value="#B2091832"/>
+                                                <Setter TargetName="AssistantOverflowBadge" Property="Visibility" Value="Visible"/>
+                                                <Setter TargetName="AssistantStripImage" Property="Effect">
+                                                    <Setter.Value><BlurEffect Radius="7"/></Setter.Value>
+                                                </Setter>
                                             </DataTrigger>
                                         </DataTemplate.Triggers>
                                     </DataTemplate>
@@ -492,6 +736,8 @@
                 <DataTrigger Binding="{Binding IsJourneyActive}" Value="True">
                     <Setter TargetName="JourneyIndicator" Property="Visibility" Value="Visible"/>
                     <Setter TargetName="AssistantBubble" Property="Padding" Value="6,1,8,0"/>
+                    <Setter TargetName="AssistantBubble" Property="Background" Value="Transparent"/>
+                    <Setter TargetName="AssistantBubble" Property="BorderThickness" Value="0"/>
                     <Setter TargetName="AssistantBubble" Property="MinWidth" Value="0"/>
                 </DataTrigger>
 
@@ -2084,7 +2330,7 @@
                                     </Style.Triggers>
                                 </Style>
                             </ScrollViewer.Style>
-                            <ItemsControl ItemsSource="{Binding ComposerAttachments}">
+                            <ItemsControl ItemsSource="{Binding ComposerGalleryTiles}">
                                 <ItemsControl.ItemsPanel>
                                     <ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate>
                                 </ItemsControl.ItemsPanel>
@@ -2092,7 +2338,10 @@
                                     <DataTemplate>
                                         <Grid Margin="0,0,6,0" ToolTip="{Binding FullPath}">
                                             <!-- Images: the only visual is the thumbnail, plus a tiny remove control. -->
-                                            <Border Width="58" Height="58" CornerRadius="10" ClipToBounds="True"
+                                            <Border x:Name="ComposerImageTile" Width="58" Height="58" CornerRadius="10" ClipToBounds="True"
+                                                    Cursor="Hand" ToolTip="Click to preview; right-click to manage images"
+                                                    MouseLeftButtonUp="ComposerImageTile_MouseLeftButtonUp"
+                                                    MouseRightButtonUp="ComposerImageTile_MouseRightButtonUp"
                                                     Background="{DynamicResource NIRAComposerBadgeBrush}"
                                                     BorderBrush="{DynamicResource NIRAComposerEdgeBrush}" BorderThickness="1">
                                                 <Border.Style>
@@ -2105,7 +2354,13 @@
                                                         </Style.Triggers>
                                                     </Style>
                                                 </Border.Style>
-                                                <Image Source="{Binding PreviewPath}" Width="58" Height="58" Stretch="UniformToFill"/>
+                                                <Grid>
+                                                    <Image x:Name="ComposerPreview" Source="{Binding PreviewPath}" Width="58" Height="58" Stretch="UniformToFill"/>
+                                                    <Border x:Name="ComposerOverflowShade" Background="Transparent"/>
+                                                    <TextBlock x:Name="ComposerOverflowCount" Visibility="Collapsed" FontSize="10"
+                                                               FontWeight="SemiBold" Foreground="White" Text="{Binding OverflowLabel}"
+                                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Grid>
                                             </Border>
                                             <!-- Documents: restrained compact type icon + filename. -->
                                             <Border Height="58" MinWidth="146" MaxWidth="222" CornerRadius="10"
@@ -2141,12 +2396,30 @@
                                                     </StackPanel>
                                                 </Grid>
                                             </Border>
-                                            <Button Content="×" Width="18" Height="18" HorizontalAlignment="Right"
+                                            <Button x:Name="RemoveComposerAttachmentButton" Content="×" Width="18" Height="18" HorizontalAlignment="Right"
                                                     VerticalAlignment="Top" Margin="0,2,2,0" FontSize="13"
                                                     Background="#B9122745" BorderBrush="#807FA9D6" BorderThickness="1"
-                                                    Foreground="White" Cursor="Hand" Tag="{Binding}"
+                                                    Foreground="White" Cursor="Hand" Tag="{Binding Attachment}"
                                                     AutomationProperties.Name="Remove attachment" Click="RemoveComposerAttachment_Click"/>
+                                            <Grid.Triggers>
+                                                <EventTrigger RoutedEvent="FrameworkElement.Loaded">
+                                                    <BeginStoryboard><Storyboard>
+                                                        <DoubleAnimation Storyboard.TargetName="ComposerImageTile" Storyboard.TargetProperty="Opacity"
+                                                                         From="0.65" To="1" Duration="0:0:0.16"/>
+                                                    </Storyboard></BeginStoryboard>
+                                                </EventTrigger>
+                                            </Grid.Triggers>
                                         </Grid>
+                                        <DataTemplate.Triggers>
+                                            <DataTrigger Binding="{Binding IsOverflowTile}" Value="True">
+                                                <Setter TargetName="ComposerOverflowShade" Property="Background" Value="#A90B1530"/>
+                                                <Setter TargetName="ComposerOverflowCount" Property="Visibility" Value="Visible"/>
+                                                <Setter TargetName="ComposerPreview" Property="Effect">
+                                                    <Setter.Value><BlurEffect Radius="4"/></Setter.Value>
+                                                </Setter>
+                                                <Setter TargetName="RemoveComposerAttachmentButton" Property="Visibility" Value="Collapsed"/>
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>

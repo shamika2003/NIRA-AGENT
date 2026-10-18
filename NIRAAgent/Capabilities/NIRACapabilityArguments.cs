@@ -360,7 +360,7 @@ internal static class NIRACapabilityArguments
             if (first == "~")
                 resolved = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             else if (IsCurrentUserKnownFolderName(first))
-                resolved = NIRAFileLocationCapabilityHandler.ResolveCurrentUserFolder(first);
+                resolved = NIRAFileLocationCapabilityHandler.ResolveConfiguredCurrentUserFolder(first);
 
             if (!string.IsNullOrWhiteSpace(resolved))
             {

@@ -29,7 +29,7 @@ public sealed class NIRAFileReadCapabilityHandler
             Parameters =
                 new[]
                 {
-                    Parameter("path", "string", true, "Absolute or relative file path."),
+                    Parameter("path", "string", true, "Verified file path. An ordinary relative name resolves under NIRA's working directory; a window title or historic file mention is not proof of an existing local file."),
                     Parameter("startLine", "integer", false, "1-based first line. Default 1."),
                     Parameter("maxLines", "integer", false, "Maximum returned lines. Default 300, maximum 1000."),
                     Parameter("maxChars", "integer", false, "Maximum returned characters. Default 24000, maximum 48000.")
@@ -48,12 +48,9 @@ public sealed class NIRAFileReadCapabilityHandler
         NIRACapabilityRequest request,
         CancellationToken cancellationToken = default)
     {
-        string path =
-            NIRACapabilityArguments.NormalizePath(
-                NIRACapabilityArguments.RequireString(
-                    request,
-                    "path",
-                    32760));
+        string requestedPath = NIRACapabilityArguments.RequireString(
+            request, "path", 32760);
+        string path = NIRACapabilityArguments.NormalizePath(requestedPath);
 
 
         int startLine =
@@ -90,8 +87,20 @@ public sealed class NIRAFileReadCapabilityHandler
 
         if (!file.Exists)
         {
+            // Do not silently interpret a process/window caption as a physical
+            // file or try invented directories. Preserve legacy relative reads
+            // when their real normalized target exists, but explain the missing
+            // location so cognition can choose a bounded discovery operation.
+            bool relative = !Path.IsPathFullyQualified(
+                Environment.ExpandEnvironmentVariables(requestedPath.Trim()));
+            string locationHint = relative
+                ? "The supplied name was relative. Only explicit user-folder prefixes " +
+                  "resolve outside NIRA's working directory. A process window title " +
+                  "is not a verified file path; locate an existing file before reading it."
+                : "This absolute file path is unavailable on this machine. " +
+                  "A location remembered from another session is not proof of local existence.";
             throw new FileNotFoundException(
-                "Requested file does not exist.",
+                $"Requested file does not exist at '{path}'. {locationHint}",
                 path);
         }
 
@@ -276,7 +285,7 @@ public sealed class NIRADirectoryListCapabilityHandler
                 NIRACapabilityIds.DirectoryList,
 
             Description =
-                "Enumerate a bounded directory listing, optionally recursive and filtered by search pattern.",
+                "Enumerate a bounded directory listing, optionally recursive and filtered by search pattern. A zero-match result does not imply that the directory has no other files or subfolders.",
 
             DefaultRisk =
                 NIRACapabilityRisk.Observe,
@@ -441,6 +450,7 @@ public sealed class NIRADirectoryListCapabilityHandler
                 else
                     rankedOutput.AppendLine($"FILE\t{entry.SizeBytes}\t{entry.Path}\tLastWriteUtc={entry.ModifiedUtc:O}");
             }
+            bool? rankedRootHasEntries = ranked.Length == 0 ? RootHasEntries(path) : null;
             return Task.FromResult(new NIRACapabilityHandlerResult
             {
                 Summary = $"Enumerated {ranked.Length} ranked entr(y/ies) under '{path}'. " +
@@ -450,6 +460,7 @@ public sealed class NIRADirectoryListCapabilityHandler
                     $"Offset={offset} | NextOffset={(observed.Count > offset + ranked.Length ? (offset + ranked.Length).ToString() : "None")} | " +
                     $"ScanComplete={!scanTruncated && unavailable == 0} | " +
                     $"RankingComplete={!scanTruncated && unavailable == 0} | Unreadable={unavailable}. " +
+                    (ranked.Length == 0 ? $"ZeroMatchScope=Pattern:{pattern},Recursive:{recursive},FilesOnly:{filesOnly} | RootHasOtherEntries={DescribeExistence(rankedRootHasEntries)}. A zero-match result does not prove the directory is empty. " : string.Empty) +
                     (sortBy == "SizeBytes"
                         ? "Directory sizes are NOT calculated; this ranks individual file sizes. "
                         : string.Empty) +
@@ -534,11 +545,13 @@ public sealed class NIRADirectoryListCapabilityHandler
         }
 
 
+        bool? rootHasEntries = count == 0 ? RootHasEntries(path) : null;
         return Task.FromResult(
             new NIRACapabilityHandlerResult
             {
                 Summary =
                     $"Enumerated {count} entry/entries under '{path}'. Recursive={recursive} | Pattern='{pattern}' | Truncated={truncated} | Offset={offset} | NextOffset={(truncated ? (offset + count).ToString() : "None")}." +
+                    (count == 0 ? $" ZeroMatchScope=Pattern:{pattern},Recursive:{recursive},FilesOnly:{filesOnly} | RootHasOtherEntries={DescribeExistence(rootHasEntries)}. A zero-match result does not prove the directory is empty." : string.Empty) +
                     (filesOnly ? $" FilesOnly=True | Scanned={filteredScanned} | ScanComplete={!truncated}." : string.Empty),
 
                 Output =
@@ -549,6 +562,32 @@ public sealed class NIRADirectoryListCapabilityHandler
             });
     }
 
+
+    // A filtered query can return zero even when the folder contains other
+    // extensions or directories. Keep this observation separate from matches.
+    // One top-level entry is enough; never enumerate the whole tree to verify.
+    private static bool? RootHasEntries(string path)
+    {
+        try
+        {
+            return Directory.EnumerateFileSystemEntries(path, "*", new EnumerationOptions
+            {
+                IgnoreInaccessible = true,
+                RecurseSubdirectories = false,
+                ReturnSpecialDirectories = false,
+                AttributesToSkip = 0
+            }).Any();
+        }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
+    }
+
+    private static string DescribeExistence(bool? hasEntries) => hasEntries switch
+    {
+        true => "True",
+        false => "False",
+        _ => "Unknown"
+    };
 
     private static NIRACapabilityParameterDescriptor Parameter(
         string name,
@@ -707,6 +746,12 @@ public sealed class NIRAFileMetadataCapabilityHandler
 public sealed class NIRAFileWriteCapabilityHandler
     : INIRACapabilityHandler
 {
+    private readonly NIRAWindowsProtectedFolderAccessService? _windowsAccess;
+    public NIRAFileWriteCapabilityHandler(NIRAWindowsProtectedFolderAccessService? windowsAccess = null)
+    {
+        _windowsAccess = windowsAccess;
+    }
+
     public NIRACapabilityDescriptor Descriptor
     {
         get;
@@ -744,6 +789,27 @@ public sealed class NIRAFileWriteCapabilityHandler
         NIRACapabilityRequest request,
         CancellationToken cancellationToken = default)
     {
+        try
+        {
+            return await ExecuteWriteOnceAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception failure) when (failure is IOException or UnauthorizedAccessException)
+        {
+            string target = NIRACapabilityArguments.NormalizePath(
+                NIRACapabilityArguments.RequireString(request, "path", 32760));
+            if (_windowsAccess is null ||
+                !Directory.Exists(Path.GetDirectoryName(target)) ||
+                !await _windowsAccess.TryRecoverAsync(target, failure, cancellationToken).ConfigureAwait(false))
+                throw;
+            // The original write remains atomic and its optimistic guards are
+            // rechecked. Never change destination or overwrite semantics.
+            return await ExecuteWriteOnceAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<NIRACapabilityHandlerResult> ExecuteWriteOnceAsync(
+        NIRACapabilityRequest request, CancellationToken cancellationToken)
+    {
         string path =
             NIRACapabilityArguments.NormalizePath(
                 NIRACapabilityArguments.RequireString(
@@ -751,6 +817,8 @@ public sealed class NIRAFileWriteCapabilityHandler
                     "path",
                     32760));
 
+
+        NIRAWindowsProtectedFolderAccessService.RejectRedirectedKnownFolderShadow(path);
 
         string content =
             NIRACapabilityArguments.RequireRawString(
@@ -828,7 +896,10 @@ public sealed class NIRAFileWriteCapabilityHandler
                 directory))
         {
             throw new DirectoryNotFoundException(
-                "Destination directory does not exist. Use filesystem.directory.create explicitly when creation is intended.");
+                "Destination directory does not exist: '" + directory + "'. " +
+                "A prior directory-create request must actually succeed before writing. " +
+                "Check its last failure (including Windows folder protection or OneDrive availability); " +
+                "repeating filesystem.write cannot create a blocked parent.");
         }
 
 
@@ -1265,6 +1336,13 @@ public sealed class NIRAFileDeleteCapabilityHandler
 public sealed class NIRADirectoryCreateCapabilityHandler
     : INIRACapabilityHandler
 {
+    private readonly NIRAWindowsProtectedFolderAccessService? _windowsAccess;
+
+    public NIRADirectoryCreateCapabilityHandler(NIRAWindowsProtectedFolderAccessService? windowsAccess = null)
+    {
+        _windowsAccess = windowsAccess;
+    }
+
     public NIRACapabilityDescriptor Descriptor
     {
         get;
@@ -1295,35 +1373,112 @@ public sealed class NIRADirectoryCreateCapabilityHandler
     }
 
 
-    public Task<NIRACapabilityHandlerResult> ExecuteAsync(
+    public async Task<NIRACapabilityHandlerResult> ExecuteAsync(
         NIRACapabilityRequest request,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
+        string path = NIRACapabilityArguments.NormalizePath(
+            NIRACapabilityArguments.RequireString(request, "path", 32760));
+        string parent = Path.GetDirectoryName(path) ?? string.Empty;
+        NIRAWindowsProtectedFolderAccessService.RejectRedirectedKnownFolderShadow(path);
+        bool existedBefore = Directory.Exists(path);
+        bool recovered = false;
+        bool retried = false;
 
-        string path =
-            NIRACapabilityArguments.NormalizePath(
-                NIRACapabilityArguments.RequireString(
-                    request,
-                    "path",
-                    32760));
-
-
-        DirectoryInfo directory =
-            Directory.CreateDirectory(
-                path);
-
-
-        return Task.FromResult(
-            new NIRACapabilityHandlerResult
+        try
+        {
+            try
             {
-                Summary =
-                    $"Directory exists after create operation: '{directory.FullName}'.",
+                // Directory.CreateDirectory already creates missing parents.
+                // A normal new folder is a routine, silent user-authorized
+                // operation; it does not require administrator elevation.
+                Directory.CreateDirectory(path);
+                if (!Directory.Exists(path))
+                    throw new DirectoryNotFoundException(
+                        "The provider did not expose the created directory.");
+            }
+            catch (Exception first) when (first is IOException or UnauthorizedAccessException)
+            {
+                // Some redirected/sync folders transiently report an absent
+                // path while its existing parent is being materialized. One
+                // bounded retry requires no new model decision or user prompt.
+                // Never retry an access denial, a missing parent, or a generic
+                // I/O fault; that is not a permission-bypass mechanism.
+                bool parentAvailable = Directory.Exists(parent);
+                if (!NIRADirectoryRecoveryPolicy.ShouldRetry(
+                        first, parentAvailable, Directory.Exists(path), 0))
+                    throw;
 
-                ChangedSystemState =
-                    true
-            });
+                retried = true;
+                await Task.Delay(180, cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!Directory.Exists(path))
+                    Directory.CreateDirectory(path);
+                if (!Directory.Exists(path))
+                    throw new DirectoryNotFoundException(
+                        "The redirected directory is still unavailable after a bounded retry.");
+                recovered = true;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Exception observedFailure = ex;
+            // A blocked operation in a protected Windows known folder can ask
+            // the owner once for an OS-managed, persistent application allowance.
+            // The user sees its broad scope before UAC. No model authorization
+            // or silent security modification is involved.
+            if (_windowsAccess is not null &&
+                await _windowsAccess.TryRecoverAsync(path, ex, cancellationToken).ConfigureAwait(false))
+            {
+                // Exactly one replay of the ORIGINAL destination, then verify.
+                // If Windows still denies it, normal diagnostics below apply.
+                try
+                {
+                    Directory.CreateDirectory(path);
+                    if (!Directory.Exists(path))
+                        throw new DirectoryNotFoundException("Directory was not visible after OS approval.");
+                    return new NIRACapabilityHandlerResult
+                    {
+                        Summary = $"Directory created and verified after explicit Windows owner approval: '{path}'.",
+                        ChangedSystemState = !existedBefore
+                    };
+                }
+                catch (Exception replay) when (replay is IOException or UnauthorizedAccessException)
+                {
+                    observedFailure = replay;
+                }
+            }
+            // Report a verified OS/provider outcome, not a guessed Defender
+            // diagnosis. A full-autonomy setting inside NIRA cannot overrule
+            // Windows access control. Never substitute an unrequested folder.
+            bool parentAvailable = Directory.Exists(parent);
+            bool targetAvailable = Directory.Exists(path);
+            string failureKind = NIRADirectoryRecoveryPolicy.Classify(observedFailure);
+            string nextStep = failureKind == "AccessDenied"
+                ? "Windows denied this path. Ask the owner once to choose an accessible location or use the OS-managed app-access configuration; do not launch NIRA as administrator."
+                : parentAvailable
+                    ? "The parent exists, but Windows did not expose the requested child. Controlled Folder Access and sync-provider failures can look similar; do not attribute this to OneDrive without independent evidence."
+                    : "The actual parent path is unavailable. Recheck the resolved known-folder location, without guessing another user profile.";
+            throw new IOException(
+                $"DirectoryCreateFailed | Kind={failureKind} | Target='{path}' | " +
+                $"ParentExists={parentAvailable} | TargetExists={targetAvailable} | " +
+                $"AutomaticRetryUsed={retried} | Exception={observedFailure.GetType().Name} | " +
+                $"HResult=0x{observedFailure.HResult:X8} | Detail={observedFailure.Message}. " +
+                nextStep + " No repeat approval or identical retry will resolve an unchanged OS restriction.", observedFailure);
+        }
+
+        // Verify the requested exact path. Never silently save to Public,
+        // AppData, or a different account in order to claim task success.
+        return new NIRACapabilityHandlerResult
+        {
+            Summary = existedBefore
+                ? $"Directory was already present: '{path}'."
+                : $"Directory created and verified: '{path}'. " +
+                  $"SilentRecovery={(recovered ? "TransientProviderRetry" : "NotNeeded")}",
+            ChangedSystemState = !existedBefore
+        };
     }
 
 
@@ -1341,4 +1496,24 @@ public sealed class NIRADirectoryCreateCapabilityHandler
             Description = description
         };
     }
+}
+
+// Platform-independent decision rules make a single safe provider retry
+// testable without changing the ordinary authorization or capability set.
+internal static class NIRADirectoryRecoveryPolicy
+{
+    internal static bool ShouldRetry(
+        Exception error, bool parentExists, bool targetExists, int retryNumber) =>
+        retryNumber == 0 && parentExists && !targetExists &&
+        (error is FileNotFoundException or DirectoryNotFoundException);
+
+    internal static string Classify(Exception error) => error switch
+    {
+        UnauthorizedAccessException => "AccessDenied",
+        IOException e when e.HResult == unchecked((int)0x80070005) => "AccessDenied",
+        FileNotFoundException => "PathOrProviderNotFound",
+        DirectoryNotFoundException => "ParentPathUnavailable",
+        IOException => "FilesystemIOError",
+        _ => "UnexpectedFailure"
+    };
 }

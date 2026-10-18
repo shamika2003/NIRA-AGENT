@@ -89,6 +89,20 @@ public sealed class MainWindowViewModel
     // Local references selected explicitly in the composer. No binary upload or
     // automatic trust assertion; existing authorized capabilities decide inspection.
     public ObservableCollection<NIRAComposerAttachment> ComposerAttachments { get; } = new();
+    // Presentation-only strip: never alters the authoritative attachment list
+    // sent to cognition. Hide surplus images behind a +N thumbnail.
+    public ObservableCollection<NIRAComposerGalleryTile> ComposerGalleryTiles { get; } = new();
+    private void RebuildComposerGalleryTiles()
+    {
+        ComposerGalleryTiles.Clear();
+        NIRAComposerAttachment[] images = ComposerAttachments.Where(a => a.IsImage).ToArray();
+        foreach (var image in images.Take(2))
+            ComposerGalleryTiles.Add(new NIRAComposerGalleryTile(image, false, 0));
+        if (images.Length >= 3)
+            ComposerGalleryTiles.Add(new NIRAComposerGalleryTile(images[2], true, images.Length - 2));
+        foreach (var document in ComposerAttachments.Where(a => !a.IsImage))
+            ComposerGalleryTiles.Add(new NIRAComposerGalleryTile(document, false, 0));
+    }
     public bool HasComposerAttachments => ComposerAttachments.Count > 0;
     private const int MaximumComposerAttachments = 12;
 
@@ -248,6 +262,7 @@ public sealed class MainWindowViewModel
 
         ComposerAttachments.CollectionChanged += (_, _) =>
         {
+            RebuildComposerGalleryTiles();
             OnPropertyChanged(nameof(HasComposerAttachments));
             OnPropertyChanged(nameof(CanSend));
             _sendCommand.RaiseCanExecuteChanged();
@@ -285,16 +300,28 @@ public sealed class MainWindowViewModel
         if (string.IsNullOrWhiteSpace(userText) && attachments.Length == 0)
             return;
 
-        // Attachment paths are user-selected local references. This is NOT a
-        // model-vision upload, document extraction or verified file observation.
-        // NIRA must use its existing authorized capabilities to inspect a path.
-        string input = attachments.Length == 0
-            ? userText
-            : (string.IsNullOrWhiteSpace(userText)
-                ? "Please help me with the local files I selected."
-                : userText) + "\n\n[User-selected local file references — paths only; contents not provided]\n" +
-              string.Join("\n", attachments.Select(a => "- " + a.FullPath)) +
-              "\n[Use available authorized capabilities to inspect if needed. Do not claim to have seen file contents without an actual observation.]";
+        // Images travel as real multimodal inputs; other file types remain
+        // explicit local references requiring authorized file capabilities.
+        string[] imagePaths;
+        try
+        {
+            imagePaths = NIRAAgent.AI.Cognition.NIRAImageInput.Validate(
+                attachments.Where(a => a.IsImage).Select(a => a.FullPath)).ToArray();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            Messages.Add(new ChatMessageViewModel("assistant", "I couldn't attach those images: " + ex.Message));
+            return;
+        }
+        var otherFiles = attachments.Where(a => !a.IsImage).ToArray();
+        string input = string.IsNullOrWhiteSpace(userText)
+            ? "Please examine the attached image(s) or selected files."
+            : userText;
+        if (otherFiles.Length != 0)
+            input += "\n\n[Selected file paths; contents not observed]\n" +
+                string.Join("\n", otherFiles.Select(a => "- " + a.FullPath));
+        if (imagePaths.Length != 0)
+            input += "\n[Real image data accompanies this turn. Inspect the attached images directly; do not treat filenames as visual evidence.]";
 
         // A past chat is a one-turn explicit source, never merged into this transcript.
         Guid? attachedPastChatSessionId = _attachedPastChatSessionId;
@@ -319,16 +346,13 @@ public sealed class MainWindowViewModel
         _sendCommand.RaiseCanExecuteChanged();
 
 
-        ChatMessageViewModel userMessage =
-            new(
-                "user",
-                attachments.Length == 0 ? userText :
-                    (string.IsNullOrWhiteSpace(userText) ? "" : userText + "\n") +
-                    string.Join("  ", attachments.Select(a => "📎 " + a.FileName)));
+        // Keep the user's actual words separate from selected sources.
+        // An image is shown AS an image in the bubble, never as "📎 file.png".
+        // The cognition path above still receives the real image bytes.
+        ChatMessageViewModel userMessage = new("user", userText);
+        userMessage.AddUserAttachments(attachments);
 
-
-        Messages.Add(
-            userMessage);
+        Messages.Add(userMessage);
 
 
         ChatMessageViewModel assistantMessage =
@@ -359,7 +383,8 @@ public sealed class MainWindowViewModel
                 in _mind.ProcessUserMessageAsync(
                     input,
                     _shutdown.Token,
-                    attachedPastChatSessionId))
+                    attachedPastChatSessionId,
+                    imagePaths))
             {
                 if (chunk.Type == NIRAOutputChunkType.Progress)
                 {
@@ -1007,4 +1032,18 @@ public sealed record NIRAComposerAttachment(string FullPath, string FileName)
         IsSpreadsheet ? "Spreadsheet or table" :
         IsPdf ? "PDF document" :
         IsCodeOrData ? "Document or data" : "Attached file";
+}
+
+// Exactly three image tiles are shown in the composer. The tile wrapping is
+// visual only; sending still includes ALL ComposerAttachments, unmodified.
+public sealed record NIRAComposerGalleryTile(NIRAComposerAttachment Attachment, bool IsOverflowTile, int HiddenCount)
+{
+    public bool IsImage => Attachment.IsImage;
+    public string? PreviewPath => Attachment.PreviewPath;
+    public string FullPath => Attachment.FullPath;
+    public string FileName => Attachment.FileName;
+    public string TypeGlyph => Attachment.TypeGlyph;
+    public string TypeLabel => Attachment.TypeLabel;
+    public string ExtensionLabel => Attachment.ExtensionLabel;
+    public string OverflowLabel => IsOverflowTile ? $"+{HiddenCount} more" : string.Empty;
 }

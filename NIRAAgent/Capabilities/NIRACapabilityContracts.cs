@@ -195,6 +195,13 @@ public static class NIRACapabilityIds
     public const string VisionCapture =
         "vision.capture";
 
+    public const string VisionAccessibility =
+        "vision.accessibility";
+
+
+    public const string DesktopInspect = "desktop.inspect";
+    public const string DesktopAct = "desktop.act";
+    public const string DesktopClose = "desktop.close";
 
     public const string VisionInspect =
         "vision.inspect";

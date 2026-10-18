@@ -64,7 +64,7 @@ public sealed class NIRACapabilityRequestPolicy
                 args["workingdirectory"] = JsonSerializer.SerializeToElement(
                     NormalizeLocalPath(Environment.CurrentDirectory));
             }
-            if (request.CapabilityId == NIRACapabilityIds.ProcessStart)
+        if (request.CapabilityId == NIRACapabilityIds.ProcessStart)
             {
                 args["filename"] = JsonSerializer.SerializeToElement(ResolveExecutable(
                     NIRACapabilityArguments.RequireString(request, "fileName", 32760)));
@@ -453,6 +453,19 @@ public sealed class NIRACapabilityRequestPolicy
             target = $"{NIRACapabilityArguments.RequireString(request, "shell")} | cwd={cwd}";
         if (request.CapabilityId == NIRACapabilityIds.ProcessStop)
             target = $"PID={NIRACapabilityArguments.RequireInteger(request, "pid", 1, int.MaxValue)}";
+
+        if (request.CapabilityId is NIRACapabilityIds.DesktopInspect or
+            NIRACapabilityIds.DesktopAct)
+        {
+            // Describe the verified target and intended UI operation in the
+            // existing authorization/audit path; never log entered text.
+            string hwnd = NIRACapabilityArguments.GetOptionalString(
+                request, "windowHandle", 80) ?? "not-yet-selected";
+            string action = request.CapabilityId == NIRACapabilityIds.DesktopAct
+                ? NIRACapabilityArguments.RequireString(request, "action", 40)
+                : "inspect";
+            target = $"Desktop HWND={hwnd} | Action={action}";
+        }
 
         bool externalVision =
             request.CapabilityId == NIRACapabilityIds.VisionInspect;

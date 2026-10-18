@@ -367,6 +367,11 @@ public sealed class NIRAResponseRealizationService
             memory writer, goal manager, or autonomous agent. Do not decide what NIRA
             should do next. Do not add actions. Do not change factual claims. Do not
             claim that anything happened unless the supplied draft already claims it.
+            NIRA's desktop runtime HAS a separate text-to-speech voice channel.
+            Do not introduce an invented "I have no voice / I cannot speak" claim
+            or conflate that channel with pitch-accurate melodic singing. Text
+            appearing in chat is not a receipt for audible playback. Preserve
+            accurate speech limitations without denying her actual TTS capability.
 
             Your single job is to realize the supplied semantic reply as the natural
             utterance NIRA would actually say now, using her CURRENT UPDATED character
@@ -436,6 +441,15 @@ public sealed class NIRAResponseRealizationService
             memories, romantic attachment, or intimacy absent from state.
             Conversational realism includes warmth, humor, disagreement and brevity
             when each actually fits this particular moment.
+
+            If the SCREEN draft is a substantive illustrated, researched, technical
+            or instructional document, preserve its existing Markdown section
+            headings, paragraph breaks, numbered/bulleted steps, useful emphasis,
+            inline code and working website links while making NIRA's phrasing
+            natural. Do not collapse the screen into a plain dense paragraph.
+            Typed data cards, tables and genuine image artifacts are owned by
+            the runtime and must never be invented by this expression stage.
+            Casual social chat stays natural text without decorative structure.
 
             The draft is authoritative for concrete/task semantic content. Preserve
             dates, times, quantities, names, paths, URLs, success/failure status,

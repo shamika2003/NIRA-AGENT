@@ -432,6 +432,7 @@ public sealed class WindowsScreenCaptureBackend
     public Task<NIRAWindowCaptureBackendResult> CaptureWindowPngAsync(
         IntPtr windowHandle,
         string destinationPath,
+        bool allowForegroundRecovery,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -442,13 +443,44 @@ public sealed class WindowsScreenCaptureBackend
                 windowHandle);
 
 
-        if (before.IsMinimized)
-        {
+        // Restoring a minimized HWND and obtaining foreground focus are different
+        // Windows operations. The user can authorize a temporary restore without
+        // Windows granting SetForegroundWindow. Try actual rendering after restore.
+        bool initiallyMinimized = before.IsMinimized;
+        if (initiallyMinimized && !allowForegroundRecovery)
             throw new InvalidOperationException(
-                "The requested visual window is minimized. Background capture does not claim reliable pixels for minimized windows.");
+                "The selected window is minimized and foreground recovery was disabled.");
+
+        try
+        {
+            if (initiallyMinimized)
+            {
+                if (!TryRestoreMinimizedTarget(windowHandle, before.ProcessId, cancellationToken))
+                    throw new InvalidOperationException(
+                        "Windows refused to restore the selected minimized window. " +
+                        "No other window's pixels were captured. An accessibility-tree " +
+                        "inspection may still be possible without changing its visibility.");
+                before = ReadWindow(windowHandle);
+            }
+            return CaptureVisibleWindowPngAsync(windowHandle, before, destinationPath,
+                allowForegroundRecovery, cancellationToken);
         }
+        finally
+        {
+            // Preserve the user's originally minimized workspace. No arbitrary
+            // application is launched, closed or granted elevated authority.
+            if (initiallyMinimized && IsWindow(windowHandle) && !IsIconic(windowHandle))
+                _ = ShowWindowAsync(windowHandle, SwMinimize);
+        }
+    }
 
-
+    private Task<NIRAWindowCaptureBackendResult> CaptureVisibleWindowPngAsync(
+        IntPtr windowHandle,
+        NIRACaptureWindowSnapshot before,
+        string destinationPath,
+        bool allowForegroundRecovery,
+        CancellationToken cancellationToken)
+    {
         string fullPath =
             PrepareDestination(
                 destinationPath,
@@ -552,54 +584,58 @@ public sealed class WindowsScreenCaptureBackend
 
             if (!rendered)
             {
-                // PrintWindow is not implemented reliably by every Windows
-                // application. A live foreground window can instead be read
-                // from desktop pixels, but NEVER substitute pixels from a
-                // covered, minimized, or unrelated background application.
-                PcRectangle desktop = VirtualScreenBounds;
-                bool fullyVisible =
-                    before.Bounds.Left >= desktop.Left &&
-                    before.Bounds.Top >= desktop.Top &&
-                    before.Bounds.Right <= desktop.Right &&
-                    before.Bounds.Bottom <= desktop.Bottom;
+                // A verified foreground BitBlt is the simplest compatible
+                // fallback. Windows may refuse focus; that must NOT prevent a
+                // different, temporarily exposed HWND capture from being tried.
+                bool alreadyForeground = GetForegroundWindow() == windowHandle;
+                bool acquiredForeground = alreadyForeground ||
+                    (allowForegroundRecovery &&
+                     TryBringTargetToForeground(windowHandle, before.ProcessId,
+                         restoreMinimized: false, cancellationToken: cancellationToken));
 
-                NIRACaptureWindowSnapshot foregroundBefore = ReadWindow(windowHandle);
-                if (GetForegroundWindow() != windowHandle ||
-                    !IsWindowVisible(windowHandle) ||
-                    foregroundBefore.IsMinimized ||
-                    foregroundBefore.ProcessId != before.ProcessId ||
-                    !fullyVisible)
+                if (acquiredForeground)
                 {
-                    throw new Win32Exception(
-                        "PrintWindow could not render the target, and the target " +
-                        "is not a fully visible foreground window. No unrelated " +
-                        "desktop pixels were substituted for its evidence.");
+                    NIRACaptureWindowSnapshot focused = ReadWindow(windowHandle);
+                    if (!IsMostlyOnScreen(focused.Bounds) ||
+                        !NIRAWindowCaptureIdentityPolicy.SameRenderableWindow(before, focused) ||
+                        GetForegroundWindow() != windowHandle)
+                        throw new InvalidOperationException(
+                            "The selected window was not verified as foreground, fully " +
+                            "on-screen and unchanged. Unrelated pixels were not used.");
+
+                    CapturePngAsync(focused.Bounds, fullPath, cancellationToken)
+                        .GetAwaiter().GetResult();
+                    NIRACaptureWindowSnapshot verified = ReadWindow(windowHandle);
+                    if (GetForegroundWindow() != windowHandle ||
+                        verified.Bounds != focused.Bounds ||
+                        !NIRAWindowCaptureIdentityPolicy.SameRenderableWindow(focused, verified))
+                    {
+                        TryDelete(fullPath);
+                        throw new InvalidOperationException(
+                            "The selected window changed while its screen pixels were captured.");
+                    }
+                    return Task.FromResult(new NIRAWindowCaptureBackendResult
+                    {
+                        Window = verified,
+                        CaptureMethod = alreadyForeground
+                            ? "VerifiedForegroundBitBlt(PrintWindowFallback)"
+                            : "VerifiedTargetActivationBitBlt(PrintWindowFallback)"
+                    });
                 }
 
-                CapturePngAsync(before.Bounds, fullPath, cancellationToken)
-                    .GetAwaiter().GetResult();
-                NIRACaptureWindowSnapshot foregroundAfter = ReadWindow(windowHandle);
-                if (GetForegroundWindow() != windowHandle ||
-                    foregroundAfter.ProcessId != before.ProcessId ||
-                    foregroundAfter.IsMinimized ||
-                    foregroundAfter.Bounds.Left != before.Bounds.Left ||
-                    foregroundAfter.Bounds.Top != before.Bounds.Top ||
-                    foregroundAfter.Bounds.Right != before.Bounds.Right ||
-                    foregroundAfter.Bounds.Bottom != before.Bounds.Bottom)
-                {
-                    TryDelete(fullPath);
+                if (!allowForegroundRecovery)
                     throw new InvalidOperationException(
-                        "The foreground window changed during desktop pixel capture. " +
-                        "The image was discarded rather than misattributed.");
-                }
+                        "The selected HWND rejected background rendering. Foreground " +
+                        "recovery was disabled; no unrelated window was captured.");
 
-                return Task.FromResult(new NIRAWindowCaptureBackendResult
-                {
-                    Window = foregroundAfter,
-                    CaptureMethod = "VerifiedForegroundBitBlt(PrintWindowFallback)"
-                });
+                // Second native path: Windows can refuse foreground focus while
+                // still allowing an ordinary application's window to appear on
+                // the desktop. Temporarily expose THIS HWND without activation,
+                // verify physical hit-testing across its surface, capture the
+                // pixels, then restore its topmost state even on failure.
+                return CaptureVerifiedExposedWindow(windowHandle, before,
+                    fullPath, cancellationToken);
             }
-
 
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -609,10 +645,10 @@ public sealed class WindowsScreenCaptureBackend
                     windowHandle);
 
 
-            if (after.ProcessId != before.ProcessId)
+            if (!NIRAWindowCaptureIdentityPolicy.SameRenderableWindow(before, after))
             {
                 throw new InvalidOperationException(
-                    "The requested window handle changed process identity during capture, so the image was discarded.");
+                    "The requested window changed identity or minimized during capture, so the image was discarded.");
             }
 
 
@@ -654,6 +690,161 @@ public sealed class WindowsScreenCaptureBackend
         }
     }
 
+
+    private static bool TryRestoreMinimizedTarget(
+        IntPtr handle, int expectedProcessId, CancellationToken cancellationToken)
+    {
+        if (!IsWindow(handle) || expectedProcessId <= 0 ||
+            expectedProcessId == Environment.ProcessId)
+            return false;
+        _ = ShowWindowAsync(handle, SwRestore);
+        for (int i = 0; i < 8; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Thread.Sleep(85);
+            if (!IsWindow(handle)) return false;
+            _ = GetWindowThreadProcessId(handle, out uint pid);
+            if (pid != (uint)expectedProcessId) return false;
+            if (!IsIconic(handle) && IsWindowVisible(handle)) return true;
+        }
+        return false;
+    }
+
+    private bool IsMostlyOnScreen(PcRectangle bounds)
+    {
+        PcRectangle desktop = VirtualScreenBounds;
+        if (bounds.IsEmpty) return false;
+        // DWM often adds invisible resize margins (-8px at the top/left)
+        // to maximized windows. Accept a mostly visible target; its sample
+        // points still have to hit this exact HWND before/after BitBlt.
+        int l = Math.Max(bounds.Left, desktop.Left);
+        int t = Math.Max(bounds.Top, desktop.Top);
+        int r = Math.Min(bounds.Right, desktop.Right);
+        int b = Math.Min(bounds.Bottom, desktop.Bottom);
+        if (r <= l || b <= t) return false;
+        double shown = (double)(r - l) * (b - t);
+        double total = (double)bounds.Width * bounds.Height;
+        return shown / total >= 0.90;
+    }
+
+    private Task<NIRAWindowCaptureBackendResult> CaptureVerifiedExposedWindow(
+        IntPtr handle, NIRACaptureWindowSnapshot before,
+        string fullPath, CancellationToken cancellationToken)
+    {
+        const uint flags = SwpNoMove | SwpNoSize | SwpNoActivate;
+        bool alreadyTopmost = (GetWindowLong(handle, GwlExStyle) & WsExTopmost) != 0;
+        bool raised = false;
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!IsWindowVisible(handle) || IsIconic(handle) ||
+                before.ProcessId == Environment.ProcessId || !IsMostlyOnScreen(before.Bounds))
+                throw new InvalidOperationException(
+                    "The selected window is not independently observable on the current desktop.");
+
+            raised = SetWindowPos(handle, HwndTopmost, 0, 0, 0, 0, flags);
+            if (!raised)
+                throw LastWin32("Windows refused to expose the selected window for a verified capture.");
+            Thread.Sleep(170); // Allow the desktop compositor to redraw.
+            cancellationToken.ThrowIfCancellationRequested();
+            NIRACaptureWindowSnapshot exposed = ReadWindow(handle);
+            if (!NIRAWindowCaptureIdentityPolicy.SameRenderableWindow(before, exposed) ||
+                exposed.Bounds != before.Bounds || !IsMostlyOnScreen(exposed.Bounds) ||
+                !WindowSurfaceBelongsToTarget(handle, exposed.Bounds))
+                throw new InvalidOperationException(
+                    "The selected window did not cover its verified screen rectangle. " +
+                    "Desktop pixels were not attributed to that application.");
+
+            CapturePngAsync(exposed.Bounds, fullPath, cancellationToken)
+                .GetAwaiter().GetResult();
+            NIRACaptureWindowSnapshot verified = ReadWindow(handle);
+            if (!NIRAWindowCaptureIdentityPolicy.SameRenderableWindow(exposed, verified) ||
+                verified.Bounds != exposed.Bounds ||
+                !WindowSurfaceBelongsToTarget(handle, verified.Bounds))
+            {
+                TryDelete(fullPath);
+                throw new InvalidOperationException(
+                    "The selected window was obscured or changed during capture; image discarded.");
+            }
+            return Task.FromResult(new NIRAWindowCaptureBackendResult
+            {
+                Window = verified,
+                CaptureMethod = "VerifiedTemporaryExposureBitBlt(PrintWindowFallback)"
+            });
+        }
+        finally
+        {
+            if (raised && !alreadyTopmost && IsWindow(handle))
+                _ = SetWindowPos(handle, HwndNotTopmost, 0, 0, 0, 0, flags);
+        }
+    }
+
+    private static bool WindowSurfaceBelongsToTarget(IntPtr handle, PcRectangle rect)
+    {
+        // Verify sampled pixels, not merely that SetWindowPos returned success.
+        // Each sample may hit a native child; its root must be the exact HWND.
+        int matches = 0;
+        foreach (double x in new[] { 0.22, 0.50, 0.78 })
+        foreach (double y in new[] { 0.22, 0.50, 0.78 })
+        {
+            var point = new NativePoint
+            {
+                X = rect.Left + (int)(rect.Width * x),
+                Y = rect.Top + (int)(rect.Height * y)
+            };
+            IntPtr hit = WindowFromPoint(point);
+            if (hit != IntPtr.Zero && GetAncestor(hit, 2) == handle)
+                matches++;
+        }
+        return matches >= 8;
+    }
+
+    // A recoverable Windows foreground request is NOT an authorization bypass.
+    // SetForegroundWindow can legitimately be refused by the OS. Never synthesize
+    // Alt/keyboard input or attach to an unrelated process to force focus.
+    private bool TryBringTargetToForeground(
+        IntPtr handle, int expectedProcessId, bool restoreMinimized,
+        CancellationToken cancellationToken)
+    {
+        if (handle == IntPtr.Zero || !IsWindow(handle) ||
+            expectedProcessId <= 0 || expectedProcessId == Environment.ProcessId)
+            return false;
+
+        if (restoreMinimized && IsIconic(handle))
+            _ = ShowWindowAsync(handle, SwRestore);
+
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                NIRACaptureWindowSnapshot current = ReadWindow(handle);
+                if (current.ProcessId != expectedProcessId)
+                    return false;
+                if (current.IsMinimized || !IsWindowVisible(handle))
+                {
+                    Thread.Sleep(70);
+                    continue;
+                }
+                if (GetForegroundWindow() == handle)
+                    return true;
+                _ = SetForegroundWindow(handle);
+                if (GetForegroundWindow() == handle)
+                {
+                    // The target may need a short compositor/UI paint cycle
+                    // after Windows acknowledges the foreground transition.
+                    Thread.Sleep(100);
+                    return GetForegroundWindow() == handle && !IsIconic(handle);
+                }
+            }
+            catch
+            {
+                return false;
+            }
+            Thread.Sleep(70);
+        }
+        return GetForegroundWindow() == handle && !IsIconic(handle);
+    }
 
     // =========================================================
     // PNG OUTPUT
@@ -985,6 +1176,38 @@ public sealed class WindowsScreenCaptureBackend
         int maxCount);
 
 
+    private const int SwRestore = 9;
+    private const int SwMinimize = 6;
+    private const int GwlExStyle = -20;
+    private const int WsExTopmost = 0x00000008;
+    private const uint SwpNoSize = 0x0001;
+    private const uint SwpNoMove = 0x0002;
+    private const uint SwpNoActivate = 0x0010;
+    private static readonly IntPtr HwndTopmost = new(-1);
+    private static readonly IntPtr HwndNotTopmost = new(-2);
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongW", SetLastError = true)]
+    private static extern int GetWindowLong(IntPtr windowHandle, int index);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(IntPtr handle, IntPtr insertAfter,
+        int x, int y, int width, int height, uint flags);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetAncestor(IntPtr handle, uint flags);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr WindowFromPoint(NativePoint point);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetForegroundWindow(IntPtr windowHandle);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ShowWindowAsync(IntPtr windowHandle, int showCommand);
+
     [DllImport(
         "user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -1068,6 +1291,13 @@ public sealed class WindowsScreenCaptureBackend
         int sourceY,
         uint rasterOperation);
 
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativePoint
+    {
+        public int X;
+        public int Y;
+    }
 
     [StructLayout(
         LayoutKind.Sequential)]

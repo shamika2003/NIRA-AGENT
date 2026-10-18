@@ -22,7 +22,7 @@ public sealed class NIRAProcessListCapabilityHandler
                 NIRACapabilityIds.ProcessList,
 
             Description =
-                "Inspect running processes with PID, window title, working-set memory and private memory; optionally filter and sort without using a shell.",
+                "Inspect running processes with PID, window title, working-set memory and private memory; optionally filter and sort without using a shell. Window titles are display labels, not verified document paths or readable text.",
 
             DefaultRisk =
                 NIRACapabilityRisk.Observe,
@@ -175,7 +175,8 @@ public sealed class NIRAProcessListCapabilityHandler
             {
                 Summary =
                     $"Inspected {snapshots.Count} matching running process(es); " +
-                    $"returned {selected.Length}. Filter='{filter ?? "-"}'. SortBy={sortBy}.",
+                    $"returned {selected.Length}. Filter='{filter ?? "-"}'. SortBy={sortBy}. " +
+                    "WindowTitlesAreNotFilesystemPaths=True.",
 
                 Output =
                     output.ToString().TrimEnd(),
@@ -469,7 +470,7 @@ public sealed class NIRAProcessStopCapabilityHandler
         return new NIRACapabilityHandlerResult
         {
             Summary =
-                $"Terminated process PID={pid} | Name='{name}' | EntireTree={entireTree}.",
+                $"VerifiedExit=True | Terminated process PID={pid} | Name='{name}' | EntireTree={entireTree}.",
 
             ChangedSystemState =
                 true

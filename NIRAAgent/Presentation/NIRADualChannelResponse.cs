@@ -7,7 +7,7 @@ namespace NIRAAgent.Presentation;
 // declarative screen blocks. The WPF app, not the model, owns the rendering.
 public sealed record NIRARichBlock
 {
-    public string Type { get; init; } = string.Empty; // heading, text, card, metric, table, chart, code, details, list, quote, timeline, checklist, progress
+    public string Type { get; init; } = string.Empty; // heading, text, hero, insight, source, card, metric, table, chart, code, details, list, quote, timeline, checklist, progress
     public string Title { get; init; } = string.Empty;
     public string Text { get; init; } = string.Empty;
     public string Unit { get; init; } = string.Empty;
@@ -50,7 +50,7 @@ public static class NIRAPresentationPolicy
         {
             if (input is null) continue;
             string type = (input.Type ?? string.Empty).Trim().ToLowerInvariant();
-            if (type is not ("heading" or "text" or "card" or "metric" or "table" or "chart" or "code" or "details" or "list" or "quote" or "timeline" or "checklist" or "progress" or "tabs" or "followups" or "file")) continue;
+            if (type is not ("heading" or "text" or "hero" or "insight" or "source" or "card" or "metric" or "table" or "chart" or "code" or "details" or "list" or "quote" or "timeline" or "checklist" or "progress" or "tabs" or "followups" or "file")) continue;
             var items = (input.Items ?? Array.Empty<string>()).Take(24).Select(x => Clip(x, type == "file" ? 32760 : 450)).Where(x => x.Length > 0).ToArray();
             var panels = (input.Panels ?? Array.Empty<string>()).Take(5).Select(x => Clip(x, 3000)).ToArray();
             var cols = (input.Columns ?? Array.Empty<string>()).Take(8).Select(c => Clip(c, 75)).ToArray();
@@ -70,7 +70,9 @@ public static class NIRAPresentationPolicy
             if (type == "table" && (cols.Length == 0 || rows.Length == 0)) continue;
             if (type == "chart" && (labels.Length < 2 || labels.Length != values.Length || values.Any(v => !double.IsFinite(v)))) continue;
             string title = Clip(input.Title, 160), text = Clip(input.Text, type == "code" ? 7000 : type == "details" ? 4000 : type == "file" ? 32760 : 1600);
-            if ((type is "heading" or "text" or "card" or "code" or "details" or "quote") && title.Length == 0 && text.Length == 0) continue;
+            if ((type is "heading" or "text" or "hero" or "insight" or "source" or "card" or "code" or "details" or "quote") && title.Length == 0 && text.Length == 0) continue;
+            if (type == "source" && !System.Text.RegularExpressions.Regex.IsMatch(text,
+                @"https?://[^\s<>]+", System.Text.RegularExpressions.RegexOptions.IgnoreCase)) continue;
             if (type == "metric" && (title.Length == 0 || text.Length == 0)) continue;
             if (type == "file" && (title.Length == 0 || text.Length == 0)) continue;
             if (type == "followups" && items.Length > 6) items = items.Take(6).ToArray();

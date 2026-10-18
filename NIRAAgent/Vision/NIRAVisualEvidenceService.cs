@@ -314,6 +314,56 @@ public sealed class NIRAVisualEvidenceService
     }
 
 
+    // Read-only HWND discovery for non-pixel accessibility inspection.
+    // The exact process/title scoring and live-window catalog are shared
+    // with screenshot capture, so these two tools cannot disagree on IDs.
+    public NIRACaptureWindowSnapshot ResolveExternalWindow(
+        long? handle, string? processName, string? titleContains)
+    {
+        if (!handle.HasValue && string.IsNullOrWhiteSpace(processName) &&
+            string.IsNullOrWhiteSpace(titleContains))
+            throw new ArgumentException(
+                "Provide a grounded windowHandle, processName, or titleContains.");
+        PcWorldState snapshot = _worldState.Current;
+        ObserveWorldSnapshot(snapshot);
+        return ResolveWindowTarget(new NIRAVisualCaptureRequest
+        {
+            Target = NIRAVisualCaptureTarget.Window,
+            WindowHandle = handle,
+            ProcessName = processName,
+            TitleContains = titleContains
+        }, snapshot).Window;
+    }
+
+    // Safe mutation target: demand exactly ONE live top-level window for the
+    // supplied process identity. Multiple instances are ambiguous and require
+    // explicit HWND selection; never select the biggest/foreground window.
+    public NIRACaptureWindowSnapshot ResolveUniqueProcessWindow(
+        string processName, string? titleContains = null)
+    {
+        var match = NIRADesktopCloseTargetPolicy.SelectUnique(
+            ReadLiveExternalWindows(), processName, titleContains);
+        // Verify it remains the same target through the established HWND gate.
+        return ResolveExternalWindow(match.Handle, match.ProcessName, match.Title);
+    }
+
+    // Fresh read of current top-level windows for one exact process identity.
+    // A missing window does not by itself prove the process exited.
+    public int CountLiveProcessWindows(string processName)
+    {
+        string name = (processName ?? string.Empty).Trim();
+        if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+            name = name[..^4];
+        if (name.Length == 0)
+            throw new ArgumentException("A grounded process name is required.");
+        return ReadLiveExternalWindows()
+            .Where(window => window.Handle > 0 && window.ProcessId > 0 &&
+                string.Equals(window.ProcessName, name, StringComparison.OrdinalIgnoreCase))
+            .Select(window => window.Handle)
+            .Distinct()
+            .Count();
+    }
+
     public bool TryGetEvidence(
         Guid evidenceId,
         out NIRAVisualEvidence? evidence)
@@ -411,10 +461,11 @@ public sealed class NIRAVisualEvidenceService
                     resolved.LastObservedAtUtc;
 
 
-                if (capturedWindow.IsMinimized)
+                if (capturedWindow.IsMinimized &&
+                    !request.AllowForegroundRecovery)
                 {
                     throw new InvalidOperationException(
-                        "The requested visual window is minimized. Bring it out of the minimized state before relying on its pixels.");
+                        "The requested window is minimized. Strict background-only capture cannot read its pixels; request explicit foreground recovery or ask the user to restore it.");
                 }
 
 
@@ -434,6 +485,9 @@ public sealed class NIRAVisualEvidenceService
                         new IntPtr(
                             capturedWindow.Handle),
                         imagePath,
+                        request.AllowForegroundRecovery &&
+                            request.Target is (NIRAVisualCaptureTarget.Window or
+                                NIRAVisualCaptureTarget.LastExternalWindow),
                         cancellationToken);
 
 
@@ -1685,4 +1739,3 @@ public sealed class NIRAVisualEvidenceService
         }
     }
 }
-

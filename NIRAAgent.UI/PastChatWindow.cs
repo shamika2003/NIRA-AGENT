@@ -20,6 +20,7 @@ namespace NIRAAgent.UI;
 public sealed class PastChatWindow : Window
 {
     private readonly IReadOnlyList<NIRAArchivedChatTurn> _turns;
+    private readonly NIRAWorkAreaWindowGuard _workAreaGuard;
     private readonly NIRAConversationArchiveStore _archive;
     private readonly StackPanel _messages = new();
     private readonly ScrollViewer _scroll;
@@ -29,6 +30,7 @@ public sealed class PastChatWindow : Window
     private int _matchIndex;
     private readonly Image _backgroundEclipse;
     private readonly Image _backgroundHalo;
+    private readonly Border _backgroundVeil;
     private readonly TextBlock _searchHint;
 
     // The PNGs are resources already included in NIRAAgent.UI.csproj.
@@ -172,10 +174,10 @@ public sealed class PastChatWindow : Window
         // Keep the native taskbar icon as the app icon, but use the official PNG
         // for the custom title strip; ICO scaling looked blurry in the viewer.
         Icon = Application.Current?.MainWindow?.Icon;
-        Width = 1000;
-        Height = 750;
+        Width = 1040;
+        Height = 760;
         MinWidth = 640;
-        MinHeight = 520;
+        MinHeight = 490;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.CanResize;
@@ -185,6 +187,8 @@ public sealed class PastChatWindow : Window
         UseLayoutRounding = true;
         Theme(this, BackgroundProperty, "NIRABackgroundBrush");
         Theme(this, ForegroundProperty, "NIRATextBrush");
+        _workAreaGuard = new NIRAWorkAreaWindowGuard(this, fitNormalWindow: true);
+        Closed += (_, _) => _workAreaGuard.Dispose();
         WindowChrome.SetWindowChrome(this, new WindowChrome
         {
             CaptionHeight = 0,
@@ -205,13 +209,13 @@ public sealed class PastChatWindow : Window
         // Put artwork BEHIND all controls, spanning the complete custom window.
         _backgroundEclipse = new Image
         {
-            Source = Artwork("nira-background-eclipse.png"),
+            Source = Artwork("nira-utility-eclipse.png"),
             Stretch = Stretch.UniformToFill,
             IsHitTestVisible = false
         };
         _backgroundHalo = new Image
         {
-            Source = Artwork("nira-background-halo.png"),
+            Source = Artwork("nira-utility-halo.png"),
             Stretch = Stretch.UniformToFill,
             IsHitTestVisible = false
         };
@@ -220,10 +224,12 @@ public sealed class PastChatWindow : Window
         outer.Children.Add(_backgroundEclipse);
         outer.Children.Add(_backgroundHalo);
 
-        var backdropVeil = new Border { Opacity = 0.45, IsHitTestVisible = false };
-        Theme(backdropVeil, Border.BackgroundProperty, "NIRABackdropVeilBrush");
-        Grid.SetRowSpan(backdropVeil, 3);
-        outer.Children.Add(backdropVeil);
+        // Keep the archive transcript readable over the artwork in both themes.
+        // The secondary window is itself NOT forcibly dark in Halo; its parent
+        // is dimmed by MainWindow's existing utility scrim.
+        _backgroundVeil = new Border { IsHitTestVisible = false };
+        Grid.SetRowSpan(_backgroundVeil, 3);
+        outer.Children.Add(_backgroundVeil);
 
         ApplyThemeArtwork(NIRAThemeManager.CurrentMode);
         NIRAThemeManager.ThemeChanged += OnThemeChanged;
@@ -277,7 +283,7 @@ public sealed class PastChatWindow : Window
         Grid.SetRow(accent, 1);
         outer.Children.Add(accent);
 
-        var body = new Grid { Margin = new Thickness(26, 24, 26, 20) };
+        var body = new Grid { Margin = new Thickness(24, 20, 24, 18) };
         body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -364,8 +370,9 @@ public sealed class PastChatWindow : Window
         Grid.SetRow(tools, 2);
         body.Children.Add(tools);
 
-        var transcriptPanel = Panel("NIRAGlassTintBrush", "NIRAGlassBorderBrush", 13);
-        transcriptPanel.Padding = new Thickness(16, 15, 9, 10);
+        // A real contrast surface instead of transparent glass over busy art.
+        var transcriptPanel = Panel("NIRAPanelBrush", "NIRABorderBrush", 16);
+        transcriptPanel.Padding = new Thickness(18, 15, 10, 10);
         _scroll = new ScrollViewer
         {
             Content = _messages,
@@ -417,6 +424,7 @@ public sealed class PastChatWindow : Window
             }
         };
         RefreshMatches();
+        Loaded += (_, _) => NIRAMotion.AnimateEntrance(body, distance: 10, durationMs: 260);
     }
 
     private void OnThemeChanged(NIRAThemeMode mode)
@@ -435,6 +443,9 @@ public sealed class PastChatWindow : Window
         bool halo = mode == NIRAThemeMode.Halo;
         _backgroundEclipse.Opacity = halo ? 0 : 1;
         _backgroundHalo.Opacity = halo ? 1 : 0;
+        _backgroundVeil.Background = new SolidColorBrush(halo
+            ? Color.FromArgb(200, 239, 246, 255)
+            : Color.FromArgb(198, 5, 12, 30));
     }
 
     private void Chrome_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -481,8 +492,8 @@ public sealed class PastChatWindow : Window
     private Border CreateBubble(NIRAArchivedChatTurn turn, string query, bool matched)
     {
         bool user = turn.Role.Equals("user", StringComparison.OrdinalIgnoreCase);
-        var bubble = Panel(user ? "NIRAChipBrush" : "NIRAGlassStrongTintBrush",
-            matched ? "NIRAFocusBorderBrush" : "NIRAGlassBorderBrush");
+        var bubble = Panel(user ? "NIRAUserBubbleFillBrush" : "NIRAPanelStrongBrush",
+            matched ? "NIRAFocusBorderBrush" : (user ? "NIRAUserBubbleEdgeBrush" : "NIRABorderBrush"), 14);
         bubble.Padding = new Thickness(15, 12, 15, 14);
         bubble.Margin = new Thickness(user ? 48 : 0, 0, user ? 0 : 48, 11);
         var content = new StackPanel();
@@ -599,5 +610,3 @@ public sealed class PastChatWindow : Window
         catch (Exception ex) { MessageBox.Show(this, ex.Message, "Copy failed"); }
     }
 }
-
-

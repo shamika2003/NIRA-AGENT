@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
@@ -9,7 +10,7 @@ namespace NIRAAgent.UI.Presentation;
 /// <summary>
 /// Safely displays NIRA's screen-only Markdown in the existing assistant TextBlock.
 /// The structured NIRARichBlock renderer remains responsible for tables/cards/etc.
-/// This is presentation only: no URL actions, HTML, or model/tool execution.
+/// This is presentation only: user-clicked HTTPS/HTTP URLs may open in the system browser; never navigate on render.
 /// </summary>
 public static class NIRAStyledChatText
 {
@@ -73,28 +74,99 @@ public static class NIRAStyledChatText
         }
     }
 
+    // Markdown links, absolute URLs and unambiguous public hostnames are
+    // clickable only after a user clicks. Do not fetch/preview external content.
+    // Restrict scheme-less links to common web TLDs so a filename such as
+    // photo.png or NIRAAgent.dll does not become a misleading website link.
+    private static readonly Regex InlineTokens = new(
+        @"\[(?<label>[^\]\r\n]{1,180})\]\((?<link>https?://[^\s)<>]{1,1900})\)|(?<url>https?://[^\s<>]+)|(?<![a-z0-9_@./:-])(?<domain>(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|org|net|gov|edu|mil|int|io|ai|dev|info|app|lk|uk|me|co|tv)(?:/[^\s<>]*)?)|\*\*(?<bold>[^*\r\n]+)\*\*|(?<!\*)\*(?<italic>[^*\r\n]+)\*(?!\*)|`(?<code>[^`\r\n]+)`",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+
     private static void AppendInline(InlineCollection inlines, string text)
     {
-        // Only a bounded set of visible inline notations is interpreted.
-        // Everything else remains literal text, including raw HTML and links.
-        var matches = Regex.Matches(text, @"\*\*(?<bold>.+?)\*\*|(?<!\*)\*(?<italic>[^*\n]+?)\*(?!\*)|`(?<code>[^`\n]+)`");
         int offset = 0;
-        foreach (Match match in matches)
+        foreach (Match match in InlineTokens.Matches(text))
         {
-            if (match.Index > offset) inlines.Add(new Run(text[offset..match.Index]));
-            if (match.Groups["bold"].Success)
+            if (match.Index > offset)
+                inlines.Add(new Run(text[offset..match.Index]));
+
+            if (match.Groups["link"].Success)
+            {
+                AddLink(inlines, match.Groups["label"].Value, match.Groups["link"].Value);
+            }
+            else if (match.Groups["url"].Success)
+            {
+                // Keep punctuation belonging to prose outside the URL.
+                string original = match.Groups["url"].Value;
+                string url = original.TrimEnd('.', ',', ';', '!', '?', ')', ']', '}');
+                AddLink(inlines, url, url);
+                if (url.Length < original.Length)
+                    inlines.Add(new Run(original[url.Length..]));
+            }
+            else if (match.Groups["domain"].Success)
+            {
+                string original = match.Groups["domain"].Value;
+                string hostnameAndPath = original.TrimEnd('.', ',', ';', '!', '?', ')', ']', '}');
+                // Explicit HTTPS is important: WPF Hyperlink only accepts a
+                // validated absolute web URI. Never infer a non-web scheme.
+                AddLink(inlines, hostnameAndPath, "https://" + hostnameAndPath);
+                if (hostnameAndPath.Length < original.Length)
+                    inlines.Add(new Run(original[hostnameAndPath.Length..]));
+            }
+            else if (match.Groups["bold"].Success)
                 inlines.Add(new Bold(new Run(match.Groups["bold"].Value)));
             else if (match.Groups["italic"].Success)
                 inlines.Add(new Italic(new Run(match.Groups["italic"].Value)));
-            else
+            else if (match.Groups["code"].Success)
             {
-                var code = new Run(match.Groups["code"].Value) { FontFamily = new FontFamily("Cascadia Code, Consolas"),
-                    FontWeight = FontWeights.SemiBold };
+                var code = new Run(match.Groups["code"].Value)
+                {
+                    FontFamily = new FontFamily("Cascadia Code, Consolas"),
+                    FontWeight = FontWeights.SemiBold
+                };
                 code.SetResourceReference(TextElement.ForegroundProperty, "NIRACyanBrush");
                 inlines.Add(code);
             }
             offset = match.Index + match.Length;
         }
         if (offset < text.Length) inlines.Add(new Run(text[offset..]));
+    }
+
+    private static void AddLink(InlineCollection inlines, string label, string address)
+    {
+        if (!Uri.TryCreate(address, UriKind.Absolute, out Uri? uri) ||
+            (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp))
+        {
+            inlines.Add(new Run(label));
+            return;
+        }
+
+        // Host-validated clickable link. The original user/LLM text is still
+        // untrusted; it cannot create file:, javascript:, cmd: or shell actions.
+        var link = new Hyperlink(new Run(label))
+        {
+            NavigateUri = uri,
+            Cursor = System.Windows.Input.Cursors.Hand,
+            TextDecorations = TextDecorations.Underline,
+            ToolTip = uri.AbsoluteUri
+        };
+        link.SetResourceReference(TextElement.ForegroundProperty, "NIRACyanBrush");
+        link.Click += (_, _) =>
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = uri.AbsoluteUri,
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[NIRA-CHAT-LINK] Open failed: {ex.GetType().Name}");
+            }
+        };
+        inlines.Add(link);
     }
 }

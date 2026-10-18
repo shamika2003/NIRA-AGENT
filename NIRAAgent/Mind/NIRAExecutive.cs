@@ -27,6 +27,8 @@ using NIRAAgent.Artifacts;
 using NIRAAgent.Authorization;
 using NIRAAgent.Browser;
 using NIRAAgent.Presentation;
+using NIRAAgent.Vision;
+using NIRAAgent.Diagnostics;
 
 namespace NIRAAgent.Mind;
 
@@ -833,6 +835,12 @@ public sealed class NIRAExecutive
         // one read-only expansion cycle, and the trusted runtime still owns authority.
         int contextExpansionCount = 0;
         int repeatedContextRequestCount = 0;
+        // Past conversations can identify a previously discussed filename but
+        // cannot prove that it exists on the current Windows installation.
+        // One archive follow-up after a verified filesystem observation is
+        // useful; repeated history-only expansions with no new local action
+        // waste model calls. A single corrective turn may still use tools.
+        int postFileObservationHistoryOnlyRounds = 0;
         HashSet<string> validContextSections = new(StringComparer.OrdinalIgnoreCase)
         {
             "memory", "conversation", "self", "character", "goals",
@@ -932,6 +940,21 @@ public sealed class NIRAExecutive
         // A different page, a corrected link, or a later user task stays free.
         HashSet<string> failedDocumentUrls =
             new(StringComparer.OrdinalIgnoreCase);
+
+        // A named HWND that failed pixel capture remains this run's actual
+        // visual objective. An unrelated foreground capture cannot satisfy it.
+        bool failedNamedWindowPixelCapture = false;
+
+        // A UI command is an action receipt, not proof of the user's goal.
+        // Require a new trusted post-action desktop observation before delivery.
+        bool desktopActionNeedsObservation = false;
+        long? desktopActionTargetHandle = null;
+        bool desktopVerificationReplanIssued = false;
+        NIRADesktopWriteContinuityGuard desktopWrites = new();
+        NIRAProcessStopContinuityGuard processStops = new();
+        NIRAProcessStartContinuityGuard processStarts = new();
+        string? pendingBlankDocumentText = null;
+        bool desktopTextMismatchObserved = false;
 
         HashSet<string> executedCapabilityRequests =
             new(
@@ -1534,6 +1557,42 @@ public sealed class NIRAExecutive
                         .Where(r => !string.IsNullOrWhiteSpace(r.Query) &&
                             executedConversationSearches.Add(r.BuildSignature()))
                         .Take(3).ToArray();
+                bool hasObservedFileSource = capabilityResultsBySignature.Values.Any(result =>
+                    result.Succeeded &&
+                    (result.CapabilityId == NIRACapabilityIds.FileLocate ||
+                     result.CapabilityId == NIRACapabilityIds.DirectoryList ||
+                     result.CapabilityId == NIRACapabilityIds.FileRead));
+                bool historicalRecheck = NIRAContextRetrievalPolicy.IsHistoryOnlyAfterFileObservation(
+                    hasObservedFileSource, added, requestedSearches.Length,
+                    requestedConversationSearches.Length,
+                    decision.CapabilityRequests.Count > 0 ||
+                    decision.BranchWorkProposals.Count > 0 ||
+                    decision.GoalProposals.Count > 0 ||
+                    decision.BranchProposals.Count > 0);
+                if (historicalRecheck && ++postFileObservationHistoryOnlyRounds > 1)
+                {
+                    requestedConversationSearches = Array.Empty<NIRAConversationSearchRequest>();
+                    if (postFileObservationHistoryOnlyRounds == 2)
+                    {
+                        executiveEvidence.AppendLine(
+                            "SOURCE-LOCALITY CORRECTION: Archived dialogue is not a live filesystem " +
+                            "observation. A previously mentioned filename or path can identify a " +
+                            "candidate, but only current-machine filesystem evidence can establish " +
+                            "that it is available now. Continue using another meaningful current " +
+                            "capability if one exists, otherwise report what remains unverified. " +
+                            "Do not request further historical paraphrases solely to prove a file exists.");
+                        Debug.WriteLine($"[ContextRetrieval] SOURCE LOCALITY REPLAN | Run={runId:D} | " +
+                            $"Cycle={cycle} | HistoricRounds={postFileObservationHistoryOnlyRounds}");
+                        // Exactly one corrective model turn; no fabricated
+                        // capability result, forced answer, or permission change.
+                        continue;
+                    }
+                    // The Executive's existing context budget handles repeated
+                    // requests without granting infinite recall/replanning calls.
+                    contextExpansionCount = Math.Max(contextExpansionCount, 4);
+                    repeatedContextRequestCount = Math.Max(repeatedContextRequestCount, 1);
+                    Debug.WriteLine($"[ContextRetrieval] SOURCE LOCALITY SATURATED | Run={runId:D} | Cycle={cycle}");
+                }
                 int newConversations = AppendConversationSearchEvidence(
                     memorySearchEvidence, requestedConversationSearches, surfacedConversationIds,
                     mindEvent.SocialEventId);
@@ -3639,6 +3698,11 @@ public sealed class NIRAExecutive
             }
 
 
+            // Also exclude second writes proposed together in one model batch.
+            HashSet<long> scheduledDesktopWrites = new();
+            HashSet<int> scheduledProcessStops = new();
+            HashSet<string> scheduledProcessStarts = new(StringComparer.OrdinalIgnoreCase);
+            HashSet<long> scheduledNewDocumentTransitions = new();
             foreach (NIRACapabilityRequest request in requestedCapabilities)
             {
                 string signature =
@@ -3667,6 +3731,84 @@ public sealed class NIRAExecutive
                     continue;
                 }
 
+                if (NIRAWindowObservationContinuityPolicy.IsUnrelatedForegroundCapture(
+                        request, failedNamedWindowPixelCapture))
+                {
+                    executedCapabilityRequests.Add(signature);
+                    capabilityEvidence.AppendLine();
+                    capabilityEvidence.AppendLine(
+                        "NAMED WINDOW OBSERVATION PROTECTED: an exact named " +
+                        "window pixel capture failed earlier in this run. " +
+                        "The model's new generic foreground/last-external " +
+                        "screenshot was not executed: it could read an unrelated " +
+                        "application. Try vision.accessibility using the SAME " +
+                        "grounded processName, titleContains or windowHandle " +
+                        "to inspect selected UI controls without foreground " +
+                        "focus; otherwise report the actual Windows limitation. " +
+                        "Do not repeat generic captures to satisfy the named request.");
+                    Debug.WriteLine($"[Executive] NAMED WINDOW FOREGROUND SUBSTITUTION BLOCKED | Run={runId:D}");
+                    continue;
+                }
+
+                if (NIRADesktopWriteContinuityGuard.BlocksSameBatchAfterNewDocument(
+                        request, scheduledNewDocumentTransitions))
+                {
+                    executedCapabilityRequests.Add(signature);
+                    capabilityEvidence.AppendLine(
+                        "NEW DOCUMENT BATCH GATE: Further desktop mutations of " +
+                        "the same window were held until the new document is " +
+                        "independently inspected as a distinct blank editor. " +
+                        "Only the first new-document command was dispatched.");
+                    NIRADiagnosticTrace.Event("DESKTOP-DOCUMENT-BATCH-BLOCKED",
+                        $"Run={runId:D} Cycle={cycle} Target=PendingNewDocument");
+                    continue;
+                }
+
+                if (desktopWrites.BlocksPendingDocumentTransition(request))
+                {
+                    executedCapabilityRequests.Add(signature);
+                    capabilityEvidence.AppendLine();
+                    capabilityEvidence.AppendLine(
+                        "NEW DOCUMENT NOT YET VERIFIED: The preceding new-document " +
+                        "shortcut was dispatched, but no subsequent desktop.inspect " +
+                        "has proven that a DIFFERENT BLANK document is active. " +
+                        "No additional keyboard commands, clearing, text entry or " +
+                        "control mutations were dispatched. Inspect the SAME HWND " +
+                        "before continuing; preserve the original file or tab.");
+                    NIRADiagnosticTrace.Event("DESKTOP-DOCUMENT-TRANSITION-BLOCKED",
+                        $"Run={runId:D} Cycle={cycle} Target=PendingBlankDocument");
+                    continue;
+                }
+
+                if (desktopWrites.BlocksUnsafeRecovery(request))
+                {
+                    executedCapabilityRequests.Add(signature);
+                    capabilityEvidence.AppendLine(
+                        "UNVERIFIED DESKTOP WRITE: A previous input operation has " +
+                        "not passed an exact editor readback. Another state-changing " +
+                        "desktop action was withheld to protect partial content. " +
+                        "Only observe the current window; do not clear or retry it.");
+                    Debug.WriteLine($"[DesktopAction] UNSAFE RECOVERY BLOCKED | Run={runId:D}");
+                    continue;
+                }
+
+                if (desktopWrites.Blocks(request))
+                {
+                    // Another model round can author entirely different text;
+                    // that does not authorize appending a second full draft.
+                    executedCapabilityRequests.Add(signature);
+                    capabilityEvidence.AppendLine();
+                    capabilityEvidence.AppendLine(
+                        "DESKTOP WRITE ALREADY DISPATCHED: A successful text " +
+                        "write occurred in this window during the current user run. " +
+                        "A second write without a deliberate change of editing " +
+                        "context was NOT executed. Inspect the current editor and " +
+                        "verify the actual result; do not append an alternative " +
+                        "full draft or embed keyboard shortcuts in text.");
+                    Debug.WriteLine($"[DesktopAction] DUPLICATE WRITE BLOCKED | Run={runId:D}");
+                    continue;
+                }
+
                 // An observed HTTP 404/410 is not an uncertain click. If the
                 // model guesses that exact dead document again with newPage or
                 // forceReload toggled, return existing evidence rather than
@@ -3692,12 +3834,58 @@ public sealed class NIRAExecutive
                     continue;
                 }
 
+                if (processStarts.TryBlock(request, out string previousStartEvidence))
+                {
+                    executedCapabilityRequests.Add(signature);
+                    capabilityEvidence.AppendLine(previousStartEvidence);
+                    NIRADiagnosticTrace.Event("PROCESS-START-REPEAT-SUPPRESSED",
+                        $"Run={runId:D} Cycle={cycle} ExecutableAlreadyLaunched=True");
+                    continue;
+                }
+                if (NIRAProcessStartContinuityGuard.LaunchKey(request) is string launchKey &&
+                    !scheduledProcessStarts.Add(launchKey))
+                {
+                    executedCapabilityRequests.Add(signature);
+                    capabilityEvidence.AppendLine(
+                        "DUPLICATE APPLICATION LAUNCH BATCH SUPPRESSED: " +
+                        "The same executable was requested more than once in a single batch. " +
+                        "Use the first launch receipt and inspect its state.");
+                    continue;
+                }
+                if (processStops.TryBlock(request, out string previousStopEvidence))
+                {
+                    executedCapabilityRequests.Add(signature);
+                    capabilityEvidence.AppendLine(previousStopEvidence);
+                    NIRADiagnosticTrace.Event("PROCESS-STOP-REPEAT-SUPPRESSED",
+                        $"Run={runId:D} Cycle={cycle} " +
+                        $"PID={NIRAProcessStopContinuityGuard.TargetPid(request)}");
+                    continue;
+                }
+                if (NIRAProcessStopContinuityGuard.TargetPid(request) is int plannedStopPid &&
+                    !scheduledProcessStops.Add(plannedStopPid))
+                {
+                    executedCapabilityRequests.Add(signature);
+                    capabilityEvidence.AppendLine($"DUPLICATE PROCESS STOP BATCH SUPPRESSED: " +
+                        $"PID={plannedStopPid}. One termination attempt per PID per batch.");
+                    continue;
+                }
+
+                if (NIRADesktopWriteContinuityGuard.WriteTarget(request) is long plannedHandle &&
+                    !scheduledDesktopWrites.Add(plannedHandle))
+                {
+                    executedCapabilityRequests.Add(signature);
+                    capabilityEvidence.AppendLine("DESKTOP WRITE BATCH SUPPRESSED: Only one content write per exact window in a single action batch. Inspect the result before another write.");
+                    continue;
+                }
+
                 if (executedCapabilityRequests.Add(
                         signature))
                 {
                     dispatchCapabilities.Add(
                         request);
-
+                    if (NIRADesktopWriteContinuityGuard.NewDocumentTarget(request)
+                        is long scheduledNewHandle)
+                        scheduledNewDocumentTransitions.Add(scheduledNewHandle);
 
                     continue;
                 }
@@ -3779,7 +3967,141 @@ public sealed class NIRAExecutive
 
                 capabilityResultsBySignature[signature] =
                     result;
+                if (newCapabilityRequests[index].CapabilityId == NIRACapabilityIds.ProcessStart)
+                {
+                    processStarts.Record(newCapabilityRequests[index], result);
+                    bool backgroundLaunch = result.Succeeded &&
+                        !NIRACapabilityArguments.GetBoolean(newCapabilityRequests[index], "waitForExit");
+                    NIRADiagnosticTrace.Event("PROCESS-LAUNCH-OUTCOME",
+                        $"Run={runId:D} Cycle={cycle} Status={result.Status} " +
+                        $"BackgroundLaunch={backgroundLaunch}");
+                }
+                if (newCapabilityRequests[index].CapabilityId == NIRACapabilityIds.ProcessStop)
+                {
+                    processStops.Record(newCapabilityRequests[index], result);
+                    // A process list captured BEFORE this termination attempt is
+                    // stale regardless of whether the attempt succeeded. Permit
+                    // a fresh read of the exact same filter in this run.
+                    int invalidatedLists = NIRAProcessStopContinuityGuard
+                        .InvalidatePriorProcessLists(executedCapabilityRequests,
+                            reportedDuplicateCapabilityRequests,
+                            capabilityRequestsBySignature, capabilityResultsBySignature);
+                    capabilityEvidence.AppendLine(result.Succeeded
+                        ? "PROCESS EXIT VERIFIED: " + result.Summary +
+                          " Do not repeat the stop. This evidence applies to the exact terminated PID."
+                        : "PROCESS STOP WAS NOT VERIFIED: " + result.Summary +
+                          " This does NOT establish that the process is still running. " +
+                          "A fresh, scoped process.list can establish its current state. " +
+                          "Do not reuse an older process-list result or repeat the failed kill.");
+                    NIRADiagnosticTrace.Event("PROCESS-STOP-OUTCOME",
+                        $"Run={runId:D} Cycle={cycle} " +
+                        $"PID={NIRAProcessStopContinuityGuard.TargetPid(newCapabilityRequests[index])} " +
+                        $"Status={result.Status} VerifiedExit={result.Succeeded} " +
+                        $"OldObservationsInvalidated={invalidatedLists}");
+                }
+
+                bool actionTextVerified = result.Output.Contains(
+                    "ActionPostconditionVerified: True", StringComparison.OrdinalIgnoreCase);
+                desktopWrites.Record(newCapabilityRequests[index], result.Succeeded ||
+                    (result.OutcomeUncertain && result.Summary.StartsWith(
+                        "DESKTOP_INPUT_MAY_BE_PARTIAL:", StringComparison.Ordinal)),
+                    actionTextVerified);
                 capabilityRequestsBySignature[signature] = newCapabilityRequests[index];
+                if (newCapabilityRequests[index].CapabilityId ==
+                        NIRACapabilityIds.DesktopInspect && result.Succeeded &&
+                        NIRADesktopDocumentTransitionPolicy.InspectedHandle(result.Output) is long inspectedHandle &&
+                        NIRADesktopExecutionEvidencePolicy.SameTargetObservation(
+                            inspectedHandle, result.Output, true))
+                {
+                    bool newDocumentProven = desktopWrites.RecordInspection(
+                        inspectedHandle, result.Output);
+                    if (newDocumentProven)
+                    {
+                        capabilityEvidence.AppendLine();
+                        capabilityEvidence.AppendLine(
+                            "NEW BLANK DOCUMENT VERIFIED: A read-only inspection of " +
+                            "the same HWND observed a changed document identity and " +
+                            "an empty active editor AFTER the new-document shortcut. " +
+                            "The earlier document was not a valid editing target.");
+                        NIRADiagnosticTrace.Event("DESKTOP-DOCUMENT-TRANSITION-VERIFIED",
+                            $"Run={runId:D} Cycle={cycle} HWND=0x{inspectedHandle:X}");
+                    }
+                }
+                if (newCapabilityRequests[index].CapabilityId ==
+                        NIRACapabilityIds.DesktopAct && result.Succeeded)
+                {
+                    // Exact text readback from the trusted backend already proves
+                    // the postcondition for this write. Do not spend two more
+                    // cognition rounds inspecting the same document. Non-text
+                    // UI actions still require a new observation.
+                    string? verifiedAction = NIRACapabilityArguments.GetOptionalString(
+                        newCapabilityRequests[index], "action", 40);
+                    desktopActionNeedsObservation =
+                        NIRADesktopExecutionEvidencePolicy.RequiresFollowupInspection(
+                            verifiedAction, actionTextVerified);
+                    if (!desktopActionNeedsObservation)
+                        NIRADiagnosticTrace.Event("DESKTOP-EXACT-TEXT-PROOF",
+                            $"Run={runId:D} Cycle={cycle} Method=BackendReadback " +
+                            "FurtherDesktopInspectionRequired=False ObjectiveReviewStillRequired=True");
+                    desktopActionTargetHandle = DesktopWindowResolver.ParseHandle(
+                        NIRACapabilityArguments.GetOptionalString(
+                            newCapabilityRequests[index], "windowHandle", 80));
+                    desktopVerificationReplanIssued = false;
+                    string? writeKind = NIRACapabilityArguments.GetOptionalString(
+                        newCapabilityRequests[index], "action", 40);
+                    if (string.Equals(writeKind, "type", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Exact new-document content is retained in-memory only;
+                        // no literal text enters diagnostic traces.
+                        bool append = newCapabilityRequests[index].Arguments.ValueKind ==
+                            System.Text.Json.JsonValueKind.Object &&
+                            newCapabilityRequests[index].Arguments.TryGetProperty(
+                                "allowExistingContent", out var appendValue) &&
+                            appendValue.ValueKind == System.Text.Json.JsonValueKind.True;
+                        pendingBlankDocumentText = append || actionTextVerified ? null :
+                            NIRACapabilityArguments.GetOptionalRawString(
+                                newCapabilityRequests[index], "text", 10000);
+                    }
+                    else pendingBlankDocumentText = null;
+                }
+                else if (newCapabilityRequests[index].CapabilityId ==
+                        NIRACapabilityIds.DesktopInspect && result.Succeeded &&
+                        desktopActionNeedsObservation &&
+                        NIRADesktopExecutionEvidencePolicy.SameTargetObservation(
+                            desktopActionTargetHandle, result.Output, result.Succeeded))
+                {
+                    // An inspection of the right HWND is NOT evidence that
+                    // the requested writing was applied. Compare full text.
+                    bool textProven = !desktopWrites.AwaitingNewDocument(
+                        NIRADesktopDocumentTransitionPolicy.InspectedHandle(result.Output) ?? 0) &&
+                        (pendingBlankDocumentText is null ||
+                        NIRADesktopTextEntryPolicy.InspectionMatchesNewDocumentText(
+                            result.Output, pendingBlankDocumentText));
+                    if (textProven)
+                    {
+                        desktopActionNeedsObservation = false;
+                        if (desktopActionTargetHandle is long verifiedHandle)
+                            desktopWrites.MarkTextVerified(verifiedHandle);
+                        pendingBlankDocumentText = null;
+                    }
+                    else
+                    {
+                        desktopTextMismatchObserved = true;
+                        capabilityEvidence.AppendLine(
+                            "DESKTOP TEXT VERIFICATION INCOMPLETE: Correct target HWND, " +
+                            "but the target editor's complete accessible text has not " +
+                            "been proven to match the requested content. No further " +
+                            "editing or destructive recovery is authorized in this run.");
+                        Debug.WriteLine($"[DesktopAction] TEXT MISMATCH | Run={runId:D} | Cycle={cycle}");
+                    }
+                }
+
+                if (NIRAWindowObservationContinuityPolicy.IsNamedWindowCapture(
+                        newCapabilityRequests[index]))
+                    failedNamedWindowPixelCapture = !result.Succeeded;
+                if (newCapabilityRequests[index].CapabilityId ==
+                        NIRACapabilityIds.VisionAccessibility && result.Succeeded)
+                    failedNamedWindowPixelCapture = false;
 
                 if (newCapabilityRequests[index].CapabilityId ==
                         NIRACapabilityIds.BrowserNavigate &&
@@ -3803,6 +4125,19 @@ public sealed class NIRAExecutive
                 AppendCapabilityEvidence(
                     capabilityEvidence,
                     capabilityResults);
+
+            // A successful close with a fresh zero-process/zero-window OS read
+            // is authoritative evidence. Prevent the model reviewer from treating
+            // a transient process.start PID as a surviving GUI instance.
+            foreach (NIRACapabilityResult closeResult in capabilityResults.Where(
+                NIRADesktopCloseCompletionPolicy.IsVerifiedReceipt))
+            {
+                string closeProof = NIRADesktopCloseCompletionPolicy.DescribeVerifiedReceipt(closeResult);
+                capabilityEvidence.AppendLine(closeProof);
+                NIRADiagnosticTrace.Event("DESKTOP-CLOSE-POSTCONDITION",
+                    $"Run={runId:D} Cycle={cycle} Verified=True " +
+                    "SameNameWindows=0 SameNameProcesses=0");
+            }
 
             // Stop the exact observed direct-lane loops BEFORE another model
             // call. New inspection refs are not new actions; an explicit trusted
@@ -4288,6 +4623,120 @@ public sealed class NIRAExecutive
                 dynamicToolCapabilityResults.Count >
                 0;
 
+            // A trusted OS failure creating the exact requested parent is a
+            // terminal prerequisite blocker for this serial action batch.
+            // Another cognition round cannot repair an unavailable storage
+            // provider; never spin through 10+ LLM calls or infer Defender.
+            if (mindEvent.Source == NIRAMindEventSource.User &&
+                !continueForRuntimeCorrection &&
+                NIRAFilesystemPrerequisitePolicy.TryDescribeBlockedPrerequisite(
+                    newCapabilityRequests, capabilityResults,
+                    out string blockedFilesystemReply, out string blockedFilesystemKind))
+            {
+                decision = decision with
+                {
+                    State = NIRACognitionState.Blocked,
+                    EmitReply = true,
+                    ReplyReady = true,
+                    Reply = blockedFilesystemReply,
+                    Speech = blockedFilesystemReply,
+                    DecisionSummary = "Windows rejected the required directory creation; " +
+                        "no dependent write is verified."
+                };
+                continueForCapabilityResults = false;
+                continueForRuntimeCorrection = false;
+                (IReadOnlyList<NIRAGoalApplyResult> stoppedGoals,
+                 IReadOnlyList<NIRABranchApplyResult> stoppedBranches) =
+                    await PersistBlockedTaskAsync(
+                        mindEvent, ResolveTaskGoalId(
+                            mindEvent, ownedGoalId, goalResults, branchResults),
+                        blockedFilesystemReply, cancellationToken);
+                goalResults = goalResults.Concat(stoppedGoals).ToArray();
+                branchResults = branchResults.Concat(stoppedBranches).ToArray();
+                goalChanges += stoppedGoals.Count(r => r.Changed);
+                branchChanges += stoppedBranches.Count(r => r.Changed);
+                NIRADiagnosticTrace.Event("FILESYSTEM-PREREQUISITE-BLOCKED",
+                    $"Run={runId:D} Cycle={cycle} Kind={blockedFilesystemKind} " +
+                    "ReplanCallsSkipped=True DefenderBlockConfirmed=False");
+            }
+
+            // A confirmed OS access boundary needs a useful manual handoff,
+            // not additional Gemma/Ultra calls trying the same forbidden action.
+            // Only terminalize a single failed close; multi-operation batches
+            // still go through the evidence-preserving review path.
+            if (mindEvent.Source == NIRAMindEventSource.User &&
+                !continueForRuntimeCorrection &&
+                NIRADesktopManualHandoffPolicy.TryDescribeBlockedOperation(
+                    newCapabilityRequests, capabilityResults,
+                    out string manualDesktopReply, out string manualDesktopKind))
+            {
+                decision = decision with
+                {
+                    State = NIRACognitionState.Blocked,
+                    EmitReply = true,
+                    ReplyReady = true,
+                    Reply = manualDesktopReply,
+                    Speech = manualDesktopReply,
+                    DecisionSummary = "Windows denied a normal window close; " +
+                        "NIRA provided a safe, user-actionable handoff."
+                };
+                continueForCapabilityResults = false;
+                continueForRuntimeCorrection = false;
+                (IReadOnlyList<NIRAGoalApplyResult> stoppedGoals,
+                 IReadOnlyList<NIRABranchApplyResult> stoppedBranches) =
+                    await PersistBlockedTaskAsync(
+                        mindEvent, ResolveTaskGoalId(
+                            mindEvent, ownedGoalId, goalResults, branchResults),
+                        manualDesktopReply, cancellationToken);
+                goalResults = goalResults.Concat(stoppedGoals).ToArray();
+                branchResults = branchResults.Concat(stoppedBranches).ToArray();
+                goalChanges += stoppedGoals.Count(item => item.Changed);
+                branchChanges += stoppedBranches.Count(item => item.Changed);
+                NIRADiagnosticTrace.Event("DESKTOP-MANUAL-HANDOFF",
+                    $"Run={runId:D} Cycle={cycle} Kind={manualDesktopKind} " +
+                    "RetriesSkipped=True ModelEscalationSkipped=True " +
+                    "TargetExitVerified=False");
+            }
+
+            // A fresh same-HWND inspection already disproved completion.
+            // Another 8-13 LLM cycles cannot make a corrupted insertion true,
+            // and potentially destructive cleanup is blocked for this run.
+            if (desktopTextMismatchObserved &&
+                mindEvent.Source == NIRAMindEventSource.User)
+            {
+                const string mismatchReply =
+                    "I opened the editor and sent the text, but the text " +
+                    "in the editor could not be verified as the complete " +
+                    "requested paragraph. I stopped without clearing or " +
+                    "rewriting it, so this " +
+                    "task is not complete.";
+                decision = decision with
+                {
+                    State = NIRACognitionState.Blocked,
+                    EmitReply = true,
+                    ReplyReady = true,
+                    Reply = mismatchReply,
+                    Speech = mismatchReply,
+                    DecisionSummary = "Live editor content did not pass exact postcondition verification."
+                };
+                continueForCapabilityResults = false;
+                continueForRuntimeCorrection = false;
+                // Keep the persistent task ledger consistent with the actual
+                // incomplete desktop result; an active goal must not claim
+                // success or silently restart the same corrupted insertion.
+                (IReadOnlyList<NIRAGoalApplyResult> stoppedGoals,
+                 IReadOnlyList<NIRABranchApplyResult> stoppedBranches) =
+                    await PersistBlockedTaskAsync(
+                        mindEvent, ResolveTaskGoalId(
+                            mindEvent, ownedGoalId, goalResults, branchResults),
+                        mismatchReply, cancellationToken);
+                goalResults = goalResults.Concat(stoppedGoals).ToArray();
+                branchResults = branchResults.Concat(stoppedBranches).ToArray();
+                goalChanges += stoppedGoals.Count(r => r.Changed);
+                branchChanges += stoppedBranches.Count(r => r.Changed);
+                Debug.WriteLine($"[DesktopAction] TEXT MISMATCH TERMINAL | Run={runId:D} | Cycle={cycle}");
+            }
+
 
             bool continueForDynamicToolResults =
                 dynamicToolMutations.Count >
@@ -4561,8 +5010,12 @@ public sealed class NIRAExecutive
                     continue;
                 }
 
-                bool forceTerminal =
-                    noProgressCycles >= 2 || saturatedSingleObservation;
+                bool deniedCloseAlreadyObserved = capabilityResultsBySignature.Values.Any(
+                    result => (result.CapabilityId is NIRACapabilityIds.DesktopAct or
+                        NIRACapabilityIds.DesktopClose) &&
+                        result.Summary.Contains("WINDOW_CLOSE_ACCESS_DENIED:", StringComparison.Ordinal));
+                bool forceTerminal = noProgressCycles >= 2 || saturatedSingleObservation ||
+                    (deniedCloseAlreadyObserved && noProgressCycles >= 1);
 
 
                 if (forceTerminal &&
@@ -4581,7 +5034,8 @@ public sealed class NIRAExecutive
                         DecisionSummary = "Waiting for the authoritative branch-work result."
                     };
                 }
-                else if (forceTerminal && !partialEvidenceSynthesisUsed &&
+                else if (forceTerminal && !deniedCloseAlreadyObserved &&
+                    !partialEvidenceSynthesisUsed &&
                     mindEvent.Source == NIRAMindEventSource.User &&
                     capabilityResultsBySignature.Values.Any(result => result.Succeeded &&
                         result.Risk == NIRACapabilityRisk.Observe))
@@ -4660,6 +5114,39 @@ public sealed class NIRAExecutive
             // A failed/denied capability result also counts as evidence of the
             // attempt; cognition may then explain the actual limitation, never
             // pretend the requested data was observed.
+
+            // Generic UI execution has a separate action/observation boundary.
+            // A successful click, key, invoke or text entry is not proof that
+            // the requested document/application result exists. Re-observe
+            // once before the user-facing completion review; if the model
+            // refuses to inspect, report unverified work, never false Done.
+            if (mindEvent.Source == NIRAMindEventSource.User &&
+                decision.State == NIRACognitionState.Complete &&
+                decision.EmitReply && desktopActionNeedsObservation)
+            {
+                if (!desktopVerificationReplanIssued)
+                {
+                    desktopVerificationReplanIssued = true;
+                    executiveEvidence.AppendLine(
+                        "DESKTOP ACTION COMPLETION BOUNDARY: A desktop.act " +
+                        "operation dispatched but no successful post-action " +
+                        "desktop.inspect has established the new application " +
+                        "state. Inspect that exact HWND now; do not say Done yet.");
+                    Debug.WriteLine($"[DesktopAction] VERIFICATION REQUIRED | Run={runId} | Cycle={cycle}");
+                    continue;
+                }
+                const string unverifiedDesktopReply =
+                    "I issued the desktop action, but I couldn't verify " +
+                    "the final application state. I won't call the task done.";
+                decision = decision with
+                {
+                    State = NIRACognitionState.Blocked,
+                    Reply = unverifiedDesktopReply,
+                    Speech = unverifiedDesktopReply,
+                    EmitReply = true, ReplyReady = true,
+                    DecisionSummary = "Desktop action dispatched without verified postcondition."
+                };
+            }
 
             // USER-OBJECTIVE DELIVERY GATE (ALL USER SURFACES)
             // The cognition model can accidentally turn an executable request
@@ -5689,6 +6176,12 @@ public sealed class NIRAExecutive
                 $"ResponsePathCalls={responsePathModelCalls} | " +
                 $"PostReplyFormationCalls={postReplyMemoryFormationCalls} | " +
                 $"TrackedTotal={cognitionModelCalls + completionReviewCalls + responseRealizationCalls + memoryFormationCalls}");
+            NIRADiagnosticTrace.Event("RUN-MODEL-CALLS",
+                $"Run={runId:D} Cognition={cognitionModelCalls} " +
+                $"DeepDelegated={_cognition.GetAdditionalCognitionCallCount(runId) > 0} " +
+                $"Review={completionReviewCalls} Realization={responseRealizationCalls} " +
+                $"MemoryFormation={memoryFormationCalls} " +
+                $"Total={cognitionModelCalls + completionReviewCalls + responseRealizationCalls + memoryFormationCalls}");
             yield return new NIRAOutputChunk
             {
                 RunId =
@@ -6767,6 +7260,40 @@ public sealed class NIRAExecutive
                 "The most recent tool operation failed, so the task is not fully verified.",
             _ => "I couldn't confirm the full requested result."
         };
+
+        // Explicit Windows OS denial is more informative than a generic stalled
+        // continuation. Never invent process exit or discard the actual failure.
+        bool closeAccessDenied = (observedResults ?? Array.Empty<NIRACapabilityResult>())
+            .Any(result => (result.CapabilityId is NIRACapabilityIds.DesktopClose or
+                NIRACapabilityIds.DesktopAct) &&
+                result.Summary.Contains("WINDOW_CLOSE_ACCESS_DENIED:", StringComparison.Ordinal));
+        if (closeAccessDenied)
+        {
+            bool observedSurvivingWindow = (observedResults ?? Array.Empty<NIRACapabilityResult>())
+                .Any(result => result.CapabilityId == NIRACapabilityIds.DesktopInspect &&
+                    result.Succeeded);
+            return "Windows denied the normal window-close request (access denied). " +
+                "I couldn't safely complete that action. If the application is still open, " +
+                "bring it to the foreground and click its X (Close) button; handle any " +
+                "save confirmation yourself. I didn't force-terminate the process or " +
+                "bypass Windows security. " +
+                (observedSurvivingWindow
+                    ? "A desktop inspection observed the window, but its final exit wasn't verified."
+                    : "I couldn't verify that its window and process exited.");
+        }
+
+        NIRACapabilityResult? verifiedClose = (observedResults ?? Array.Empty<NIRACapabilityResult>())
+            .LastOrDefault(NIRADesktopCloseCompletionPolicy.IsVerifiedReceipt);
+        if (verifiedClose is not null)
+        {
+            return "I verified that " +
+                (verifiedClose.Output.Split('\n')
+                    .FirstOrDefault(line => line.StartsWith("ProcessName: ", StringComparison.OrdinalIgnoreCase))?
+                    .Substring("ProcessName: ".Length).Trim() ?? "the targeted application") +
+                " closed: its window disappeared and no matching processes or windows " +
+                "remained in the final check. Any other requested work still needs its " +
+                "own confirmation.";
+        }
 
         // Keep literal source paths from verified filesystem results, never
         // invent a match, and avoid dumping an entire 200-entry tool transcript.

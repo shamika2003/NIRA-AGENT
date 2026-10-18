@@ -1,0 +1,197 @@
+<Window x:Class="NIRAAgent.UI.Visuals.NIRAUserAttachmentGalleryWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        Title="NIRA · Images"
+        Width="1080" Height="785" MinWidth="620" MinHeight="450"
+        WindowStartupLocation="CenterOwner"
+        WindowStyle="None" ResizeMode="CanResize" ShowInTaskbar="False"
+        Background="{DynamicResource NIRABackgroundBrush}"
+        Foreground="{DynamicResource NIRATextBrush}"
+        FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="13"
+        SnapsToDevicePixels="True" UseLayoutRounding="True"
+        PreviewKeyDown="Gallery_PreviewKeyDown">
+    <WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="0" ResizeBorderThickness="7"
+                            CornerRadius="0" GlassFrameThickness="0"
+                            UseAeroCaptionButtons="False"/>
+    </WindowChrome.WindowChrome>
+
+    <Window.Resources>
+        <Style x:Key="GalleryTitleButton" TargetType="Button"
+               BasedOn="{StaticResource NIRASecondaryButtonStyle}">
+            <Setter Property="Width" Value="36"/>
+            <Setter Property="Height" Value="34"/>
+            <Setter Property="MinWidth" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Margin" Value="4,0,0,0"/>
+        </Style>
+        <Style x:Key="GalleryArrowButton" TargetType="Button"
+               BasedOn="{StaticResource NIRASecondaryButtonStyle}">
+            <Setter Property="Width" Value="40"/>
+            <Setter Property="Height" Value="46"/>
+            <Setter Property="MinWidth" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="FontSize" Value="25"/>
+            <Setter Property="FontWeight" Value="Light"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid x:Name="RootShell" Background="{DynamicResource NIRAWindowGradient}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="62"/>
+            <RowDefinition Height="1"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" Background="{DynamicResource NIRATopBarTintBrush}"
+                MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+            <Grid Margin="20,0,16,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Image Source="/Assets/Nira-Icon.png" Width="34" Height="34"
+                           Stretch="Uniform" Margin="0,0,11,0" IsHitTestVisible="False"/>
+                    <StackPanel VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="NIRA" FontSize="16" FontWeight="SemiBold"/>
+                            <TextBlock Text="  /  IMAGE VIEWER" FontSize="10" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource NIRASecondaryBrush}"
+                                       VerticalAlignment="Bottom" Margin="1,0,0,2"/>
+                        </StackPanel>
+                        <TextBlock Text="ATTACHMENTS · FULL RESOLUTION" FontSize="9.5"
+                                   Foreground="{DynamicResource NIRASecondaryBrush}" Margin="0,3,0,0"/>
+                    </StackPanel>
+                </StackPanel>
+                <TextBlock Grid.Column="1" Text="{Binding CounterText}" FontSize="12"
+                           VerticalAlignment="Center" Margin="14,0,14,0"
+                           Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Style="{StaticResource GalleryTitleButton}" Content="&#xE921;"
+                            ToolTip="Minimize" Click="MinimizeButton_Click"/>
+                    <Button Style="{StaticResource GalleryTitleButton}" Content="&#xE922;"
+                            ToolTip="Maximize / restore" Click="MaximizeButton_Click"/>
+                    <Button Style="{StaticResource GalleryTitleButton}" Content="&#xE8BB;"
+                            ToolTip="Close viewer" Click="CloseButton_Click"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+        <Border Grid.Row="1" Background="{DynamicResource NIRANeonLine}"/>
+
+        <Border Grid.Row="2" Margin="18,16,18,0" Padding="10"
+                CornerRadius="18" Background="{DynamicResource NIRAPanelStrongBrush}"
+                BorderBrush="{DynamicResource NIRABorderBrush}" BorderThickness="1">
+            <Grid Background="Transparent">
+                <Border CornerRadius="13" Background="#08101F"
+                        BorderBrush="#395274" BorderThickness="1"/>
+                <Grid Margin="7" ClipToBounds="True">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="44"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="44"/>
+                    </Grid.ColumnDefinitions>
+                    <Button Grid.Column="0" Content="‹" Margin="0,0,3,0"
+                            Style="{StaticResource GalleryArrowButton}"
+                            IsEnabled="{Binding CanGoPrevious}" ToolTip="Previous image (Left arrow)"
+                            Click="PreviousButton_Click"/>
+                    <!-- Preserve async, frozen-image binding; never decode in layout. -->
+                    <Image Grid.Column="1" Source="{Binding SelectedItem.FullImage}"
+                           Stretch="Uniform" StretchDirection="DownOnly"
+                           SnapsToDevicePixels="True" RenderOptions.BitmapScalingMode="HighQuality"/>
+                    <Button Grid.Column="2" Content="›" Margin="3,0,0,0"
+                            Style="{StaticResource GalleryArrowButton}"
+                            IsEnabled="{Binding CanGoNext}" ToolTip="Next image (Right arrow)"
+                            Click="NextButton_Click"/>
+                </Grid>
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="3" Margin="18,12,18,18" Padding="12,11,12,9"
+                CornerRadius="16" Background="{DynamicResource NIRAPanelBrush}"
+                BorderBrush="{DynamicResource NIRABorderBrush}" BorderThickness="1">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <DockPanel Margin="4,0,4,9">
+                    <!-- A source URL is available only for an already-grounded
+                         visual artifact; the link opens on explicit user click. -->
+                    <Button x:Name="SourceLinkButton" DockPanel.Dock="Right"
+                            Content="Open image source  ↗"
+                            Margin="12,0,0,0" Padding="9,3" FontSize="11"
+                            Visibility="Collapsed"
+                            Cursor="Hand"
+                            Foreground="{DynamicResource NIRABlueBrush}"
+                            Background="Transparent" BorderThickness="0"
+                            Click="OpenSourceButton_Click"/>
+
+
+                    <TextBlock DockPanel.Dock="Left" Text="IMAGE COLLECTION" FontSize="10"
+                               FontWeight="SemiBold" Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                    <TextBlock DockPanel.Dock="Right" Text="← / → TO NAVIGATE  ·  ESC TO CLOSE"
+                               FontSize="9" Foreground="{DynamicResource NIRAMutedBrush}"
+                               HorizontalAlignment="Right"/>
+                </DockPanel>
+                <ListBox x:Name="ThumbnailList" Grid.Row="1" Height="85"
+                         ItemsSource="{Binding Items}"
+                         SelectionChanged="ThumbnailList_SelectionChanged"
+                         Background="Transparent" BorderThickness="0"
+                         ScrollViewer.CanContentScroll="False"
+                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                         ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                    <ListBox.ItemsPanel>
+                        <ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                    </ListBox.ItemsPanel>
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="Padding" Value="0"/>
+                            <Setter Property="Margin" Value="0,0,8,0"/>
+                            <Setter Property="Background" Value="Transparent"/>
+                            <Setter Property="BorderThickness" Value="0"/>
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="ListBoxItem">
+                                        <Border x:Name="Tile" CornerRadius="9"
+                                                BorderBrush="{DynamicResource NIRABorderBrush}"
+                                                BorderThickness="1" Padding="3"
+                                                Background="#0D1830">
+                                            <ContentPresenter/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="Tile" Property="BorderBrush"
+                                                        Value="{DynamicResource NIRAComposerEdgeBrush}"/>
+                                            </Trigger>
+                                            <Trigger Property="IsSelected" Value="True">
+                                                <Setter TargetName="Tile" Property="BorderBrush"
+                                                        Value="{DynamicResource NIRABlueBrush}"/>
+                                                <Setter TargetName="Tile" Property="BorderThickness" Value="2"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Border Width="112" Height="68" CornerRadius="6"
+                                    Background="#08101F" ClipToBounds="True">
+                                <Image Source="{Binding PreviewImage}" Stretch="Uniform"
+                                       SnapsToDevicePixels="True"/>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

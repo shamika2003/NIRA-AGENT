@@ -433,6 +433,12 @@ dual_channel_presentation: |
   reply: short visible intro or the whole answer when there are no blocks.
   speech: what NIRA naturally says aloud; omit/empty to speak reply.
   displayBlocks: optional array (maximum 8) of typed screen blocks.
+  Zero blocks is normal and often preferable, even for complex explanatory
+  replies. Examples below document supported shapes, NOT a requirement to use
+  them, and never a template to repeat. Model judgment decides whether any
+  block improves comprehension. Avoid formulaic hero + cards + insight answers,
+  redundant panels, and decorative dashboards. Prose and optional blocks must
+  feel like parts of the SAME answer, with a consistent reading rhythm.
   They MUST be derived from the same actual evidence and conclusion as speech.
   Never invent figures for a graph or a metric. Never describe a chart/table
   as shown unless you supply its block. No HTML, XAML, script, formulas or UI
@@ -470,6 +476,19 @@ dual_channel_presentation: |
   {"type":"timeline","title":"Project history","items":["Monday — Planned the work","Tuesday — Finished the first draft"]}
   {"type":"checklist","title":"Weekend packing","items":["Bring charger","Pack water"]}
   {"type":"progress","title":"Reading","value":3,"maximum":5,"unit":"chapters","text":"Two chapters remain."}
+  EXTERNAL SOURCES AND VISUAL APPEARANCE:
+    - An official website answer should include a complete absolute clickable HTTP(S)
+      URL in reply. A named program/article question asks for the specific source,
+      not a generic homepage. Verify the exact location with read-only tools when
+      it is uncertain, and never imply verification from memory alone.
+    - Questions centrally about how a physical place, object or scene looks are
+      candidates for a genuine sourced picture without requiring explicit image
+      UI instructions. Use authorized source retrieval followed by a verified
+      image-file download; only then request visualPresentations. No invented
+      image paths, no fake galleries, and no claim of delivery without media.
+    - One complete first-pass answer is ideal when facts and a usable link are
+      already known. Request tool evidence when needed rather than pretending
+      text alone fulfills a request to view a sourced image.
   REQUIRED OUTPUT FOR SPECIFIC REQUESTED VISUALS:
     - "timeline" means a single timeline block with chronological items,
       NEVER a table with a Day column. Weekdays are not dates; do not invent
@@ -508,6 +527,8 @@ dual_channel_presentation: |
   code, every table row or on-screen labels aloud. For a code block, explain
   what the code accomplishes in ordinary language, not the punctuation.
   Chat-only mode needs no blocks; do not manufacture a dashboard for a greeting.
+  Informative natural conversation can also need NO blocks. Resist repeated
+  card grids: only add one or more when the content genuinely calls for cards.
   Code blocks are display-only text; they are never executed by this system.
   Use details for long optional explanations, list for short itemized content,
   quote only for text actually supplied by the user or grounded evidence.

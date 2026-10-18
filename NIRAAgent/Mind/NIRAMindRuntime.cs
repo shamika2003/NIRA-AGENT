@@ -95,7 +95,8 @@ public sealed class NIRAMindRuntime
         string userInput,
         [EnumeratorCancellation]
         CancellationToken cancellationToken = default,
-        Guid? attachedPastChatSessionId = null)
+        Guid? attachedPastChatSessionId = null,
+        IReadOnlyList<string>? imagePaths = null)
     {
         if (string.IsNullOrWhiteSpace(
                 userInput))
@@ -133,6 +134,11 @@ public sealed class NIRAMindRuntime
 
 
             Dictionary<string, string> userMetadata = new();
+            var explicitImages = NIRAAgent.AI.Cognition.NIRAImageInput.FindExplicitLocalImages(input);
+            var allImages = (imagePaths ?? Array.Empty<string>()).Concat(explicitImages).ToArray();
+            if (allImages.Length > 0)
+                userMetadata[NIRAAgent.AI.Cognition.NIRAImageInput.MetadataKey] =
+                    NIRAAgent.AI.Cognition.NIRAImageInput.Serialize(allImages);
             if (attachedPastChatSessionId is Guid sid && sid != Guid.Empty)
                 userMetadata["attachedPastChatSessionId"] = sid.ToString("D");
             NIRAActiveWorkObservation otherWork = _activeUserWork.Observe();

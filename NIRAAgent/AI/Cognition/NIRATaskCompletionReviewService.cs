@@ -107,6 +107,12 @@ public sealed class NIRATaskCompletionReviewService
             on each subsequent request. Link it only when the user explicitly
             refers to it or semantically supplies its missing information.
             A new, unrelated objective is not a continuation of an earlier unfinished one, regardless of domain.
+            An explicit new execution instruction with its own target and method
+            is a new objective even when the user recently tested the SAME
+            application. Do not attach prior-run PIDs or incomplete earlier
+            attempts to this task merely because the application name repeats.
+            Only link earlier state if the current user actually refers to
+            an earlier instance/result or leaves a referent to resolve.
             If this is a true short follow-up, use RECENT CONVERSATION and
             UNRESOLVED OBJECTIVE to recover the full user-requested outcome.
             Set resumesPriorObjective=true only for a grounded continuation;
@@ -218,6 +224,30 @@ public sealed class NIRATaskCompletionReviewService
             reachability probe's outcome and the remaining uncertainty.
             Existence is not evidence of contents; contents are not evidence
             of a requested comparison unless that comparison was performed.
+            VERIFIED CLOSE AND LAUNCH-PID PROVENANCE: process.start can return
+            a transient process ID for an app activation/broker/launcher, not
+            the process owning its visible top-level window. PID inequality alone
+            does NOT prove the wrong window was closed or the application is
+            still running. A trusted desktop.close receipt with
+            CloseObjectiveVerified: True is stronger current-state evidence:
+            the exact unique window disappeared, its owner exited, and fresh
+            operating-system checks found zero matching processes and windows.
+            If the user requested ordinary application launch then close, accept
+            this specific close outcome; do NOT require the original process.start
+            PID to equal the later GUI owner PID. Review unrelated user-requested
+            outputs independently and do not claim that an earlier launcher PID
+            directly owned the HWND. When CloseObjectiveVerified is missing or
+            False, NEVER infer complete application closure from a dispatched
+            close or a single disappearing window alone.
+            DESKTOP ACTION FIDELITY: desktop.act success means a single UI
+            operation was dispatched, NOT that the requested application task
+            finished. Require fresh post-action inspection evidence for the
+            actual requested artifact/state. An action receipt without this
+            result cannot justify a Done claim, even if the model is confident.
+            UI Automation window captions/breadcrumbs are not verified
+            filesystem paths; do not infer OneDrive directory existence from
+            a named File Explorer window. Screenshots of unrelated apps are
+            not observation of the requested target.
             A successful login,
             successful click, discovered menu, or link to more information is not
             completion when the user requested information BEYOND it. A login page,

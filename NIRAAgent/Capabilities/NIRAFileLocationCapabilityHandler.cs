@@ -4,6 +4,7 @@
  * It never selects a write target or grants access to the discovered path.
  */
 using System.Text;
+using System.Runtime.InteropServices;
 
 namespace NIRAAgent.Capabilities;
 
@@ -108,7 +109,20 @@ public sealed class NIRAFileLocationCapabilityHandler : INIRACapabilityHandler
             (kind.Equals("Directory", StringComparison.OrdinalIgnoreCase) ||
              kind.Equals("Either", StringComparison.OrdinalIgnoreCase)))
         {
-            string folder = ResolveCurrentUserFolder(name);
+            string folder = ResolveConfiguredCurrentUserFolder(name);
+            if (!Directory.Exists(folder))
+                return Task.FromResult(new NIRACapabilityHandlerResult
+                {
+                    Summary = $"LocationSearch=ConfiguredButMissing | Scope=CurrentUserFolder | Name='{name}' | " +
+                        "Matches=0 | ScanComplete=True | NoDirectoryWasObserved=True",
+                    Output = $"ConfiguredKnownFolder={folder}\n" +
+                        "The current Windows user has this known-folder location configured, " +
+                        "but the directory does not exist. This is NOT a verified directory. " +
+                        "If the user requested file creation there, first use filesystem.directory.create " +
+                        "for this exact configured path; otherwise ask for clarification. " +
+                        "Do NOT broaden filesystem.locate to search unrelated drives.",
+                    ChangedSystemState = false
+                });
             return Task.FromResult(new NIRACapabilityHandlerResult
             {
                 Summary = $"LocationSearch=Unique | Scope=CurrentUserFolder | Name='{name}' | " +
@@ -317,27 +331,49 @@ public sealed class NIRAFileLocationCapabilityHandler : INIRACapabilityHandler
         });
     }
 
-    // Opt-in known-user-folder resolution. Exact OS directory identities are
-    // architectural targets, not a list of example filenames/test responses.
-    // A missing or inaccessible folder is reported as such; never silently
-    // scan the whole drive or another account's profile to guess a replacement.
+    // Resolve the configured current-user Windows shell target; it is not
+    // necessarily a folder that exists yet. This method NEVER substitutes an
+    // unredirected profile shadow for a redirected Documents/OneDrive folder.
+    // Callers doing observations must check existence independently.
+    internal static string ResolveConfiguredCurrentUserFolder(string name)
+    {
+        string key = name.Trim().ToLowerInvariant();
+        string? configured = null;
+        if (OperatingSystem.IsWindows())
+            configured = NIRAWindowsKnownFolderPath.GetConfiguredPath(key);
+
+        if (string.IsNullOrWhiteSpace(configured))
+            configured = key switch
+            {
+                "desktop" => Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+                "documents" => Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                "pictures" => Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
+                "music" => Environment.GetFolderPath(Environment.SpecialFolder.MyMusic),
+                "videos" => Environment.GetFolderPath(Environment.SpecialFolder.MyVideos),
+                "downloads" => ResolveCurrentUserDownloads(),
+                _ => throw new ArgumentException("Unknown current-user known folder name.")
+            };
+        if (string.IsNullOrWhiteSpace(configured) || !Path.IsPathFullyQualified(configured))
+            throw new DirectoryNotFoundException(
+                $"WindowsKnownFolderUnconfigured | Folder={name} | " +
+                "Windows did not expose an absolute per-user folder location. " +
+                "No replacement folder was guessed.");
+        return Path.GetFullPath(configured);
+    }
+
+    // Location discovery describes EXISTING folders only. Missing-but-configured
+    // roots are a different fact and must not be presented as found directories.
     internal static string ResolveCurrentUserFolder(string name)
     {
-        string? path = name.Trim().ToLowerInvariant() switch
-        {
-            "desktop" => Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
-            "documents" => Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-            "pictures" => Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
-            "music" => Environment.GetFolderPath(Environment.SpecialFolder.MyMusic),
-            "videos" => Environment.GetFolderPath(Environment.SpecialFolder.MyVideos),
-            "downloads" => ResolveCurrentUserDownloads(),
-            _ => throw new ArgumentException("Unknown current-user known folder name.")
-        };
-        if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path) ||
-            !Directory.Exists(path))
+        string configured = ResolveConfiguredCurrentUserFolder(name);
+        if (!Directory.Exists(configured))
             throw new DirectoryNotFoundException(
-                $"Current-user known folder '{name}' is unavailable; provide its actual path.");
-        return Path.GetFullPath(path);
+                $"WindowsKnownFolderConfiguredButMissing | Folder={name} | " +
+                $"ConfiguredPath='{configured}' | Create that exact directory " +
+                "through an authorized filesystem.directory.create operation, " +
+                "or ask the user to repair Windows' folder configuration. " +
+                "Do not repeat filesystem.locate or guess a shadow directory.");
+        return configured;
     }
 
     private static string? ResolveCurrentUserDownloads()

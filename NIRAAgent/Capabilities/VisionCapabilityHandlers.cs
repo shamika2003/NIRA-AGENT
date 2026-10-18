@@ -4,6 +4,7 @@
 
 using System.Globalization;
 using System.Text;
+using System.Diagnostics;
 
 using NIRAAgent.PC.Awareness;
 using NIRAAgent.Vision;
@@ -25,14 +26,16 @@ public sealed class NIRAScreenCaptureCapabilityHandler
     private readonly NIRAVisualEvidenceService
         _visualEvidence;
 
+    private readonly INIRADesktopAccessibilityBackend _accessibilityBackend;
 
     public NIRAScreenCaptureCapabilityHandler(
-        NIRAVisualEvidenceService visualEvidence)
+        NIRAVisualEvidenceService visualEvidence,
+        INIRADesktopAccessibilityBackend accessibilityBackend)
     {
-        _visualEvidence =
-            visualEvidence
-            ?? throw new ArgumentNullException(
-                nameof(visualEvidence));
+        _visualEvidence = visualEvidence
+            ?? throw new ArgumentNullException(nameof(visualEvidence));
+        _accessibilityBackend = accessibilityBackend
+            ?? throw new ArgumentNullException(nameof(accessibilityBackend));
     }
 
 
@@ -46,7 +49,7 @@ public sealed class NIRAScreenCaptureCapabilityHandler
                 NIRACapabilityIds.VisionCapture,
 
             Description =
-                "Capture an on-demand PNG and return grounded visual-evidence metadata. target may be foregroundWindow, lastExternalWindow, window, activeMonitor, or region. target=window can resolve a live or recent external top-level HWND and capture it without keeping it foreground. Capture alone does not interpret pixels.",
+                "Capture a grounded on-demand PNG. For a named application prefer target=window with a live HWND, processName or titleContains; this works even when another app is foreground. When a target refuses background rendering, optional verified foreground recovery may briefly raise the SAME requested window, then capture it. No unrelated screen is substituted; failure means no visual evidence. Capture alone does not interpret pixels. If pixels cannot be captured, use vision.accessibility on the SAME window to inspect provider-reported controls without needing foreground focus.",
 
             DefaultRisk =
                 NIRACapabilityRisk.Observe,
@@ -77,6 +80,12 @@ public sealed class NIRAScreenCaptureCapabilityHandler
                         "string",
                         false,
                         "Optional case-insensitive live/recent external window-title selector for target=window."),
+
+                    Parameter(
+                        "allowForegroundRecovery",
+                        "boolean",
+                        false,
+                        "For window/lastExternalWindow only: when background rendering fails or the window is minimized, try one bounded Windows foreground/restore recovery of that exact HWND. Defaults true for those explicit targets; false keeps strict background-only capture."),
 
                     Parameter(
                         "presentToUser",
@@ -164,8 +173,19 @@ public sealed class NIRAScreenCaptureCapabilityHandler
                 : null;
 
 
-        NIRAVisualEvidence evidence =
-            await _visualEvidence.CaptureAsync(
+        // A named application may be observable through Windows accessibility
+        // even if it refuses all pixel-capture techniques. Resolve the SAME
+        // live HWND for both modalities, never an unrelated foreground app.
+        bool presentToUser = request.Arguments.ValueKind ==
+            System.Text.Json.JsonValueKind.Object &&
+            request.Arguments.EnumerateObject().Any(property =>
+                string.Equals(property.Name, "presentToUser", StringComparison.OrdinalIgnoreCase) &&
+                property.Value.ValueKind == System.Text.Json.JsonValueKind.True);
+
+        NIRAVisualEvidence evidence;
+        try
+        {
+            evidence = await _visualEvidence.CaptureAsync(
                 new NIRAVisualCaptureRequest
                 {
                     Target =
@@ -181,10 +201,52 @@ public sealed class NIRAScreenCaptureCapabilityHandler
                         processName,
 
                     TitleContains =
-                        titleContains
+                        titleContains,
+
+                    AllowForegroundRecovery =
+                        (target is NIRAVisualCaptureTarget.Window or
+                            NIRAVisualCaptureTarget.LastExternalWindow) &&
+                        NIRACapabilityArguments.GetBoolean(request,
+                            "allowForegroundRecovery", defaultValue: true)
                 },
                 cancellationToken);
-
+        }
+        catch (Exception pixelFailure) when (
+            (pixelFailure is InvalidOperationException or System.ComponentModel.Win32Exception) &&
+            target == NIRAVisualCaptureTarget.Window &&
+            (windowHandle.HasValue || !string.IsNullOrWhiteSpace(processName) ||
+             !string.IsNullOrWhiteSpace(titleContains)))
+        {
+            // Read-only fallback is *not* a PNG. Return an explicitly labeled
+            // provider-based observation, and only if that alternate read succeeds.
+            NIRACaptureWindowSnapshot selected = _visualEvidence.ResolveExternalWindow(
+                windowHandle, processName, titleContains);
+            NIRADesktopAccessibilityResult observed = await _accessibilityBackend.InspectAsync(
+                new IntPtr(selected.Handle), selected.ProcessId, cancellationToken);
+            Debug.WriteLine($"[VisionCapture] ACCESSIBILITY FALLBACK | " +
+                $"HWND=0x{selected.Handle:X} | PID={selected.ProcessId} | " +
+                $"Elements={observed.ElementsRead} | Truncated={observed.Truncated}");
+            return new NIRACapabilityHandlerResult
+            {
+                Succeeded = true,
+                Summary = $"Pixel capture was unavailable; observed read-only Windows UI " +
+                    $"Automation controls of '{selected.Title}' ({selected.ProcessName}, PID {selected.ProcessId}).",
+                Output = "NIRA TARGET WINDOW OBSERVATION — ACCESSIBILITY FALLBACK\n" +
+                    $"PixelCaptureFailed: {pixelFailure.GetType().Name}: {pixelFailure.Message}\n" +
+                    "PixelScreenshotAvailable: False\n" +
+                    $"InlineImageRequestedButUnavailable: {presentToUser}\n" +
+                    "EvidenceModality: Windows UI Automation (provider-reported controls, NOT pixels)\n" +
+                    $"WindowHandle: 0x{selected.Handle:X}\n" +
+                    $"Process: {selected.ProcessName}\nProcessId: {selected.ProcessId}\n" +
+                    $"Title: {selected.Title}\nMinimizedAtResolution: {selected.IsMinimized}\n" +
+                    $"ElementsRead: {observed.ElementsRead}\nTruncated: {observed.Truncated}\n" +
+                    "InterpretationStatus: UI_AUTOMATION_CONTROLS_ONLY\n" +
+                    "Only an explicit IsSelected=True provider value grounds a selected control. " +
+                    "Do not claim screenshot success or call vision.inspect on a missing image.\n" +
+                    observed.ControlTree,
+                ChangedSystemState = false
+            };
+        }
 
         StringBuilder output =
             new();
@@ -198,11 +260,7 @@ public sealed class NIRAScreenCaptureCapabilityHandler
 
         // Declarative delivery intent is not an image or a permission itself;
         // it is recorded for the next cognition cycle's factual wording.
-        bool presentToUser = request.Arguments.ValueKind ==
-            System.Text.Json.JsonValueKind.Object &&
-            request.Arguments.EnumerateObject().Any(property =>
-                string.Equals(property.Name, "presentToUser", StringComparison.OrdinalIgnoreCase) &&
-                property.Value.ValueKind == System.Text.Json.JsonValueKind.True);
+
         output.AppendLine($"InlinePresentationRequested: {presentToUser}");
 
         if (presentToUser)
@@ -240,6 +298,19 @@ public sealed class NIRAScreenCaptureCapabilityHandler
         output.AppendLine(
             $"CaptureBounds: left={evidence.CaptureBounds.Left}, top={evidence.CaptureBounds.Top}, width={evidence.Width}, height={evidence.Height}");
 
+        // The user's ChatGPT/NIRA conversation may steal foreground focus.
+        // Preserve the actual captured subject in the observation itself; a
+        // successful PNG of NIRA cannot establish another app's visible data.
+        if (target == NIRAVisualCaptureTarget.ForegroundWindow &&
+            string.Equals(evidence.CapturedWindowProcessName, "NIRAAgent.UI",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            output.AppendLine("CaptureIsNIRAInterfaceOnly: True");
+            output.AppendLine("CaptureScope: This image contains NIRA's interface only. " +
+                "If the user's actual subject is a different named desktop window, " +
+                "use target=window with its observed processName, titleContains, " +
+                "or exact HWND. Do not repeat this foreground capture unchanged.");
+        }
 
         if (evidence.CapturedWindowHandle != 0)
         {
@@ -768,5 +839,82 @@ public sealed class NIRAVisualInspectCapabilityHandler
         return clean.Length <= maximum
             ? clean
             : clean[..maximum] + "...";
+    }
+}
+
+
+// Generic non-pixel fallback when Windows refuses rendering or focus.
+// Returns UIA semantics only, not invented screenshot contents.
+public sealed class NIRAWindowAccessibilityCapabilityHandler : INIRACapabilityHandler
+{
+    private readonly NIRAVisualEvidenceService _visualEvidence;
+    private readonly INIRADesktopAccessibilityBackend _backend;
+
+    public NIRAWindowAccessibilityCapabilityHandler(
+        NIRAVisualEvidenceService visualEvidence,
+        INIRADesktopAccessibilityBackend backend)
+    {
+        _visualEvidence = visualEvidence;
+        _backend = backend;
+    }
+
+    public NIRACapabilityDescriptor Descriptor { get; } = new()
+    {
+        Id = NIRACapabilityIds.VisionAccessibility,
+        Description = "Read an exact external application's Windows UI Automation control tree. " +
+            "Use when a named/minimized/background window rejects vision.capture, or " +
+            "when selected tabs/menus can be identified without a screenshot. " +
+            "Read-only and does not require foreground focus. UIA coverage varies; " +
+            "an absent selected control is not proof of which page is open.",
+        DefaultRisk = NIRACapabilityRisk.Observe,
+        Parameters = new[]
+        {
+            new NIRACapabilityParameterDescriptor { Name = "processName", Type = "string",
+                Description = "Grounded process executable/display name to resolve an open external HWND." },
+            new NIRACapabilityParameterDescriptor { Name = "titleContains", Type = "string",
+                Description = "Optional title selector for one open window." },
+            new NIRACapabilityParameterDescriptor { Name = "windowHandle", Type = "string",
+                Description = "Optional decimal or 0x hexadecimal HWND from live window evidence." }
+        }
+    };
+
+    public NIRACapabilityRisk ResolveRisk(NIRACapabilityRequest request) =>
+        NIRACapabilityRisk.Observe;
+
+    public async Task<NIRACapabilityHandlerResult> ExecuteAsync(
+        NIRACapabilityRequest request, CancellationToken cancellationToken = default)
+    {
+        string? proc = NIRACapabilityArguments.GetOptionalString(request, "processName", 260);
+        string? title = NIRACapabilityArguments.GetOptionalString(request, "titleContains", 600);
+        string? rawHwnd = NIRACapabilityArguments.GetOptionalString(request, "windowHandle", 80);
+        long? hwnd = null;
+        if (!string.IsNullOrWhiteSpace(rawHwnd))
+        {
+            bool hex = rawHwnd.StartsWith("0x", StringComparison.OrdinalIgnoreCase);
+            if (!long.TryParse(hex ? rawHwnd[2..] : rawHwnd,
+                hex ? NumberStyles.HexNumber : NumberStyles.Integer,
+                CultureInfo.InvariantCulture, out long parsed) || parsed == 0)
+                throw new ArgumentException("windowHandle must be a nonzero decimal or 0x hexadecimal HWND.");
+            hwnd = parsed;
+        }
+        NIRACaptureWindowSnapshot window = _visualEvidence.ResolveExternalWindow(hwnd, proc, title);
+        NIRADesktopAccessibilityResult result = await _backend.InspectAsync(
+            new IntPtr(window.Handle), window.ProcessId, cancellationToken);
+        return new NIRACapabilityHandlerResult
+        {
+            Succeeded = true,
+            Summary = "Read Windows UI Automation controls from verified external " +
+                $"window '{window.Title}' ({window.ProcessName}, PID {window.ProcessId}).",
+            Output = "NIRA GROUNDED WINDOWS ACCESSIBILITY OBSERVATION\n" +
+                $"WindowHandle: 0x{window.Handle:X}\n" +
+                $"Process: {window.ProcessName}\nProcessId: {window.ProcessId}\n" +
+                $"Title: {window.Title}\nMinimizedAtResolution: {window.IsMinimized}\n" +
+                $"ElementsRead: {result.ElementsRead}\nTruncated: {result.Truncated}\n" +
+                "ObservationMethod: Windows UI Automation, not pixels.\n" +
+                "IsSelected=true is a provider-reported navigation selection; " +
+                "a control without that signal is not proof of its current state.\n" +
+                result.ControlTree,
+            ChangedSystemState = false
+        };
     }
 }

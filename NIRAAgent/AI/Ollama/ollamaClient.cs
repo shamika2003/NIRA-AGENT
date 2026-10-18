@@ -3,6 +3,7 @@
  */
 
 using System.Diagnostics;
+using NIRAAgent.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
@@ -71,17 +72,26 @@ public sealed class OllamaClient : IDisposable
         Stopwatch timer = Stopwatch.StartNew();
         Debug.WriteLine($"[LLM] START | Call={callId:D} | Model={ModelName} | " +
             $"JsonMode={jsonMode} | SystemChars={systemPrompt.Length} | UserChars={userMessage.Length}");
+        NIRADiagnosticTrace.Event("LLM-START", $"Call={callId:D} Model={ModelName} " +
+            $"Mode=Text Json={jsonMode} SystemChars={systemPrompt.Length} UserChars={userMessage.Length}");
+        NIRADiagnosticTrace.ModelRequest(callId, ModelName, systemPrompt, userMessage,
+            jsonMode, "Text");
         try
         {
             string answer = await SendNonStreamingChatJsonAsync(json, cancellationToken);
             Debug.WriteLine($"[LLM] END | Call={callId:D} | " +
                 $"ElapsedMs={timer.ElapsedMilliseconds} | ResponseChars={answer.Length}");
+            NIRADiagnosticTrace.Event("LLM-END", $"Call={callId:D} " +
+                $"ElapsedMs={timer.ElapsedMilliseconds} ResponseChars={answer.Length}");
+            NIRADiagnosticTrace.ModelResponse(callId, ModelName, answer);
             return answer;
         }
         catch (Exception ex)
         {
             Debug.WriteLine($"[LLM] FAILED | Call={callId:D} | " +
                 $"ElapsedMs={timer.ElapsedMilliseconds} | ErrorType={ex.GetType().Name}");
+            NIRADiagnosticTrace.Event("LLM-FAILED", $"Call={callId:D} " +
+                $"ElapsedMs={timer.ElapsedMilliseconds} ErrorType={ex.GetType().Name}");
             throw;
         }
     }
@@ -119,14 +129,16 @@ public sealed class OllamaClient : IDisposable
                 "Multimodal Ollama chat requires at least one image.");
         }
 
-        if (paths.Length > 4)
+        if (paths.Length > NIRAAgent.AI.Cognition.NIRAImageInput.MaximumImagesPerModelCall)
         {
             throw new InvalidOperationException(
-                "Multimodal Ollama chat is limited to four images per request.");
+                $"Multimodal Ollama chat supports up to " +
+                $"{NIRAAgent.AI.Cognition.NIRAImageInput.MaximumImagesPerModelCall} images " +
+                "per bounded request. Use NIRAImageInput.PlanBatches for more.");
         }
 
         const long maximumImageBytes = 20L * 1024L * 1024L;
-        const long maximumTotalBytes = 32L * 1024L * 1024L;
+        const long maximumTotalBytes = NIRAAgent.AI.Cognition.NIRAImageInput.MaximumModelCallBytes;
         long totalBytes = 0;
         List<string> images = new(paths.Length);
 
@@ -196,17 +208,27 @@ public sealed class OllamaClient : IDisposable
         Debug.WriteLine($"[LLM] START | Call={callId:D} | Model={modelName} | " +
             $"Mode=Vision | Images={paths.Length} | " +
             $"SystemChars={systemPrompt.Length} | UserChars={userMessage.Length}");
+        NIRADiagnosticTrace.Event("LLM-START", $"Call={callId:D} Model={modelName} " +
+            $"Mode=Vision Images={paths.Length} Json={jsonMode} " +
+            $"SystemChars={systemPrompt.Length} UserChars={userMessage.Length}");
+        NIRADiagnosticTrace.ModelRequest(callId, modelName, systemPrompt, userMessage,
+            jsonMode, "Vision", paths.Length);
         try
         {
             string answer = await SendNonStreamingChatJsonAsync(json, cancellationToken);
             Debug.WriteLine($"[LLM] END | Call={callId:D} | " +
                 $"ElapsedMs={timer.ElapsedMilliseconds} | ResponseChars={answer.Length}");
+            NIRADiagnosticTrace.Event("LLM-END", $"Call={callId:D} " +
+                $"ElapsedMs={timer.ElapsedMilliseconds} ResponseChars={answer.Length}");
+            NIRADiagnosticTrace.ModelResponse(callId, modelName, answer);
             return answer;
         }
         catch (Exception ex)
         {
             Debug.WriteLine($"[LLM] FAILED | Call={callId:D} | " +
                 $"ElapsedMs={timer.ElapsedMilliseconds} | ErrorType={ex.GetType().Name}");
+            NIRADiagnosticTrace.Event("LLM-FAILED", $"Call={callId:D} " +
+                $"ElapsedMs={timer.ElapsedMilliseconds} ErrorType={ex.GetType().Name}");
             throw;
         }
     }

@@ -317,6 +317,20 @@ public sealed class NIRASelfModelService
             facts,
             NIRASelfFactCategory.Identity);
 
+        // The first cognition call receives a compact identity/self pulse and
+        // normally excludes the large capability list. Carry the authoritative
+        // voice fact in that identity slice, rather than making cognition guess
+        // that NIRA cannot speak. The fact still comes from the registered
+        // runtime provider; this is a view, not another capability definition.
+        NIRASelfFactState? spokenVoice = facts.FirstOrDefault(fact =>
+            fact.Category == NIRASelfFactCategory.Capability &&
+            string.Equals(fact.Key, "capability.voice", StringComparison.OrdinalIgnoreCase));
+        if (spokenVoice is not null)
+        {
+            builder.AppendLine("VOICE / SPEECH CAPABILITY (authoritative)");
+            builder.AppendLine("- " + spokenVoice.Statement);
+            builder.AppendLine();
+        }
 
         AppendFacts(
             builder,
@@ -1952,4 +1966,3 @@ public sealed class NIRASelfModelService
                 "...";
     }
 }
-

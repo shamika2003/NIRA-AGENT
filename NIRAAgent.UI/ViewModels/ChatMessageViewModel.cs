@@ -4,6 +4,7 @@
 
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Linq;
 using System.Runtime.CompilerServices;
 
 using NIRAAgent.Artifacts;
@@ -12,6 +13,7 @@ using NIRAAgent.UI.Presentation;
 using NIRAAgent.Conversation;
 using System.Diagnostics;
 using System.Windows;
+using System.Windows.Media;
 
 namespace NIRAAgent.UI.ViewModels;
 
@@ -196,6 +198,86 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         new();
 
 
+    // User-chosen attachments are a visual snapshot of the sent turn, not
+    // model output or a new capability. Images use the same safe on-load,
+    // bounded bitmap preview as existing trusted visual-artifact cards.
+    public ObservableCollection<VisualArtifactViewModel> UserImageAttachments { get; } = new();
+    public ObservableCollection<NIRAUserImageGalleryTileViewModel> UserImageGalleryTiles { get; } = new();
+    public ObservableCollection<NIRAUserImageGalleryTileViewModel> AssistantImageGalleryTiles { get; } = new();
+    public ObservableCollection<NIRAComposerAttachment> UserFileAttachments { get; } = new();
+    public bool HasUserImages => UserImageAttachments.Count > 0;
+    public bool HasSingleUserImage => UserImageAttachments.Count == 1;
+    public bool HasUserFiles => UserFileAttachments.Count > 0;
+    public int UserImageCount => UserImageAttachments.Count;
+    public bool HasOverflowUserImages => UserImageAttachments.Count > 2;
+    public int OverflowUserImageCount => Math.Max(0, UserImageAttachments.Count - 2);
+
+    public void AddUserAttachments(IEnumerable<NIRAComposerAttachment> attachments)
+    {
+        foreach (NIRAComposerAttachment attachment in attachments)
+        {
+            if (attachment.IsImage)
+            {
+                UserImageAttachments.Add(new VisualArtifactViewModel(new NIRAVisualArtifact
+                {
+                    ArtifactId = Guid.NewGuid(),
+                    SourceKind = NIRAVisualArtifactSourceKind.LocalImage,
+                    LocalPath = attachment.FullPath,
+                    Title = attachment.FileName,
+                    Caption = string.Empty
+                }));
+            }
+            else
+            {
+                UserFileAttachments.Add(attachment);
+            }
+        }
+
+        RebuildUserImageGalleryTiles();
+    }
+
+    public IReadOnlyList<VisualArtifactViewModel> GetUserImageArtifacts() =>
+        UserImageAttachments.ToArray();
+
+    public IReadOnlyList<VisualArtifactViewModel> GetAssistantImageArtifacts() =>
+        VisualArtifacts.ToArray();
+
+    // Both directions share one compact, bounded, one-row gallery contract.
+    // Two actual previews and an overflow tile keep a large attachment set
+    // from growing the chat into a very tall column. The gallery viewer
+    // still receives ALL original artifacts in their original order.
+    private void RebuildUserImageGalleryTiles()
+    {
+        BuildGalleryTiles(UserImageGalleryTiles, UserImageAttachments, assistant: false);
+        OnPropertyChanged(nameof(UserImageCount));
+        OnPropertyChanged(nameof(HasOverflowUserImages));
+        OnPropertyChanged(nameof(OverflowUserImageCount));
+    }
+
+    private void RebuildAssistantImageGalleryTiles() =>
+        BuildGalleryTiles(AssistantImageGalleryTiles, VisualArtifacts, assistant: true);
+
+    private void BuildGalleryTiles(
+        ObservableCollection<NIRAUserImageGalleryTileViewModel> target,
+        IReadOnlyList<VisualArtifactViewModel> images,
+        bool assistant)
+    {
+        target.Clear();
+        int count = images.Count;
+        if (count == 0) return;
+        int visible = Math.Min(count, 3);
+        for (int index = 0; index < visible; index++)
+        {
+            bool overflow = count >= 3 && index == 2;
+            target.Add(new NIRAUserImageGalleryTileViewModel(
+                this, images[index], index,
+                hiddenCount: overflow ? count - 2 : 0,
+                isOverflowTile: overflow,
+                isAssistantTile: assistant,
+                isSingleImage: count == 1));
+        }
+    }
+
     public ObservableCollection<FrameworkElement> RichElements { get; } = new();
     public bool HasRichElements => RichElements.Count > 0;
 
@@ -273,6 +355,10 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         &&
         !HasRichElements
         &&
+        !HasUserImages
+        &&
+        !HasUserFiles
+        &&
         !IsJourneyActive;
 
 
@@ -286,6 +372,19 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         _content =
             content;
 
+        UserImageAttachments.CollectionChanged += (_, _) =>
+        {
+            RebuildUserImageGalleryTiles();
+            OnPropertyChanged(nameof(HasUserImages));
+            OnPropertyChanged(nameof(HasSingleUserImage));
+            OnPropertyChanged(nameof(IsEmpty));
+        };
+        UserFileAttachments.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(HasUserFiles));
+            OnPropertyChanged(nameof(IsEmpty));
+        };
+
         RichElements.CollectionChanged += (_, _) =>
         {
             OnPropertyChanged(nameof(HasRichElements));
@@ -295,6 +394,7 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         VisualArtifacts.CollectionChanged +=
             (_, _) =>
             {
+                RebuildAssistantImageGalleryTiles();
                 OnPropertyChanged(
                     nameof(HasVisualArtifacts));
                 OnPropertyChanged(
@@ -355,4 +455,43 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
             new PropertyChangedEventArgs(
                 propertyName));
     }
+}
+
+public sealed class NIRAUserImageGalleryTileViewModel
+{
+    public NIRAUserImageGalleryTileViewModel(
+        ChatMessageViewModel owner,
+        VisualArtifactViewModel artifact,
+        int sourceIndex,
+        int hiddenCount = 0,
+        bool isOverflowTile = false,
+        bool isAssistantTile = false,
+        bool isSingleImage = false)
+    {
+        Owner = owner ?? throw new ArgumentNullException(nameof(owner));
+        Artifact = artifact ?? throw new ArgumentNullException(nameof(artifact));
+        SourceIndex = sourceIndex;
+        HiddenCount = Math.Max(0, hiddenCount);
+        IsOverflowTile = isOverflowTile;
+        IsAssistantTile = isAssistantTile;
+        IsSingleImage = isSingleImage;
+    }
+
+    public ChatMessageViewModel Owner { get; }
+    public VisualArtifactViewModel Artifact { get; }
+    public int SourceIndex { get; }
+    public int HiddenCount { get; }
+    public bool IsOverflowTile { get; }
+    public bool IsAssistantTile { get; }
+    public bool IsSingleImage { get; }
+    public string Title => Artifact.Title;
+    public string Caption => Artifact.Caption;
+    public bool HasCaption => Artifact.HasCaption;
+    public string SourceUri => Artifact.SourceUri;
+    public bool HasSourceUri => Artifact.HasSourceUri;
+    public IReadOnlyList<VisualArtifactViewModel> GetGalleryImages() =>
+        IsAssistantTile ? Owner.GetAssistantImageArtifacts() : Owner.GetUserImageArtifacts();
+    public ImageSource? PreviewImage => Artifact.PreviewImage;
+    public bool HasPreview => Artifact.HasPreview;
+    public string OverflowLabel => HiddenCount > 0 ? $"+{HiddenCount}" : string.Empty;
 }

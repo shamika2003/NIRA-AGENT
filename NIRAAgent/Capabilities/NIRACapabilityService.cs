@@ -2,7 +2,9 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using NIRAAgent.Authorization;
+using NIRAAgent.Diagnostics;
 using NIRAAgent.Browser;
+using NIRAAgent.Vision;
 
 namespace NIRAAgent.Capabilities;
 
@@ -12,6 +14,10 @@ public sealed class NIRACapabilityService
     private static bool IsCertainNoEffectBrowserPreflight(string capabilityId, Exception exception) =>
         capabilityId == NIRACapabilityIds.BrowserSelect &&
         exception is NIRABrowserOptionUnavailableException;
+
+    private static bool IsCertainNoEffectFilesystemPreflight(string capabilityId, Exception exception) =>
+        capabilityId == NIRACapabilityIds.FileWrite &&
+        exception is DirectoryNotFoundException;
 
     private readonly NIRACapabilityRegistry _registry;
     private readonly INIRACapabilityAuthorizer _authorizer;
@@ -175,6 +181,22 @@ public sealed class NIRACapabilityService
             Debug.WriteLine($"[Capability] {result.Status.ToString().ToUpperInvariant()} | Id={result.CapabilityId} | " +
                 $"Risk={result.Risk} | Changed={result.ChangedSystemState} | Uncertain={result.OutcomeUncertain} | " +
                 $"ExitCode={result.ExitCode?.ToString() ?? "-"} | Audit={result.AuditAttemptId?.ToString("D") ?? "-"}");
+            NIRADiagnosticTrace.Event("TOOL-RESULT", $"Id={result.CapabilityId} " +
+                $"Status={result.Status} Risk={result.Risk} Changed={result.ChangedSystemState} " +
+                $"Uncertain={result.OutcomeUncertain} ElapsedMs={(result.FinishedAtUtc - result.StartedAtUtc).TotalMilliseconds:F0} " +
+                $"Audit={result.AuditAttemptId?.ToString("D") ?? "-"}");
+            if (NIRADiagnosticTrace.DetailedToolCaptureEnabled &&
+                (result.CapabilityId.StartsWith("filesystem.", StringComparison.OrdinalIgnoreCase) ||
+                 result.CapabilityId.StartsWith("desktop.", StringComparison.OrdinalIgnoreCase) ||
+                 result.CapabilityId == NIRACapabilityIds.ProcessStop))
+            {
+                // Developer-opt-in, local-only: the summary can include private
+                // paths. Never capture raw file contents or secrets here.
+                NIRADiagnosticTrace.Event("TOOL-DETAIL",
+                    $"Id={result.CapabilityId} Status={result.Status} " +
+                    $"Summary={result.Summary} OutputChars={result.Output.Length} " +
+                    $"Audit={result.AuditAttemptId?.ToString("D") ?? "-"}");
+            }
             // Structured, NON-SECRET diagnostics. Do not write raw exception
             // messages: browser sites may include private form data in errors.
             if (result.CapabilityId == NIRACapabilityIds.BrowserAuthenticate &&
@@ -202,6 +224,23 @@ public sealed class NIRACapabilityService
             // batch and return to cognition instead of dispatching potentially
             // unsafe or meaningless follow-up actions. Independent work belongs
             // in explicit branches/another decision, where ownership is clear.
+            // A model may propose create-folder + write-child in the same
+            // array. Never execute the dependent write if the required parent
+            // creation failed. This is dependency ordering, not a new access
+            // restriction; unrelated filesystem work is still available in a
+            // later, independently reasoned decision.
+            if (result.CapabilityId == NIRACapabilityIds.DirectoryCreate &&
+                result.Status != NIRACapabilityResultStatus.Succeeded &&
+                requests.Skip(results.Count).Any(next =>
+                    DependsOnFailedDirectoryCreation(request, next)))
+            {
+                Debug.WriteLine(
+                    "[FilesystemFlow] DEPENDENT BATCH STOP | Failed=filesystem.directory.create | " +
+                    $"Remaining={requests.Count - results.Count} | " +
+                    "Reason=RequiredParentWasNotCreated | NoDependentWriteDispatched");
+                break;
+            }
+
             if (browserFailure)
             {
                 bool hasRemainingRequests =
@@ -220,6 +259,43 @@ public sealed class NIRACapabilityService
             }
         }
         return results;
+    }
+
+    // Compare normalized path relationships, not model-authored explanations.
+    // Only dependent mutations require this batch stop. No use of test-case
+    // filenames, specific known folders, or location-specific rules.
+    internal static bool DependsOnFailedDirectoryCreation(
+        NIRACapabilityRequest failedCreation,
+        NIRACapabilityRequest later)
+    {
+        if (failedCreation.CapabilityId != NIRACapabilityIds.DirectoryCreate ||
+            later.CapabilityId is not (NIRACapabilityIds.FileWrite or
+                NIRACapabilityIds.FileCopy or NIRACapabilityIds.FileMove or
+                NIRACapabilityIds.DirectoryCreate))
+            return false;
+
+        try
+        {
+            string failed = NIRACapabilityArguments.NormalizePath(
+                NIRACapabilityArguments.RequireString(failedCreation, "path"));
+            string destinationName = later.CapabilityId is NIRACapabilityIds.FileCopy or
+                NIRACapabilityIds.FileMove ? "destination" : "path";
+            string destination = NIRACapabilityArguments.NormalizePath(
+                NIRACapabilityArguments.RequireString(later, destinationName));
+            string relative = Path.GetRelativePath(failed, destination);
+            return relative == "." ||
+                (!Path.IsPathRooted(relative) &&
+                 relative != ".." &&
+                 !relative.StartsWith(".." + Path.DirectorySeparatorChar,
+                     StringComparison.Ordinal) &&
+                 !relative.StartsWith(".." + Path.AltDirectorySeparatorChar,
+                     StringComparison.Ordinal));
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or
+            InvalidOperationException or NotSupportedException)
+        {
+            return false; // Invalid evidence cannot establish a dependency.
+        }
     }
 
     private async Task<NIRACapabilityResult> ExecuteOneAsync(NIRACapabilityRequest raw, CancellationToken ct)
@@ -256,6 +332,12 @@ public sealed class NIRACapabilityService
             risk = descriptor.DefaultRisk;
             ValidateArguments(request, descriptor);
             risk = handler.ResolveRisk(request);
+            if (request.CapabilityId == NIRACapabilityIds.DesktopAct)
+                NIRADiagnosticTrace.Event("DESKTOP-ACTION-REQUEST",
+                    NIRADiagnosticTrace.DesktopArgumentShape(request.Arguments));
+            else if (request.CapabilityId == NIRACapabilityIds.DesktopInspect)
+                NIRADiagnosticTrace.Event("DESKTOP-INSPECT-REQUEST",
+                    $"Args={NIRADiagnosticTrace.ArgumentKeys(request.Arguments)}");
 
             request = _policy.Prepare(request);
             risk = handler.ResolveRisk(request);
@@ -316,11 +398,22 @@ public sealed class NIRACapabilityService
         }
         catch (Exception ex)
         {
+            if (request.CapabilityId is NIRACapabilityIds.DesktopAct or
+                NIRACapabilityIds.DesktopClose or NIRACapabilityIds.DesktopInspect)
+                NIRADiagnosticTrace.Event("DESKTOP-FAILURE",
+                    $"Capability={request.CapabilityId} Stage={(dispatched ? "AfterDispatch" : "BeforeDispatch")} " +
+                    $"ExceptionType={ex.GetType().Name} " +
+                    $"InputDefinitelyNotSent={ex is NIRADesktopNoInputException} " +
+                    NIRADiagnosticTrace.DesktopArgumentShape(request.Arguments));
             // A native dropdown option mismatch is rejected inside the browser
             // BEFORE Playwright attempts selection. This proven preflight case
             // has zero side effects; do not mark it as an uncertain browser
             // mutation or force the model into unnecessary 30-second recovery.
-            bool preflightNoEffect = IsCertainNoEffectBrowserPreflight(request.CapabilityId, ex);
+            bool preflightNoEffect = IsCertainNoEffectBrowserPreflight(request.CapabilityId, ex) ||
+                IsCertainNoEffectFilesystemPreflight(request.CapabilityId, ex) ||
+                ((request.CapabilityId is NIRACapabilityIds.DesktopAct or
+                    NIRACapabilityIds.DesktopClose) &&
+                 ex is NIRADesktopNoInputException);
             if (request.CapabilityId.StartsWith("browser.", StringComparison.OrdinalIgnoreCase))
             {
                 // Log NAMES, never values: URLs may carry tokens and credential

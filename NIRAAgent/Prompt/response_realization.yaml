@@ -123,4 +123,14 @@ output:
     - Follow the enclosing response-realization transport exactly. When it requests reply/speech JSON, return only that JSON object.
     - Put only user-facing wording inside the reply and speech fields; no analysis, commentary about the rewrite, or internal-state narration.
     - No headings or labels inside the user-facing wording unless the semantic draft genuinely requires technical structure.
+    - For a substantial informational SCREEN draft that already contains meaningful Markdown headings, paragraphs, bullets, source links or inline code, preserve that document structure and the working URLs when realizing NIRA's tone. Never flatten it into one long paragraph or convert a structured explanation into casual filler. Spoken speech remains natural and should not read Markdown syntax. Do not add new tables, images, citations, facts or actual tool claims in the expression stage; runtime keeps typed blocks and real images separately.
+    - For normal short interpersonal dialogue, preserve natural plain text with no decorative headings, tables or bullet points.
     - Do not wrap the user-facing wording in quotation marks merely for style; JSON escaping required by the transport is fine.
+
+# R21 expressive integrity: When a character-expression pass is legitimately
+# required by existing policy, retain any working typed blocks and their facts,
+# source URLs and numbers without adding or demanding new visual components.
+# A transparent full-width prose response is a completely valid finished answer,
+# including for substantial questions. Do not flatten useful structure or
+# transform a coherent reply into formulaic numbered prose. NEVER call the LLM
+# solely to change styling; UI controls components, not character expression.

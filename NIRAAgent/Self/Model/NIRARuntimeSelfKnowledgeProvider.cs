@@ -124,7 +124,11 @@ public sealed class NIRARuntimeSelfKnowledgeProvider
                     NIRASelfFactCategory.Capability,
 
                 Statement =
-                    "I can synthesize spoken responses through configured voice engines when a usable audio output device is available."
+                    "I have an actual speech-output channel. When voice is enabled and an audio device and " +
+                    "configured voice engine are working, I speak via text-to-speech, using my separate speech " +
+                    "response rather than simply displaying text in chat. That capability supports spoken " +
+                    "delivery, not guaranteed pitch-controlled melodic singing. An audio request is not proof " +
+                    "that playback succeeded; I should never claim I have no voice."
             },
 
             new()

@@ -378,6 +378,14 @@ public partial class App : WpfApplication
 
 
             builder.Services.AddSingleton<
+                INIRADesktopAccessibilityBackend,
+                WindowsAccessibilityBackend>();
+
+            builder.Services.AddSingleton<
+                INIRADesktopInteractionBackend,
+                WindowsDesktopInteractionBackend>();
+
+            builder.Services.AddSingleton<
                 NIRAVisualEvidenceService>();
 
 
@@ -413,6 +421,17 @@ public partial class App : WpfApplication
                 INIRACapabilityHandler,
                 NIRAVisualInspectCapabilityHandler>();
 
+            builder.Services.AddSingleton<
+                INIRACapabilityHandler,
+                NIRAWindowAccessibilityCapabilityHandler>();
+
+
+            builder.Services.AddSingleton<INIRACapabilityHandler,
+                NIRADesktopInspectCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler,
+                NIRADesktopActCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler,
+                NIRADesktopCloseCapabilityHandler>();
 
             builder.Services.AddSingleton<
                 INIRACapabilityHandler,
@@ -461,6 +480,8 @@ public partial class App : WpfApplication
                 INIRACapabilityHandler,
                 NIRAFileDeleteCapabilityHandler>();
 
+
+            builder.Services.AddSingleton<NIRAWindowsProtectedFolderAccessService>();
 
             builder.Services.AddSingleton<
                 INIRACapabilityHandler,
@@ -951,6 +972,16 @@ public partial class App : WpfApplication
             MainWindow =
                 window;
 
+            _host.Services.GetRequiredService<NIRAWindowsProtectedFolderAccessService>()
+                .SetConsentHandler(async (description, ct) =>
+                {
+                    ct.ThrowIfCancellationRequested();
+                    return await Dispatcher.InvokeAsync(() =>
+                        WpfMessageBox.Show(window, description,
+                            "NIRA — Windows protected-folder access",
+                            WpfMessageBoxButton.YesNo,
+                            WpfMessageBoxImage.Warning) == System.Windows.MessageBoxResult.Yes).Task;
+                });
 
             window.AttachAuthorization(
                 _host.Services.GetRequiredService<NIRAAuthorityStore>(),

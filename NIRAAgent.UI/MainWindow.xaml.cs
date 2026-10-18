@@ -24,6 +24,7 @@ using NIRAAgent.Vision;
 using NIRAAgent.UI.ViewModels;
 using NIRAAgent.UI.Visuals;
 using NIRAAgent.UI.Theming;
+using NIRAAgent.Diagnostics;
 
 namespace NIRAAgent.UI;
 
@@ -118,6 +119,9 @@ public partial class MainWindow : Window
     private PermissionToastWindow? _permissionToast;
     private NIRARuntimeSettingsService? _settingsService;
     private SettingsWindow? _settingsWindow;
+    // Non-utility viewers also participate in the established, borderless
+    // main-window scrim. Track real window lifetime, not button state.
+    private readonly HashSet<Window> _auxiliaryOverlayWindows = new();
     private bool _authorizationClosed;
     private readonly NIRAWorkAreaWindowGuard _workAreaGuard;
     private readonly NIRAVisualToastPlacementService _visualToastPlacement;
@@ -281,10 +285,26 @@ public partial class MainWindow : Window
     private void PermissionToast_OpenFullPermissionsRequested() =>
         OpenPermissions(showRequests: true);
 
+    private void TrackAuxiliaryOverlay(Window window)
+    {
+        if (!_auxiliaryOverlayWindows.Add(window)) return;
+        window.StateChanged += (_, _) => RefreshUtilityWindowScrim();
+        window.Loaded += (_, _) => RefreshUtilityWindowScrim();
+        window.Closed += (_, _) =>
+        {
+            _auxiliaryOverlayWindows.Remove(window);
+            RefreshUtilityWindowScrim();
+        };
+        // When ShowDialog enters its nested dispatcher, the owner is dimmed
+        // already. When a modeless gallery closes, its overlay clears too.
+        RefreshUtilityWindowScrim();
+    }
+
     private void RefreshUtilityWindowScrim()
     {
         bool visible = (_settingsWindow is { IsVisible: true, WindowState: not WindowState.Minimized }) ||
-                       (_permissionsWindow is { IsVisible: true, WindowState: not WindowState.Minimized });
+                       (_permissionsWindow is { IsVisible: true, WindowState: not WindowState.Minimized }) ||
+                       _auxiliaryOverlayWindows.Any(w => w.IsVisible && w.WindowState != WindowState.Minimized);
         UtilityWindowScrim.BeginAnimation(OpacityProperty,
             new DoubleAnimation
             {
@@ -2620,6 +2640,82 @@ public partial class MainWindow : Window
         }
     }
 
+    // Provenance links are opened only on a real user click. Never turn an
+    // untrusted sourceUri into an automatic download or executable launch.
+    private void VisualArtifactOpenSource_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button button ||
+            button.Tag is not string address ||
+            !Uri.TryCreate(address, UriKind.Absolute, out Uri? uri) ||
+            (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp))
+            return;
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = uri.AbsoluteUri,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            NIRADiagnosticTrace.Event("IMAGE-SOURCE-OPEN",
+                $"Error={ex.GetType().Name}");
+            MessageBox.Show(this, "That image source could not be opened.",
+                "NIRA image source", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+    }
+
+    private void UserImageGalleryTile_MouseLeftButtonUp(
+        object sender,
+        MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement element ||
+            element.DataContext is not NIRAUserImageGalleryTileViewModel tile)
+            return;
+
+        // Consume the thumbnail click immediately: prevents bubbling into
+        // unrelated chat click handlers while opening a secondary viewer.
+        e.Handled = true;
+        IReadOnlyList<VisualArtifactViewModel> images = tile.GetGalleryImages();
+        NIRADiagnosticTrace.Event("IMAGE-GALLERY-CLICK",
+            $"Count={images.Count} Selected={tile.SourceIndex}");
+        if (images.Count == 0) return;
+
+        try
+        {
+            if (images.Count == 1)
+            {
+                NIRADiagnosticTrace.Event("IMAGE-GALLERY-OPEN", "Stage=SingleViewer");
+                OpenVisualArtifactViewer(images[0]);
+                return;
+            }
+
+            NIRADiagnosticTrace.Event("IMAGE-GALLERY-OPEN", "Stage=BeforeConstructor");
+            NIRAUserAttachmentGalleryWindow viewer = new(images, tile.SourceIndex);
+            NIRADiagnosticTrace.Event("IMAGE-GALLERY-OPEN", "Stage=AfterConstructor");
+            if (IsVisible)
+            {
+                viewer.Owner = this;
+                TrackAuxiliaryOverlay(viewer);
+            }
+
+            NIRADiagnosticTrace.Event("IMAGE-GALLERY-OPEN", "Stage=BeforeShow");
+            viewer.Show();
+            RefreshUtilityWindowScrim();
+            NIRADiagnosticTrace.Event("IMAGE-GALLERY-OPEN", "Stage=Shown");
+            viewer.Activate();
+        }
+        catch (Exception ex)
+        {
+            NIRADiagnosticTrace.Event("IMAGE-GALLERY-ERROR",
+                $"Type={ex.GetType().Name} Message={ex.Message.Replace('\r', ' ').Replace('\n', ' ')}");
+            MessageBox.Show(this,
+                "The image gallery could not open. NIRA's diagnostics have recorded the error.",
+                "NIRA image viewer", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
 
     private void OpenVisualArtifactViewer(
         VisualArtifactViewModel artifact)
@@ -2633,7 +2729,10 @@ public partial class MainWindow : Window
                 this;
         }
 
+        if (IsVisible)
+            TrackAuxiliaryOverlay(viewer);
         viewer.Show();
+        RefreshUtilityWindowScrim();
         viewer.Activate();
     }
 
@@ -3116,6 +3215,7 @@ public partial class MainWindow : Window
         if (_conversationArchive == null ||
             sender is not Button { Tag: NIRAArchivedChatSession session }) return;
         var view = new PastChatWindow(_conversationArchive, session) { Owner = this };
+        TrackAuxiliaryOverlay(view);
         if (view.ShowDialog() == true)
         {
             _viewModel.AttachPastChat(session.SessionId, session.Title);
@@ -3153,6 +3253,70 @@ public partial class MainWindow : Window
         {
             addButton.IsEnabled = true;
         }
+    }
+
+    // The +N overflow tile is presentation-only. The authoritative composer
+    // still contains every image and allows inspection/removal independently.
+    private void ComposerImageTile_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement element ||
+            element.DataContext is not NIRAComposerGalleryTile tile ||
+            !tile.IsImage) return;
+        e.Handled = true;
+        var images = _viewModel.ComposerAttachments.Where(a => a.IsImage).ToArray();
+        if (images.Length == 0) return;
+        var artifacts = images.Select(image => new VisualArtifactViewModel(new NIRAVisualArtifact
+        {
+            ArtifactId = Guid.NewGuid(),
+            SourceKind = NIRAVisualArtifactSourceKind.LocalImage,
+            LocalPath = image.FullPath,
+            Title = image.FileName
+        })).ToArray();
+        int selected = tile.IsOverflowTile ? 2 : Array.FindIndex(images,
+            image => string.Equals(image.FullPath, tile.FullPath, StringComparison.OrdinalIgnoreCase));
+        try
+        {
+            NIRAUserAttachmentGalleryWindow viewer = new(artifacts, Math.Max(0, selected));
+            if (IsVisible)
+            {
+                viewer.Owner = this;
+                TrackAuxiliaryOverlay(viewer);
+            }
+            viewer.Show();
+            RefreshUtilityWindowScrim();
+            viewer.Activate();
+        }
+        catch (Exception ex)
+        {
+            NIRADiagnosticTrace.Event("COMPOSER-GALLERY-ERROR", $"Type={ex.GetType().Name}");
+            MessageBox.Show(this, "The image preview could not open.",
+                "NIRA image preview", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+    }
+
+    private void ComposerImageTile_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement element ||
+            element.DataContext is not NIRAComposerGalleryTile tile ||
+            !tile.IsImage) return;
+        e.Handled = true;
+        var images = _viewModel.ComposerAttachments.Where(a => a.IsImage).ToArray();
+        if (images.Length == 0) return;
+        var menu = new System.Windows.Controls.ContextMenu();
+        foreach (NIRAComposerAttachment attachment in images)
+        {
+            var item = new System.Windows.Controls.MenuItem
+            {
+                Header = "Remove  " + attachment.FileName,
+                Tag = attachment,
+                ToolTip = attachment.FullPath
+            };
+            item.Click += (_, _) => _viewModel.RemoveComposerAttachment(attachment);
+            menu.Items.Add(item);
+        }
+        element.ContextMenu = menu;
+        menu.PlacementTarget = element;
+        menu.IsOpen = true;
     }
 
     private void RemoveComposerAttachment_Click(object sender, RoutedEventArgs e)

@@ -10,6 +10,9 @@ using NIRAAgent.Mind;
 using NIRAAgent.Authorization;
 using NIRAAgent.Memory.LongTerm;
 using NIRAAgent.Character.History;
+using NIRAAgent.Vision;
+using NIRAAgent.Diagnostics;
+using NIRAAgent.PC.Awareness;
 
 // Run with: dotnet run --project NIRAAgent.RegressionChecks
 // These are offline contract checks, not simulated live model/Bridge tests.
@@ -18,6 +21,72 @@ int failed = 0;
 Console.WriteLine($"[DeepRouting] REGRESSION | Revision={NIRAModelSelection.RoutingRevision} | " +
     $"Assembly={typeof(NIRAModelSelection).Assembly.Location}");
 Console.WriteLine("[ConcurrentMind] REGRESSION | Revision=NIRA-CONCURRENT-20261014-S4-ADAPTIVE");
+
+Check("Multimodal image input is bounded and carries real path references", () =>
+{
+    string folder = Path.Combine(Path.GetTempPath(), "nira-image-test-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        string image = Path.Combine(folder, "test.png");
+        File.WriteAllBytes(image, new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 });
+        string payload = NIRAImageInput.Serialize(new[] { image, image });
+        var restored = NIRAImageInput.ReadMetadata(new Dictionary<string, string>
+            { [NIRAImageInput.MetadataKey] = payload });
+        if (restored.Count != 1 || restored[0] != Path.GetFullPath(image))
+            throw new Exception("Image attachment provenance was lost");
+        if (!NIRAImageInput.FindExplicitLocalImages("Inspect " + image + " please")
+                .Contains(image, StringComparer.OrdinalIgnoreCase))
+            throw new Exception("Explicit existing local image was not discovered");
+        Throws<InvalidOperationException>(() => NIRAImageInput.Validate(new[] { Path.Combine(folder, "x.txt") }));
+        Throws<FileNotFoundException>(() => NIRAImageInput.Validate(new[] { Path.Combine(folder, "absent.png") }));
+    }
+    finally { Directory.Delete(folder, true); }
+});
+
+Check("Five attached images stay in one direct vision request", () =>
+{
+    string folder = Path.Combine(Path.GetTempPath(), "nira-images-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        string[] paths = Enumerable.Range(1, 5).Select(index =>
+            Path.Combine(folder, $"photo-{index}.png")).ToArray();
+        foreach (string image in paths) File.WriteAllBytes(image, new byte[] { 137, 80, 78, 71 });
+        IReadOnlyList<string> accepted = NIRAImageInput.Validate(paths);
+        var batches = NIRAImageInput.PlanBatches(accepted);
+        if (accepted.Count != 5 || batches.Count != 1 || batches[0].Paths.Count != 5)
+            throw new Exception("Five images were rejected or split unnecessarily");
+        string encoded = NIRAImageInput.Serialize(paths);
+        if (NIRAImageInput.ReadMetadata(new Dictionary<string, string>
+            { [NIRAImageInput.MetadataKey] = encoded }).Count != 5)
+            throw new Exception("Five-image metadata lost an attachment");
+    }
+    finally { Directory.Delete(folder, true); }
+});
+
+Check("Twenty images are processed in ordered bounded batches", () =>
+{
+    string folder = Path.Combine(Path.GetTempPath(), "nira-images-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        string[] paths = Enumerable.Range(1, 20).Select(index =>
+            Path.Combine(folder, $"photo-{index}.png")).ToArray();
+        foreach (string image in paths) File.WriteAllBytes(image, new byte[] { 137, 80, 78, 71 });
+        var batches = NIRAImageInput.PlanBatches(paths);
+        if (batches.Count != 3 || batches[0].Paths.Count != 8 ||
+            batches[1].Paths.Count != 8 || batches[2].Paths.Count != 4 ||
+            batches[1].FirstImageNumber != 9 || batches[2].FirstImageNumber != 17 ||
+            !batches.SelectMany(b => b.Paths).SequenceEqual(paths))
+            throw new Exception("Batching reordered, lost or duplicated an image");
+        string[] extras = Enumerable.Range(21, 5).Select(index =>
+            Path.Combine(folder, $"photo-{index}.png")).ToArray();
+        foreach (string image in extras) File.WriteAllBytes(image, new byte[] { 137, 80, 78, 71 });
+        Throws<InvalidOperationException>(() => NIRAImageInput.Validate(paths.Concat(extras)));
+    }
+    finally { Directory.Delete(folder, true); }
+});
 
 Check("Browser fallback is reserved for a genuinely missing Playwright executable", () =>
 {
@@ -250,25 +319,103 @@ Check("User-folder relative paths resolve against OS known folders, not app bin"
         throw new Exception("Unrelated relative file paths were unexpectedly redirected");
 });
 
-Check("Named user-content directories are discovered without unknown-folder exceptions", () =>
+Check("Named directory discovery stays grounded without writing to redirected user folders", () =>
 {
-    if (!OperatingSystem.IsWindows()) return;
-    string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-    if (!Directory.Exists(documents)) return;
-    string name = "nira-scope-regression-" + Guid.NewGuid().ToString("N");
-    string folder = Path.Combine(documents, name);
+    // The positive fixture lives in an isolated local temporary directory.
+    // Do not create/delete test directories under Documents, Desktop, or
+    // OneDrive-managed known folders: sync providers can move placeholders
+    // while the test is enumerating, making the result timing-dependent.
+    string root = Path.Combine(Path.GetTempPath(),
+        "nira-scope-regression-" + Guid.NewGuid().ToString("N"));
+    string name = "observed-subfolder-" + Guid.NewGuid().ToString("N");
+    string folder = Path.Combine(root, name);
     try
     {
         Directory.CreateDirectory(folder);
         var handler = new NIRAFileLocationCapabilityHandler();
-        var result = handler.ExecuteAsync(Request(NIRACapabilityIds.FileLocate,
-            JsonSerializer.Serialize(new { scope = "CurrentUserFolder", name, kind = "Directory", maxDepth = 2, maxEntries = 4000 })))
-            .GetAwaiter().GetResult();
-        if (!result.Succeeded || !result.Output.Contains(folder, StringComparison.OrdinalIgnoreCase) ||
-            !result.Summary.Contains("Scope=CurrentUserContent", StringComparison.Ordinal))
-            throw new Exception("A named folder inside user Documents was not discovered via bounded fallback");
+        var rootedResult = handler.ExecuteAsync(Request(NIRACapabilityIds.FileLocate,
+            JsonSerializer.Serialize(new
+            {
+                root, name, kind = "Directory", maxDepth = 0,
+                maxEntries = 64, maxMatches = 2
+            }))).GetAwaiter().GetResult();
+        if (!rootedResult.Succeeded ||
+            !rootedResult.Output.Contains("DIR\t" + folder, StringComparison.OrdinalIgnoreCase) ||
+            !rootedResult.Summary.Contains("Scope=RootOrWholePc", StringComparison.Ordinal))
+            throw new Exception("Exact rooted directory discovery did not return the test folder");
+
+        // An arbitrary, nonexistent folder name must be a bounded negative
+        // observation within the current user's content folders, not an
+        // unknown-folder exception or an implicit whole-drive search.
+        if (OperatingSystem.IsWindows())
+        {
+            string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            if (Directory.Exists(documents))
+            {
+                string missing = "nira-scoped-absent-" + Guid.NewGuid().ToString("N");
+                var scopedResult = handler.ExecuteAsync(Request(NIRACapabilityIds.FileLocate,
+                    JsonSerializer.Serialize(new
+                    {
+                        scope = "CurrentUserFolder", name = missing,
+                        kind = "Directory", maxDepth = 0,
+                        maxEntries = 1, maxMatches = 1
+                    }))).GetAwaiter().GetResult();
+                if (!scopedResult.Succeeded ||
+                    !scopedResult.Summary.Contains("Scope=CurrentUserContent", StringComparison.Ordinal) ||
+                    !scopedResult.Summary.Contains("MatchMode=Exact", StringComparison.Ordinal) ||
+                    !scopedResult.Summary.Contains("MaxEntriesPerRoot=1", StringComparison.Ordinal) ||
+                    scopedResult.Summary.Contains("Scope=RootOrWholePc", StringComparison.Ordinal) ||
+                    scopedResult.Summary.Contains("LocationSearch=Unique", StringComparison.Ordinal))
+                    throw new Exception("Unknown named folder escaped bounded current-user-content discovery");
+            }
+        }
     }
-    finally { if (Directory.Exists(folder)) Directory.Delete(folder, true); }
+    finally
+    {
+        if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+    }
+});
+
+Check("Window captions remain distinct from verified disk paths", () =>
+{
+    var processHandler = new NIRAProcessListCapabilityHandler();
+    if (!processHandler.Descriptor.Description.Contains("not verified document paths", StringComparison.Ordinal) ||
+        !processHandler.ExecuteAsync(Request(NIRACapabilityIds.ProcessList,
+            JsonSerializer.Serialize(new { name = "nira-absent-process-filter-" + Guid.NewGuid().ToString("N") })))
+            .GetAwaiter().GetResult().Summary.Contains("WindowTitlesAreNotFilesystemPaths=True", StringComparison.Ordinal))
+        throw new Exception("Process observations must not claim that window titles prove document locations");
+});
+
+Check("Missing relative read reports the actual resolution without inventing a file", () =>
+{
+    var reader = new NIRAFileReadCapabilityHandler();
+    string name = "nira-missing-relative-" + Guid.NewGuid().ToString("N") + ".txt";
+    try
+    {
+        reader.ExecuteAsync(Request(NIRACapabilityIds.FileRead,
+            JsonSerializer.Serialize(new { path = name }))).GetAwaiter().GetResult();
+        throw new Exception("Missing source unexpectedly succeeded");
+    }
+    catch (FileNotFoundException ex)
+    {
+        if (!ex.Message.Contains("working directory", StringComparison.OrdinalIgnoreCase) ||
+            !ex.Message.Contains("window title", StringComparison.OrdinalIgnoreCase))
+            throw new Exception("Missing file lacked source-provenance guidance");
+    }
+});
+
+Check("Post-observation archive loops are bounded without blocking new tools", () =>
+{
+    bool IsHistory(bool file, bool newSection, int memories, int chats, bool hasWork) =>
+        NIRAContextRetrievalPolicy.IsHistoryOnlyAfterFileObservation(
+            file, newSection, memories, chats, hasWork);
+    if (!IsHistory(true, false, 0, 1, false) ||
+        IsHistory(false, false, 0, 1, false) ||
+        IsHistory(true, true, 0, 1, false) ||
+        IsHistory(true, false, 1, 1, false) ||
+        IsHistory(true, false, 0, 1, true) ||
+        IsHistory(true, false, 0, 0, false))
+        throw new Exception("History-only budget affected unrelated or fresh work");
 });
 
 Check("Automatic local observation permits only bounded exact commands", () =>
@@ -576,6 +723,27 @@ Check("All app guidance fits NIRA's current 3000-character loader budget", () =>
         if (length > limit)
             throw new Exception($"{Path.GetFileName(file)} has {length} characters; runtime limit is {limit}");
     }
+});
+
+Check("R20 visual block contract preserves supported narrative and actual source", () =>
+{
+    using JsonDocument document = JsonDocument.Parse("""
+        {"displayBlocks":[
+          {"type":"hero","title":"Ancient engineering","text":"How quarrying worked"},
+          {"type":"card","title":"Quarrying","text":"Limestone from nearby quarries"},
+          {"type":"card","title":"Transport","text":"Sledges and organized work"},
+          {"type":"insight","title":"Main takeaway","text":"Coordinated engineering mattered"},
+          {"type":"source","title":"Read more","text":"https://example.org/reference"}
+        ]}
+        """);
+    var blocks = NIRARichBlockJsonReader.Read(document.RootElement);
+    if (blocks.Count != 5 ||
+        !blocks.Select(b => b.Type).SequenceEqual(new[] { "hero", "card", "card", "insight", "source" }))
+        throw new Exception("R20 sourced visual block types were rejected or reordered");
+    var forged = NIRAPresentationPolicy.Normalize(new [] {
+        new NIRARichBlock { Type = "source", Title = "Fake source", Text = "I saw it somewhere" }
+    });
+    if (forged.Count != 0) throw new Exception("A source card must contain an actual HTTP(S) destination");
 });
 
 Check("Rich screen blocks are included in objective review", () =>
@@ -1624,6 +1792,1439 @@ Check("R11 inspected browser references are stable for live nodes only", () =>
         !script.Contains("refState.nodes.get(el)", StringComparison.Ordinal) ||
         !script.Contains("refState.nodes.set(el, ref)", StringComparison.Ordinal))
         throw new Exception("Browser inspection no longer preserves per-node refs");
+});
+
+Check("R13 filtered filesystem listings distinguish no match from an empty folder", () =>
+{
+    string root = Path.Combine(Path.GetTempPath(), "nira-r13-observation-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, "visible.md"), "exists");
+        var handler = new NIRADirectoryListCapabilityHandler();
+        foreach (string? sort in new string?[] { null, "LastWriteUtc" })
+        {
+            object parameters = sort is null
+                ? new { path = root, pattern = "*.txt", filesOnly = true }
+                : new { path = root, pattern = "*.txt", filesOnly = true, sortBy = sort };
+            var result = handler.ExecuteAsync(Request(NIRACapabilityIds.DirectoryList,
+                JsonSerializer.Serialize(parameters))).GetAwaiter().GetResult();
+            if (!result.Succeeded || result.Output.Length != 0 ||
+                !result.Summary.Contains("RootHasOtherEntries=True", StringComparison.Ordinal) ||
+                !result.Summary.Contains("ZeroMatchScope=Pattern:*.txt", StringComparison.Ordinal) ||
+                !result.Summary.Contains("does not prove the directory is empty", StringComparison.Ordinal))
+                throw new Exception("Zero text matches were mistaken for an empty Documents-style folder");
+        }
+    }
+    finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+});
+
+Check("R13 ordinary folder creation and subsequent verified UTF-8 write still work", () =>
+{
+    string root = Path.Combine(Path.GetTempPath(), "nira-r13-write-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        string folder = Path.Combine(root, "new-folder");
+        var created = new NIRADirectoryCreateCapabilityHandler().ExecuteAsync(
+            Request(NIRACapabilityIds.DirectoryCreate, JsonSerializer.Serialize(new { path = folder })))
+            .GetAwaiter().GetResult();
+        if (!created.Succeeded || !Directory.Exists(folder))
+            throw new Exception("Normal directory create no longer succeeds");
+        string file = Path.Combine(folder, "note.txt");
+        var written = new NIRAFileWriteCapabilityHandler().ExecuteAsync(
+            Request(NIRACapabilityIds.FileWrite, JsonSerializer.Serialize(new { path = file, content = "R13 verified note" })))
+            .GetAwaiter().GetResult();
+        if (!written.Succeeded || File.ReadAllText(file) != "R13 verified note" ||
+            !written.Summary.Contains("SHA256=", StringComparison.Ordinal))
+            throw new Exception("Folder creation did not yield an intact verified text file");
+    }
+    finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+});
+
+Check("R13 a missing write parent fails before any file is created", () =>
+{
+    string root = Path.Combine(Path.GetTempPath(), "nira-r13-unavailable-" + Guid.NewGuid().ToString("N"));
+    string target = Path.Combine(root, "missing-parent", "text.txt");
+    try
+    {
+        var handler = new NIRAFileWriteCapabilityHandler();
+        try
+        {
+            handler.ExecuteAsync(Request(NIRACapabilityIds.FileWrite,
+                JsonSerializer.Serialize(new { path = target, content = "not written" })))
+                .GetAwaiter().GetResult();
+            throw new Exception("Write with a missing parent unexpectedly succeeded");
+        }
+        catch (DirectoryNotFoundException ex)
+        {
+            if (!ex.Message.Contains("must actually succeed", StringComparison.Ordinal) ||
+                File.Exists(target))
+                throw new Exception("Missing-parent write was not stopped before mutation");
+        }
+        MethodInfo guard = typeof(NIRACapabilityService).GetMethod(
+            "IsCertainNoEffectFilesystemPreflight", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new Exception("Missing certain-no-effect write classification");
+        if (guard.Invoke(null, new object[] { NIRACapabilityIds.FileWrite,
+                new DirectoryNotFoundException("No parent") }) is not true ||
+            guard.Invoke(null, new object[] { NIRACapabilityIds.DirectoryCreate,
+                new IOException("Uncertain parent") }) is not false)
+            throw new Exception("Filesystem outcome-uncertainty classification is too broad");
+    }
+    finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+});
+
+Check("R13 scoped model guidance preserves correct target-window and folder evidence", () =>
+{
+    Type compiler = typeof(NIRACognitionService).Assembly.GetType(
+        "NIRAAgent.AI.Cognition.NIRACognitionPromptCompiler")
+        ?? throw new Exception("Missing focused cognition compiler");
+    // This is a source-contract check; live behavior still needs real tasks.
+    string file = LocatePromptFolder() is string folder
+        ? Path.Combine(folder, "cognition.yaml") : string.Empty;
+    if (file.Length == 0 || !File.Exists(file))
+        throw new Exception("Cannot find current production cognition guidance");
+    string policy = File.ReadAllText(file);
+    if (!policy.Contains("mismatched evidence", StringComparison.Ordinal) ||
+        !policy.Contains("A failed finite action does not become a persistent goal", StringComparison.Ordinal))
+        throw new Exception("Current cognition policy lost evidence or persistent-goal boundary");
+});
+
+Check("R13.1 dependent writes are blocked only after a failed parent creation", () =>
+{
+    string root = Path.Combine(Path.GetTempPath(), "nira-dependency-" + Guid.NewGuid().ToString("N"));
+    var failed = Request(NIRACapabilityIds.DirectoryCreate,
+        JsonSerializer.Serialize(new { path = Path.Combine(root, "new") }));
+    var childWrite = Request(NIRACapabilityIds.FileWrite,
+        JsonSerializer.Serialize(new { path = Path.Combine(root, "new", "note.txt"), content = "note" }));
+    var nestedCreate = Request(NIRACapabilityIds.DirectoryCreate,
+        JsonSerializer.Serialize(new { path = Path.Combine(root, "new", "sub") }));
+    var unrelatedWrite = Request(NIRACapabilityIds.FileWrite,
+        JsonSerializer.Serialize(new { path = Path.Combine(root, "other", "note.txt"), content = "note" }));
+    var unrelatedRead = Request(NIRACapabilityIds.FileRead,
+        JsonSerializer.Serialize(new { path = Path.Combine(root, "new", "note.txt") }));
+    if (!NIRACapabilityService.DependsOnFailedDirectoryCreation(failed, childWrite) ||
+        !NIRACapabilityService.DependsOnFailedDirectoryCreation(failed, nestedCreate) ||
+        NIRACapabilityService.DependsOnFailedDirectoryCreation(failed, unrelatedWrite) ||
+        NIRACapabilityService.DependsOnFailedDirectoryCreation(failed, unrelatedRead))
+        throw new Exception("Filesystem dependency detection was inaccurate");
+});
+
+Check("R13.1 successful existing-directory creation is a verified no-op", () =>
+{
+    string root = Path.Combine(Path.GetTempPath(), "nira-existing-dir-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        Directory.CreateDirectory(root);
+        var result = new NIRADirectoryCreateCapabilityHandler().ExecuteAsync(
+            Request(NIRACapabilityIds.DirectoryCreate,
+                JsonSerializer.Serialize(new { path = root })))
+            .GetAwaiter().GetResult();
+        if (!result.Succeeded || result.ChangedSystemState ||
+            !result.Summary.Contains("already present", StringComparison.Ordinal))
+            throw new Exception("Existing directory was misreported as a mutation");
+    }
+    finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+});
+
+Check("R13.2 silent directory recovery only retries transient provider path failures", () =>
+{
+    bool Retry(Exception error, bool parent, bool target, int attempt) =>
+        NIRADirectoryRecoveryPolicy.ShouldRetry(error, parent, target, attempt);
+    if (!Retry(new FileNotFoundException("Cloud placeholder not ready"), true, false, 0) ||
+        !Retry(new DirectoryNotFoundException("Folder temporarily unavailable"), true, false, 0) ||
+        Retry(new FileNotFoundException(), true, false, 1) ||
+        Retry(new FileNotFoundException(), false, false, 0) ||
+        Retry(new FileNotFoundException(), true, true, 0) ||
+        Retry(new UnauthorizedAccessException("Windows denied access"), true, false, 0) ||
+        Retry(new IOException("Unclassified filesystem error"), true, false, 0))
+        throw new Exception("Directory recovery exceeded its one-shot transient-provider boundary");
+});
+
+Check("R13.2 OS access denials are diagnosed separately from missing provider paths", () =>
+{
+    if (NIRADirectoryRecoveryPolicy.Classify(
+            new UnauthorizedAccessException("Denied")) != "AccessDenied" ||
+        NIRADirectoryRecoveryPolicy.Classify(
+            new FileNotFoundException("Missing child")) != "PathOrProviderNotFound" ||
+        NIRADirectoryRecoveryPolicy.Classify(
+            new DirectoryNotFoundException("Missing parent")) != "ParentPathUnavailable" ||
+        NIRADirectoryRecoveryPolicy.Classify(
+            new IOException("Unknown I/O")) != "FilesystemIOError")
+        throw new Exception("Windows error classes must not be confused with Defender approval");
+});
+
+Check("R13.2 routine directory creation needs no new access prompt or destination substitution", () =>
+{
+    string root = Path.Combine(Path.GetTempPath(),
+        "nira-silent-folder-" + Guid.NewGuid().ToString("N"));
+    string nested = Path.Combine(root, "content", "notes");
+    try
+    {
+        var handler = new NIRADirectoryCreateCapabilityHandler();
+        var result = handler.ExecuteAsync(Request(NIRACapabilityIds.DirectoryCreate,
+            JsonSerializer.Serialize(new { path = nested }))).GetAwaiter().GetResult();
+        if (!result.Succeeded || !Directory.Exists(nested) ||
+            !result.ChangedSystemState ||
+            !result.Summary.Contains("SilentRecovery=NotNeeded", StringComparison.Ordinal))
+            throw new Exception("Normal nested folder creation stopped being a silent verified action");
+        var again = handler.ExecuteAsync(Request(NIRACapabilityIds.DirectoryCreate,
+            JsonSerializer.Serialize(new { path = nested }))).GetAwaiter().GetResult();
+        if (!again.Succeeded || again.ChangedSystemState)
+            throw new Exception("Existing folder must remain a successful no-op");
+    }
+    finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+});
+
+// R13.3 — ordinary Windows file operations remain prompt-free; only a failed
+// write in a protected known folder may reach explicit OS-level consent.
+Check("R13.3 normal local folder creation never requests Windows elevation", () =>
+{
+    string path = Path.Combine(Path.GetTempPath(), "nira-quiet-folder-" + Guid.NewGuid().ToString("N"));
+    var service = new NIRAWindowsProtectedFolderAccessService();
+    int prompts = 0;
+    service.SetConsentHandler((_, _) => { prompts++; return Task.FromResult(true); });
+    try
+    {
+        var result = new NIRADirectoryCreateCapabilityHandler(service).ExecuteAsync(
+            Request(NIRACapabilityIds.DirectoryCreate,
+                JsonSerializer.Serialize(new { path }))).GetAwaiter().GetResult();
+        if (!result.Succeeded || !Directory.Exists(path) || prompts != 0)
+            throw new Exception("Ordinary folder was blocked or caused a consent prompt");
+    }
+    finally { if (Directory.Exists(path)) Directory.Delete(path, true); }
+});
+
+Check("R13.3 Windows access without an explicit consent handler never grants access", () =>
+{
+    var service = new NIRAWindowsProtectedFolderAccessService();
+    string target = Path.Combine(Path.GetTempPath(), "nira-rejected", "note.txt");
+    bool granted = service.TryRecoverAsync(target, new UnauthorizedAccessException("sample"),
+        CancellationToken.None).GetAwaiter().GetResult();
+    if (granted) throw new Exception("Unexpected OS allowance");
+});
+
+Check("R13.3 redirected Windows Documents is not silently substituted with profile Documents", () =>
+{
+    if (!OperatingSystem.IsWindows()) return;
+
+    // The real Windows known-folder lookup may return an empty path in an
+    // isolated test process. Exercise the production path rule with distinct,
+    // deterministic absolute paths instead of silently skipping the assertion.
+    string simulatedProfile = Path.Combine(Path.GetTempPath(), "nira-shadow-" + Guid.NewGuid().ToString("N"));
+    string simulatedLegacy = Path.Combine(simulatedProfile, "Documents");
+    string simulatedActual = Path.Combine(simulatedProfile, "OneDrive", "Documents");
+    string shadow = Path.Combine(simulatedLegacy, "NIRA-ShadowCheck", "note.txt");
+    string canonical = Path.Combine(simulatedActual, "NIRA-ShadowCheck", "note.txt");
+    string sibling = Path.Combine(simulatedProfile, "DocumentsOld", "note.txt");
+    bool IsShadow(string target, string actual) =>
+        NIRAWindowsProtectedFolderAccessService.IsRedirectedKnownFolderShadow(
+            target, simulatedProfile, "Documents", actual);
+
+    if (!IsShadow(shadow, simulatedActual) ||
+        IsShadow(canonical, simulatedActual) ||
+        IsShadow(sibling, simulatedActual) ||
+        IsShadow(shadow, simulatedLegacy) ||
+        IsShadow(shadow, string.Empty))
+        throw new Exception("Redirected known-folder path policy accepted a shadow or rejected a valid path");
+
+    // Also test the OS-facing guard when the host actually resolves the folder.
+    string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    string actualDocuments = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+    if (string.IsNullOrWhiteSpace(userProfile) || string.IsNullOrWhiteSpace(actualDocuments))
+        return; // No Windows mapping to assert; deterministic rule was tested above.
+
+    string profileDocuments = Path.Combine(userProfile, "Documents");
+    string requested = Path.Combine(profileDocuments, "NIRA-ShadowCheck", "note.txt");
+    bool redirected = NIRAWindowsProtectedFolderAccessService.IsRedirectedKnownFolderShadow(
+        requested, userProfile, "Documents", actualDocuments);
+    if (redirected)
+    {
+        try
+        {
+            NIRAWindowsProtectedFolderAccessService.RejectRedirectedKnownFolderShadow(requested);
+            throw new Exception("Noncanonical Documents accepted as the real known folder");
+        }
+        catch (InvalidOperationException ex) when (ex.Message.StartsWith("WrongWindowsKnownFolder", StringComparison.Ordinal)) { }
+    }
+    NIRAWindowsProtectedFolderAccessService.RejectRedirectedKnownFolderShadow(
+        Path.Combine(actualDocuments, "NIRA-ShadowCheck", "note.txt"));
+});
+
+Check("R14 named window recovery is opt-in within the exact HWND capture contract", () =>
+{
+    var request = new NIRAVisualCaptureRequest {
+        Target = NIRAVisualCaptureTarget.Window,
+        ProcessName = "AnyApp",
+        AllowForegroundRecovery = true };
+    if (!request.AllowForegroundRecovery ||
+        new NIRAVisualCaptureRequest { Target = NIRAVisualCaptureTarget.ForegroundWindow }.AllowForegroundRecovery)
+        throw new Exception("Foreground recovery must not silently enable itself for arbitrary captures");
+    var method = typeof(INIRAScreenCaptureBackend).GetMethod("CaptureWindowPngAsync")
+        ?? throw new Exception("Window capture backend missing");
+    if (method.GetParameters().Length != 4 ||
+        method.GetParameters()[2].ParameterType != typeof(bool))
+        throw new Exception("Host must receive exact-window recovery authorization");
+});
+
+Check("R14 window capture refuses HWND substitution or minimized post-capture state", () =>
+{
+    var before = new NIRACaptureWindowSnapshot {
+        Handle = 7201, ProcessId = 112, ProcessName = "AnyApp",
+        Bounds = new PcRectangle(0, 0, 800, 600) };
+    if (!NIRAWindowCaptureIdentityPolicy.SameRenderableWindow(before, before) ||
+        NIRAWindowCaptureIdentityPolicy.SameRenderableWindow(before, before with { Handle = 7202 }) ||
+        NIRAWindowCaptureIdentityPolicy.SameRenderableWindow(before, before with { ProcessId = 113 }) ||
+        NIRAWindowCaptureIdentityPolicy.SameRenderableWindow(before, before with { IsMinimized = true }))
+        throw new Exception("Capture identity must match actual target HWND and PID");
+});
+
+Check("R15 named-window failure cannot be substituted with generic foreground capture", () =>
+{
+    NIRACapabilityRequest named = Request(NIRACapabilityIds.VisionCapture,
+        "{\"target\":\"window\",\"processName\":\"AnyApp\"}");
+    NIRACapabilityRequest other = Request(NIRACapabilityIds.VisionCapture,
+        "{\"target\":\"foregroundWindow\"}");
+    if (!NIRAWindowObservationContinuityPolicy.IsNamedWindowCapture(named) ||
+        !NIRAWindowObservationContinuityPolicy.IsUnrelatedForegroundCapture(other, true) ||
+        NIRAWindowObservationContinuityPolicy.IsUnrelatedForegroundCapture(other, false))
+        throw new Exception("A failed exact target must remain the visual objective");
+});
+
+Check("R15 selector-bearing and non-vision observations are never suppressed", () =>
+{
+    NIRACapabilityRequest selected = Request(NIRACapabilityIds.VisionCapture,
+        "{\"target\":\"window\",\"titleContains\":\"My Work\"}");
+    NIRACapabilityRequest process = Request(NIRACapabilityIds.ProcessList, "{}");
+    if (NIRAWindowObservationContinuityPolicy.IsUnrelatedForegroundCapture(selected, true) ||
+        NIRAWindowObservationContinuityPolicy.IsUnrelatedForegroundCapture(process, true))
+        throw new Exception("Actual named target and independent tools must be allowed");
+});
+
+Check("R15 Windows accessibility has an independent read-only evidence contract", () =>
+{
+    var descriptor = new NIRAWindowAccessibilityCapabilityHandler(
+        null!, null!).Descriptor;
+    if (descriptor.Id != "vision.accessibility" ||
+        descriptor.DefaultRisk != NIRACapabilityRisk.Observe ||
+        !descriptor.Parameters.Any(p => p.Name == "windowHandle") ||
+        !descriptor.Parameters.Any(p => p.Name == "processName"))
+        throw new Exception("Named-app UI Automation fallback missing or unsafe");
+});
+
+Check("R15 named capture still rejects a forged different HWND identity", () =>
+{
+    var a = new NIRACaptureWindowSnapshot {
+        Handle = 1101, ProcessId = 10, Bounds = new PcRectangle(0, 0, 800, 600) };
+    if (NIRAWindowCaptureIdentityPolicy.SameRenderableWindow(a,
+        a with { Handle = 1102, ProcessId = 10 }))
+        throw new Exception("Window identity was incorrectly accepted");
+});
+
+Check("R16 desktop control interface is registered as observe plus authorized mutation", () =>
+{
+    var inspect = new NIRADesktopInspectCapabilityHandler(null!, null!).Descriptor;
+    var act = new NIRADesktopActCapabilityHandler(null!, null!).Descriptor;
+    if (inspect.Id != "desktop.inspect" || inspect.DefaultRisk != NIRACapabilityRisk.Observe ||
+        act.Id != "desktop.act" || act.DefaultRisk != NIRACapabilityRisk.Modify ||
+        !act.Parameters.Any(p => p.Name == "windowHandle") ||
+        !act.Parameters.Any(p => p.Name == "controlType"))
+        throw new Exception("General desktop controls not registered with proper risk and targets");
+});
+
+Check("R16 refuses ungrounded desktop control clicks", () =>
+{
+    Throws<ArgumentException>(() => NIRADesktopActionPolicy.Validate(new NIRADesktopAction {
+        Kind="click", ControlName="" }));
+    Throws<ArgumentException>(() => NIRADesktopActionPolicy.Validate(new NIRADesktopAction {
+        Kind="click", ControlName="", ControlType="ControlType.Button" }));
+});
+
+Check("R16 exact inspected UI control action passes structural preflight", () =>
+{
+    NIRADesktopActionPolicy.Validate(new NIRADesktopAction {
+        Kind="invoke", ControlName="Save", ControlType="ControlType.Button" });
+    NIRADesktopActionPolicy.Validate(new NIRADesktopAction {
+        Kind="setValue", AutomationId="document-editor", ControlType="ControlType.Edit", Text="Draft" });
+});
+
+Check("R16 desktop action disallows arbitrary code or unbounded payloads", () =>
+{
+    Throws<ArgumentException>(() => NIRADesktopActionPolicy.Validate(new NIRADesktopAction {
+        Kind="shell", ControlName="cmd", ControlType="ControlType.Edit" }));
+    Throws<ArgumentException>(() => NIRADesktopActionPolicy.Validate(new NIRADesktopAction {
+        Kind="setValue", AutomationId="edit", ControlType="ControlType.Edit", Text=new string('A',10001) }));
+});
+
+Check("R16 input methods do not accept unrelated payload arguments", () =>
+{
+    Throws<ArgumentException>(() => NIRADesktopActionPolicy.Validate(new NIRADesktopAction {
+        Kind="press", Key="CTRL+S", Text="surprise" }));
+    Throws<ArgumentException>(() => NIRADesktopActionPolicy.Validate(new NIRADesktopAction {
+        Kind="invoke", ControlName="OK", ControlType="ControlType.Button", Key="ALT+F4" }));
+});
+
+Check("R16 mutating desktop command requires an exact HWND", () =>
+{
+    if (DesktopWindowResolver.ParseHandle("0x1234") != 0x1234 ||
+        DesktopWindowResolver.ParseHandle("4660") != 4660)
+        throw new Exception("Exact HWND parsing failed");
+    Throws<ArgumentException>(() => DesktopWindowResolver.ParseHandle("0xnope"));
+    Throws<ArgumentException>(() => DesktopWindowResolver.ParseHandle("0"));
+});
+
+Check("R16 post-action observation is distinguished from dispatched input", () =>
+{
+    var dispatched = new NIRADesktopActionResult { ActionDispatched=true, PostconditionVerified=false };
+    if (!dispatched.ActionDispatched || dispatched.PostconditionVerified)
+        throw new Exception("Dispatch and postcondition were conflated");
+});
+
+Check("R16 verified UI post-action observation must match exact HWND", () =>
+{
+    string evidence = "NIRA DESKTOP CONTROL SNAPSHOT\nWindowHandle: 0x1234\nProcessId: 100";
+    if (!NIRADesktopExecutionEvidencePolicy.SameTargetObservation(0x1234, evidence, true) ||
+        NIRADesktopExecutionEvidencePolicy.SameTargetObservation(0x9999, evidence, true) ||
+        NIRADesktopExecutionEvidencePolicy.SameTargetObservation(0x1234, evidence, false))
+        throw new Exception("Another application's inspection incorrectly cleared pending UI verification");
+});
+
+Check("R16.1 allows foreground-verified focused editor typing without invented selectors", () =>
+{
+    // Actual focus, editable ControlType, HWND ancestry, and password checks
+    // are performed inside WindowsDesktopInteractionBackend before SendInput.
+    NIRADesktopActionPolicy.Validate(new NIRADesktopAction {
+        Kind="type", Text="We explore the stars." });
+    Throws<ArgumentException>(() => NIRADesktopActionPolicy.Validate(new NIRADesktopAction {
+        Kind="type", Text="" }));
+});
+
+Check("R16.1 permits unique live-control identification without copied type", () =>
+{
+    // The backend must match exactly one live control; an absent identifier
+    // is still forbidden for non-typing control operations.
+    NIRADesktopActionPolicy.Validate(new NIRADesktopAction {
+        Kind="invoke", ControlName="Open" });
+    Throws<ArgumentException>(() => NIRADesktopActionPolicy.Validate(new NIRADesktopAction {
+        Kind="invoke" }));
+});
+
+Check("R16.1 diagnostic argument shape never includes desktop text or control names", () =>
+{
+    using var data = JsonDocument.Parse("""
+        {"action":"type","windowHandle":"0x1234","controlName":"PRIVATE_CONTROL_NAME",
+         "automationId":"PRIVATE_AUTOMATION_ID","text":"PERSONAL_TEXT_DO_NOT_LOG"}
+        """);
+    string shape = NIRADiagnosticTrace.DesktopArgumentShape(data.RootElement);
+    if (!shape.Contains("Action=type", StringComparison.Ordinal) ||
+        !shape.Contains("TextChars=24", StringComparison.Ordinal) ||
+        shape.Contains("PERSONAL", StringComparison.Ordinal) ||
+        shape.Contains("PRIVATE", StringComparison.Ordinal))
+        throw new Exception("Desktop diagnostic contains private argument content");
+});
+
+Check("R16.1 raw model response capture is explicitly opt-in", () =>
+{
+    string? before = Environment.GetEnvironmentVariable("NIRA_DEBUG_LLM_RESPONSES");
+    string? transcriptBefore = Environment.GetEnvironmentVariable("NIRA_DEBUG_LLM_TRANSCRIPTS");
+    try
+    {
+        // The debugger implicitly enables full capture; outside it, the
+        // historic explicit response switch remains independently opt-in.
+        Environment.SetEnvironmentVariable("NIRA_DEBUG_LLM_TRANSCRIPTS", null);
+        Environment.SetEnvironmentVariable("NIRA_DEBUG_LLM_RESPONSES", null);
+        if (!System.Diagnostics.Debugger.IsAttached && NIRADiagnosticTrace.LlmResponseCaptureEnabled)
+            throw new Exception("LLM response logging enabled without opt-in");
+        Environment.SetEnvironmentVariable("NIRA_DEBUG_LLM_RESPONSES", "1");
+        if (!NIRADiagnosticTrace.LlmResponseCaptureEnabled)
+            throw new Exception("Explicit opt-in was ignored");
+    }
+    finally
+    {
+        Environment.SetEnvironmentVariable("NIRA_DEBUG_LLM_RESPONSES", before);
+        Environment.SetEnvironmentVariable("NIRA_DEBUG_LLM_TRANSCRIPTS", transcriptBefore);
+    }
+});
+
+Check("R16.2 type text rejects fake keyboard shortcuts without typing them literally", () =>
+{
+    Throws<ArgumentException>(() => NIRADesktopActionPolicy.Validate(new NIRADesktopAction {
+        Kind = "type", Text = "^a{BACKSPACE}New paragraph" }));
+    NIRADesktopActionPolicy.Validate(new NIRADesktopAction {
+        Kind = "press", Key = "CTRL+A" });
+});
+
+Check("R16.2 normal prose typing remains valid", () =>
+{
+    NIRADesktopActionPolicy.Validate(new NIRADesktopAction {
+        Kind = "type", Text = "Space exploration starts here. No keyboard macros." });
+    if (NIRADesktopTextEntryPolicy.ContainsShortcutNotation("A simple paragraph with a normal caret ^ symbol."))
+        throw new Exception("Normal text was mistaken for keyboard syntax");
+});
+
+Check("R16.2 existing-content override applies only to inserting text", () =>
+{
+    NIRADesktopActionPolicy.Validate(new NIRADesktopAction {
+        Kind = "type", Text = "extra details", AllowExistingContent = true });
+    Throws<ArgumentException>(() => NIRADesktopActionPolicy.Validate(new NIRADesktopAction {
+        Kind = "press", Key = "TAB", AllowExistingContent = true }));
+});
+
+Check("R16.2 readback requires exact editor value not merely a matching substring", () =>
+{
+    if (!NIRADesktopTextEntryPolicy.MatchesInsertedText("", "The stars are bright.", "The stars are bright.") ||
+        !NIRADesktopTextEntryPolicy.MatchesInsertedText("", "Line one\r\nLine two", "Line one\nLine two"))
+        throw new Exception("A complete inserted string was not verified");
+    if (NIRADesktopTextEntryPolicy.MatchesInsertedText("old ", "old injected new", "new") ||
+        NIRADesktopTextEntryPolicy.MatchesInsertedText("", "garbage target", "target"))
+        throw new Exception("A partial match was wrongly accepted as the complete editor state");
+});
+
+Check("R16.2 missing UIA readback never counts as verified content", () =>
+{
+    if (NIRADesktopTextEntryPolicy.MatchesInsertedText(null, "text", "text") ||
+        NIRADesktopTextEntryPolicy.MatchesInsertedText("", null, "text") ||
+        NIRADesktopTextEntryPolicy.MatchesInsertedText("", "", "text"))
+        throw new Exception("Missing or empty readback counted as completed action");
+});
+
+Check("R16.2 same-window repeated desktop writes are suppressed per run", () =>
+{
+    var guard = new NIRADesktopWriteContinuityGuard();
+    var first = Request(NIRACapabilityIds.DesktopAct,
+        "{\"windowHandle\":\"0x234\",\"action\":\"type\",\"text\":\"alpha\"}");
+    var alternative = Request(NIRACapabilityIds.DesktopAct,
+        "{\"windowHandle\":\"0x234\",\"action\":\"type\",\"text\":\"beta\"}");
+    if (guard.Blocks(first)) throw new Exception("First type was blocked");
+    guard.Record(first, true);
+    if (!guard.Blocks(alternative)) throw new Exception("Changed wording bypassed write continuity");
+    if (guard.Blocks(Request(NIRACapabilityIds.DesktopAct,
+        "{\"windowHandle\":\"0x235\",\"action\":\"type\",\"text\":\"other\"}")))
+        throw new Exception("Separate window was blocked");
+});
+
+Check("R16.4 pathological model text is rejected before any desktop dispatch", () =>
+{
+    string malformed = "Exploring Mars " + new string('T', 128) +
+        " then " + new string('.', 90);
+    if (!NIRADesktopTextEntryPolicy.LooksCorruptedLongText(malformed))
+        throw new Exception("Repeated-character failure was not detected");
+    Throws<ArgumentException>(() => NIRADesktopActionPolicy.Validate(
+        new NIRADesktopAction { Kind = "type", Text = malformed }));
+    string ordinary = string.Concat(Enumerable.Repeat(
+        "Mars exploration studies rocks and terrain with robotic rovers. ", 8));
+    if (NIRADesktopTextEntryPolicy.LooksCorruptedLongText(ordinary))
+        throw new Exception("Normal long prose was incorrectly rejected");
+    NIRADesktopActionPolicy.Validate(new NIRADesktopAction {
+        Kind = "type", Text = ordinary });
+});
+
+Check("R16.4 malformed desktop decision is escalatable before execution", () =>
+{
+    string payload = "Notes " + new string('A', 80) +
+        " conclusion " + new string('.', 50);
+    NIRACognitionDecision candidate = new() {
+        State = NIRACognitionState.Continue,
+        CapabilityRequests = new[] { Request(NIRACapabilityIds.DesktopAct,
+            JsonSerializer.Serialize(new { windowHandle = "0x234", action = "type", text = payload })) }
+    };
+    if (!NIRACognitionService.ContainsCorruptedDesktopText(candidate))
+        throw new Exception("Bad model text reached the Executive without being identified");
+    NIRACognitionDecision healthy = candidate with {
+        CapabilityRequests = new[] { Request(NIRACapabilityIds.DesktopAct,
+            JsonSerializer.Serialize(new { windowHandle = "0x234", action = "type",
+                text = "Exploring Mars requires careful robotic navigation and scientific instruments." })) }
+    };
+    if (NIRACognitionService.ContainsCorruptedDesktopText(healthy))
+        throw new Exception("Normal input was routed unnecessarily");
+});
+
+Check("R16.3 inspection requires exact full-text fingerprint", () =>
+{
+    const string text = "Exploring Mars safely.\nAstronauts carry oxygen.";
+    string digest = NIRADesktopTextEntryPolicy.TextFingerprint(text);
+    string observed = "NIRA VERIFIED DESKTOP CONTROLS\nDepth=2 | ControlType='ControlType.Document' " +
+        "| HasKeyboardFocus=True | EditorTextLength=47 | EditorTextSha256=" + digest;
+    if (!NIRADesktopTextEntryPolicy.InspectionMatchesNewDocumentText(observed, text) ||
+        NIRADesktopTextEntryPolicy.InspectionMatchesNewDocumentText(observed, "different") ||
+        !NIRADesktopTextEntryPolicy.InspectionMatchesNewDocumentText(
+            observed.Replace("HasKeyboardFocus=True", "HasKeyboardFocus=False"), text) ||
+        NIRADesktopTextEntryPolicy.InspectionMatchesNewDocumentText(
+            "WindowHandle: 0x1234\nEditorTextPreview='Mars'", text))
+        throw new Exception("A preview or unrelated editor can no longer verify text entry");
+});
+
+Check("R16.3 unverified typing freezes unsafe same-window repair", () =>
+{
+    var guard = new NIRADesktopWriteContinuityGuard();
+    var write = Request(NIRACapabilityIds.DesktopAct,
+        "{\"windowHandle\":\"0x234\",\"action\":\"type\",\"text\":\"alpha\"}");
+    guard.Record(write, true, postconditionVerified: false);
+    var reset = Request(NIRACapabilityIds.DesktopAct,
+        "{\"windowHandle\":\"0x234\",\"action\":\"press\",\"key\":\"CTRL+N\"}");
+    var focus = Request(NIRACapabilityIds.DesktopAct,
+        "{\"windowHandle\":\"0x234\",\"action\":\"focus\",\"controlName\":\"Editor\"}");
+    if (!guard.BlocksUnsafeRecovery(reset) || guard.BlocksUnsafeRecovery(focus) ||
+        !guard.Blocks(write))
+        throw new Exception("Unverified editor mutation can be overwritten or replayed");
+    guard.MarkTextVerified(0x234);
+    if (guard.BlocksUnsafeRecovery(reset))
+        throw new Exception("Proven text still blocks a legitimate new editing context");
+});
+
+Check("R16.2 read-only inspection does not reset a successful write guard", () =>
+{
+    var guard = new NIRADesktopWriteContinuityGuard();
+    var write = Request(NIRACapabilityIds.DesktopAct,
+        "{\"windowHandle\":\"0x234\",\"action\":\"type\",\"text\":\"alpha\"}");
+    guard.Record(write, true);
+    guard.Record(Request(NIRACapabilityIds.DesktopInspect,
+        "{\"windowHandle\":\"0x234\"}"), true);
+    if (!guard.Blocks(write)) throw new Exception("Inspection unintentionally allowed another full draft");
+});
+
+Check("R16.2 and R17.3 editing context only resets after a verified new blank document", () =>
+{
+    const string existing = "WindowHandle: 0x234\nTitle: Previous.txt - Editor\n" +
+        "Depth=5 | ControlType='ControlType.TabItem' | Name='Previous.txt' | AutomationId='' | Enabled=True | IsSelected=True\n" +
+        "Depth=3 | ControlType='ControlType.Edit' | Name='' | AutomationId='' | Enabled=True | HasKeyboardFocus=True | EditorTextLength=5\n";
+    const string blank = "WindowHandle: 0x234\nTitle: Untitled - Editor\n" +
+        "Depth=5 | ControlType='ControlType.TabItem' | Name='Previous.txt' | AutomationId='' | Enabled=True\n" +
+        "Depth=5 | ControlType='ControlType.TabItem' | Name='Untitled' | AutomationId='' | Enabled=True | IsSelected=True\n" +
+        "Depth=3 | ControlType='ControlType.Edit' | Name='' | AutomationId='' | Enabled=True | HasKeyboardFocus=True | EditorTextLength=0\n";
+    var guard = new NIRADesktopWriteContinuityGuard();
+    var write = Request(NIRACapabilityIds.DesktopAct,
+        "{\"windowHandle\":\"0x234\",\"action\":\"type\",\"text\":\"alpha\"}");
+    var newDocument = Request(NIRACapabilityIds.DesktopAct,
+        "{\"windowHandle\":\"0x234\",\"action\":\"press\",\"key\":\"CTRL+N\"}");
+    guard.RecordInspection(0x234, existing);
+    guard.Record(write, true);
+    guard.Record(newDocument, true);
+    if (!guard.Blocks(write) || !guard.BlocksPendingDocumentTransition(write))
+        throw new Exception("Sending Ctrl+N must not unlock or overwrite the original document");
+    if (guard.RecordInspection(0x234, existing) || !guard.Blocks(write))
+        throw new Exception("Unchanged document was mistakenly accepted as a new editing context");
+    if (!guard.RecordInspection(0x234, blank) || guard.Blocks(write) ||
+        guard.BlocksPendingDocumentTransition(write))
+        throw new Exception("Proven new blank document did not unlock writing");
+    guard.Record(write, true);
+    guard.Record(Request(NIRACapabilityIds.DesktopAct,
+        "{\"windowHandle\":\"0x234\",\"action\":\"press\",\"key\":\"CTRL+A\"}"), true);
+    if (!guard.Blocks(write)) throw new Exception("Select-all incorrectly reset write guard");
+});
+
+Check("R16.2 unsuccessful actions cannot lock future writing", () =>
+{
+    var guard = new NIRADesktopWriteContinuityGuard();
+    var write = Request(NIRACapabilityIds.DesktopAct,
+        "{\"windowHandle\":\"0x234\",\"action\":\"type\",\"text\":\"alpha\"}");
+    guard.Record(write, false);
+    if (guard.Blocks(write)) throw new Exception("A failed no-effect write was treated as completed");
+});
+
+Check("R16.2 typed desktop preflight distinguishes no-input from uncertain partial dispatch", () =>
+{
+    Exception safe = new NIRADesktopNoInputException("Existing editor is not blank");
+    if (safe is not InvalidOperationException || safe is OperationCanceledException ||
+        new InvalidOperationException("Input may have started") is NIRADesktopNoInputException)
+        throw new Exception("A potentially partial keyboard dispatch cannot be marked no effect");
+});
+
+Check("R16.2 uncertain partial Unicode input has a stable no-replay signal", () =>
+{
+    Exception e = new NIRADesktopUncertainInputException("Input partially inserted");
+    if (!e.Message.StartsWith("DESKTOP_INPUT_MAY_BE_PARTIAL:", StringComparison.Ordinal) ||
+        e is not InvalidOperationException || e is NIRADesktopNoInputException)
+        throw new Exception("Partial input was misclassified as safe to repeat");
+});
+
+Check("R17 native and background-safe desktop actions never require foreground", () =>
+{
+    foreach (string action in new[] { "invoke", "select", "toggle", "expand", "collapse", "setValue" })
+        Equal(NIRADesktopExecutionMode.BackgroundAutomation,
+            NIRADesktopExecutionStrategy.ForAction(action));
+    Equal(NIRADesktopExecutionMode.BackgroundAutomation,
+        NIRADesktopExecutionStrategy.ForAction("type", nativeEditorAvailable: true));
+});
+
+Check("R17 actual pointer and keyboard actions require an exact focused window", () =>
+{
+    foreach (string action in new[] { "press", "click", "type", "focus", "activate" })
+        Equal(NIRADesktopExecutionMode.ForegroundInteraction,
+            NIRADesktopExecutionStrategy.ForAction(action));
+    Throws<ArgumentException>(() => NIRADesktopExecutionStrategy.ForAction("invented-action"));
+});
+
+Check("R17 focus lease pauses when owner changes applications and resumes on return", () =>
+{
+    var lease = new NIRAForegroundLeaseState();
+    Equal(NIRAForegroundLeaseTransition.None, lease.Observe(true));
+    Equal(NIRAForegroundLeaseTransition.Paused, lease.Observe(false));
+    if (!lease.IsPaused) throw new Exception("Focus switch was not preserved");
+    Equal(NIRAForegroundLeaseTransition.None, lease.Observe(false));
+    Equal(NIRAForegroundLeaseTransition.Resumed, lease.Observe(true));
+    if (lease.IsPaused) throw new Exception("Lease did not resume");
+    Equal(NIRAForegroundLeaseTransition.None, lease.Observe(true));
+});
+
+Check("R17 capability execution routing is independent of the application title", () =>
+{
+    // No Notepad, Blender, Explorer or Task Manager specific code paths.
+    Equal(NIRADesktopExecutionStrategy.ForAction("Click"),
+        NIRADesktopExecutionStrategy.ForAction("click"));
+    Equal(NIRADesktopExecutionStrategy.ForAction("INVOKE"),
+        NIRADesktopExecutionStrategy.ForAction("invoke"));
+});
+
+Check("R17.1 exact native text evidence avoids a redundant inspect cycle", () =>
+{
+    if (NIRADesktopExecutionEvidencePolicy.RequiresFollowupInspection("type", true) ||
+        NIRADesktopExecutionEvidencePolicy.RequiresFollowupInspection("setValue", true) ||
+        !NIRADesktopExecutionEvidencePolicy.RequiresFollowupInspection("type", false) ||
+        !NIRADesktopExecutionEvidencePolicy.RequiresFollowupInspection("press", true) ||
+        !NIRADesktopExecutionEvidencePolicy.RequiresFollowupInspection("click", false))
+        throw new Exception("Exact text proof was confused with an unrelated desktop action");
+});
+
+Check("R17.1 LLM diagnostic capture is discoverable and under explicit owner control", () =>
+{
+    string? oldTranscripts = Environment.GetEnvironmentVariable("NIRA_DEBUG_LLM_TRANSCRIPTS");
+    string? oldPrompts = Environment.GetEnvironmentVariable("NIRA_DEBUG_LLM_PROMPTS");
+    string? oldResponses = Environment.GetEnvironmentVariable("NIRA_DEBUG_LLM_RESPONSES");
+    try
+    {
+        Environment.SetEnvironmentVariable("NIRA_DEBUG_LLM_TRANSCRIPTS", "0");
+        Environment.SetEnvironmentVariable("NIRA_DEBUG_LLM_PROMPTS", "1");
+        Environment.SetEnvironmentVariable("NIRA_DEBUG_LLM_RESPONSES", "1");
+        if (NIRADiagnosticTrace.LlmPromptCaptureEnabled ||
+            NIRADiagnosticTrace.LlmResponseCaptureEnabled)
+            throw new Exception("Explicit transcript OFF switch ignored");
+        Environment.SetEnvironmentVariable("NIRA_DEBUG_LLM_TRANSCRIPTS", "1");
+        if (!NIRADiagnosticTrace.LlmPromptCaptureEnabled ||
+            !NIRADiagnosticTrace.LlmResponseCaptureEnabled)
+            throw new Exception("Explicit full transcript ON switch ignored");
+    }
+    finally
+    {
+        Environment.SetEnvironmentVariable("NIRA_DEBUG_LLM_TRANSCRIPTS", oldTranscripts);
+        Environment.SetEnvironmentVariable("NIRA_DEBUG_LLM_PROMPTS", oldPrompts);
+        Environment.SetEnvironmentVariable("NIRA_DEBUG_LLM_RESPONSES", oldResponses);
+    }
+});
+
+Check("R17.1 complete model transcripts pair prompt and response by call ID", () =>
+{
+    string? before = Environment.GetEnvironmentVariable("NIRA_DEBUG_LLM_TRANSCRIPTS");
+    try
+    {
+        Environment.SetEnvironmentVariable("NIRA_DEBUG_LLM_TRANSCRIPTS", "1");
+        Guid call = Guid.NewGuid();
+        string uniqueMarker = "NIRA_R171_DIAGNOSTIC_TEST_" + Guid.NewGuid().ToString("N");
+        NIRADiagnosticTrace.ModelRequest(call, "regression-test", uniqueMarker,
+            "Test private input", jsonMode: true, inputKind: "Text");
+        NIRADiagnosticTrace.ModelResponse(call, "regression-test", "{\"state\":\"Complete\"}");
+        string data = File.ReadAllText(NIRADiagnosticTrace.LlmLogPath);
+        if (!data.Contains(uniqueMarker, StringComparison.Ordinal) ||
+            !data.Contains(call.ToString("D"), StringComparison.OrdinalIgnoreCase) ||
+            !data.Contains("LLM-REQUEST", StringComparison.Ordinal) ||
+            !data.Contains("LLM-RESPONSE", StringComparison.Ordinal))
+            throw new Exception("Transcript missing paired request and response details");
+        if (!File.Exists(NIRADiagnosticTrace.StatusPath))
+            throw new Exception("No discoverable diagnostic capture status");
+    }
+    finally { Environment.SetEnvironmentVariable("NIRA_DEBUG_LLM_TRANSCRIPTS", before); }
+});
+
+Check("R17.1 configured known folders never silently choose another user profile", () =>
+{
+    if (!OperatingSystem.IsWindows()) return;
+    try
+    {
+        string configured = NIRAFileLocationCapabilityHandler.ResolveConfiguredCurrentUserFolder("Documents");
+        if (!Path.IsPathFullyQualified(configured))
+            throw new Exception("Configured Windows Documents is not absolute");
+        // Directory may be genuinely absent: discovery must not fake a match.
+        if (!Directory.Exists(configured))
+        {
+            var locate = new NIRAFileLocationCapabilityHandler();
+            var result = locate.ExecuteAsync(Request(NIRACapabilityIds.FileLocate,
+                """{"name":"Documents","scope":"CurrentUserFolder","kind":"Directory"}"""))
+                .GetAwaiter().GetResult();
+            if (!result.Summary.Contains("ConfiguredButMissing", StringComparison.Ordinal) ||
+                result.Summary.Contains("Matches=1", StringComparison.Ordinal))
+                throw new Exception("Missing Windows folder was misreported as present");
+        }
+    }
+    catch (DirectoryNotFoundException ex)
+    {
+        if (!ex.Message.Contains("WindowsKnownFolderUnconfigured", StringComparison.Ordinal))
+            throw;
+    }
+});
+
+Check("R17.2 unavailable folder prerequisite terminates without another model call", () =>
+{
+    var request = Request(NIRACapabilityIds.DirectoryCreate,
+        JsonSerializer.Serialize(new { path = Path.Combine(Path.GetTempPath(), "nira-unavailable") }));
+    var result = new NIRACapabilityResult
+    {
+        CapabilityId = NIRACapabilityIds.DirectoryCreate,
+        Status = NIRACapabilityResultStatus.Failed,
+        Summary = "DirectoryCreateFailed | Kind=PathOrProviderNotFound | HResult=0x80070002"
+    };
+    if (!NIRAFilesystemPrerequisitePolicy.TryDescribeBlockedPrerequisite(
+        new[] { request }, new[] { result }, out string reply, out string category) ||
+        category != "PathOrProviderNotFound" ||
+        !reply.Contains("does not establish a Defender block", StringComparison.Ordinal) ||
+        !reply.Contains("No file was saved", StringComparison.Ordinal))
+        throw new Exception("Provider-path failure was misreported as Defender or allowed to loop");
+});
+
+Check("R17.2 access denied is not confused with missing storage provider", () =>
+{
+    var request = Request(NIRACapabilityIds.DirectoryCreate,
+        JsonSerializer.Serialize(new { path = Path.Combine(Path.GetTempPath(), "nira-denied") }));
+    var result = new NIRACapabilityResult
+    {
+        CapabilityId = NIRACapabilityIds.DirectoryCreate,
+        Status = NIRACapabilityResultStatus.Failed,
+        Summary = "DirectoryCreateFailed | Kind=AccessDenied | HResult=0x80070005"
+    };
+    if (!NIRAFilesystemPrerequisitePolicy.TryDescribeBlockedPrerequisite(
+        new[] { request }, new[] { result }, out string reply, out string category) ||
+        category != "AccessDenied" || !reply.Contains("Windows denied", StringComparison.Ordinal))
+        throw new Exception("Access denial was not identified precisely");
+});
+
+Check("R17.2 only dependent writes are stopped after failed parent creation", () =>
+{
+    string parent = Path.Combine(Path.GetTempPath(), "nira-batch-parent");
+    var create = Request(NIRACapabilityIds.DirectoryCreate,
+        JsonSerializer.Serialize(new { path = parent }));
+    var dependent = Request(NIRACapabilityIds.FileWrite,
+        JsonSerializer.Serialize(new { path = Path.Combine(parent, "child.txt"), content = "test" }));
+    var independent = Request(NIRACapabilityIds.FileWrite,
+        JsonSerializer.Serialize(new { path = Path.Combine(Path.GetTempPath(), "other.txt"), content = "test" }));
+    var failed = new NIRACapabilityResult
+    {
+        CapabilityId = NIRACapabilityIds.DirectoryCreate,
+        Status = NIRACapabilityResultStatus.Failed,
+        Summary = "DirectoryCreateFailed | Kind=PathOrProviderNotFound"
+    };
+    if (!NIRAFilesystemPrerequisitePolicy.TryDescribeBlockedPrerequisite(
+            new[] { create, dependent }, new[] { failed }, out _, out _) ||
+        NIRAFilesystemPrerequisitePolicy.TryDescribeBlockedPrerequisite(
+            new[] { create, independent }, new[] { failed }, out _, out _))
+        throw new Exception("Guard either ignored failed child dependency or blocked independent work");
+});
+
+Check("R17.2 success, unverified and unrelated failures do not trip folder blocker", () =>
+{
+    var create = Request(NIRACapabilityIds.DirectoryCreate,
+        JsonSerializer.Serialize(new { path = Path.GetTempPath() }));
+    var fake = new NIRACapabilityResult
+    {
+        CapabilityId = NIRACapabilityIds.DirectoryCreate,
+        Status = NIRACapabilityResultStatus.Failed,
+        Summary = "The folder was not created for an unspecified reason"
+    };
+    if (NIRAFilesystemPrerequisitePolicy.TryDescribeBlockedPrerequisite(
+        new[] { create }, new[] { fake }, out _, out _) ||
+        NIRAFilesystemPrerequisitePolicy.TryDescribeBlockedPrerequisite(
+        new[] { create }, new[] { fake with { Status = NIRACapabilityResultStatus.Succeeded,
+            Summary = "DirectoryCreateFailed | Kind=AccessDenied" } }, out _, out _))
+        throw new Exception("Unsafe early termination from unrelated or successful outcome");
+});
+
+
+// R17.3: new-document commands are not proof that a fresh editor was selected.
+// All inspections below are synthetic: no live UIA or model call is involved.
+Check("R17.3 selected tab must change before a new-document shortcut is trusted", () =>
+{
+    const string previous = "WindowHandle: 0x1234\nTitle: Existing.txt - Editor\n" +
+        "Depth=5 | ControlType='ControlType.TabItem' | Name='Existing.txt' | AutomationId='' | Enabled=True | IsSelected=True\n" +
+        "Depth=4 | ControlType='ControlType.Document' | Name='' | AutomationId='' | Enabled=True | HasKeyboardFocus=True | EditorTextLength=80\n";
+    const string unchanged = "WindowHandle: 0x1234\nTitle: Existing.txt - Editor\n" +
+        "Depth=5 | ControlType='ControlType.TabItem' | Name='Existing.txt' | AutomationId='' | Enabled=True | IsSelected=True\n" +
+        "Depth=4 | ControlType='ControlType.Document' | Name='' | AutomationId='' | Enabled=True | HasKeyboardFocus=True | EditorTextLength=0\n";
+    if (NIRADesktopDocumentTransitionPolicy.VerifiesNewBlankDocument(previous, unchanged))
+        throw new Exception("Cleared original document must not be mistaken for a new document");
+    const string created = "WindowHandle: 0x1234\nTitle: Untitled - Editor\n" +
+        "Depth=5 | ControlType='ControlType.TabItem' | Name='Existing.txt' | AutomationId='' | Enabled=True\n" +
+        "Depth=5 | ControlType='ControlType.TabItem' | Name='Untitled' | AutomationId='' | Enabled=True | IsSelected=True\n" +
+        "Depth=4 | ControlType='ControlType.Document' | Name='' | AutomationId='' | Enabled=True | HasKeyboardFocus=True | EditorTextLength=0\n";
+    if (!NIRADesktopDocumentTransitionPolicy.VerifiesNewBlankDocument(previous, created) ||
+        NIRADesktopDocumentTransitionPolicy.VerifiesNewBlankDocument(previous,
+            created.Replace("WindowHandle: 0x1234", "WindowHandle: 0x5678", StringComparison.Ordinal)))
+        throw new Exception("Different empty document identity and same HWND were not required");
+});
+
+Check("R17.3 identical tab captions require a larger selected tab inventory", () =>
+{
+    const string before = "WindowHandle: 0xabc\nTitle: Untitled - Editor\n" +
+        "Depth=5 | ControlType='ControlType.TabItem' | Name='Untitled' | AutomationId='' | Enabled=True | IsSelected=True\n" +
+        "Depth=4 | ControlType='ControlType.Edit' | Name='' | AutomationId='' | Enabled=True | HasKeyboardFocus=True | EditorTextLength=0\n";
+    const string after = "WindowHandle: 0xabc\nTitle: Untitled - Editor\n" +
+        "Depth=5 | ControlType='ControlType.TabItem' | Name='Untitled' | AutomationId='' | Enabled=True\n" +
+        "Depth=5 | ControlType='ControlType.TabItem' | Name='Untitled' | AutomationId='' | Enabled=True | IsSelected=True\n" +
+        "Depth=4 | ControlType='ControlType.Edit' | Name='' | AutomationId='' | Enabled=True | HasKeyboardFocus=True | EditorTextLength=0\n";
+    if (!NIRADesktopDocumentTransitionPolicy.VerifiesNewBlankDocument(before, after) ||
+        NIRADesktopDocumentTransitionPolicy.VerifiesNewBlankDocument(before, before))
+        throw new Exception("Same-name tabs were not distinguished by tab inventory");
+});
+
+Check("R17.3 Ctrl+N run guard requires observed blank document before typing", () =>
+{
+    const string existing = "WindowHandle: 0x1234\nTitle: Existing.txt - Editor\n" +
+        "Depth=5 | ControlType='ControlType.TabItem' | Name='Existing.txt' | AutomationId='' | Enabled=True | IsSelected=True\n" +
+        "Depth=3 | ControlType='ControlType.Edit' | Name='' | AutomationId='' | Enabled=True | HasKeyboardFocus=True | EditorTextLength=22\n";
+    const string blank = "WindowHandle: 0x1234\nTitle: Untitled - Editor\n" +
+        "Depth=5 | ControlType='ControlType.TabItem' | Name='Existing.txt' | AutomationId='' | Enabled=True\n" +
+        "Depth=5 | ControlType='ControlType.TabItem' | Name='Untitled' | AutomationId='' | Enabled=True | IsSelected=True\n" +
+        "Depth=3 | ControlType='ControlType.Edit' | Name='' | AutomationId='' | Enabled=True | HasKeyboardFocus=True | EditorTextLength=0\n";
+    var guard = new NIRADesktopWriteContinuityGuard();
+    var newDocument = Request(NIRACapabilityIds.DesktopAct,
+        "{\"windowHandle\":\"0x1234\",\"action\":\"press\",\"key\":\"CTRL+N\"}");
+    var destructive = Request(NIRACapabilityIds.DesktopAct,
+        "{\"windowHandle\":\"0x1234\",\"action\":\"press\",\"key\":\"BACKSPACE\"}");
+    var typing = Request(NIRACapabilityIds.DesktopAct,
+        "{\"windowHandle\":\"0x1234\",\"action\":\"type\",\"text\":\"Mars facts\"}");
+    guard.RecordInspection(0x1234, existing);
+    guard.Record(newDocument, succeeded:true);
+    if (!guard.AwaitingNewDocument(0x1234) ||
+        !guard.BlocksPendingDocumentTransition(destructive) ||
+        !guard.BlocksPendingDocumentTransition(typing))
+        throw new Exception("Mutation was allowed on an unverified document switch");
+    if (guard.RecordInspection(0x1234, existing) ||
+        !guard.BlocksPendingDocumentTransition(typing))
+        throw new Exception("Unchanged selection wrongly cleared the document guard");
+    if (!guard.RecordInspection(0x1234, blank) ||
+        guard.AwaitingNewDocument(0x1234) || guard.BlocksPendingDocumentTransition(typing))
+        throw new Exception("Correct fresh blank document never unlocked writing");
+});
+
+Check("R17.3 failed/new-document transitions never invent evidence", () =>
+{
+    const string after = "WindowHandle: 0x4567\nTitle: Untitled - Editor\n" +
+        "Depth=5 | ControlType='ControlType.TabItem' | Name='Untitled' | AutomationId='' | Enabled=True | IsSelected=True\n" +
+        "Depth=3 | ControlType='ControlType.Edit' | Name='' | AutomationId='' | Enabled=True | HasKeyboardFocus=True | EditorTextLength=0\n";
+    var guard = new NIRADesktopWriteContinuityGuard();
+    var newDoc = Request(NIRACapabilityIds.DesktopAct,
+        "{\"windowHandle\":\"0x4567\",\"action\":\"press\",\"key\":\"CTRL+N\"}");
+    var nextAction = Request(NIRACapabilityIds.DesktopAct,
+        "{\"windowHandle\":\"0x4567\",\"action\":\"press\",\"key\":\"BACKSPACE\"}");
+    var unrelated = Request(NIRACapabilityIds.DesktopAct,
+        "{\"windowHandle\":\"0x7654\",\"action\":\"press\",\"key\":\"ENTER\"}");
+    var batch = new HashSet<long> { 0x4567 };
+    if (!NIRADesktopWriteContinuityGuard.BlocksSameBatchAfterNewDocument(nextAction, batch) ||
+        NIRADesktopWriteContinuityGuard.BlocksSameBatchAfterNewDocument(unrelated, batch))
+        throw new Exception("New-document batch boundary blocked unrelated HWND or allowed unsafe same HWND");
+    guard.Record(newDoc, succeeded:false);
+    if (guard.AwaitingNewDocument(0x4567))
+        throw new Exception("Rejected Ctrl+N was misrepresented as a dispatched action");
+    guard.Record(newDoc, succeeded:true); // no prior inspection to compare
+    if (guard.RecordInspection(0x4567, after) || !guard.AwaitingNewDocument(0x4567))
+        throw new Exception("No pre-action identity evidence must never certify a new document");
+});
+
+Check("R17.4 voice fact is provided by the authoritative runtime self-knowledge provider", () =>
+{
+    var provider = new NIRAAgent.Self.Model.NIRARuntimeSelfKnowledgeProvider();
+    var fact = provider.GetFacts().SingleOrDefault(x => x.Key == "capability.voice")
+        ?? throw new Exception("Missing authoritative speech capability");
+    if (!fact.Statement.Contains("text-to-speech", StringComparison.OrdinalIgnoreCase) ||
+        !fact.Statement.Contains("speak", StringComparison.OrdinalIgnoreCase))
+        throw new Exception("Authoritative self fact does not establish spoken voice");
+});
+
+Check("R17.4 initial cognition contract distinguishes speech output from melodic singing", () =>
+{
+    string system = NIRACognitionPromptCompiler.BootstrapSystem("identity:\n  name: NIRA");
+    if (!system.Contains("SPOKEN AUDIO CAPABILITY", StringComparison.Ordinal) ||
+        !system.Contains("pitch-controlled singing", StringComparison.Ordinal) ||
+        !system.Contains("clearly mark an uncertain guess", StringComparison.Ordinal))
+        throw new Exception("First-pass model could invent that NIRA cannot speak");
+});
+
+Check("R17.4 compact self pulse retains authoritative spoken voice facts", () =>
+{
+    Type type = typeof(NIRACognitionService).Assembly.GetType(
+        "NIRAAgent.AI.Cognition.NIRACognitionPromptCompiler")
+        ?? throw new Exception("Missing cognition compiler");
+    MethodInfo pulse = type.GetMethod("SelfPulse", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new Exception("Missing self pulse builder");
+    string full = "NIRA AUTHORITATIVE SELF-MODEL\nIDENTITY\n- I am NIRA.\n" +
+        "VOICE / SPEECH CAPABILITY (authoritative)\n- I can speak with text-to-speech.\n" +
+        "CURRENT CAPABILITIES\n- Other capabilities.\n" +
+        "LEARNED DURABLE\n- None.\nCURRENT TEMPORARY OPINIONS / TASTES\n" +
+        "ACTIVE COMMITMENTS\n- None.\nRECENTLY RESOLVED COMMITMENTS\n";
+    string compact = (string?)pulse.Invoke(null, new object[] { full }) ?? "";
+    if (!compact.Contains("speak with text-to-speech", StringComparison.Ordinal))
+        throw new Exception("The current voice capability is missing from the first model call");
+});
+
+Check("R17.4 final expression stage must not invent a voice disability", () =>
+{
+    MethodInfo build = typeof(NIRAResponseRealizationService).GetMethod(
+        "BuildSystemPrompt", BindingFlags.Static | BindingFlags.NonPublic)
+        ?? throw new Exception("Missing final expression prompt builder");
+    string prompt = (string?)build.Invoke(null, new object[] { "identity: NIRA", "" }) ?? "";
+    if (!prompt.Contains("pitch-accurate melodic singing", StringComparison.Ordinal) ||
+        !prompt.Contains("text-to-speech voice channel", StringComparison.Ordinal))
+        throw new Exception("Final realization may introduce a false speech-capability denial");
+});
+
+Check("R17.5 process-stop continuity keys by exact PID, not application name", () =>
+{
+    var guard = new NIRAProcessStopContinuityGuard();
+    var stopped = Request(NIRACapabilityIds.ProcessStop, """{"pid":976,"entireProcessTree":true}""");
+    var alternate = Request(NIRACapabilityIds.ProcessStop, """{"pid":976,"entireProcessTree":false}""");
+    var other = Request(NIRACapabilityIds.ProcessStop, """{"pid":8156}""");
+    if (guard.TryBlock(stopped, out _)) throw new Exception("Unexecuted first stop was blocked");
+    guard.Record(stopped, new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.ProcessStop,
+        Status = NIRACapabilityResultStatus.Succeeded,
+        Summary = "VerifiedExit=True | Terminated process PID=976"
+    });
+    if (!guard.TryBlock(alternate, out string evidence) ||
+        !evidence.Contains("ALREADY VERIFIED", StringComparison.Ordinal) ||
+        guard.TryBlock(other, out _))
+        throw new Exception("Process stop proof was not preserved by target PID");
+});
+
+Check("R17.5 process stop denial does not imply current liveness or authorize repeated kill", () =>
+{
+    var guard = new NIRAProcessStopContinuityGuard();
+    var target = Request(NIRACapabilityIds.ProcessStop, """{"pid":976,"entireProcessTree":true}""");
+    guard.Record(target, new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.ProcessStop,
+        Status = NIRACapabilityResultStatus.Failed,
+        OutcomeUncertain = true,
+        Summary = "Access is denied. Partial effects may remain; inspect before retrying."
+    });
+    if (!guard.TryBlock(target, out string reason) ||
+        !reason.Contains("does not prove the window is still open", StringComparison.Ordinal) ||
+        !reason.Contains("FRESH process.list", StringComparison.Ordinal))
+        throw new Exception("Failed stop was confused with final machine state");
+});
+
+Check("R17.5 process stop guard excludes other capabilities and malformed PIDs", () =>
+{
+    var guard = new NIRAProcessStopContinuityGuard();
+    if (NIRAProcessStopContinuityGuard.TargetPid(Request(NIRACapabilityIds.ProcessStop,
+            """{"pid":"976"}""")) is not null ||
+        NIRAProcessStopContinuityGuard.TargetPid(Request(NIRACapabilityIds.ProcessStop,
+            """{"pid":0}""")) is not null ||
+        NIRAProcessStopContinuityGuard.TargetPid(Request(NIRACapabilityIds.ProcessList,
+            """{"name":"taskmgr"}""")) is not null ||
+        !NIRAProcessStopContinuityGuard.IsProcessObservation(Request(NIRACapabilityIds.ProcessList,
+            """{"name":"taskmgr"}""")))
+        throw new Exception("Process-specific continuity guard became overbroad");
+});
+
+Check("R17.5 process-stop handler demands verified exit before reporting success", () =>
+{
+    string source = typeof(NIRAProcessStopCapabilityHandler).Assembly.Location;
+    if (string.IsNullOrEmpty(source)) throw new Exception("Process handler assembly not available");
+    // Policy never turns a model claim or process-list snapshot into a stop receipt.
+    var guard = new NIRAProcessStopContinuityGuard();
+    var target = Request(NIRACapabilityIds.ProcessStop, """{"pid":40000}""");
+    guard.Record(target, new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.ProcessList,
+        Status = NIRACapabilityResultStatus.Succeeded, Summary = "Not found"
+    });
+    if (guard.TryBlock(target, out _))
+        throw new Exception("Read-only process observation counted as actual stop receipt");
+});
+
+Check("R17.5 process stop retry guard is per run", () =>
+{
+    var runA = new NIRAProcessStopContinuityGuard();
+    var runB = new NIRAProcessStopContinuityGuard();
+    var target = Request(NIRACapabilityIds.ProcessStop, """{"pid":976}""");
+    runA.Record(target, new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.ProcessStop,
+        Status = NIRACapabilityResultStatus.Rejected,
+        Summary = "Approval refused"
+    });
+    if (!runA.TryBlock(target, out _) || runB.TryBlock(target, out _))
+        throw new Exception("Stop result wrongly leaked between independent user runs");
+});
+
+Check("R17.5 process stop invalidates stale inventory without erasing independent evidence", () =>
+{
+    var oldList = Request(NIRACapabilityIds.ProcessList, """{"name":"taskmgr"}""");
+    var other = Request(NIRACapabilityIds.FileRead, """{"path":"C:/example.txt"}""");
+    var signatures = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "old", "other" };
+    var duplicateReports = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "old", "other" };
+    var requests = new Dictionary<string, NIRACapabilityRequest>(StringComparer.OrdinalIgnoreCase) {
+        ["old"] = oldList, ["other"] = other
+    };
+    var results = new Dictionary<string, NIRACapabilityResult>(StringComparer.OrdinalIgnoreCase) {
+        ["old"] = new NIRACapabilityResult { CapabilityId = NIRACapabilityIds.ProcessList },
+        ["other"] = new NIRACapabilityResult { CapabilityId = NIRACapabilityIds.FileRead }
+    };
+    int removed = NIRAProcessStopContinuityGuard.InvalidatePriorProcessLists(
+        signatures, duplicateReports, requests, results);
+    if (removed != 1 || signatures.Contains("old") || duplicateReports.Contains("old") ||
+        requests.ContainsKey("old") || results.ContainsKey("old") ||
+        !signatures.Contains("other") || !requests.ContainsKey("other") ||
+        !results.ContainsKey("other"))
+        throw new Exception("A post-stop process observation could be reused or independent work was erased");
+});
+
+
+// R17.7: general-purpose close semantics, not application-name special cases.
+Check("R17.7 close target requires one actual matching process window", () =>
+{
+    var windows = new[] {
+        new NIRACaptureWindowSnapshot { Handle = 234, ProcessId = 71, ProcessName = "Notes", Title = "Draft" },
+        new NIRACaptureWindowSnapshot { Handle = 345, ProcessId = 72, ProcessName = "Browser", Title = "Notes tutorial" }
+    };
+    var selected = NIRADesktopCloseTargetPolicy.SelectUnique(windows, "Notes.exe");
+    if (selected.Handle != 234)
+        throw new Exception("Target selection jumped to a titled unrelated process");
+    Throws<InvalidOperationException>(() => NIRADesktopCloseTargetPolicy.SelectUnique(windows, "Missing"));
+});
+Check("R17.7 close refuses multiple same-process windows", () =>
+{
+    var windows = new[] {
+        new NIRACaptureWindowSnapshot { Handle = 12, ProcessId = 19, ProcessName = "Editor", Title = "First" },
+        new NIRACaptureWindowSnapshot { Handle = 13, ProcessId = 19, ProcessName = "Editor", Title = "Second" }
+    };
+    Throws<InvalidOperationException>(() => NIRADesktopCloseTargetPolicy.SelectUnique(windows, "Editor"));
+    if (NIRADesktopCloseTargetPolicy.SelectUnique(windows, "Editor", "First").Handle != 12)
+        throw new Exception("Unambiguous observed title filter failed");
+});
+Check("R17.7 close refuses blank, guessed or processless targets", () =>
+{
+    var windows = new[] { new NIRACaptureWindowSnapshot { Handle = 12, ProcessId = 19, ProcessName = "Editor", Title = "Untitled" } };
+    Throws<ArgumentException>(() => NIRADesktopCloseTargetPolicy.SelectUnique(windows, ""));
+    Throws<InvalidOperationException>(() => NIRADesktopCloseTargetPolicy.SelectUnique(windows, "Browser"));
+});
+
+Check("R17.7 close primitive is a bounded normal desktop modification", () =>
+{
+    var d = new NIRADesktopCloseCapabilityHandler(null!, null!).Descriptor;
+    if (d.Id != NIRACapabilityIds.DesktopClose ||
+        d.DefaultRisk != NIRACapabilityRisk.Modify ||
+        !d.Parameters.Any(p => p.Name == "processName" && p.Required) ||
+        d.Parameters.Any(p => p.Name == "windowHandle" && p.Required))
+        throw new Exception("Generic close descriptor missing or unsafe");
+});
+Check("R17.7 OS-denied close is conclusively no-input", () =>
+{
+    Exception e = new NIRADesktopAccessDeniedException("WINDOW_CLOSE_ACCESS_DENIED:");
+    if (e is not NIRADesktopNoInputException ||
+        !e.Message.StartsWith("WINDOW_CLOSE_ACCESS_DENIED:", StringComparison.Ordinal))
+        throw new Exception("Access denied must not be classified as uncertain input");
+});
+Check("R17.7 strict native close still rejects control selectors and macros", () =>
+{
+    NIRADesktopActionPolicy.Validate(new NIRADesktopAction { Kind="close" });
+    Throws<ArgumentException>(() => NIRADesktopActionPolicy.Validate(
+        new NIRADesktopAction { Kind="close", ControlName="Close" }));
+    Throws<ArgumentException>(() => NIRADesktopActionPolicy.Validate(
+        new NIRADesktopAction { Kind="close", Key="ALT+F4" }));
+});
+Check("R17.7 exact HWND legacy operation remains supported", () =>
+{
+    var d = new NIRADesktopActCapabilityHandler(null!, null!).Descriptor;
+    if (!d.Parameters.Any(p => p.Name == "windowHandle" && p.Required) ||
+        d.Id != NIRACapabilityIds.DesktopAct)
+        throw new Exception("Exact window close path was broken");
+});
+
+Check("R17.7 denied desktop close produces a truthful manual handoff", () =>
+{
+    var request = Request(NIRACapabilityIds.DesktopClose,
+        "{\"processName\":\"SampleEditor\"}");
+    var result = new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.DesktopClose,
+        Status = NIRACapabilityResultStatus.Failed,
+        Summary = "WINDOW_CLOSE_ACCESS_DENIED: Windows denied WM_CLOSE",
+        OutcomeUncertain = false
+    };
+    if (!NIRADesktopManualHandoffPolicy.TryDescribeBlockedOperation(
+            new[] { request }, new[] { result }, out string message, out string kind) ||
+        kind != "WindowsCloseAccessDenied" ||
+        !message.Contains("click its X", StringComparison.Ordinal) ||
+        !message.Contains("haven't verified", StringComparison.Ordinal))
+        throw new Exception("Missing honest user handoff after OS denial");
+});
+Check("R17.7 manual handoff excludes uncertain and unrelated failures", () =>
+{
+    var request = Request(NIRACapabilityIds.DesktopClose,
+        "{\"processName\":\"SampleEditor\"}");
+    var denied = new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.DesktopClose,
+        Status = NIRACapabilityResultStatus.Failed,
+        Summary = "WINDOW_CLOSE_ACCESS_DENIED: Windows denied WM_CLOSE"
+    };
+    if (NIRADesktopManualHandoffPolicy.TryDescribeBlockedOperation(
+            new[] { request }, new[] { denied with { OutcomeUncertain = true } }, out _, out _) ||
+        NIRADesktopManualHandoffPolicy.TryDescribeBlockedOperation(
+            new[] { request }, new[] { denied with { Summary = "WINDOW_SELECTION_NOT_UNIQUE" } }, out _, out _) ||
+        NIRADesktopManualHandoffPolicy.TryDescribeBlockedOperation(
+            new[] { Request(NIRACapabilityIds.DesktopInspect, "{}") }, new[] { denied }, out _, out _))
+        throw new Exception("Unrelated or uncertain failures were treated as conclusive OS denial");
+});
+Check("R17.7 independent operations cannot be hidden by a manual handoff", () =>
+{
+    var request = Request(NIRACapabilityIds.DesktopClose,
+        "{\"processName\":\"SampleEditor\"}");
+    var denied = new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.DesktopClose,
+        Status = NIRACapabilityResultStatus.Failed,
+        Summary = "WINDOW_CLOSE_ACCESS_DENIED: Windows denied WM_CLOSE"
+    };
+    var inspect = Request(NIRACapabilityIds.DesktopInspect, "{}");
+    var observation = denied with {
+        CapabilityId = NIRACapabilityIds.DesktopInspect,
+        Status = NIRACapabilityResultStatus.Succeeded, Summary = "Verified controls"
+    };
+    if (NIRADesktopManualHandoffPolicy.TryDescribeBlockedOperation(
+            new[] { request, inspect }, new[] { denied, observation }, out _, out _))
+        throw new Exception("Independent evidence was lost to the early terminal path");
+});
+
+Check("R17.6 graceful window close is an exact HWND operation", () =>
+{
+    NIRADesktopActionPolicy.Validate(new NIRADesktopAction { Kind = "close" });
+    Throws<ArgumentException>(() => NIRADesktopActionPolicy.Validate(new NIRADesktopAction {
+        Kind = "close", ControlName = "Quit" }));
+    Throws<ArgumentException>(() => NIRADesktopActionPolicy.Validate(new NIRADesktopAction {
+        Kind = "close", Text = "cannot close with text" }));
+});
+
+Check("R17.6 graceful close does not seize foreground", () =>
+{
+    Equal(NIRADesktopExecutionMode.BackgroundAutomation,
+        NIRADesktopExecutionStrategy.ForAction("close"));
+    if (NIRADesktopExecutionStrategy.NeedsForeground("close"))
+        throw new Exception("Closing an exact window wrongly requires foreground focus");
+    if (!NIRADesktopExecutionStrategy.NeedsForeground("press"))
+        throw new Exception("Keyboard actions lost their foreground lease");
+});
+
+Check("R17.6 a successful background process launch cannot be blindly repeated", () =>
+{
+    var guard = new NIRAProcessStartContinuityGuard();
+    var first = Request(NIRACapabilityIds.ProcessStart,
+        """{"fileName":"C:\\Windows\\System32\\taskmgr.exe","arguments":"/7"}""");
+    var second = Request(NIRACapabilityIds.ProcessStart,
+        """{"fileName":"C:\\Windows\\System32\\taskmgr.exe"}""");
+    if (guard.TryBlock(first, out _)) throw new Exception("First launch suppressed");
+    guard.Record(first, new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.ProcessStart,
+        Status = NIRACapabilityResultStatus.Succeeded, Summary = "Launched process PID=1234"
+    });
+    if (!guard.TryBlock(second, out string evidence) ||
+        !evidence.Contains("ALREADY DISPATCHED", StringComparison.Ordinal))
+        throw new Exception("Second launch of same executable was not suppressed");
+});
+
+Check("R17.6 separate applications do not share process launch guards", () =>
+{
+    var guard = new NIRAProcessStartContinuityGuard();
+    var first = Request(NIRACapabilityIds.ProcessStart,
+        """{"fileName":"C:\\Windows\\System32\\taskmgr.exe"}""");
+    guard.Record(first, new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.ProcessStart,
+        Status = NIRACapabilityResultStatus.Succeeded
+    });
+    if (guard.TryBlock(Request(NIRACapabilityIds.ProcessStart,
+        """{"fileName":"C:\\Windows\\System32\\notepad.exe"}"""), out _))
+        throw new Exception("An unrelated app launch was wrongly suppressed");
+});
+
+Check("R17.6 failed launch is not treated as completed application work", () =>
+{
+    var guard = new NIRAProcessStartContinuityGuard();
+    var request = Request(NIRACapabilityIds.ProcessStart,
+        """{"fileName":"C:\\Windows\\System32\\notepad.exe"}""");
+    guard.Record(request, new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.ProcessStart,
+        Status = NIRACapabilityResultStatus.Failed
+    });
+    if (guard.TryBlock(request, out _)) throw new Exception("Failed launch locked out recovery");
+});
+
+Check("R17.6 awaited completed commands are not treated as resident GUI launches", () =>
+{
+    var guard = new NIRAProcessStartContinuityGuard();
+    var request = Request(NIRACapabilityIds.ProcessStart,
+        """{"fileName":"C:\\Windows\\System32\\cmd.exe","waitForExit":true}""");
+    guard.Record(request, new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.ProcessStart,
+        Status = NIRACapabilityResultStatus.Succeeded
+    });
+    if (guard.TryBlock(request, out _)) throw new Exception("Short-lived command blocked as a GUI launch");
+});
+
+Check("R17.6 process launch continuity is run-scoped", () =>
+{
+    var a = new NIRAProcessStartContinuityGuard();
+    var b = new NIRAProcessStartContinuityGuard();
+    var request = Request(NIRACapabilityIds.ProcessStart,
+        """{"fileName":"C:\\Windows\\System32\\taskmgr.exe"}""");
+    a.Record(request, new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.ProcessStart,
+        Status = NIRACapabilityResultStatus.Succeeded
+    });
+    if (!a.TryBlock(request, out _) || b.TryBlock(request, out _))
+        throw new Exception("Launch continuity leaked across user runs");
+});
+
+Check("R17.8 zero remaining windows and processes proves an application close", () =>
+{
+    if (!NIRADesktopCloseCompletionPolicy.ProvesApplicationGone(true, false, 0, 0) ||
+        NIRADesktopCloseCompletionPolicy.ProvesApplicationGone(true, true, 0, 0) ||
+        NIRADesktopCloseCompletionPolicy.ProvesApplicationGone(true, false, 1, 0) ||
+        NIRADesktopCloseCompletionPolicy.ProvesApplicationGone(true, false, 0, 1))
+        throw new Exception("Close proof accepted an active window or process");
+});
+Check("R17.8 unknown postcondition never counts as verified exit", () =>
+{
+    if (NIRADesktopCloseCompletionPolicy.ProvesApplicationGone(true, null, 0, 0) ||
+        NIRADesktopCloseCompletionPolicy.ProvesApplicationGone(true, false, null, 0) ||
+        NIRADesktopCloseCompletionPolicy.ProvesApplicationGone(true, false, 0, null) ||
+        NIRADesktopCloseCompletionPolicy.ProvesApplicationGone(false, false, 0, 0))
+        throw new Exception("Unknown close evidence was misclassified as complete");
+});
+Check("R17.8 genuine close receipt is independent of transient launcher PID", () =>
+{
+    var receipt = new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.DesktopClose,
+        Status = NIRACapabilityResultStatus.Succeeded,
+        Output = "ProcessName: Sample\nProcessId: 4216\nOriginalWindowGone: True\n" +
+                 "OriginalProcessAlive: False\nRemainingMatchingProcesses: 0\n" +
+                 "RemainingMatchingWindows: 0\nCloseObjectiveVerified: True\n"
+    };
+    if (!NIRADesktopCloseCompletionPolicy.IsVerifiedReceipt(receipt) ||
+        !NIRADesktopCloseCompletionPolicy.DescribeVerifiedReceipt(receipt)
+            .Contains("transient launcher", StringComparison.OrdinalIgnoreCase) ||
+        NIRADesktopCloseCompletionPolicy.IsVerifiedReceipt(receipt with {
+            Status = NIRACapabilityResultStatus.Failed }) ||
+        NIRADesktopCloseCompletionPolicy.IsVerifiedReceipt(receipt with {
+            OutcomeUncertain = true }))
+        throw new Exception("Verified closure was not separated from launcher PID");
+});
+Check("R17.8 incomplete or unrelated close cannot short-circuit verification", () =>
+{
+    var receipt = new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.DesktopClose,
+        Status = NIRACapabilityResultStatus.Succeeded,
+        Output = "ProcessName: Sample\nOriginalWindowGone: True\n" +
+                 "OriginalProcessAlive: False\nRemainingMatchingProcesses: 0\n" +
+                 "RemainingMatchingWindows: 0\nCloseObjectiveVerified: False\n"
+    };
+    if (NIRADesktopCloseCompletionPolicy.IsVerifiedReceipt(receipt) ||
+        NIRADesktopCloseCompletionPolicy.IsVerifiedReceipt(receipt with {
+            CapabilityId = NIRACapabilityIds.ProcessStart,
+            Output = "CloseObjectiveVerified: True" }))
+        throw new Exception("Unverified close was accepted");
+});
+Check("R17.8 launch guard equates a bare executable with its resolved path", () =>
+{
+    if (!NIRAProcessStartContinuityGuard.EquivalentExecutable("taskmgr.exe", @"C:\Windows\System32\taskmgr.exe") ||
+        !NIRAProcessStartContinuityGuard.EquivalentExecutable("notepad", "notepad.exe") ||
+        NIRAProcessStartContinuityGuard.EquivalentExecutable(@"C:\A\sample.exe", @"D:\B\sample.exe") ||
+        NIRAProcessStartContinuityGuard.EquivalentExecutable("notepad.exe", "taskmgr.exe"))
+        throw new Exception("Launch alias matching is too weak or too broad");
+});
+Check("R17.8 repeated launch aliases are guarded after successful first launch", () =>
+{
+    var guard = new NIRAProcessStartContinuityGuard();
+    var first = Request(NIRACapabilityIds.ProcessStart,
+        "{\"fileName\":\"taskmgr.exe\"}");
+    var alias = Request(NIRACapabilityIds.ProcessStart,
+        JsonSerializer.Serialize(new { fileName = @"C:\Windows\System32\taskmgr.exe" }));
+    guard.Record(first, new NIRACapabilityResult {
+        CapabilityId=NIRACapabilityIds.ProcessStart,
+        Status=NIRACapabilityResultStatus.Succeeded,
+        Summary="Started PID 4244" });
+    if (!guard.TryBlock(alias, out string evidence) ||
+        !evidence.Contains("ALREADY DISPATCHED", StringComparison.Ordinal))
+        throw new Exception("A path spelling bypassed the launch guard");
+});
+
+Check("R17.8 final no-progress reply preserves a verified close", () =>
+{
+    var verified = new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.DesktopClose,
+        Status = NIRACapabilityResultStatus.Succeeded,
+        Output = "ProcessName: Sample\nOriginalWindowGone: True\n" +
+                 "OriginalProcessAlive: False\nRemainingMatchingProcesses: 0\n" +
+                 "RemainingMatchingWindows: 0\nCloseObjectiveVerified: True\n"
+    };
+    var failedLater = new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.ProcessList,
+        Status = NIRACapabilityResultStatus.Failed,
+        Summary = "Later independent observation failed"
+    };
+    MethodInfo method = typeof(NIRAExecutive).GetMethod("BuildNoProgressFallbackReply",
+        BindingFlags.Static | BindingFlags.NonPublic)
+        ?? throw new Exception("Completion fallback missing");
+    var answer = method.Invoke(null, new object?[] {
+        new NIRACognitionDecision(), failedLater, new[] { verified, failedLater }
+    }) as string ?? string.Empty;
+    if (!answer.Contains("Sample closed", StringComparison.OrdinalIgnoreCase) ||
+        answer.Contains("couldn't verify the exact requested result", StringComparison.OrdinalIgnoreCase))
+        throw new Exception("A verified close was overwritten by a generic failure");
+});
+Check("R17.8 no-progress fallback never invents a close after partial evidence", () =>
+{
+    var incomplete = new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.DesktopClose,
+        Status = NIRACapabilityResultStatus.Succeeded,
+        Summary = "Close dispatched",
+        Output = "OriginalWindowGone: True\nOriginalProcessAlive: Unknown\nCloseObjectiveVerified: False"
+    };
+    MethodInfo method = typeof(NIRAExecutive).GetMethod("BuildNoProgressFallbackReply",
+        BindingFlags.Static | BindingFlags.NonPublic)
+        ?? throw new Exception("Completion fallback missing");
+    var answer = method.Invoke(null, new object?[] {
+        new NIRACognitionDecision(), incomplete, new[] { incomplete }
+    }) as string ?? string.Empty;
+    if (answer.Contains("verified that", StringComparison.OrdinalIgnoreCase) ||
+        answer.Contains("processes or windows remained", StringComparison.OrdinalIgnoreCase))
+        throw new Exception("Incomplete close was reported as proved");
+});
+
+Check("R18 first-call and expanded resource contracts distinguish links from source research", () =>
+{
+    Type compiler = typeof(NIRACognitionService).Assembly.GetType(
+        "NIRAAgent.AI.Cognition.NIRACognitionPromptCompiler", true)!;
+    MethodInfo bootstrap = compiler.GetMethod("BootstrapSystem",
+        BindingFlags.Public | BindingFlags.Static)!;
+    MethodInfo full = compiler.GetMethod("System", BindingFlags.Public | BindingFlags.Static)!;
+    string b = (string)bootstrap.Invoke(null, new object[] { "" })!;
+    string f = (string)full.Invoke(null, new object[] { "{}", "" })!;
+    foreach (string prompt in new[] { b, f })
+    {
+        if (!prompt.Contains("USER-USEFUL RESOURCE COMPLETENESS", StringComparison.Ordinal) ||
+            !prompt.Contains("specific", StringComparison.OrdinalIgnoreCase) ||
+            !prompt.Contains("HTTPS/HTTP URL", StringComparison.Ordinal) ||
+            !prompt.Contains("visualPresentations", StringComparison.Ordinal) ||
+            !prompt.Contains("http.download", StringComparison.Ordinal) ||
+            !prompt.Contains("Don't force", StringComparison.OrdinalIgnoreCase))
+            throw new Exception("The active cognition path lost source/image delivery guidance");
+    }
+});
+Check("R18 user prompt keeps source/link completeness visible on first turn", () =>
+{
+    Type compiler = typeof(NIRACognitionService).Assembly.GetType(
+        "NIRAAgent.AI.Cognition.NIRACognitionPromptCompiler", true)!;
+    MethodInfo method = compiler.GetMethod("User", BindingFlags.Public | BindingFlags.Static)!;
+    var scope = new NIRACognitionContext {
+        Cycle = 1,
+        Event = NIRAMindEvent.UserMessage("Where can I read about a topic?", Guid.NewGuid(), "regression:link")
+    };
+    string prompt = (string)method.Invoke(null, new object?[] { scope, null, null })!;
+    if (!prompt.Contains("CURRENT-REQUEST RESOURCE DELIVERY CHECK", StringComparison.Ordinal) ||
+        !prompt.Contains("clickable Markdown link", StringComparison.Ordinal) ||
+        !prompt.Contains("read-only web capability", StringComparison.Ordinal))
+        throw new Exception("First-pass source result requirement was absent");
 });
 
 Console.WriteLine($"REGRESSION CHECKS: {passed} passed, {failed} failed");

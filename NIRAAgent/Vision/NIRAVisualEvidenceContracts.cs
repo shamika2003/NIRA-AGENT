@@ -69,6 +69,15 @@ public sealed record NIRAVisualCaptureRequest
         get;
         init;
     }
+
+    // Explicitly named external windows may need to be temporarily raised to
+    // obtain reliable desktop pixels when PrintWindow is not implemented.
+    // Unrelated foreground/monitor captures never receive this authority.
+    public bool AllowForegroundRecovery
+    {
+        get;
+        init;
+    }
 }
 
 
@@ -205,6 +214,21 @@ public sealed record NIRACaptureWindowSnapshot
         && !Bounds.IsEmpty;
 }
 
+
+public static class NIRAWindowCaptureIdentityPolicy
+{
+    // A screenshot attributed to a specific application must retain the
+    // same HWND and process identity before and after pixel acquisition.
+    public static bool SameRenderableWindow(
+        NIRACaptureWindowSnapshot before,
+        NIRACaptureWindowSnapshot after) =>
+        before.Handle != 0 &&
+        before.Handle == after.Handle &&
+        before.ProcessId > 0 &&
+        before.ProcessId == after.ProcessId &&
+        !after.IsMinimized &&
+        !after.Bounds.IsEmpty;
+}
 
 public sealed record NIRAWindowCaptureBackendResult
 {
@@ -503,6 +527,6 @@ public interface INIRAScreenCaptureBackend
     Task<NIRAWindowCaptureBackendResult> CaptureWindowPngAsync(
         IntPtr windowHandle,
         string destinationPath,
+        bool allowForegroundRecovery,
         CancellationToken cancellationToken = default);
 }
-

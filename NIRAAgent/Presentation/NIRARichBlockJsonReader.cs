@@ -255,13 +255,16 @@ public static class NIRARichBlockJsonReader
             "blockquote" => "quote",
             "line" or "linechart" or "bar" or "barchart" => "chart",
             "comparison" or "cards" or "cardgroup" => "card",
+            "feature" or "featured" or "spotlight" or "hero" => "hero",
+            "takeaway" or "keyinsight" or "highlight" or "insight" => "insight",
+            "resource" or "reference" or "sourcelink" or "source" => "source",
             "stat" or "statcard" or "statistic" or "kpi" or "metriccard" or "metricpanel" => "metric",
             _ => type
         };
         // "file" cards are reserved for authoritative runtime tool evidence.
         // A model's unverified success claim must never impersonate that status UI.
         if (type == "file") return null;
-        if (type is not ("heading" or "text" or "card" or "metric" or "table" or "chart" or "code" or "details" or "list" or "quote" or "timeline" or "checklist" or "progress" or "tabs" or "followups"))
+        if (type is not ("heading" or "text" or "hero" or "insight" or "source" or "card" or "metric" or "table" or "chart" or "code" or "details" or "list" or "quote" or "timeline" or "checklist" or "progress" or "tabs" or "followups"))
             type = defaultType;
 
         List<string> items = Strings(element, "items");
@@ -314,6 +317,10 @@ public static class NIRARichBlockJsonReader
             if (explicitValue.Length > 0) body = explicitValue;
         }
         if (type == "code" && body.Length == 0) body = First(element, "", "code");
+        // A source card may use a conventional URL field. This only preserves
+        // model-supplied link text; it does not fetch or verify the destination.
+        if (type == "source" && body.Length == 0)
+            body = First(element, "", "url", "href", "uri");
         if (type == "card")
         {
             var details = new List<string>();
@@ -323,7 +330,7 @@ public static class NIRARichBlockJsonReader
                     p.NameEquals("blockType") ||
                     TitleNames.Contains(p.Name, StringComparer.OrdinalIgnoreCase) ||
                     BodyNames.Contains(p.Name, StringComparer.OrdinalIgnoreCase)) continue;
-                if (p.Name is "items" or "cards" or "blocks" or "data") continue;
+                if (p.Name is "items" or "cards" or "blocks" or "data" or "unit" or "tone" or "accent") continue;
                 string value = AsText(p.Value);
                 if (value.Length > 0) details.Add(p.Name + ": " + value);
             }
