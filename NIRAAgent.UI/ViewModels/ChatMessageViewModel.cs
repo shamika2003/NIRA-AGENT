@@ -268,7 +268,7 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         int visible = Math.Min(count, 3);
         for (int index = 0; index < visible; index++)
         {
-            bool overflow = count >= 3 && index == 2;
+            bool overflow = count > 3 && index == 2;
             target.Add(new NIRAUserImageGalleryTileViewModel(
                 this, images[index], index,
                 hiddenCount: overflow ? count - 2 : 0,
@@ -279,7 +279,21 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
     }
 
     public ObservableCollection<FrameworkElement> RichElements { get; } = new();
+    private readonly List<(FrameworkElement View, NIRARichBlock Block)> _photoCreditFrames = new();
     public bool HasRichElements => RichElements.Count > 0;
+    private bool HasRetrievedCreditedImage => VisualArtifacts.Any(image =>
+        image.HasStructuredCredit && image.HasSourceUri);
+
+    private void SuppressDuplicatePhotoCreditFrames()
+    {
+        if (!HasRetrievedCreditedImage) return;
+        foreach (var entry in _photoCreditFrames.ToArray())
+        {
+            if (!NIRAImageCreditLayoutPolicy.IsDuplicatePhotoCredit(entry.Block, true)) continue;
+            RichElements.Remove(entry.View);
+            _photoCreditFrames.Remove(entry);
+        }
+    }
 
     public void AddRichBlocks(IReadOnlyList<NIRARichBlock> blocks,
         NIRAConversationArchiveStore? archive = null, Guid? messageId = null,
@@ -303,10 +317,22 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
                 string type = normalized[index].Type;
                 var group = new List<NIRARichBlock>();
                 while (index < normalized.Count && normalized[index].Type == type)
+                {
+                    // Credit-only cards must remain independent of other cards,
+                    // so a later trusted image can suppress only the duplicate.
+                    bool isCredit = NIRAImageCreditLayoutPolicy.IsDuplicatePhotoCredit(normalized[index], true);
+                    if (isCredit && group.Count > 0) break;
                     group.Add(normalized[index++]);
-                RichElements.Add(type == "card"
+                    if (isCredit) break;
+                }
+                if (group.Count == 1 && NIRAImageCreditLayoutPolicy.IsDuplicatePhotoCredit(
+                        group[0], HasRetrievedCreditedImage)) continue;
+                FrameworkElement rendered = type == "card"
                     ? NIRARichBlockRenderer.RenderCardGroup(group)
-                    : NIRARichBlockRenderer.RenderMetricGroup(group));
+                    : NIRARichBlockRenderer.RenderMetricGroup(group);
+                RichElements.Add(rendered);
+                if (group.Count == 1 && NIRAImageCreditLayoutPolicy.IsDuplicatePhotoCredit(group[0], true))
+                    _photoCreditFrames.Add((rendered, group[0]));
             }
             else
             {
@@ -323,7 +349,12 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
                             Debug.WriteLine($"[RichInteraction] STATE_SAVE_FAILED | {ex.GetType().Name}");
                         }
                     };
-                RichElements.Add(NIRARichBlockRenderer.Render(block, saved, persist, followUp));
+                if (NIRAImageCreditLayoutPolicy.IsDuplicatePhotoCredit(block, HasRetrievedCreditedImage))
+                    continue;
+                FrameworkElement rendered = NIRARichBlockRenderer.Render(block, saved, persist, followUp);
+                RichElements.Add(rendered);
+                if (NIRAImageCreditLayoutPolicy.IsDuplicatePhotoCredit(block, true))
+                    _photoCreditFrames.Add((rendered, block));
             }
         }
     }
@@ -395,6 +426,7 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
             (_, _) =>
             {
                 RebuildAssistantImageGalleryTiles();
+                SuppressDuplicatePhotoCreditFrames();
                 OnPropertyChanged(
                     nameof(HasVisualArtifacts));
                 OnPropertyChanged(
@@ -489,6 +521,15 @@ public sealed class NIRAUserImageGalleryTileViewModel
     public bool HasCaption => Artifact.HasCaption;
     public string SourceUri => Artifact.SourceUri;
     public bool HasSourceUri => Artifact.HasSourceUri;
+    public bool HasStructuredCredit => Artifact.HasStructuredCredit;
+    public string CreditProvider => Artifact.CreditProvider;
+    public string CreditCreator => Artifact.CreditCreator;
+    public bool HasCreditCreator => Artifact.HasCreditCreator;
+    public string CreditLicense => Artifact.CreditLicense;
+    public bool HasCreditLicense => Artifact.HasCreditLicense;
+    public string SourceActionLabel => Artifact.SourceActionLabel;
+    public string ReferenceCaption => Artifact.ReferenceCaption;
+    public bool HasReferenceCaption => Artifact.HasReferenceCaption;
     public IReadOnlyList<VisualArtifactViewModel> GetGalleryImages() =>
         IsAssistantTile ? Owner.GetAssistantImageArtifacts() : Owner.GetUserImageArtifacts();
     public ImageSource? PreviewImage => Artifact.PreviewImage;

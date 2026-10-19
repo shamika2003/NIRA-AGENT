@@ -6,6 +6,7 @@
         xmlns:ui="clr-namespace:NIRAAgent.UI"
         xmlns:present="clr-namespace:NIRAAgent.UI.Presentation"
         xmlns:typing="clr-namespace:NIRAAgent.UI.Typing"
+        xmlns:gallery="clr-namespace:NIRAAgent.UI.Gallery"
         Title="NIRA by ELVARA"
         Icon="Assets/Nira-Icon.ico"
         Width="1440"
@@ -585,47 +586,150 @@
                                 </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemContainerStyle>
                                     <Style TargetType="ContentPresenter">
-                                        <Setter Property="Margin" Value="0,0,7,0"/>
+                                        <Setter Property="Margin" Value="0,0,9,0"/>
                                     </Style>
                                 </ItemsControl.ItemContainerStyle>
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <Grid>
+                                            <!-- Source-grounded photo display. The media is the
+                                                 focal point; metadata lives in a readable footer.
+                                                 Width follows the chat column up to 760px. -->
                                             <Border x:Name="AssistantSingleImageCard"
-                                                    CornerRadius="14" ClipToBounds="True"
+                                                    CornerRadius="17" ClipToBounds="True"
                                                     Background="{DynamicResource NIRAComposerBadgeBrush}"
                                                     BorderBrush="{DynamicResource NIRAComposerEdgeBrush}"
                                                     BorderThickness="1" Visibility="Collapsed">
-                                                <Grid Width="520" MaxWidth="520">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="195"/>
-                                                        <ColumnDefinition Width="*"/>
-                                                    </Grid.ColumnDefinitions>
-                                                    <Border Grid.Column="0" ClipToBounds="True" Background="#FF080E1C"
-                                                            MouseLeftButtonUp="UserImageGalleryTile_MouseLeftButtonUp" Cursor="Hand">
-                                                        <Image Source="{Binding PreviewImage}" Width="195" Height="147"
-                                                               Stretch="UniformToFill" SnapsToDevicePixels="True"/>
+                                                <Grid Width="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType={x:Type ItemsControl}}}"
+                                                      MaxWidth="640">
+                                                    <Grid.RowDefinitions>
+                                                        <RowDefinition Height="Auto"/>
+                                                        <RowDefinition Height="Auto"/>
+                                                    </Grid.RowDefinitions>
+                                                    <Border Grid.Row="0" Height="315" ClipToBounds="True"
+                                                            Background="#FF091529" Cursor="Hand"
+                                                            ToolTip="Open image at full size"
+                                                            MouseLeftButtonUp="UserImageGalleryTile_MouseLeftButtonUp">
+                                                        <Grid>
+                                                            <Image Source="{Binding PreviewImage}" Stretch="Uniform"
+                                                                   RenderOptions.BitmapScalingMode="HighQuality"
+                                                                   SnapsToDevicePixels="True"/>
+                                                            <Border Background="#A5091730" HorizontalAlignment="Left"
+                                                                    VerticalAlignment="Top" Margin="14"
+                                                                    Padding="10,6" CornerRadius="8"
+                                                                    IsHitTestVisible="False">
+                                                                <StackPanel Orientation="Horizontal">
+                                                                    <TextBlock Text="✦" FontSize="12" Margin="0,0,7,0"
+                                                                               Foreground="#FF7EE3FF"/>
+                                                                    <TextBlock Text="NIRA  /  IMAGE REFERENCE" FontSize="10"
+                                                                               FontWeight="SemiBold" Foreground="White"/>
+                                                                </StackPanel>
+                                                            </Border>
+                                                            <Border HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                                                    Margin="0,0,13,13" Padding="10,6"
+                                                                    Background="#B0081730" CornerRadius="8"
+                                                                    IsHitTestVisible="False">
+                                                                <TextBlock Text="↗  VIEW FULL IMAGE" FontSize="10"
+                                                                           FontWeight="SemiBold" Foreground="White"/>
+                                                            </Border>
+                                                        </Grid>
                                                     </Border>
-                                                    <StackPanel Grid.Column="1" Margin="13,12,14,12"
-                                                                VerticalAlignment="Center">
-                                                        <TextBlock Text="{Binding Title}" FontSize="13"
+                                                    <StackPanel Grid.Row="1" Margin="18,15,18,16">
+                                                        <TextBlock Text="{Binding CreditProvider}" FontSize="10"
+                                                                   FontWeight="SemiBold" Foreground="{DynamicResource NIRACyanBrush}"
+                                                                   Margin="0,0,0,5">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding HasStructuredCredit}" Value="False">
+                                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                        <TextBlock Text="{Binding Title}" FontSize="17"
                                                                    FontWeight="SemiBold" TextWrapping="Wrap"
                                                                    Foreground="{DynamicResource NIRATextBrush}"/>
-                                                        <TextBlock Text="{Binding Caption}" FontSize="11"
-                                                                   Margin="0,6,0,0" TextWrapping="Wrap" MaxHeight="73"
-                                                                   Foreground="{DynamicResource NIRASecondaryBrush}"/>
-                                                        <Button x:Name="AssistantImageSourceButton" Content="Open image source  ↗"
-                                                                Tag="{Binding SourceUri}" ToolTip="Open the verified image's original source"
-                                                                Background="Transparent" BorderThickness="0"
-                                                                Padding="0" Margin="0,8,0,0"
-                                                                HorizontalAlignment="Left"
+                                                        <WrapPanel Margin="0,9,0,0">
+                                                            <WrapPanel.Style>
+                                                                <Style TargetType="WrapPanel">
+                                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding HasStructuredCredit}" Value="False">
+                                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </WrapPanel.Style>
+                                                            <TextBlock Text="PHOTO BY  " FontSize="10.5"
+                                                                       Foreground="{DynamicResource NIRASecondaryBrush}"
+                                                                       VerticalAlignment="Center">
+                                                                <TextBlock.Style>
+                                                                    <Style TargetType="TextBlock">
+                                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding HasCreditCreator}" Value="False">
+                                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </TextBlock.Style>
+                                                            </TextBlock>
+                                                            <TextBlock Text="{Binding CreditCreator}" FontSize="11.5"
+                                                                       FontWeight="SemiBold" Margin="0,0,15,0"
+                                                                       Foreground="{DynamicResource NIRATextBrush}"/>
+                                                            <TextBlock Text="{Binding CreditLicense}" FontSize="10.5"
+                                                                       VerticalAlignment="Center"
+                                                                       Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                                                        </WrapPanel>
+                                                        <TextBlock Text="{Binding ReferenceCaption}" FontSize="11.5"
+                                                                   Margin="0,8,0,0" TextWrapping="Wrap"
+                                                                   Foreground="{DynamicResource NIRASecondaryBrush}">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding HasReferenceCaption}" Value="False">
+                                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                        <Button x:Name="AssistantImageSourceButton"
+                                                                Content="{Binding SourceActionLabel}"
+                                                                Tag="{Binding SourceUri}"
+                                                                ToolTip="Open the original credited source page"
+                                                                Margin="0,13,0,0" Padding="12,8"
+                                                                HorizontalAlignment="Left" Cursor="Hand"
+                                                                FontSize="11.5" FontWeight="SemiBold"
                                                                 Foreground="{DynamicResource NIRABlueBrush}"
-                                                                Cursor="Hand" FontSize="11" FontWeight="SemiBold"
-                                                                Click="VisualArtifactOpenSource_Click"/>
+                                                                Click="VisualArtifactOpenSource_Click">
+                                                            <Button.Template>
+                                                                <ControlTemplate TargetType="Button">
+                                                                    <Border x:Name="SourcePill"
+                                                                            Background="{DynamicResource NIRAGlassStrongTintBrush}"
+                                                                            BorderBrush="{DynamicResource NIRAComposerEdgeBrush}"
+                                                                            BorderThickness="1" CornerRadius="9"
+                                                                            Padding="{TemplateBinding Padding}">
+                                                                        <ContentPresenter HorizontalAlignment="Center"
+                                                                                          VerticalAlignment="Center"/>
+                                                                    </Border>
+                                                                    <ControlTemplate.Triggers>
+                                                                        <Trigger Property="IsMouseOver" Value="True">
+                                                                            <Setter TargetName="SourcePill" Property="BorderBrush"
+                                                                                    Value="{DynamicResource NIRACyanBrush}"/>
+                                                                        </Trigger>
+                                                                    </ControlTemplate.Triggers>
+                                                                </ControlTemplate>
+                                                            </Button.Template>
+                                                        </Button>
                                                     </StackPanel>
                                                 </Grid>
                                             </Border>
-                                            <Border x:Name="AssistantStripTile" Width="164" Height="108"
+                                            <Border x:Name="AssistantStripTile" Width="192" Height="144"
                                                     CornerRadius="11" ClipToBounds="True"
                                                     Background="{DynamicResource NIRAComposerBadgeBrush}"
                                                     BorderBrush="{DynamicResource NIRAComposerEdgeBrush}"
@@ -652,6 +756,22 @@
                                                     <Image x:Name="AssistantStripImage" Source="{Binding PreviewImage}"
                                                            Stretch="UniformToFill" SnapsToDevicePixels="True"/>
                                                     <Border x:Name="AssistantOverflowShade" Background="#00000000"/>
+                                                    <Border x:Name="AssistantStripLabelShade" Height="51"
+                                                            VerticalAlignment="Bottom" IsHitTestVisible="False">
+                                                        <Border.Background>
+                                                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                                                <GradientStop Color="#0709152B" Offset="0"/>
+                                                                <GradientStop Color="#DB081426" Offset="1"/>
+                                                            </LinearGradientBrush>
+                                                        </Border.Background>
+                                                        <StackPanel Margin="10,6,10,6" VerticalAlignment="Bottom">
+                                                            <TextBlock Text="{Binding Title}" FontSize="11"
+                                                                       FontWeight="SemiBold" Foreground="White"
+                                                                       TextTrimming="CharacterEllipsis"/>
+                                                            <TextBlock Text="{Binding CreditProvider}" FontSize="9"
+                                                                       Foreground="#FFD5EDFF" Margin="0,2,0,0"/>
+                                                        </StackPanel>
+                                                    </Border>
                                                     <TextBlock x:Name="AssistantOverflowBadge" Visibility="Collapsed"
                                                                Text="{Binding OverflowLabel}" Foreground="White"
                                                                FontWeight="SemiBold" FontSize="20"
@@ -673,6 +793,7 @@
                                             <DataTrigger Binding="{Binding IsOverflowTile}" Value="True">
                                                 <Setter TargetName="AssistantOverflowShade" Property="Background" Value="#B2091832"/>
                                                 <Setter TargetName="AssistantOverflowBadge" Property="Visibility" Value="Visible"/>
+                                                <Setter TargetName="AssistantStripLabelShade" Property="Visibility" Value="Collapsed"/>
                                                 <Setter TargetName="AssistantStripImage" Property="Effect">
                                                     <Setter.Value><BlurEffect Radius="7"/></Setter.Value>
                                                 </Setter>
@@ -1753,7 +1874,7 @@
                 </StackPanel>
 
                 <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="20,0,20,0">
-                    <Button Style="{StaticResource NavButtonStyle}" Content="Chat" Tag="ACTIVE"/>
+                    <Button x:Name="ChatNavButton" Style="{StaticResource NavButtonStyle}" Content="Chat" Tag="ACTIVE" Click="OpenChat_Click"/>
                     <Button Style="{StaticResource NavButtonStyle}" Content="Memory"
                             Tag="Show me the most relevant things you remember about our current work."
                             Click="QuickPrompt_Click"/>
@@ -1766,6 +1887,8 @@
                     <Button Style="{StaticResource NavButtonStyle}" Content="System"
                             Tag="Give me a concise status of your current system state and active work."
                             Click="QuickPrompt_Click"/>
+                    <Button x:Name="GalleryNavButton" Style="{StaticResource NavButtonStyle}" Content="Gallery"
+                            ToolTip="Open your saved image library" Click="OpenGallery_Click"/>
                 </StackPanel>
 
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
@@ -2576,5 +2699,8 @@
                 Grid.RowSpan="2" Panel.ZIndex="900"
                 Background="#F201040A" Opacity="0"
                 Visibility="Visible" IsHitTestVisible="False"/>
+        <!-- R34: Real local Gallery page. Chat stays alive underneath, with no LLM work. -->
+        <gallery:NIRAGalleryPage x:Name="GalleryPage" Grid.Row="1" Margin="12,10,12,12"
+                                 Visibility="Collapsed" Panel.ZIndex="8"/>
     </Grid>
 </Window>

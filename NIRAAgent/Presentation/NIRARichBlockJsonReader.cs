@@ -267,15 +267,31 @@ public static class NIRARichBlockJsonReader
         if (type is not ("heading" or "text" or "hero" or "insight" or "source" or "card" or "metric" or "table" or "chart" or "code" or "details" or "list" or "quote" or "timeline" or "checklist" or "progress" or "tabs" or "followups"))
             type = defaultType;
 
-        List<string> items = Strings(element, "items");
-        if (items.Count == 0) items = Strings(element, "bullets");
-        if (items.Count == 0 && type == "timeline") items = Strings(element, "events");
-        if (items.Count == 0 && type == "checklist") items = Strings(element, "tasks");
-        if (items.Count == 0 && type == "tabs") items = Strings(element, "labels");
-        if (items.Count == 0 && type == "followups") items = Strings(element, "options");
-        if (items.Count == 0 && type == "followups") items = Strings(element, "suggestions");
-        var panels = Strings(element, "panels");
-        if (panels.Count == 0 && type == "tabs") panels = Strings(element, "contents");
+        // A model may use objects instead of the contracted string arrays.
+        // Extract their human-readable fields; never print JSON property names
+        // such as "text:", "title:" or "checked: false" on screen.
+        List<string> items = PresentationItems(element, "items", type);
+        if (items.Count == 0) items = PresentationItems(element, "bullets", type);
+        if (items.Count == 0 && type == "timeline") items = PresentationItems(element, "events", type);
+        if (items.Count == 0 && type == "checklist") items = PresentationItems(element, "tasks", type);
+        if (items.Count == 0 && type == "tabs") items = PresentationItems(element, "labels", type);
+        if (items.Count == 0 && type == "followups") items = PresentationItems(element, "options", type);
+        if (items.Count == 0 && type == "followups") items = PresentationItems(element, "suggestions", type);
+        var panels = type == "tabs" ? TabPanelStrings(element, "panels") : Strings(element, "panels");
+        if (panels.Count == 0 && type == "tabs") panels = TabPanelStrings(element, "contents");
+        // Also accept tabs authored as items:[{label,content}, ...].
+        if (type == "tabs" && panels.Count == 0 &&
+            Property(element, "items", out var tabItems) && tabItems.ValueKind == JsonValueKind.Array)
+        {
+            var objects = tabItems.EnumerateArray().ToArray();
+            if (objects.Length >= 2 && objects.All(e => e.ValueKind == JsonValueKind.Object))
+            {
+                var labelsFromItems = objects.Select(e => First(e, "", "label", "title", "name")).ToList();
+                var contentFromItems = objects.Select(PanelContent).ToList();
+                if (labelsFromItems.All(x => x.Length > 0) && contentFromItems.All(x => x.Length > 0))
+                { items = labelsFromItems; panels = contentFromItems; }
+            }
+        }
         List<string> cols = Strings(element, "columns");
         if (cols.Count == 0) cols = Strings(element, "headers");
         var rows = new List<IReadOnlyList<string>>();
@@ -353,6 +369,80 @@ public static class NIRARichBlockJsonReader
             ProgressValue = Number(element, "value"),
             ProgressMaximum = Number(element, "maximum") ?? Number(element, "total")
         };
+    }
+
+    // Presentation-only shape compatibility. These routines preserve supplied
+    // words and dates; they do not infer task completion or invent milestones.
+    private static List<string> PresentationItems(JsonElement obj, string key, string type)
+    {
+        if (!Property(obj, key, out var values) || values.ValueKind != JsonValueKind.Array)
+            return new List<string>();
+        var items = new List<string>();
+        foreach (var value in values.EnumerateArray())
+        {
+            string text;
+            if (value.ValueKind != JsonValueKind.Object)
+                text = AsText(value);
+            else if (type == "timeline")
+            {
+                string when = First(value, "", "date", "year", "period", "when", "day", "stage", "time");
+                string title = First(value, "", "title", "event", "milestone", "label", "name");
+                string description = First(value, "", "text", "description", "body", "content", "summary");
+                if (title.Length == 0) title = description;
+                else if (description.Length > 0 && !string.Equals(title, description, StringComparison.Ordinal))
+                    title += "\n" + description;
+                text = when.Length > 0 && title.Length > 0 ? when + " — " + title : title;
+            }
+            else if (type == "checklist")
+            {
+                text = First(value, "", "text", "task", "label", "title", "description", "name");
+                string detail = First(value, "", "details", "note");
+                if (text.Length > 0 && detail.Length > 0) text += "\n" + detail;
+                // A model's checked/done flag is NEVER proof that work was done.
+            }
+            else
+                text = First(value, "", "label", "title", "name", "text", "description");
+            if (!string.IsNullOrWhiteSpace(text)) items.Add(text.Trim());
+        }
+        return items;
+    }
+
+    private static List<string> TabPanelStrings(JsonElement obj, string key)
+    {
+        if (!Property(obj, key, out var values) || values.ValueKind != JsonValueKind.Array)
+            return new List<string>();
+        return values.EnumerateArray().Select(PanelContent).ToList();
+    }
+
+    // Return meaningful Markdown, not an object's property dump. Markdown is
+    // interpreted only by NIRA's safe local WPF renderer, never as executable UI.
+    private static string PanelContent(JsonElement value)
+    {
+        if (value.ValueKind == JsonValueKind.String) return value.GetString() ?? "";
+        if (value.ValueKind == JsonValueKind.Array)
+            return string.Join("\n", value.EnumerateArray().Select(PanelContent)
+                .Where(x => !string.IsNullOrWhiteSpace(x)));
+        if (value.ValueKind != JsonValueKind.Object) return AsText(value);
+        var parts = new List<string>();
+        string title = First(value, "", "heading", "title");
+        if (title.Length > 0) parts.Add("### " + title);
+        string body = First(value, "", "text", "body", "content", "description", "summary", "overview");
+        if (body.Length > 0) parts.Add(body);
+        if (Property(value, "sections", out var sections) && sections.ValueKind == JsonValueKind.Array)
+            foreach (var section in sections.EnumerateArray().Take(12))
+            {
+                string sectionText = PanelContent(section);
+                if (sectionText.Length > 0) parts.Add(sectionText);
+            }
+        foreach (var key in new[] { "bullets", "steps", "points" })
+            if (Property(value, key, out var bullets) && bullets.ValueKind == JsonValueKind.Array)
+            {
+                var lines = bullets.EnumerateArray().Take(24).Select(e =>
+                    e.ValueKind == JsonValueKind.Object
+                        ? First(e, "", "text", "label", "title", "description") : AsText(e));
+                parts.Add(string.Join("\n", lines.Where(x => x.Length > 0).Select(x => "- " + x)));
+            }
+        return string.Join("\n\n", parts.Where(x => !string.IsNullOrWhiteSpace(x)));
     }
 
     private static List<string> Strings(JsonElement obj, string key) =>

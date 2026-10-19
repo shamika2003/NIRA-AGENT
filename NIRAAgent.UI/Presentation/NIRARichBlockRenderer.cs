@@ -155,8 +155,11 @@ public static class NIRARichBlockRenderer
     public static FrameworkElement RenderCardGroup(IEnumerable<NIRARichBlock> cards)
     {
         var collection = cards.ToList();
-        return ResponsiveTiles(collection.Select((card, i) => (FrameworkElement)Card(card, i))
-            .ToList(), 3, 282, 9);
+        // Long explanatory cards need generous reading width. Three columns are
+        // reserved for genuinely compact cards, not dense technical prose.
+        bool substantial = collection.Any(card => card.Text.Length > 175 || card.Title.Length > 29);
+        return ResponsiveTiles(collection.Select((card, i) => (FrameworkElement)Card(card, i, true))
+            .ToList(), substantial ? 2 : 3, substantial ? 355 : 260, 13);
     }
 
     public static FrameworkElement RenderMetricGroup(IEnumerable<NIRARichBlock> metrics)
@@ -209,27 +212,36 @@ public static class NIRARichBlockRenderer
     private static Border Insight(NIRARichBlock block)
     {
         var content = new StackPanel();
+        // R23: An insight is a quiet inline emphasis, not a fixed gold footer.
+        // The cognition decision controls whether the note exists at all.
         content.Children.Add(SemanticHeading("✦", block.Title.Length > 0 ?
-            block.Title : "Worth noting", Palette[3]));
+            block.Title : "Note", Palette[1]));
         if (block.Text.Length > 0)
         {
             var body = Text(block.Text, 13.4);
             body.Margin = new Thickness(37, 9, 0, 0);
             content.Children.Add(body);
         }
-        return DesignedSurface(content, Palette[3], 17);
+        return DesignedSurface(content, Palette[1], 13);
     }
 
     private static Border Source(NIRARichBlock block)
     {
+        // A model-authored source block is a useful resource LINK, not proof
+        // that the page has been fetched. Keep the actual URL in the click
+        // destination and use a legible title/host instead of dumping it raw.
         var content = new StackPanel();
-        content.Children.Add(SemanticHeading("↗", block.Title.Length > 0 ?
-            block.Title : "Source", Palette[4]));
-        var link = Text(block.Text, 13.1, false, "NIRACyanBrush");
-        link.Margin = new Thickness(37, 8, 0, 0);
+        string title = block.Title.Length > 0 ? block.Title : "Reference";
+        content.Children.Add(SemanticHeading("↗", title, Palette[4]));
+        string shown = block.Text;
+        if (Uri.TryCreate(block.Text, UriKind.Absolute, out Uri? url) &&
+            url.Scheme is "http" or "https")
+        {
+            shown = $"[Visit {url.Host}  ↗]({url.AbsoluteUri})";
+        }
+        var link = Text(shown, 13.1, true, "NIRACyanBrush");
+        link.Margin = new Thickness(37, 10, 0, 0);
         content.Children.Add(link);
-        // The existing inline URL parser controls click navigation. A source
-        // block must already have a URL accepted by NIRAPresentationPolicy.
         return DesignedSurface(content, Palette[4], 17);
     }
 
@@ -290,15 +302,48 @@ public static class NIRARichBlockRenderer
         var root = new StackPanel();
         if (block.Title.Length > 0)
         {
-            var heading = Text(block.Title, 15, true);
-            heading.Margin = new Thickness(0, 0, 0, 9);
+            var heading = Text(block.Title, 16.1, true);
+            heading.Margin = new Thickness(0, 0, 0, 12);
             root.Children.Add(heading);
         }
         if (!string.IsNullOrWhiteSpace(block.Text))
-            root.Children.Add(Text(block.Text, 13.2));
+        {
+            // Labeled, multiline explanations deserve distinct subheadings
+            // instead of an uninterrupted dense paragraph. Do not invent labels.
+            string copy = block.Text.Replace("\r\n", "\n").Replace('\r', '\n');
+            copy = Regex.Replace(copy,
+                @"(?<=\S)[ \t]+(?=\*{0,2}(?:Benefits|Challenges|Applications|Advantages|Disadvantages|Risks|Limitations|Best for|Trade-offs)\*{0,2}:\*{0,2})",
+                "\n", RegexOptions.CultureInvariant);
+            var lines = copy.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            int labeled = lines.Count(line => Regex.IsMatch(line.Trim(),
+                @"^\*{0,2}[\p{L}][\p{L}0-9 &/()\-]{2,34}\*{0,2}:\*{0,2}\s*\S", RegexOptions.CultureInvariant));
+            if (labeled >= 2)
+            {
+                foreach (string original in lines)
+                {
+                    string line = original.Trim();
+                    var part = Regex.Match(line, @"^\*{0,2}(?<name>[\p{L}][\p{L}0-9 &/()\-]{2,34})\*{0,2}:\*{0,2}\s*(?<detail>.*)$");
+                    if (part.Success)
+                    {
+                        var label = Text(part.Groups["name"].Value.ToUpperInvariant(), 10.7, true, "NIRACyanBrush");
+                        label.Margin = new Thickness(0, 13, 0, 4);
+                        root.Children.Add(label);
+                        if (!string.IsNullOrWhiteSpace(part.Groups["detail"].Value))
+                            root.Children.Add(Text(part.Groups["detail"].Value, 13.4));
+                    }
+                    else
+                    {
+                        var paragraph = Text(line, 13.4);
+                        paragraph.Margin = new Thickness(0, 7, 0, 0);
+                        root.Children.Add(paragraph);
+                    }
+                }
+            }
+            else root.Children.Add(Text(block.Text, 13.4));
+        }
         // Subtle hue variation only for an ACTUAL group, never arbitrary
         // numbering: cards are often choices rather than sequential actions.
-        return DesignedSurface(root, grouped ? Palette[index % 3] : Palette[0], 17);
+        return DesignedSurface(root, grouped ? Palette[index % 3] : Palette[0], 21);
     }
 
     private static UIElement Body(NIRARichBlock block)
@@ -527,10 +572,23 @@ public static class NIRARichBlockRenderer
         @"```(?<language>[^`\r\n]*)\r?\n(?<source>[\s\S]*?)\r?\n?```",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    // The chat document parser renders actual headings, bullets and tables in
+    // tab panels. It never evaluates scripts or model-defined UI actions.
+    private static FrameworkElement TabMarkdown(string markdown)
+    {
+        var panel = new StackPanel { HorizontalAlignment = HorizontalAlignment.Stretch };
+        NIRAChatDocument.SetText(panel, markdown);
+        return panel;
+    }
+
     private static UIElement TabPanelContent(string text, string tabLabel)
     {
         var content = new StackPanel { Margin = new Thickness(3, 5, 3, 9) };
         string source = (text ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n');
+        // R24 archives may already contain the older flattened object form.
+        // Strip only the leading field label, not actual authored content.
+        source = Regex.Replace(source, @"^\s*(?:text|body|content):\s*(?=\S)", string.Empty,
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         MatchCollection fences = TabCodeFence.Matches(source);
         if (fences.Count == 0)
         {
@@ -546,7 +604,7 @@ public static class NIRARichBlockRenderer
                     Type = "code", Text = source.Trim(), Title = "Example"
                 }));
             }
-            else content.Children.Add(Text(source, 13));
+            else content.Children.Add(TabMarkdown(source));
             return content;
         }
 
@@ -558,9 +616,7 @@ public static class NIRARichBlockRenderer
                 string prose = source[cursor..fence.Index].Trim();
                 if (prose.Length > 0)
                 {
-                    var paragraph = Text(prose, 13);
-                    paragraph.Margin = new Thickness(0, 0, 0, 10);
-                    content.Children.Add(paragraph);
+                    content.Children.Add(TabMarkdown(prose));
                 }
             }
             string code = fence.Groups["source"].Value.Trim('\n');
@@ -580,7 +636,7 @@ public static class NIRARichBlockRenderer
         if (cursor < source.Length)
         {
             string trailing = source[cursor..].Trim();
-            if (trailing.Length > 0) content.Children.Add(Text(trailing, 13));
+            if (trailing.Length > 0) content.Children.Add(TabMarkdown(trailing));
         }
         return content;
     }
@@ -705,11 +761,23 @@ public static class NIRARichBlockRenderer
 
         for (int i = 0; i < block.Items.Count; i++)
         {
-            var item = block.Items[i];
-            // Only format an explicit day/stage + task separator, never invent one.
-            var split = Regex.Match(item, @"^\s*(?<when>[^—–:]{1,55})\s*[—–:]\s*(?<task>.+)$");
-            string when = split.Success ? split.Groups["when"].Value.Trim() : "Step";
+            string item = block.Items[i];
+            // Compatibility for earlier archived responses whose JSON objects
+            // were flattened into "1980s; title: ...; text: ...".
+            var legacy = Regex.Match(item,
+                @"^\s*(?:(?:date|year|period):\s*)?(?<when>[^;\r\n]+);\s*title:\s*(?<title>[^;\r\n]+);\s*text:\s*(?<body>[\s\S]+)$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (legacy.Success)
+                item = legacy.Groups["when"].Value.Trim() + " — " +
+                    legacy.Groups["title"].Value.Trim() + "\n" + legacy.Groups["body"].Value.Trim();
+            // Only display a real authored date/stage. No placeholder DATE.
+            var split = Regex.Match(item,
+                @"^\s*(?<when>[^—–:\r\n]{1,55})\s*[—–:]\s*(?<task>[\s\S]+)$");
+            string when = split.Success ? split.Groups["when"].Value.Trim() : $"MILESTONE {i + 1:00}";
             string task = split.Success ? split.Groups["task"].Value.Trim() : item;
+            int lineBreak = task.IndexOf('\n');
+            string milestoneTitle = lineBreak < 0 ? task.Trim() : task[..lineBreak].Trim();
+            string milestoneDetail = lineBreak < 0 ? string.Empty : task[(lineBreak + 1)..].Trim();
             var line = new Grid { Margin = new Thickness(0, 0, 0, i == block.Items.Count - 1 ? 0 : 14) };
             line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(34) });
             line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -756,7 +824,13 @@ public static class NIRARichBlockRenderer
             var stage = Text(when.ToUpperInvariant(), 11.5, true, "NIRACyanBrush");
             stage.Margin = new Thickness(0, 0, 0, 7);
             body.Children.Add(stage);
-            body.Children.Add(Text(task, 14.2));
+            body.Children.Add(Text(milestoneTitle, 14.4, milestoneDetail.Length > 0));
+            if (milestoneDetail.Length > 0)
+            {
+                var detail = Text(milestoneDetail, 13.4);
+                detail.Margin = new Thickness(0, 7, 0, 0);
+                body.Children.Add(detail);
+            }
             card.Child = body;
             Grid.SetColumn(card, 1);
             line.Children.Add(card);
@@ -780,7 +854,7 @@ public static class NIRARichBlockRenderer
             { RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent) });
         var content = new FrameworkElementFactory(typeof(ContentPresenter));
         content.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
-        content.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        content.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Stretch);
         content.SetBinding(ContentPresenter.ContentProperty, new Binding("Content")
             { RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent) });
         border.AppendChild(content);
@@ -809,28 +883,44 @@ public static class NIRARichBlockRenderer
         {
             int itemIndex = i;
             string item = block.Items[i];
+            // Older persisted checklists serialized {text, checked} as a label
+            // dump. Display the task only; historic model flags do not certify
+            // completion or change the user's saved manual check state.
+            var legacyTask = Regex.Match(item,
+                @"^\s*(?:text|task):\s*(?<body>[\s\S]*?)(?:;\s*(?:checked|done):\s*(?:true|false))?\s*$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (legacyTask.Success) item = legacyTask.Groups["body"].Value.Trim();
             bool completed = checkedItems.Contains(i);
-            var row = new DockPanel { LastChildFill = true, Margin = new Thickness(15, 12, 15, 12) };
+            // Grid + Auto layout: long labels may grow to two or more lines.
+            // A fixed button height/centered content clipped the previous rows.
+            var row = new Grid { Margin = new Thickness(15, 12, 15, 12),
+                HorizontalAlignment = HorizontalAlignment.Stretch, ClipToBounds = false };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(34) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             var glyph = new Border { Width = 21, Height = 21, CornerRadius = new CornerRadius(6),
-                BorderThickness = new Thickness(1.4), Margin = new Thickness(0, 0, 12, 0),
-                VerticalAlignment = VerticalAlignment.Center };
+                BorderThickness = new Thickness(1.4), Margin = new Thickness(0, 2, 0, 0),
+                VerticalAlignment = VerticalAlignment.Top };
             Theme(glyph, Border.BorderBrushProperty, "NIRACyanBrush");
             Theme(glyph, Border.BackgroundProperty, "NIRAGlassStrongTintBrush");
             var tick = Text("✓", 15, true, "NIRACyanBrush");
             tick.TextAlignment = TextAlignment.Center;
             tick.Visibility = completed ? Visibility.Visible : Visibility.Collapsed;
             glyph.Child = tick;
-            DockPanel.SetDock(glyph, Dock.Left);
+            Grid.SetColumn(glyph, 0);
             row.Children.Add(glyph);
-            var label = Text(item, 14);
-            label.VerticalAlignment = VerticalAlignment.Center;
+            var label = Text(item, 13.5);
+            label.HorizontalAlignment = HorizontalAlignment.Stretch;
+            label.VerticalAlignment = VerticalAlignment.Top;
+            label.TextTrimming = TextTrimming.None;
+            Grid.SetColumn(label, 1);
             label.TextDecorations = completed ? TextDecorations.Strikethrough : null;
             label.Opacity = completed ? .67 : 1;
             row.Children.Add(label);
             var button = new Button { Content = row, Template = rowTemplate,
                 Margin = new Thickness(0, 0, 0, 9), Padding = new Thickness(0),
                 HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                Cursor = System.Windows.Input.Cursors.Hand, MinHeight = 43,
+                Cursor = System.Windows.Input.Cursors.Hand, MinHeight = 52,
+                VerticalContentAlignment = VerticalAlignment.Stretch,
                 ToolTip = "Manual checkbox; does not execute or verify NIRA work" };
             Theme(button, Control.BackgroundProperty, "NIRAGlassStrongTintBrush");
             Theme(button, Control.BorderBrushProperty, "NIRAGlassBorderBrush");

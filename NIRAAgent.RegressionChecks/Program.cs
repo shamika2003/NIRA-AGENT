@@ -13,6 +13,8 @@ using NIRAAgent.Character.History;
 using NIRAAgent.Vision;
 using NIRAAgent.Diagnostics;
 using NIRAAgent.PC.Awareness;
+using NIRAAgent.Images;
+using NIRAAgent.Gallery;
 
 // Run with: dotnet run --project NIRAAgent.RegressionChecks
 // These are offline contract checks, not simulated live model/Bridge tests.
@@ -723,6 +725,471 @@ Check("All app guidance fits NIRA's current 3000-character loader budget", () =>
         if (length > limit)
             throw new Exception($"{Path.GetFileName(file)} has {length} characters; runtime limit is {limit}");
     }
+});
+
+Check("R26 Wikimedia image candidates preserve real source, attribution and bounded IDs", () =>
+{
+    const string payload = """
+        {"query":{"pages":[
+            {"index":1,"title":"File:Karnak_temple.jpg","imageinfo":[{
+                "mime":"image/jpeg","width":2300,"height":1550,
+                "thumburl":"https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Karnak_temple.jpg/1000px-Karnak_temple.jpg",
+                "descriptionurl":"https://commons.wikimedia.org/wiki/File:Karnak_temple.jpg",
+                "extmetadata":{"Artist":{"value":"<a>Historical photographer</a>"},
+                 "LicenseShortName":{"value":"CC BY-SA 4.0"},
+                 "LicenseUrl":{"value":"https://creativecommons.org/licenses/by-sa/4.0/"}}}]},
+            {"index":2,"title":"File:Unsafe.jpg","imageinfo":[{
+                "mime":"image/jpeg","thumburl":"https://127.0.0.1/private.jpg",
+                "descriptionurl":"https://commons.wikimedia.org/wiki/File:Unsafe.jpg"}]},
+            {"index":3,"title":"File:Vector.svg","imageinfo":[{
+                "mime":"image/svg+xml","thumburl":"https://upload.wikimedia.org/wikipedia/commons/a/b/vector.svg",
+                "descriptionurl":"https://commons.wikimedia.org/wiki/File:Vector.svg"}]}
+        ]}}
+        """;
+    var selected = NIRACommonsImageDiscoveryService.ParseCommonsSearchResponse(payload, 3);
+    if (selected.Count != 1 || selected[0].Title != "Karnak temple.jpg" ||
+        selected[0].Author != "Historical photographer" ||
+        selected[0].License != "CC BY-SA 4.0" ||
+        selected[0].SourceUri != "https://commons.wikimedia.org/wiki/File:Karnak_temple.jpg" ||
+        !Guid.TryParseExact(selected[0].CandidateId, "N", out _))
+        throw new Exception("Wikimedia response lost its provenance or accepted an unsafe item.");
+    if (NIRACommonsImageDiscoveryService.IsPermittedMediaUri("http://upload.wikimedia.org/wikipedia/commons/a.jpg") ||
+        NIRACommonsImageDiscoveryService.IsPermittedMediaUri("https://upload.wikimedia.org.evil.test/wikipedia/commons/a.jpg") ||
+        NIRACommonsImageDiscoveryService.IsPermittedMediaUri("https://upload.wikimedia.org@127.0.0.1/wikipedia/commons/a.jpg") ||
+        NIRACommonsImageDiscoveryService.IsPermittedMediaUri("https://upload.wikimedia.org.evil.test/wikipedia/commons/a.jpg"))
+        throw new Exception("Media origin restrictions accepted a forged URI.");
+});
+
+Check("R26 images are independent native capabilities with visual attribution", () =>
+{
+    using var service = new NIRACommonsImageDiscoveryService();
+    var search = new NIRAImageSearchCapabilityHandler(service);
+    var retrieve = new NIRAImageRetrieveCapabilityHandler(service);
+    if (search.Descriptor.Id != NIRACapabilityIds.ImageSearch ||
+        retrieve.Descriptor.Id != NIRACapabilityIds.ImageRetrieve ||
+        search.Descriptor.DefaultRisk != NIRACapabilityRisk.Observe ||
+        retrieve.Descriptor.DefaultRisk != NIRACapabilityRisk.Observe ||
+        retrieve.Descriptor.Parameters.Any(p => p.Name is "url" or "destination" or "path"))
+        throw new Exception("Native image capability was not registered as restricted observation.");
+    var candidate = Request(NIRACapabilityIds.ImageRetrieve, """{"candidateId":"not-observed"}""");
+    Throws<InvalidOperationException>(() => retrieve.ExecuteAsync(candidate).GetAwaiter().GetResult());
+    var visual = new NIRACapabilityVisualArtifact {
+        LocalPath = @"C:\NIRAAgent\visual-artifacts\commons-cache\photo.jpg",
+        SourceUri = "https://commons.wikimedia.org/wiki/File:Karnak_temple.jpg",
+        PresentToUser = true
+    }.Normalize();
+    if (!visual.PresentToUser || !visual.SourceUri.Contains("commons.wikimedia.org") ||
+        (visual with { SourceUri = "https://evil.example/photo" }).Normalize().SourceUri.Length != 0)
+        throw new Exception("Trusted media attribution was discarded or source URL was unbounded.");
+});
+
+Check("R28 independent Openverse results retain licensed Flickr photo and attribution", () =>
+{
+    const string json = """
+        {"results":[
+          {"title":"Great Pyramid of Giza","creator":"Public photographer",
+           "license":"by","license_version":"4.0",
+           "license_url":"https://creativecommons.org/licenses/by/4.0/",
+           "foreign_landing_url":"https://www.flickr.com/photos/author/123456/",
+           "thumbnail":"https://live.staticflickr.com/1234/photohash_b.jpg",
+           "url":"https://live.staticflickr.com/1234/photohash_o.jpg",
+           "width":1024,"height":768,"mature":false},
+          {"title":"Unsafe local image","creator":"No",
+           "license":"by","foreign_landing_url":"https://www.flickr.com/photos/attacker/2/",
+           "thumbnail":"https://localhost/private.jpg","url":"https://127.0.0.1/private.jpg"},
+          {"title":"Unknown image rights","creator":"No",
+           "license":"unknown","foreign_landing_url":"https://www.flickr.com/photos/attacker/3/",
+           "thumbnail":"https://live.staticflickr.com/1234/unknown.jpg"},
+          {"title":"Fake Flickr source","creator":"No",
+           "license":"by","foreign_landing_url":"https://www.flickr.com.evil.test/photos/a/4",
+           "thumbnail":"https://live.staticflickr.com/1234/evil.jpg"}
+        ]}
+        """;
+    var found = NIRACommonsImageDiscoveryService.ParseOpenverseSearchResponse(json, 4);
+    if (found.Count != 1 || found[0].Provider != "Openverse" ||
+        found[0].Title != "Great Pyramid of Giza" ||
+        found[0].Author != "Public photographer" ||
+        found[0].License != "BY 4.0" ||
+        found[0].SourceUri != "https://www.flickr.com/photos/author/123456/" ||
+        !Guid.TryParseExact(found[0].CandidateId, "N", out _) ||
+        !NIRACommonsImageDiscoveryService.IsPermittedMediaUri(found[0].MediaUrl) ||
+        !NIRACommonsImageDiscoveryService.IsPermittedSourcePage(found[0].SourceUri))
+        throw new Exception("Openverse results were dropped or untrusted URLs were accepted");
+    if (NIRACommonsImageDiscoveryService.IsPermittedMediaUri("https://live.staticflickr.com.evil.test/123/a.jpg") ||
+        NIRACommonsImageDiscoveryService.IsPermittedMediaUri("http://live.staticflickr.com/123/a.jpg") ||
+        NIRACommonsImageDiscoveryService.IsPermittedMediaUri("https://live.staticflickr.com@127.0.0.1/a.jpg") ||
+        NIRACommonsImageDiscoveryService.IsPermittedMediaUri("https://live.staticflickr.com/123/a.jpg?redirect=1"))
+        throw new Exception("Flickr media origin check can be forged");
+});
+
+Check("R28 trusted Openverse source attribution survives visual artifact normalization", () =>
+{
+    var sourced = new NIRACapabilityVisualArtifact {
+        LocalPath = @"C:\NIRAAgent\visual-artifacts\commons-cache\openverse.jpg",
+        SourceUri = "https://www.flickr.com/photos/author/123456/",
+        PresentToUser = true
+    }.Normalize();
+    if (sourced.SourceUri != "https://www.flickr.com/photos/author/123456/" ||
+        (sourced with { SourceUri = "https://www.flickr.com.evil.test/photos/a/" }).Normalize().SourceUri.Length != 0)
+        throw new Exception("Openverse's verified Flickr source page was lost or an unsafe page was accepted");
+});
+
+Check("R29 image HTTPS transport prefers IPv4 without disabling TLS, proxy or host restrictions", () =>
+{
+    Type provider = typeof(NIRACommonsImageDiscoveryService);
+    MethodInfo factory = provider.GetMethod("CreateImageHttpHandler", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new Exception("Image transport factory not found");
+    using var handler = (System.Net.Http.SocketsHttpHandler)(factory.Invoke(null, null)
+        ?? throw new Exception("Image HTTP handler was not constructed"));
+    if (handler.ConnectCallback is null || handler.AllowAutoRedirect || handler.UseCookies || !handler.UseProxy)
+        throw new Exception("Image HTTP transport lost dual-stack handling or safe handler settings");
+    MethodInfo connector = provider.GetMethod("ConnectPreferIPv4Async", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new Exception("IPv4-preferred image connector not found");
+    if (!connector.IsStatic ||
+        NIRACommonsImageDiscoveryService.IsPermittedMediaUri("https://127.0.0.1/wikipedia/commons/test.jpg") ||
+        NIRACommonsImageDiscoveryService.IsPermittedMediaUri("http://upload.wikimedia.org/wikipedia/commons/a.jpg"))
+        throw new Exception("Image transport weakened safe URL restrictions");
+});
+
+Check("R30 Openverse keeps an independent verified backup media URL", () =>
+{
+    const string json = """
+        {"results":[{"title":"Pyramid daytime", "creator":"Test photographer",
+          "license":"by","license_version":"2.0",
+          "foreign_landing_url":"https://www.flickr.com/photos/example/12345/",
+          "thumbnail":"https://live.staticflickr.com/10/thumb_b.jpg",
+          "url":"https://live.staticflickr.com/10/original_o.jpg",
+          "mature":false}]}
+        """;
+    var images = NIRACommonsImageDiscoveryService.ParseOpenverseSearchResponse(json, 3);
+    if (images.Count != 1 || images[0].MediaUrl != "https://live.staticflickr.com/10/thumb_b.jpg" ||
+        images[0].AlternateMediaUrl != "https://live.staticflickr.com/10/original_o.jpg" ||
+        !NIRACommonsImageDiscoveryService.IsPermittedMediaUri(images[0].AlternateMediaUrl))
+        throw new Exception("Alternate approved image CDN source was lost");
+    var failure = new NIRAImageRetrievalUnavailableException("HTTP403");
+    if (!failure.Message.StartsWith("IMAGE_RETRIEVAL_UNAVAILABLE:", StringComparison.Ordinal))
+        throw new Exception("Image retrieval failures must have a typed, terminal marker");
+});
+
+Check("R31 Commons current thumbnail host passes strict grounded provenance", () =>
+{
+    // Current real Commons API responses use thumb.wikimedia.org rather than
+    // exclusively upload.wikimedia.org. The old parser accepted 0 of 12.
+    const string json = """
+        {"query":{"pages":[
+           {"index":1,"title":"File:Pyramid_Giza.jpg","imageinfo":[{
+             "mime":"image/jpeg","width":2500,"height":1500,
+             "thumburl":"https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/Pyramid_Giza.jpg/1000px-Pyramid_Giza.jpg",
+             "url":"https://upload.wikimedia.org/wikipedia/commons/a/ab/Pyramid_Giza.jpg",
+             "descriptionurl":"https://commons.wikimedia.org/wiki/File:Pyramid_Giza.jpg",
+             "extmetadata":{"Artist":{"value":"<b>Verified author</b>"},"LicenseShortName":{"value":"CC BY-SA 4.0"}}
+           }]},
+           {"index":2,"title":"File:Attack.jpg","imageinfo":[{
+             "mime":"image/jpeg","thumburl":"https://thumb.wikimedia.org.evil.test/wikipedia/commons/a.jpg",
+             "url":"https://127.0.0.1/private.jpg",
+             "descriptionurl":"https://commons.wikimedia.org/wiki/File:Attack.jpg"
+           }]}
+        ]}}
+        """;
+    var matches = NIRACommonsImageDiscoveryService.ParseCommonsSearchResponse(json, 6);
+    if (matches.Count != 1 ||
+        matches[0].MediaUrl != "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/Pyramid_Giza.jpg/1000px-Pyramid_Giza.jpg" ||
+        matches[0].AlternateMediaUrl != "https://upload.wikimedia.org/wikipedia/commons/a/ab/Pyramid_Giza.jpg" ||
+        matches[0].Author != "Verified author" || matches[0].License != "CC BY-SA 4.0")
+        throw new Exception("Commons current thumbnails were discarded or original alternative was lost");
+    string[] forbidden = {
+        "https://thumb.wikimedia.org.evil.test/wikipedia/commons/a.jpg",
+        "https://thumb.wikimedia.org@127.0.0.1/wikipedia/commons/a.jpg",
+        "http://thumb.wikimedia.org/wikipedia/commons/a.jpg",
+        "https://thumb.wikimedia.org/other/a.jpg",
+        "https://thumb.wikimedia.org/wikipedia/commons/a.jpg?redirect=1",
+        "https://api.openverse.org/v1/images/example/thumb/"
+    };
+    if (forbidden.Any(NIRACommonsImageDiscoveryService.IsPermittedMediaUri) ||
+        !NIRACommonsImageDiscoveryService.IsPermittedMediaUri(matches[0].MediaUrl))
+        throw new Exception("R31 official media allowlist accepted an unauthorized URL");
+});
+
+Check("R31 Openverse proxy thumbnails fall back to approved Flickr originals", () =>
+{
+    const string json = """
+        {"results":[{"title":"Great Pyramid","creator":"Test Creator","license":"by",
+         "foreign_landing_url":"https://www.flickr.com/photos/test/123/",
+         "thumbnail":"https://api.openverse.org/v1/images/xyz/thumb/",
+         "url":"https://live.staticflickr.com/65535/original_o.jpg","mature":false}]}
+        """;
+    var candidates = NIRACommonsImageDiscoveryService.ParseOpenverseSearchResponse(json, 4);
+    if (candidates.Count != 1 ||
+        candidates[0].MediaUrl != "https://live.staticflickr.com/65535/original_o.jpg" ||
+        candidates[0].AlternateMediaUrl.Length != 0)
+        throw new Exception("Openverse proxy thumbnail prevented valid original image selection");
+});
+
+Check("R32 standalone reference links have bounded, clickable HTTP(S) destinations", () =>
+{
+    if (!NIRAResourceLinkPolicy.TryParse(
+        "Source: [Great Pyramid museum collection](https://museum.example.org/giza)", out var source) ||
+        source?.Kind != "SOURCE" || source.Label != "Great Pyramid museum collection" ||
+        source.Host != "museum.example.org")
+        throw new Exception("Descriptive sourced link was not identified");
+    if (!NIRAResourceLinkPolicy.TryParse(
+        "[Further reading](https://example.org/articles/robotics)", out var ordinary) ||
+        ordinary?.Kind != "REFERENCE")
+        throw new Exception("Independent Markdown resource link was lost");
+    string[] rejected = {
+        "[run command](file:///c:/Windows/system32/cmd.exe)",
+        "Source: [evil](https://example.com@127.0.0.1/private)",
+        "Flickr", // a bare provider name is NOT a clickable source
+        "Learn more [naturally](https://example.org/about) in this paragraph."
+    };
+    if (rejected.Any(line => NIRAResourceLinkPolicy.TryParse(line, out _)))
+        throw new Exception("Source presentation promoted non-standalone or invalid URLs");
+});
+
+Check("R32 photo credits are separate from source, license URL and generic visual captions", () =>
+{
+    NIRAReferenceImageCredit photo = NIRAReferenceImageCreditPolicy.Read(
+        "Openverse • girolame • BY 2.0 • License: https://creativecommons.org/licenses/by/2.0/",
+        "https://www.flickr.com/photos/91241612@N00/2427530661");
+    if (!photo.IsStructured || photo.Provider != "Openverse" || photo.Creator != "girolame" ||
+        photo.License != "CC BY 2.0" || photo.LinkLabel != "View on Flickr  ↗")
+        throw new Exception("Photo author/provider/license were not separated for the new image footer");
+    NIRAReferenceImageCredit wiki = NIRAReferenceImageCreditPolicy.Read(
+        "Wikimedia Commons • Photographer • CC BY-SA 4.0",
+        "https://commons.wikimedia.org/wiki/File:Example.jpg");
+    if (!wiki.IsStructured || wiki.LinkLabel != "View on Wikimedia Commons  ↗" ||
+        wiki.License != "CC BY-SA 4.0")
+        throw new Exception("Commons attribution/source label was lost");
+    NIRAReferenceImageCredit screenshot = NIRAReferenceImageCreditPolicy.Read(
+        "Screenshot of user's desktop", "");
+    if (screenshot.IsStructured || screenshot.Creator.Length != 0)
+        throw new Exception("Unsourced screenshots cannot invent photo credits");
+});
+
+// R34 gallery tests: file system only, ZERO LLM/network requests.
+Check("R34 persistent categorized gallery deduplicates and retains verified sources", () =>
+{
+    string temp = Path.Combine(Path.GetTempPath(), "nira-gallery-test-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(temp);
+    try
+    {
+        string original = Path.Combine(temp, "test.png");
+        // Valid minimal PNG signature is sufficient for the catalog's source gate.
+        File.WriteAllBytes(original, Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/BGAAAAAASUVORK5CYII="));
+        string config = Path.Combine(temp, "settings");
+        var gallery = new NIRAGalleryLibraryService(config);
+        var upload = gallery.Import(original, NIRAGalleryCategory.Uploaded, "My test photo")
+            ?? throw new Exception("User upload was not imported");
+        if (gallery.Import(original, NIRAGalleryCategory.Uploaded)?.Id != upload.Id)
+            throw new Exception("Same category/content should deduplicate");
+        var web = gallery.Import(original, NIRAGalleryCategory.WebFound, "Reference", "Test credit", "https://commons.wikimedia.org/wiki/File:Example.png")
+            ?? throw new Exception("Verified web import was rejected");
+        if (gallery.Items.Count != 2 || web.Category != NIRAGalleryCategory.WebFound ||
+            !web.SourceUri.StartsWith("https://commons.wikimedia.org/", StringComparison.Ordinal) ||
+            !File.Exists(gallery.ResolvePath(upload)))
+            throw new Exception("Categories, source attribution, or library copies missing");
+        if (gallery.Items.Any(x => x.Category == NIRAGalleryCategory.AiGenerated))
+            throw new Exception("Gallery must not fabricate AI-generated images");
+        var reloaded = new NIRAGalleryLibraryService(config);
+        if (reloaded.Items.Count != 2 || !File.Exists(reloaded.ResolvePath(web)))
+            throw new Exception("Gallery index did not survive restart");
+        string newRoot = Path.Combine(temp, "moved");
+        gallery.MoveLibrary(newRoot);
+        if (!string.Equals(gallery.RootFolder, newRoot, StringComparison.OrdinalIgnoreCase) ||
+            !File.Exists(gallery.ResolvePath(upload)) || !File.Exists(gallery.ResolvePath(web)) ||
+            !File.Exists(original))
+            throw new Exception("Verified relocation lost images or modified original upload");
+        if (new NIRAGalleryLibraryService(config).RootFolder != newRoot)
+            throw new Exception("Relocated folder was not persisted across restart");
+        string occupied = Path.Combine(temp, "occupied");
+        Directory.CreateDirectory(occupied);
+        File.WriteAllText(Path.Combine(occupied, "keep.txt"), "owned by user");
+        Throws<InvalidOperationException>(() => gallery.MoveLibrary(occupied));
+        if (!File.Exists(Path.Combine(occupied, "keep.txt")) || gallery.RootFolder != newRoot)
+            throw new Exception("Rejected destination damaged existing files");
+        Throws<InvalidOperationException>(() => gallery.MoveLibrary(Path.Combine(newRoot, "nested")));
+    }
+    finally { if (Directory.Exists(temp)) Directory.Delete(temp, recursive: true); }
+});
+
+// R33: all following checks are offline; no Ollama calls or internet.
+Check("R33 bullet references render as resource rows without losing URL safety", () =>
+{
+    string[] examples = {
+        "- [Britannica: Great Pyramid of Giza](https://www.britannica.com/topic/Great-Pyramid-of-Giza)",
+        "* [UNESCO: Memphis and its Necropolis](https://whc.unesco.org/en/list/86/)",
+        "2. [Official reference](https://example.org/reference)"
+    };
+    foreach (string line in examples)
+        if (!NIRAResourceLinkPolicy.TryParse(line, out var link) || link is null ||
+            !link.Address.StartsWith("https://", StringComparison.Ordinal))
+            throw new Exception("Bulleted external link was not recognized as a standalone reference");
+    string[] invalid = {
+        "- [Unsafe](file:///etc/passwd)",
+        "- [Invalid](https://example.org@127.0.0.1/secret)",
+        "- Read a [link](https://example.org) in a sentence"
+    };
+    if (invalid.Any(line => NIRAResourceLinkPolicy.TryParse(line, out _)))
+        throw new Exception("Unsafe/mixed links were promoted to dedicated reference cards");
+});
+
+Check("R33 only duplicate photo metadata is suppressed with actual retrieved evidence", () =>
+{
+    var duplicate = new NIRARichBlock {
+        Type = "card", Title = "Image Details",
+        Text = "PHOTOGRAPHER: girolame\nSOURCE: Flickr\nLICENSE: CC BY 2.0"
+    };
+    if (!NIRAImageCreditLayoutPolicy.IsDuplicatePhotoCredit(duplicate, true) ||
+        NIRAImageCreditLayoutPolicy.IsDuplicatePhotoCredit(duplicate, false) ||
+        NIRAImageCreditLayoutPolicy.IsDuplicatePhotoCredit(
+            duplicate with { Title = "Pyramid construction", Text = "Architecture of Giza" }, true) ||
+        NIRAImageCreditLayoutPolicy.IsDuplicatePhotoCredit(
+            duplicate with { Text = "Photographer: X\nArchitecture: built with limestone" }, true))
+        throw new Exception("Photo credit dedup hid actual commentary or unsourced content");
+});
+
+Check("R33 previously retrieved images cannot be reclassified as provider outage", () =>
+{
+    MethodInfo method = typeof(NIRAExecutive).GetMethod(
+        "ShouldMarkImageProviderUnavailable", BindingFlags.Static | BindingFlags.NonPublic)
+        ?? throw new Exception("Missing run-wide image outcome decision");
+    var failed = new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.ImageRetrieve,
+        Status = NIRACapabilityResultStatus.Failed
+    };
+    var items = new [] { failed };
+    bool Should(int count) => (bool)(method.Invoke(null, new object[] { count, items }) ?? false);
+    if (!Should(0) || Should(1) || Should(3))
+        throw new Exception("Failed extra candidate undid a verified image retrieval");
+});
+
+Check("R27 a provider outage blocks subsequent image searches without any network wait", () =>
+{
+    using var provider = new NIRACommonsImageDiscoveryService();
+    Type type = typeof(NIRACommonsImageDiscoveryService);
+    var until = type.GetField("_searchUnavailableUntilUtc", BindingFlags.NonPublic | BindingFlags.Instance)
+        ?? throw new Exception("Provider cooldown field not found");
+    var kind = type.GetField("_lastSearchFailureKind", BindingFlags.NonPublic | BindingFlags.Instance)
+        ?? throw new Exception("Provider failure classification not found");
+    until.SetValue(provider, DateTimeOffset.UtcNow.AddMinutes(1));
+    kind.SetValue(provider, "Timeout");
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    Throws<NIRAImageProviderUnavailableException>(() =>
+        provider.SearchAsync("Karnak temple", 5).GetAwaiter().GetResult());
+    watch.Stop();
+    if (watch.Elapsed > TimeSpan.FromSeconds(2))
+        throw new Exception("Repeated image search waited for a network timeout instead of using cooldown.");
+});
+
+Check("R27 free Wikipedia image fallback retains trusted Wikimedia media and file provenance", () =>
+{
+    const string response = """
+        {"query":{"pages":[
+            {"index":1,"title":"Karnak","pageimage":"Karnak hall.jpg",
+             "thumbnail":{"source":"https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Karnak.jpg/1000px-Karnak.jpg","width":1000,"height":700}},
+            {"index":2,"title":"Bad host","pageimage":"Unsafe.jpg",
+             "thumbnail":{"source":"https://localhost/private.jpg","width":1000,"height":700}}
+        ]}}
+        """;
+    var results = NIRACommonsImageDiscoveryService.ParseWikipediaFreeImageResponse(response, 6);
+    if (results.Count != 1 || results[0].Title != "Karnak" ||
+        results[0].SourceUri != "https://commons.wikimedia.org/wiki/File:Karnak_hall.jpg" ||
+        !results[0].MediaUrl.StartsWith("https://upload.wikimedia.org/", StringComparison.Ordinal) ||
+        results[0].Author.Length != 0 ||
+        !results[0].Description.Contains("file page", StringComparison.Ordinal))
+        throw new Exception("Wikipedia alternate image source lost source grounding or accepted unsafe media.");
+});
+
+Check("R27 image provider outages use a bounded cooldown and identifiable reason", () =>
+{
+    if (NIRACommonsImageDiscoveryService.SearchNetworkTimeout > TimeSpan.FromSeconds(12) ||
+        NIRACommonsImageDiscoveryService.SearchFailureCooldown < TimeSpan.FromSeconds(30) ||
+        NIRACommonsImageDiscoveryService.ClassifyProviderFailure(
+            new OperationCanceledException()) != "Timeout" ||
+        NIRACommonsImageDiscoveryService.ClassifyProviderFailure(
+            new HttpRequestException("rate", null, System.Net.HttpStatusCode.TooManyRequests)) != "RateLimited" ||
+        NIRACommonsImageDiscoveryService.ClassifyProviderFailure(
+            new HttpRequestException("offline")) != "NetworkError")
+        throw new Exception("Image source failures must not cause repeated long network attempts.");
+    var failed = new NIRAImageProviderUnavailableException("Timeout", new TimeoutException());
+    if (!failed.Message.StartsWith("IMAGE_PROVIDER_UNAVAILABLE:", StringComparison.Ordinal) ||
+        !failed.Message.Contains("Do not retry", StringComparison.Ordinal))
+        throw new Exception("Provider failure must expose a non-retry recovery boundary.");
+});
+
+Check("R25 nested rich text objects render as content, not leaked JSON field names", () =>
+{
+    using JsonDocument document = JsonDocument.Parse("""
+        {"displayBlocks":[
+          {"type":"tabs","title":"Robot","items":["Costs","Stages"],
+           "panels":[{"text":"### Primary costs\n- Materials\n- Certification"},
+                     {"heading":"Phases","steps":["Prototype","Test"]}]},
+          {"type":"timeline","title":"AI history","items":[
+            {"date":"1980s","title":"Expert systems","text":"Domain knowledge"},
+            {"year":"2017","title":"Transformer","description":"Attention models"}]},
+          {"type":"checklist","title":"Optimization","items":[
+            {"text":"Review startup programs","checked":false},
+            {"text":"Check drive health","description":"SMART status"}]}
+        ]}
+        """);
+    var blocks = NIRARichBlockJsonReader.Read(document.RootElement);
+    if (blocks.Count != 3 || blocks[0].Type != "tabs" || blocks[1].Type != "timeline" ||
+        blocks[2].Type != "checklist" ||
+        !blocks[0].Panels[0].StartsWith("### Primary costs", StringComparison.Ordinal) ||
+        !blocks[0].Panels[1].Contains("- Prototype", StringComparison.Ordinal) ||
+        !blocks[1].Items[0].StartsWith("1980s — Expert systems\n", StringComparison.Ordinal) ||
+        !blocks[2].Items[0].Equals("Review startup programs", StringComparison.Ordinal) ||
+        blocks.Any(b => b.Items.Any(i => i.Contains("checked:", StringComparison.OrdinalIgnoreCase))) ||
+        blocks[0].Panels.Any(p => p.Contains("text:", StringComparison.OrdinalIgnoreCase)))
+        throw new Exception("Nested rich data was flattened into label dumps or rejected");
+});
+
+Check("R24 adaptive rich presentation stays useful without a forced template", () =>
+{
+    string directory = LocatePromptFolder() ?? throw new Exception("No production prompt folder");
+    Type compiler = typeof(NIRACognitionService).Assembly.GetType(
+        "NIRAAgent.AI.Cognition.NIRACognitionPromptCompiler", throwOnError: true)!;
+    MethodInfo bootstrap = compiler.GetMethod("BootstrapSystem",
+        BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+        ?? throw new Exception("Missing first-call compiler");
+    string personality = File.ReadAllText(Path.Combine(directory, "nira_personality.yaml"));
+    string prompt = (string?)bootstrap.Invoke(null, new object[] { personality }) ?? string.Empty;
+    string focused = File.ReadAllText(Path.Combine(directory, "cognition.yaml"));
+    string contract = File.ReadAllText(Path.Combine(directory, "cognition_contract.yaml"));
+    if (!prompt.Contains("INTELLIGENT RICH COMPOSITION", StringComparison.Ordinal) ||
+        !focused.Contains("primary presentation for naturally structured material", StringComparison.Ordinal) ||
+        !contract.Contains("purposeful typed", StringComparison.Ordinal) ||
+        !prompt.Contains("transparent prose remains natural", StringComparison.Ordinal) ||
+        prompt.Contains("always emit exactly 3 cards", StringComparison.OrdinalIgnoreCase))
+        throw new Exception("Adaptive composition contract missing, or a fixed layout was imposed");
+    if (NIRAPresentationPolicy.Normalize(Array.Empty<NIRARichBlock>()).Count != 0)
+        throw new Exception("Short conversations were given invented visual blocks");
+});
+
+Check("R24 table tabs timeline and checklist survive declarative JSON parsing", () =>
+{
+    using JsonDocument document = JsonDocument.Parse("""
+        {"displayBlocks":[
+          {"type":"table","title":"Options","columns":["Board","Best use"],
+            "rows":[["ESP32","Simple navigation"],["Pi","Vision"]]},
+          {"type":"tabs","title":"Considerations","items":["Cost","Power"],
+            "panels":["Compare budgets","Compare energy consumption"]},
+          {"type":"timeline","title":"History","items":["1956 — Research","2017 — Transformers"]},
+          {"type":"checklist","title":"Things to verify","items":["Sensors","Battery"]}
+        ]}
+        """);
+    var parsed = NIRARichBlockJsonReader.Read(document.RootElement);
+    if (parsed.Count != 4 ||
+        !parsed.Select(block => block.Type).SequenceEqual(new[] { "table", "tabs", "timeline", "checklist" }) ||
+        parsed[0].Rows.Count != 2 || parsed[1].Panels.Count != 2 ||
+        parsed[2].Items.Count != 2 || parsed[3].Items.Count != 2)
+        throw new Exception("A valid structured response was dropped or lost data");
+    if (NIRAPresentationPolicy.Normalize(new[] {
+        new NIRARichBlock { Type = "chart", Title = "Not sourced", Labels = new[] { "A", "B" },
+            Values = new[] { double.NaN, 4.0 } }
+    }).Count != 0)
+        throw new Exception("Nonfinite invented chart values should be rejected");
 });
 
 Check("R20 visual block contract preserves supported narrative and actual source", () =>

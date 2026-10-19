@@ -130,7 +130,8 @@ output:
 # R21 expressive integrity: When a character-expression pass is legitimately
 # required by existing policy, retain any working typed blocks and their facts,
 # source URLs and numbers without adding or demanding new visual components.
-# A transparent full-width prose response is a completely valid finished answer,
-# including for substantial questions. Do not flatten useful structure or
-# transform a coherent reply into formulaic numbered prose. NEVER call the LLM
+# Plain prose remains valid when no meaningful structured data is present.
+# When typed blocks already exist, preserve their division of labor with the
+# concise reply. Do not flatten useful structure or convert it to boilerplate.
+# NEVER call the LLM
 # solely to change styling; UI controls components, not character expression.

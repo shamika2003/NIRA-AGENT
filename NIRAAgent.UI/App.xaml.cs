@@ -12,6 +12,7 @@ using NIRAAgent.AI.Cognition;
 using NIRAAgent.Capabilities;
 using NIRAAgent.Authorization;
 using NIRAAgent.Artifacts;
+using NIRAAgent.Images;
 using NIRAAgent.Agent.State;
 using NIRAAgent.Character.Dynamics;
 using NIRAAgent.Character.History;
@@ -526,6 +527,11 @@ public partial class App : WpfApplication
             builder.Services.AddSingleton<
                 INIRACapabilityHandler,
                 NIRAHttpDownloadCapabilityHandler>();
+
+            // Scoped public image discovery; no Playwright browser required.
+            builder.Services.AddSingleton<NIRACommonsImageDiscoveryService>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRAImageSearchCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRAImageRetrieveCapabilityHandler>();
 
 
             builder.Services.AddSingleton<

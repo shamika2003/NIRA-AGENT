@@ -34,6 +34,14 @@ namespace NIRAAgent.Mind;
 
 public sealed class NIRAExecutive
 {
+    // A later invalid image candidate never erases a verified image receipt.
+    // Tested offline; no model call or provider dependency.
+    private static bool ShouldMarkImageProviderUnavailable(int alreadyRetrieved,
+        IReadOnlyList<NIRACapabilityResult> results) =>
+        alreadyRetrieved == 0 && results.Any(result =>
+            (result.CapabilityId == NIRACapabilityIds.ImageSearch ||
+             result.CapabilityId == NIRACapabilityIds.ImageRetrieve) && !result.Succeeded);
+
     // Routing and completion are orthogonal. One foreground serial operation
     // should not allocate a persistent branch; one genuinely delegated operation
     // must not be hijacked by the direct lane simply because it has one step.
@@ -870,6 +878,11 @@ public sealed class NIRAExecutive
         // Subsequent stagnation retains the existing fail-closed loop guard.
         bool repeatedReadRecoveryUsed = false;
         bool partialEvidenceSynthesisUsed = false;
+        // A real image provider outage gets at most ONE answer-only cognition
+        // continuation. Never spend further rounds on unchanged image failures.
+        int unavailableImageProviderCycle = 0; // Also covers exhausted image retrieval.
+        int verifiedImageRetrievalCount = 0; // Run-wide receipts, not just this capability batch.
+
 
         // Malformed model capability objects are never executed. Give cognition
         // one bounded structured correction cycle, then fail closed instead of
@@ -1093,6 +1106,38 @@ public sealed class NIRAExecutive
                     expandedCapabilityIds,
                     synthesizeFromEvidence);
 
+
+            if (unavailableImageProviderCycle > 0 && cycle > unavailableImageProviderCycle &&
+                decision.State == NIRACognitionState.Continue &&
+                decision.CapabilityRequests.All(request =>
+                    request.CapabilityId is NIRACapabilityIds.ImageSearch or NIRACapabilityIds.ImageRetrieve) &&
+                decision.GoalProposals.Count == 0 && decision.BranchProposals.Count == 0 &&
+                decision.BranchWorkProposals.Count == 0 &&
+                decision.DynamicToolProposals.Count == 0 &&
+                decision.DynamicToolInvocations.Count == 0 &&
+                decision.MemorySearches.Count == 0 &&
+                decision.ConversationSearches.Count == 0)
+            {
+                // A nonterminal follow-up to an unavailable image service has
+                // no new authoritative evidence. Do not spend a third LLM call
+                // or repeat an equivalent remote operation. No fake images.
+                const string imageFailureReply =
+                    "I couldn't download a verified reference image from the available sources. " +
+                    "I haven't displayed any pictures. I can still " +
+                    "explain the subject without them, or retry the image search later.";
+                decision = decision with
+                {
+                    State = NIRACognitionState.Blocked,
+                    EmitReply = true,
+                    Reply = imageFailureReply,
+                    Speech = imageFailureReply,
+                    DisplayBlocks = Array.Empty<NIRARichBlock>(),
+                    ReplyReady = true,
+                    DecisionSummary = "One image-provider recovery round exhausted without new evidence."
+                };
+                NIRADiagnosticTrace.Event("IMAGE-SEARCH-RECOVERY",
+                    $"Run={runId:D} Cycle={cycle} Outcome=StoppedNoEvidence FurtherImageCalls=0");
+            }
 
             decision =
                 RestrictEmbeddedElvaraDecision(
@@ -4125,6 +4170,49 @@ public sealed class NIRAExecutive
                 AppendCapabilityEvidence(
                     capabilityEvidence,
                     capabilityResults);
+
+            verifiedImageRetrievalCount += capabilityResults.Count(result =>
+                result.CapabilityId == NIRACapabilityIds.ImageRetrieve && result.Succeeded);
+
+            if (verifiedImageRetrievalCount > 0 && capabilityResults.Any(result =>
+                result.CapabilityId == NIRACapabilityIds.ImageRetrieve && !result.Succeeded))
+            {
+                // Stale candidate IDs or failed additional downloads do not undo
+                // successful image receipts from an earlier cognition cycle.
+                executiveEvidence.AppendLine();
+                executiveEvidence.AppendLine(
+                    $"VERIFIED IMAGE DELIVERY (AUTHORITATIVE): {verifiedImageRetrievalCount} real " +
+                    "image(s) were already retrieved into NIRA chat during this run. " +
+                    "Subsequent image.retrieve failures affect only those candidates; " +
+                    "do NOT say the provider was unavailable or no pictures were shown. " +
+                    "Do not issue further image.retrieve requests in this turn. " +
+                    "Finish the response grounded in the images actually retrieved; " +
+                    "different photographs of one site do not cover other requested sites.");
+                NIRADiagnosticTrace.Event("IMAGE-SEARCH-RECOVERY",
+                    $"Run={runId:D} Cycle={cycle} Outcome=PartialImageSuccess Verified={verifiedImageRetrievalCount}");
+            }
+
+            if (unavailableImageProviderCycle == 0 &&
+                ShouldMarkImageProviderUnavailable(verifiedImageRetrievalCount, capabilityResults))
+            {
+                unavailableImageProviderCycle = cycle;
+                executiveEvidence.AppendLine();
+                executiveEvidence.AppendLine(
+                    "IMAGE PROVIDER UNAVAILABLE (AUTHORITATIVE TOOL RESULT): " +
+                    "Image discovery or verified retrieval failed in this run. No image " +
+                    "file was retrieved. Do not invoke image.search or image.retrieve " +
+                    "again for this objective; multiple failed image queries are NOT " +
+                    "independent evidence. On the very next cognition turn provide " +
+                    "the useful non-image answer from supported knowledge, openly " +
+                    "state that reference images could not be displayed, and finish " +
+                    "with state=Complete. Do not claim any images or source verification, " +
+                    "and do not claim a picture was displayed, or identify a photographer " +
+                    "without authoritative source evidence. You may give a clearly " +
+                    "labeled general site or search link instead. Do not spend additional " +
+                    "reasoning turns trying the same provider.");
+                NIRADiagnosticTrace.Event("IMAGE-SEARCH-RECOVERY",
+                    $"Run={runId:D} Cycle={cycle} Outcome=ProviderUnavailable Next=OneAnswerOnlyRound");
+            }
 
             // A successful close with a fresh zero-process/zero-window OS read
             // is authoritative evidence. Prevent the model reviewer from treating
@@ -7373,6 +7461,7 @@ public sealed class NIRAExecutive
                         LocalPath = normalized.LocalPath,
                         Title = normalized.Title,
                         Caption = normalized.Caption,
+                        SourceUri = normalized.SourceUri,
                         Surface = surface
                     };
 

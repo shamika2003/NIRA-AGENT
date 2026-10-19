@@ -104,6 +104,27 @@ public partial class NIRAVisualArtifactViewerWindow : Window
     private void MaximizeButton_Click(object sender, RoutedEventArgs e) =>
         WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
 
+    private void Viewer_OpenSource_Click(object sender, RoutedEventArgs e)
+    {
+        // Only user-initiated navigation to the source URI already carried by
+        // the verified visual artifact. No remote media fetch in the viewer.
+        if (sender is not System.Windows.Controls.Button button ||
+            button.Tag is not string address ||
+            !Uri.TryCreate(address, UriKind.Absolute, out Uri? uri) ||
+            (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp))
+            return;
+        try
+        {
+            Process.Start(new ProcessStartInfo { FileName = uri.AbsoluteUri, UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            NIRADiagnosticTrace.Event("IMAGE-SOURCE-OPEN", $"Error={ex.GetType().Name}");
+            MessageBox.Show(this, "That image source could not be opened.",
+                "NIRA image source", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+    }
+
     private void CloseButton_Click(
         object sender,
         RoutedEventArgs e)

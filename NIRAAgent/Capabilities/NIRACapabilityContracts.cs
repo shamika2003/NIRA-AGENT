@@ -114,6 +114,9 @@ public static class NIRACapabilityIds
     public const string HttpDownload =
         "http.download";
 
+    public const string ImageSearch = "image.search";
+    public const string ImageRetrieve = "image.retrieve";
+
 
     public const string BrowserSessionOpen =
         "browser.session.open";
@@ -655,6 +658,9 @@ public sealed record NIRACapabilityVisualArtifact
 
     public string Caption { get; init; } = string.Empty;
 
+    // Grounded attribution only. Never a fetch target in the presentation layer.
+    public string SourceUri { get; init; } = string.Empty;
+
     public bool PresentToUser { get; init; }
 
     public string Surface { get; init; } = "Auto";
@@ -681,9 +687,21 @@ public sealed record NIRACapabilityVisualArtifact
             LocalPath = hasEvidence ? string.Empty : LocalPath.Trim(),
             Title = NormalizeText(Title, 180),
             Caption = NormalizeText(Caption, 1000),
+            SourceUri = NormalizeSourceUri(SourceUri),
             Surface = surface
         };
     }
+
+    private static string NormalizeSourceUri(string? value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out Uri? uri) &&
+        uri.Scheme == Uri.UriSchemeHttps &&
+        ((uri.Host.Equals("commons.wikimedia.org", StringComparison.OrdinalIgnoreCase) &&
+          uri.AbsolutePath.StartsWith("/wiki/File:", StringComparison.Ordinal)) ||
+         (uri.Host.Equals("www.flickr.com", StringComparison.OrdinalIgnoreCase) &&
+          uri.AbsolutePath.StartsWith("/photos/", StringComparison.Ordinal))) &&
+        uri.IsDefaultPort && uri.UserInfo.Length == 0
+            ? uri.AbsoluteUri
+            : string.Empty;
 
     private static string NormalizeText(string? value, int maximum)
     {

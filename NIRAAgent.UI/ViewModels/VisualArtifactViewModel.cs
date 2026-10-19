@@ -15,6 +15,7 @@ using System.Windows.Media.Imaging;
 
 using NIRAAgent.Artifacts;
 using NIRAAgent.Diagnostics;
+using NIRAAgent.Presentation;
 
 namespace NIRAAgent.UI.ViewModels;
 
@@ -54,6 +55,21 @@ public sealed class VisualArtifactViewModel : INotifyPropertyChanged
     public string SourceUri => Artifact.SourceUri;
     public bool HasSourceUri => Uri.TryCreate(SourceUri, UriKind.Absolute, out var parsed)
         && (parsed.Scheme == Uri.UriSchemeHttps || parsed.Scheme == Uri.UriSchemeHttp);
+
+    // Structured labels are derived from already retrieved, attributed images.
+    // Other visual artifacts keep their original caption rather than being
+    // misidentified as stock photography or as a licensed reference image.
+    private NIRAReferenceImageCredit Credit =>
+        NIRAReferenceImageCreditPolicy.Read(Artifact.Caption, SourceUri);
+    public bool HasStructuredCredit => Credit.IsStructured;
+    public string CreditProvider => Credit.Provider;
+    public string CreditCreator => Credit.Creator;
+    public bool HasCreditCreator => Credit.HasCreator;
+    public string CreditLicense => Credit.License;
+    public bool HasCreditLicense => Credit.HasLicense;
+    public string SourceActionLabel => Credit.LinkLabel;
+    public string ReferenceCaption => Credit.IsStructured ? "" : Caption;
+    public bool HasReferenceCaption => !Credit.IsStructured && HasCaption;
 
 
     public ImageSource? PreviewImage

@@ -2,6 +2,7 @@
  * filename: MainWindow.xaml.cs
  */
 
+using System.IO;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Windows;
@@ -15,6 +16,8 @@ using System.Windows.Shapes;
 using NIRAAgent.Agent.State;
 using NIRAAgent.Conversation;
 using NIRAAgent.Artifacts;
+using NIRAAgent.Gallery;
+using NIRAAgent.UI.Gallery;
 using NIRAAgent.Authorization;
 using NIRAAgent.Branches;
 using NIRAAgent.Self.Model;
@@ -128,6 +131,7 @@ public partial class MainWindow : Window
     private readonly MainWindowViewModel _viewModel;
     private NIRAConversationArchiveStore? _conversationArchive;
     private NIRAVisualArtifactToastWindow? _visualArtifactToast;
+    private readonly NIRAGalleryLibraryService _galleryLibrary = new();
 
     public void AttachAuthorization(NIRAAuthorityStore store,
         NIRAScopedCapabilityAuthorizer authorizer, NIRACapabilityApprovalBroker broker)
@@ -455,6 +459,8 @@ public partial class MainWindow : Window
         DataContext =
             _viewModel;
 
+        GalleryPage.Initialize(_galleryLibrary);
+
         _viewModel.Messages.CollectionChanged +=
             Messages_CollectionChanged;
 
@@ -611,10 +617,67 @@ public partial class MainWindow : Window
         };
     }
 
+    private void OpenGallery_Click(object sender, RoutedEventArgs e)
+    {
+        MainWorkspace.Visibility = Visibility.Collapsed;
+        GalleryPage.Visibility = Visibility.Visible;
+        ChatNavButton.Tag = null;
+        GalleryNavButton.Tag = "ACTIVE";
+        ImportVisibleChatImages();
+        GalleryPage.RefreshGallery();
+    }
+
+    private void OpenChat_Click(object sender, RoutedEventArgs e)
+    {
+        GalleryPage.Visibility = Visibility.Collapsed;
+        MainWorkspace.Visibility = Visibility.Visible;
+        GalleryNavButton.Tag = null;
+        ChatNavButton.Tag = "ACTIVE";
+    }
+
+    private void ImportVisibleChatImages()
+    {
+        foreach (ChatMessageViewModel msg in _viewModel.Messages)
+        {
+            if (msg.Role.Equals("user", StringComparison.OrdinalIgnoreCase))
+                foreach (var image in msg.GetUserImageArtifacts())
+                    QueueGalleryImport(image.Artifact, NIRAGalleryCategory.Uploaded);
+            else
+                foreach (var image in msg.GetAssistantImageArtifacts())
+                    if (!string.IsNullOrWhiteSpace(image.SourceUri))
+                        QueueGalleryImport(image.Artifact, NIRAGalleryCategory.WebFound);
+        }
+    }
+
+    // No model request. Gallery gets independent durable copies of successfully
+    // displayed images. Failures never affect chat or visual artifact delivery.
+    private void QueueGalleryImport(NIRAVisualArtifact artifact, NIRAGalleryCategory category)
+    {
+        if (string.IsNullOrWhiteSpace(artifact.LocalPath) || !File.Exists(artifact.LocalPath)) return;
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var item = _galleryLibrary.Import(artifact.LocalPath, category,
+                    artifact.Title, artifact.Caption, artifact.SourceUri);
+                if (item != null)
+                    Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        if (GalleryPage.Visibility == Visibility.Visible) GalleryPage.RefreshGallery();
+                    }));
+            }
+            catch (Exception ex)
+            {
+                NIRADiagnosticTrace.Event("GALLERY-IMPORT", "Outcome=Failed Kind=" + ex.GetType().Name);
+            }
+        });
+    }
+
     private void QuickPrompt_Click(
         object sender,
         RoutedEventArgs e)
     {
+        OpenChat_Click(sender, e);
         if (sender is not Button button ||
             button.Tag is not string prompt ||
             string.IsNullOrWhiteSpace(prompt))
@@ -2527,6 +2590,9 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (!string.IsNullOrWhiteSpace(artifact.SourceUri))
+            QueueGalleryImport(artifact, NIRAGalleryCategory.WebFound);
+
         bool chatActive =
             IsVisible
             &&
@@ -2781,6 +2847,9 @@ public partial class MainWindow : Window
             {
                 message.PropertyChanged +=
                     Message_PropertyChanged;
+                if (message.Role.Equals("user", StringComparison.OrdinalIgnoreCase))
+                    foreach (var photo in message.GetUserImageArtifacts())
+                        QueueGalleryImport(photo.Artifact, NIRAGalleryCategory.Uploaded);
             }
         }
 

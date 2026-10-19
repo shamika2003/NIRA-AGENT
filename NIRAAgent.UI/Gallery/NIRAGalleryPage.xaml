@@ -1,0 +1,161 @@
+<UserControl x:Class="NIRAAgent.UI.Gallery.NIRAGalleryPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="Transparent" Foreground="{DynamicResource NIRATextBrush}"
+             FontFamily="Segoe UI Variable Text, Segoe UI">
+    <UserControl.Resources>
+        <Style x:Key="GalleryNavStyle" TargetType="Button">
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
+            <Setter Property="Background" Value="{DynamicResource NIRAChipBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource NIRAGlassBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="14,12"/>
+            <Setter Property="Margin" Value="0,0,0,9"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="13">
+                            <ContentPresenter Margin="{TemplateBinding Padding}" VerticalAlignment="Center" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="Tag" Value="ACTIVE">
+                    <Setter Property="Background" Value="{DynamicResource NIRACardHoverBrush}"/>
+                    <Setter Property="BorderBrush" Value="{DynamicResource NIRABlueBrush}"/>
+                    <Setter Property="FontWeight" Value="SemiBold"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="GalleryActionStyle" TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource NIRAChipBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource NIRAGlassBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="13,9"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template"><Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border CornerRadius="10" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value></Setter>
+        </Style>
+    </UserControl.Resources>
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="236"/>
+            <ColumnDefinition Width="14"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <!-- The Gallery has its own left navigation; it never replaces NIRA's presence panel permanently. -->
+        <Border Grid.Column="0" CornerRadius="19" Background="{DynamicResource NIRAGlassStrongTintBrush}"
+                BorderBrush="{DynamicResource NIRAGlassBorderBrush}" BorderThickness="1" Padding="17,22">
+            <DockPanel LastChildFill="True">
+                <StackPanel DockPanel.Dock="Top">
+                    <TextBlock Text="MEDIA LIBRARY" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource NIRACyanBrush}"/>
+                    <TextBlock Text="Your Gallery" FontFamily="Segoe UI Variable Display, Segoe UI" FontSize="25"
+                               Margin="0,8,0,3" FontWeight="SemiBold"/>
+                    <TextBlock Text="Saved pictures, all in one place." FontSize="11" TextWrapping="Wrap"
+                               Foreground="{DynamicResource NIRASecondaryBrush}" Margin="0,0,0,24"/>
+                    <Button x:Name="UploadedButton" Content="▣   Uploaded images" Click="Uploaded_Click" Tag="ACTIVE"
+                            Style="{StaticResource GalleryNavStyle}"/>
+                    <Button x:Name="WebButton" Content="◎   Found on web" Click="Web_Click"
+                            Style="{StaticResource GalleryNavStyle}"/>
+                    <Button x:Name="GeneratedButton" Content="✧   AI generated" Click="Generated_Click"
+                            Style="{StaticResource GalleryNavStyle}"/>
+                </StackPanel>
+                <StackPanel DockPanel.Dock="Bottom" VerticalAlignment="Bottom">
+                    <Border Height="1" Margin="0,12,0,13" Background="{DynamicResource NIRAGlassBorderBrush}"/>
+                    <TextBlock Text="PRIVATE LOCAL LIBRARY" FontSize="9" FontWeight="SemiBold"
+                               Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                    <TextBlock Text="Original uploads and chat evidence remain untouched."
+                               TextWrapping="Wrap" FontSize="10.5" Margin="0,7,0,0"
+                               Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+        <Border Grid.Column="2" CornerRadius="19" BorderThickness="1"
+                BorderBrush="{DynamicResource NIRAGlassBorderBrush}" Background="{DynamicResource NIRAGlassTintBrush}"
+                Padding="20,17">
+            <Grid>
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                <StackPanel Grid.Row="0">
+                    <DockPanel LastChildFill="True">
+                        <StackPanel DockPanel.Dock="Left">
+                            <TextBlock x:Name="SectionTitle" Text="Uploaded images" FontSize="23" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="SectionSummary" Text="Images you share with NIRA" FontSize="11" Margin="0,5,0,0"
+                                       Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button x:Name="AddButton" Content="+ Add photos" Style="{StaticResource GalleryActionStyle}"
+                                    Margin="0,0,8,0" Click="Add_Click"/>
+                            <Button Content="⟳ Refresh" Style="{StaticResource GalleryActionStyle}" Click="Refresh_Click"/>
+                        </StackPanel>
+                    </DockPanel>
+                    <TextBlock Text="GALLERY FOLDER" FontSize="9.5" FontWeight="SemiBold" Margin="0,22,0,7"
+                               Foreground="{DynamicResource NIRACyanBrush}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" BorderThickness="1" CornerRadius="10" Padding="11,9" MinHeight="39"
+                                Background="{DynamicResource NIRAChipBrush}" BorderBrush="{DynamicResource NIRAGlassBorderBrush}">
+                            <TextBlock x:Name="StoragePathText" FontSize="11.5" TextTrimming="CharacterEllipsis"/>
+                        </Border>
+                        <Button Grid.Column="1" Content="Change folder" Margin="8,0,0,0"
+                                Style="{StaticResource GalleryActionStyle}" Click="ChangeFolder_Click"/>
+                        <Button Grid.Column="2" Content="Open" Margin="8,0,0,0"
+                                Style="{StaticResource GalleryActionStyle}" Click="OpenFolder_Click"/>
+                    </Grid>
+                </StackPanel>
+                <Grid Grid.Row="1" Margin="0,16,0,12">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <TextBlock x:Name="StatusText" Text="Ready" FontSize="11" TextWrapping="Wrap"
+                               Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                    <TextBlock x:Name="CountText" Grid.Column="1" Text="0 photos" FontSize="11"
+                               Foreground="{DynamicResource NIRACyanBrush}"/>
+                </Grid>
+                <Grid Grid.Row="2">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <ItemsControl x:Name="ImageTiles" ItemsSource="{Binding Tiles}">
+                            <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate><DataTemplate>
+                                <Button Tag="{Binding}" Click="Image_Click" Cursor="Hand" Background="Transparent" BorderThickness="0"
+                                        Margin="0,0,13,15" Padding="0" ToolTip="Open photo">
+                                    <Border Width="220" CornerRadius="14" ClipToBounds="True" BorderThickness="1"
+                                            BorderBrush="{DynamicResource NIRAGlassBorderBrush}" Background="{DynamicResource NIRAChipBrush}">
+                                        <StackPanel>
+                                            <Border Height="150" Background="{DynamicResource NIRAChipBrush}">
+                                                <Image Source="{Binding Preview}" Stretch="Uniform"/>
+                                            </Border>
+                                            <StackPanel Margin="12,11,12,12">
+                                                <TextBlock Text="{Binding Title}" FontSize="12" FontWeight="SemiBold"
+                                                           TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding Credit}" FontSize="10.5" Margin="0,5,0,0"
+                                                           Foreground="{DynamicResource NIRASecondaryBrush}" TextTrimming="CharacterEllipsis"/>
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Border>
+                                </Button>
+                            </DataTemplate></ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                    <StackPanel x:Name="EmptyState" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                MaxWidth="410">
+                        <TextBlock Text="✧" FontSize="40" Foreground="{DynamicResource NIRABlueBrush}" HorizontalAlignment="Center"/>
+                        <TextBlock x:Name="EmptyTitle" Text="No images yet" Margin="0,12,0,0" FontSize="19"
+                                   HorizontalAlignment="Center" FontWeight="SemiBold"/>
+                        <TextBlock x:Name="EmptyDescription" Text="Images will appear here as they are added."
+                                   Margin="0,9,0,0" TextWrapping="Wrap" TextAlignment="Center" FontSize="11.5"
+                                   Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                    </StackPanel>
+                </Grid>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

@@ -4,11 +4,11 @@
 
 **Project:** `NIRA-AGENT`
 
-**Source/code files:** 304
+**Source/code files:** 314
 
 **Resource files shown in tree:** 16
 
-**Total clean project files:** 320
+**Total clean project files:** 330
 
 ---
 
@@ -20,9 +20,14 @@ Generated build folders such as `bin/` and `obj/` are intentionally excluded.
 NIRA-AGENT/
 ├── .gitignore
 ├── NIRA_CHARACTER_DELIVERY_INVARIANT.md
+├── NIRA_IMAGE_API_DIAG_R30_1.ps1
+├── NIRA_IMAGE_HTTPS_CHECK.ps1
 ├── NIRAAgent.CharacterLab
 │   ├── LabProgression.cs
 │   ├── NIRAAgent.CharacterLab.csproj
+│   └── Program.cs
+├── NIRAAgent.ImageLab
+│   ├── NIRAAgent.ImageLab.csproj
 │   └── Program.cs
 ├── NIRAAgent.RegressionChecks
 │   ├── NIRAAgent.RegressionChecks.csproj
@@ -61,6 +66,9 @@ NIRA-AGENT/
 │   │       └── ParticleTarget.cs
 │   ├── CredentialPromptWindow.xaml
 │   ├── CredentialPromptWindow.xaml.cs
+│   ├── Gallery
+│   │   ├── NIRAGalleryPage.xaml
+│   │   └── NIRAGalleryPage.xaml.cs
 │   ├── MainWindow.xaml
 │   ├── MainWindow.xaml.cs
 │   ├── Models
@@ -172,6 +180,7 @@ NIRA-AGENT/
     │   ├── DesktopInteractionCapabilityHandlers.cs
     │   ├── FilesystemCapabilityHandlers.cs
     │   ├── HttpCapabilityHandlers.cs
+    │   ├── ImageDiscoveryCapabilityHandlers.cs
     │   ├── NIRACapabilityArguments.cs
     │   ├── NIRACapabilityContracts.cs
     │   ├── NIRACapabilityProcessRunner.cs
@@ -238,11 +247,15 @@ NIRA-AGENT/
     │   ├── NIRAVisualFormIds.cs
     │   ├── NIRAVisualIntent.cs
     │   └── NIRAVisualIntentService.cs
+    ├── Gallery
+    │   └── NIRAGalleryLibraryService.cs
     ├── Goals
     │   ├── NIRAGoalContracts.cs
     │   ├── NIRAGoalSchedulerService.cs
     │   ├── NIRAGoalService.cs
     │   └── NIRAGoalStore.cs
+    ├── Images
+    │   └── NIRACommonsImageDiscoveryService.cs
     ├── Integrations
     │   └── Elvara
     │       ├── Apps
@@ -321,6 +334,7 @@ NIRA-AGENT/
     │   └── output.wav
     ├── Presentation
     │   ├── NIRADualChannelResponse.cs
+    │   ├── NIRAResourceLinkPresentation.cs
     │   ├── NIRARichBlockJsonReader.cs
     │   └── NIRAVerifiedFilePresentation.cs
     ├── Prompt
@@ -500,7 +514,187 @@ This invariant does not authorize tools, override reviewer decisions, change mem
 
 ---
 
-## 3. `NIRAAgent.CharacterLab\LabProgression.cs`
+## 3. `NIRA_IMAGE_API_DIAG_R30_1.ps1`
+
+**File:** `NIRA_IMAGE_API_DIAG_R30_1.ps1`
+
+```powershell
+# NIRA R30.1 - no-model API diagnostic for the existing image discovery engine.
+# Reads public API responses only. No Ollama, no NIRA UI, no file changes outside %TEMP%.
+# Tests precisely the R30 Openverse and Commons queries and one approved image CDN.
+$ErrorActionPreference = 'Stop'
+$progressPreference = 'SilentlyContinue'
+$curl = (Get-Command curl.exe -ErrorAction Stop).Source
+$dir = Join-Path $env:TEMP ("nira-image-diag-" + [guid]::NewGuid().ToString('N'))
+New-Item -Path $dir -ItemType Directory -Force | Out-Null
+
+function Get-HostOf($url) {
+  try { if ([string]::IsNullOrWhiteSpace($url)) { return '-' }; return ([uri]$url).Host } catch { return 'INVALID' }
+}
+function Get-Value($obj, $name) {
+  if ($null -eq $obj) { return $null }
+  $p = $obj.PSObject.Properties[$name]
+  if ($null -eq $p) { return $null }
+  return $p.Value
+}
+function Read-Api($name, $url, $timeSeconds) {
+  $body = Join-Path $dir ($name + '.json')
+  $hdr = Join-Path $dir ($name + '.headers')
+  Write-Host "`n=== $name ==="
+  $metrics = & $curl -4 --compressed --silent --show-error --max-time $timeSeconds --connect-timeout 4 --max-redirs 0 `
+    -H 'Accept: application/json' -A 'NIRAAgent/1.0 (desktop Wikimedia Commons reference image client)' `
+    --dump-header $hdr --output $body `
+    --write-out 'HTTP=%{http_code} TCP=%{time_connect}s TLS=%{time_appconnect}s TOTAL=%{time_total}s' $url
+  $code = $LASTEXITCODE
+  Write-Host "Result: $metrics; curlExit=$code"
+  if (!(Test-Path $body)) { Write-Host 'Body: none'; return $null }
+  $raw = [IO.File]::ReadAllText($body)
+  Write-Host "ResponseBytes: $([IO.File]::ReadAllBytes($body).Length)"
+  if ($raw.Length -eq 0) { Write-Host 'Body: empty'; return $null }
+  try { return $raw | ConvertFrom-Json -ErrorAction Stop }
+  catch {
+    $preview = ($raw -replace '[\r\n]+', ' ')
+    if ($preview.Length -gt 170) { $preview = $preview.Substring(0,170) }
+    Write-Host "JSON: INVALID; responseStartsWith=$preview"
+    return $null
+  }
+}
+function Show-ApiError($data) {
+  if ($null -eq $data) { return }
+  $apiError = Get-Value $data 'error'
+  if ($null -ne $apiError) {
+    Write-Host "API_ERROR: code=$(Get-Value $apiError 'code') message=$(Get-Value $apiError 'info')"
+  }
+  $warnings = Get-Value $data 'warnings'
+  if ($null -ne $warnings) {
+    $w = $warnings | ConvertTo-Json -Compress -Depth 5
+    if ($w.Length -gt 400) { $w = $w.Substring(0, 400) }
+    Write-Host "WARNINGS: $w"
+  }
+}
+function Valid-Media($address) {
+  try {
+    $u = [uri]$address
+    if ($u.Scheme -ne 'https' -or $u.Port -ne 443 -or $u.UserInfo -ne '' -or $u.Query -ne '' -or $u.Fragment -ne '') { return $false }
+    if ($u.Host -eq 'upload.wikimedia.org' -and $u.AbsolutePath.StartsWith('/wikipedia/commons/')) { return $true }
+    if ($u.Host -eq 'live.staticflickr.com' -and $u.AbsolutePath.EndsWith('.jpg')) { return $true }
+  } catch { }
+  return $false
+}
+try {
+  Write-Host 'NIRA R30.1 IMAGE API DIAGNOSTIC'
+  Write-Host 'LLM calls: 0 | Browser: not used | NIRA: not required'
+  Write-Host 'Probes public API responses using IPv4 and the R30 User-Agent.'
+
+  $openverse = 'https://api.openverse.org/v1/images/?q=Great%20Pyramid%20of%20Giza&page_size=18&mature=false'
+  $data = Read-Api 'OPENVERSE' $openverse 8
+  Show-ApiError $data
+  $openResults = @(Get-Value $data 'results')
+  if ($null -eq $data -or $null -eq (Get-Value $data 'results')) { $openResults = @() }
+  Write-Host "OpenverseResults: $($openResults.Count)"
+  $accepted = @()
+  foreach ($item in $openResults) {
+    $thumb = Get-Value $item 'thumbnail'
+    $orig = Get-Value $item 'url'
+    $media = if (Valid-Media $thumb) { $thumb } else { $orig }
+    $source = Get-Value $item 'foreign_landing_url'
+    $licensed = (Get-Value $item 'license') -in @('by','by-sa','by-nd','by-nc','by-nc-sa','by-nc-nd','cc0','pdm','publicdomain')
+    if ((Valid-Media $media) -and $licensed -and (($source -like 'https://www.flickr.com/photos/*') -or ($source -like 'https://commons.wikimedia.org/wiki/File:*'))) { $accepted += $item }
+  }
+  Write-Host "OpenverseLikelyAccepted: $($accepted.Count) (approximate standalone filter)"
+  if ($openResults.Count -gt 0) {
+    foreach ($item in @($openResults | Select-Object -First 3)) {
+      Write-Host "  Sample: thumbnailHost=$(Get-HostOf (Get-Value $item 'thumbnail')) sourceHost=$(Get-HostOf (Get-Value $item 'foreign_landing_url')) license=$(Get-Value $item 'license')"
+    }
+  }
+
+  $commons = 'https://commons.wikimedia.org/w/api.php?action=query&format=json&formatversion=2&generator=search&gsrnamespace=6&gsrlimit=12&gsrsearch=Great%20Pyramid%20of%20Giza&prop=imageinfo&iiprop=url%7Cmime%7Csize%7Cextmetadata&iiurlwidth=1000&iiextmetadatalanguage=en&iiextmetadatafilter=Artist%7CLicenseShortName%7CLicenseUrl%7CImageDescription%7CCredit'
+  $wikidata = Read-Api 'COMMONS_R30_EXACT' $commons 8
+  Show-ApiError $wikidata
+  $q = Get-Value $wikidata 'query'
+  $pages = @()
+  if ($null -ne $q -and $null -ne (Get-Value $q 'pages')) { $pages = @(Get-Value $q 'pages') }
+  $withInfo = 0
+  $withMedia = 0
+  $mediaCandidate = $null
+  foreach($p in $pages) {
+    $infos = Get-Value $p 'imageinfo'
+    if ($null -eq $infos) { continue }
+    $withInfo++
+    $info = @($infos)[0]
+    $url = Get-Value $info 'thumburl'
+    if ([string]::IsNullOrEmpty($url)) { $url = Get-Value $info 'url' }
+    $source = Get-Value $info 'descriptionurl'
+    if ((Valid-Media $url) -and $source -like 'https://commons.wikimedia.org/*' -and (Get-Value $info 'mime') -in @('image/jpeg','image/png','image/gif')) {
+      $withMedia++
+      if ($null -eq $mediaCandidate) { $mediaCandidate = $url }
+    }
+  }
+  $queryKeys = if ($null -eq $wikidata) { 'none' } else { ($wikidata.PSObject.Properties.Name -join ',') }
+  Write-Host "CommonsTopLevelKeys: $queryKeys"
+  Write-Host "CommonsPages: $($pages.Count) | WithImageInfo: $withInfo | R30Valid: $withMedia"
+  foreach($p in @($pages | Select-Object -First 2)) {
+    $infos = Get-Value $p 'imageinfo'
+    if ($null -eq $infos) { Write-Host '  Page sample: no imageinfo'; continue }
+    $info = @($infos)[0]
+    $uri = Get-Value $info 'thumburl'
+    if (!$uri) { $uri = Get-Value $info 'url' }
+    Write-Host "  Page sample: mime=$(Get-Value $info 'mime') mediaHost=$(Get-HostOf $uri) sourceHost=$(Get-HostOf (Get-Value $info 'descriptionurl'))"
+  }
+
+  if ($null -eq $mediaCandidate -and $accepted.Count -gt 0) {
+    $mediaCandidate = Get-Value $accepted[0] 'thumbnail'
+    if (!(Valid-Media $mediaCandidate)) { $mediaCandidate = Get-Value $accepted[0] 'url' }
+  }
+  if ($null -ne $mediaCandidate -and (Valid-Media $mediaCandidate)) {
+    $imageFile = Join-Path $dir 'image-test.bin'
+    $imageHeader = Join-Path $dir 'image-test.headers'
+    Write-Host "`n=== APPROVED IMAGE DOWNLOAD ==="
+    Write-Host "MediaHost: $(Get-HostOf $mediaCandidate)"
+    $timing = & $curl -4 --silent --show-error --max-time 8 --connect-timeout 4 --max-redirs 0 `
+      --max-filesize 3000000 -A 'NIRAAgent/1.0 (desktop Wikimedia Commons reference image client)' `
+      --dump-header $imageHeader --output $imageFile --write-out 'HTTP=%{http_code} TLS=%{time_appconnect}s TOTAL=%{time_total}s' $mediaCandidate
+    Write-Host "ImageResult: $timing; curlExit=$LASTEXITCODE"
+    if (Test-Path $imageFile) {
+      $bytes = [IO.File]::ReadAllBytes($imageFile)
+      $valid = (($bytes.Length -ge 3 -and $bytes[0] -eq 255 -and $bytes[1] -eq 216 -and $bytes[2] -eq 255) -or
+          ($bytes.Length -ge 8 -and $bytes[0] -eq 137 -and $bytes[1] -eq 80 -and $bytes[2] -eq 78) -or
+          ($bytes.Length -ge 6 -and [Text.Encoding]::ASCII.GetString($bytes,0,3) -eq 'GIF'))
+      Write-Host "SavedBytes: $($bytes.Length) | ValidImageSignature: $valid"
+    }
+  } else { Write-Host "`nImage download skipped: neither API supplied a permitted candidate." }
+  Write-Host "`nDONE. No LLM calls. Share the console output."
+} finally {
+  Remove-Item -LiteralPath $dir -Force -Recurse -ErrorAction SilentlyContinue
+}
+```
+
+---
+
+## 4. `NIRA_IMAGE_HTTPS_CHECK.ps1`
+
+**File:** `NIRA_IMAGE_HTTPS_CHECK.ps1`
+
+```powershell
+# Run from Windows PowerShell: .\NIRA_IMAGE_HTTPS_CHECK.ps1
+# No API key. Performs two real HTTPS GETs and reports only status/timings.
+$ErrorActionPreference = "Continue"
+$targets = @(
+  'https://api.openverse.org/v1/images/?q=Great%20Pyramid%20of%20Giza&page_size=3',
+  'https://commons.wikimedia.org/w/api.php?action=query&format=json&meta=siteinfo'
+)
+foreach ($url in $targets) {
+  $hostName = ([uri]$url).Host
+  Write-Host "`nHTTPS IPv4: $hostName"
+  & curl.exe -4 -L -sS --max-time 18 --output NUL --write-out 'HTTP=%{http_code} TCP=%{time_connect}s TLS=%{time_appconnect}s TOTAL=%{time_total}s\n' $url
+  Write-Host "curl exit code: $LASTEXITCODE"
+}
+Write-Host "`nThese results test real HTTPS responses, not only DNS or TCP port 443."
+```
+
+---
+
+## 5. `NIRAAgent.CharacterLab\LabProgression.cs`
 
 **File:** `NIRAAgent.CharacterLab\LabProgression.cs`
 
@@ -840,7 +1034,7 @@ internal static class LabProgressionChecks
 
 ---
 
-## 4. `NIRAAgent.CharacterLab\NIRAAgent.CharacterLab.csproj`
+## 6. `NIRAAgent.CharacterLab\NIRAAgent.CharacterLab.csproj`
 
 **File:** `NIRAAgent.CharacterLab\NIRAAgent.CharacterLab.csproj`
 
@@ -866,7 +1060,7 @@ internal static class LabProgressionChecks
 
 ---
 
-## 5. `NIRAAgent.CharacterLab\Program.cs`
+## 7. `NIRAAgent.CharacterLab\Program.cs`
 
 **File:** `NIRAAgent.CharacterLab\Program.cs`
 
@@ -1750,7 +1944,87 @@ internal static class OfflineChecks
 
 ---
 
-## 6. `NIRAAgent.RegressionChecks\NIRAAgent.RegressionChecks.csproj`
+## 8. `NIRAAgent.ImageLab\NIRAAgent.ImageLab.csproj`
+
+**File:** `NIRAAgent.ImageLab\NIRAAgent.ImageLab.csproj`
+
+```xml
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\NIRAAgent\NIRAAgent.csproj" />
+  </ItemGroup>
+</Project>
+```
+
+---
+
+## 9. `NIRAAgent.ImageLab\Program.cs`
+
+**File:** `NIRAAgent.ImageLab\Program.cs`
+
+```csharp
+using System.Diagnostics;
+using NIRAAgent.Images;
+
+// Standalone end-to-end real image search/retrieve using production service.
+// NO Ollama client, no NIRAExecutive, no LLM call, no browser, no API key.
+string query = string.Join(' ', args).Trim();
+if (query.Length == 0) query = "Great Pyramid of Giza";
+if (query.Length > 160)
+{
+    Console.Error.WriteLine("Query too long (160 characters max).");
+    return 2;
+}
+Console.WriteLine("NIRA IMAGE LAB / R31");
+Console.WriteLine("Cloud LLM calls: ZERO. Tests NIRA's real image.search and image.retrieve service.");
+Console.WriteLine($"Search query: {query}");
+using var imageService = new NIRACommonsImageDiscoveryService();
+var clock = Stopwatch.StartNew();
+try
+{
+    IReadOnlyList<NIRACommonsImageCandidate> candidates =
+        await imageService.SearchAsync(query, 6);
+    Console.WriteLine($"SEARCH: {(candidates.Count > 0 ? "PASS" : "NO RESULTS")}, " +
+                      $"candidates={candidates.Count}, elapsed={clock.Elapsed.TotalSeconds:F1}s");
+    Console.WriteLine($"SEARCH DETAIL: {imageService.LastSearchStatus}");
+    foreach (var item in candidates)
+        Console.WriteLine($"  - {item.Provider} | {item.Title} | CDN={new Uri(item.MediaUrl).Host} " +
+                          $"| Creator={(item.Author.Length == 0 ? "See source" : item.Author)}");
+    if (candidates.Count == 0) return 3;
+    clock.Restart();
+    NIRACommonsImageDownload downloaded =
+        await imageService.RetrieveAsync(candidates[0].CandidateId);
+    if (!File.Exists(downloaded.LocalPath) || new FileInfo(downloaded.LocalPath).Length != downloaded.Bytes)
+        throw new IOException("Successful result did not match actual cached file bytes.");
+    Console.WriteLine($"RETRIEVE: PASS, bytes={downloaded.Bytes}, elapsed={clock.Elapsed.TotalSeconds:F1}s");
+    Console.WriteLine($"File: {downloaded.LocalPath}");
+    Console.WriteLine($"Title: {downloaded.Title}");
+    Console.WriteLine($"Attribution: {downloaded.Caption}");
+    Console.WriteLine($"Source: {downloaded.SourceUri}");
+    Console.WriteLine("NEXT: NIRA can display these real bytes through its existing verified-artifact gallery.");
+    return 0;
+}
+catch (Exception exception)
+{
+    Console.WriteLine($"FAILED after {clock.Elapsed.TotalSeconds:F1}s: {exception.GetType().Name}");
+    Console.WriteLine(exception.Message);
+    Console.WriteLine($"SEARCH DETAIL: {imageService.LastSearchStatus}");
+    for (Exception? inner = exception.InnerException; inner != null; inner = inner.InnerException)
+        Console.WriteLine($"  Cause: {inner.GetType().Name}: {inner.Message}");
+    Console.WriteLine("NO MODEL CALLS WERE MADE. Send this output to diagnose the exact failed stage.");
+    return 1;
+}
+```
+
+---
+
+## 10. `NIRAAgent.RegressionChecks\NIRAAgent.RegressionChecks.csproj`
 
 **File:** `NIRAAgent.RegressionChecks\NIRAAgent.RegressionChecks.csproj`
 
@@ -1770,7 +2044,7 @@ internal static class OfflineChecks
 
 ---
 
-## 7. `NIRAAgent.RegressionChecks\Program.cs`
+## 11. `NIRAAgent.RegressionChecks\Program.cs`
 
 **File:** `NIRAAgent.RegressionChecks\Program.cs`
 
@@ -1790,6 +2064,8 @@ using NIRAAgent.Character.History;
 using NIRAAgent.Vision;
 using NIRAAgent.Diagnostics;
 using NIRAAgent.PC.Awareness;
+using NIRAAgent.Images;
+using NIRAAgent.Gallery;
 
 // Run with: dotnet run --project NIRAAgent.RegressionChecks
 // These are offline contract checks, not simulated live model/Bridge tests.
@@ -2500,6 +2776,471 @@ Check("All app guidance fits NIRA's current 3000-character loader budget", () =>
         if (length > limit)
             throw new Exception($"{Path.GetFileName(file)} has {length} characters; runtime limit is {limit}");
     }
+});
+
+Check("R26 Wikimedia image candidates preserve real source, attribution and bounded IDs", () =>
+{
+    const string payload = """
+        {"query":{"pages":[
+            {"index":1,"title":"File:Karnak_temple.jpg","imageinfo":[{
+                "mime":"image/jpeg","width":2300,"height":1550,
+                "thumburl":"https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Karnak_temple.jpg/1000px-Karnak_temple.jpg",
+                "descriptionurl":"https://commons.wikimedia.org/wiki/File:Karnak_temple.jpg",
+                "extmetadata":{"Artist":{"value":"<a>Historical photographer</a>"},
+                 "LicenseShortName":{"value":"CC BY-SA 4.0"},
+                 "LicenseUrl":{"value":"https://creativecommons.org/licenses/by-sa/4.0/"}}}]},
+            {"index":2,"title":"File:Unsafe.jpg","imageinfo":[{
+                "mime":"image/jpeg","thumburl":"https://127.0.0.1/private.jpg",
+                "descriptionurl":"https://commons.wikimedia.org/wiki/File:Unsafe.jpg"}]},
+            {"index":3,"title":"File:Vector.svg","imageinfo":[{
+                "mime":"image/svg+xml","thumburl":"https://upload.wikimedia.org/wikipedia/commons/a/b/vector.svg",
+                "descriptionurl":"https://commons.wikimedia.org/wiki/File:Vector.svg"}]}
+        ]}}
+        """;
+    var selected = NIRACommonsImageDiscoveryService.ParseCommonsSearchResponse(payload, 3);
+    if (selected.Count != 1 || selected[0].Title != "Karnak temple.jpg" ||
+        selected[0].Author != "Historical photographer" ||
+        selected[0].License != "CC BY-SA 4.0" ||
+        selected[0].SourceUri != "https://commons.wikimedia.org/wiki/File:Karnak_temple.jpg" ||
+        !Guid.TryParseExact(selected[0].CandidateId, "N", out _))
+        throw new Exception("Wikimedia response lost its provenance or accepted an unsafe item.");
+    if (NIRACommonsImageDiscoveryService.IsPermittedMediaUri("http://upload.wikimedia.org/wikipedia/commons/a.jpg") ||
+        NIRACommonsImageDiscoveryService.IsPermittedMediaUri("https://upload.wikimedia.org.evil.test/wikipedia/commons/a.jpg") ||
+        NIRACommonsImageDiscoveryService.IsPermittedMediaUri("https://upload.wikimedia.org@127.0.0.1/wikipedia/commons/a.jpg") ||
+        NIRACommonsImageDiscoveryService.IsPermittedMediaUri("https://upload.wikimedia.org.evil.test/wikipedia/commons/a.jpg"))
+        throw new Exception("Media origin restrictions accepted a forged URI.");
+});
+
+Check("R26 images are independent native capabilities with visual attribution", () =>
+{
+    using var service = new NIRACommonsImageDiscoveryService();
+    var search = new NIRAImageSearchCapabilityHandler(service);
+    var retrieve = new NIRAImageRetrieveCapabilityHandler(service);
+    if (search.Descriptor.Id != NIRACapabilityIds.ImageSearch ||
+        retrieve.Descriptor.Id != NIRACapabilityIds.ImageRetrieve ||
+        search.Descriptor.DefaultRisk != NIRACapabilityRisk.Observe ||
+        retrieve.Descriptor.DefaultRisk != NIRACapabilityRisk.Observe ||
+        retrieve.Descriptor.Parameters.Any(p => p.Name is "url" or "destination" or "path"))
+        throw new Exception("Native image capability was not registered as restricted observation.");
+    var candidate = Request(NIRACapabilityIds.ImageRetrieve, """{"candidateId":"not-observed"}""");
+    Throws<InvalidOperationException>(() => retrieve.ExecuteAsync(candidate).GetAwaiter().GetResult());
+    var visual = new NIRACapabilityVisualArtifact {
+        LocalPath = @"C:\NIRAAgent\visual-artifacts\commons-cache\photo.jpg",
+        SourceUri = "https://commons.wikimedia.org/wiki/File:Karnak_temple.jpg",
+        PresentToUser = true
+    }.Normalize();
+    if (!visual.PresentToUser || !visual.SourceUri.Contains("commons.wikimedia.org") ||
+        (visual with { SourceUri = "https://evil.example/photo" }).Normalize().SourceUri.Length != 0)
+        throw new Exception("Trusted media attribution was discarded or source URL was unbounded.");
+});
+
+Check("R28 independent Openverse results retain licensed Flickr photo and attribution", () =>
+{
+    const string json = """
+        {"results":[
+          {"title":"Great Pyramid of Giza","creator":"Public photographer",
+           "license":"by","license_version":"4.0",
+           "license_url":"https://creativecommons.org/licenses/by/4.0/",
+           "foreign_landing_url":"https://www.flickr.com/photos/author/123456/",
+           "thumbnail":"https://live.staticflickr.com/1234/photohash_b.jpg",
+           "url":"https://live.staticflickr.com/1234/photohash_o.jpg",
+           "width":1024,"height":768,"mature":false},
+          {"title":"Unsafe local image","creator":"No",
+           "license":"by","foreign_landing_url":"https://www.flickr.com/photos/attacker/2/",
+           "thumbnail":"https://localhost/private.jpg","url":"https://127.0.0.1/private.jpg"},
+          {"title":"Unknown image rights","creator":"No",
+           "license":"unknown","foreign_landing_url":"https://www.flickr.com/photos/attacker/3/",
+           "thumbnail":"https://live.staticflickr.com/1234/unknown.jpg"},
+          {"title":"Fake Flickr source","creator":"No",
+           "license":"by","foreign_landing_url":"https://www.flickr.com.evil.test/photos/a/4",
+           "thumbnail":"https://live.staticflickr.com/1234/evil.jpg"}
+        ]}
+        """;
+    var found = NIRACommonsImageDiscoveryService.ParseOpenverseSearchResponse(json, 4);
+    if (found.Count != 1 || found[0].Provider != "Openverse" ||
+        found[0].Title != "Great Pyramid of Giza" ||
+        found[0].Author != "Public photographer" ||
+        found[0].License != "BY 4.0" ||
+        found[0].SourceUri != "https://www.flickr.com/photos/author/123456/" ||
+        !Guid.TryParseExact(found[0].CandidateId, "N", out _) ||
+        !NIRACommonsImageDiscoveryService.IsPermittedMediaUri(found[0].MediaUrl) ||
+        !NIRACommonsImageDiscoveryService.IsPermittedSourcePage(found[0].SourceUri))
+        throw new Exception("Openverse results were dropped or untrusted URLs were accepted");
+    if (NIRACommonsImageDiscoveryService.IsPermittedMediaUri("https://live.staticflickr.com.evil.test/123/a.jpg") ||
+        NIRACommonsImageDiscoveryService.IsPermittedMediaUri("http://live.staticflickr.com/123/a.jpg") ||
+        NIRACommonsImageDiscoveryService.IsPermittedMediaUri("https://live.staticflickr.com@127.0.0.1/a.jpg") ||
+        NIRACommonsImageDiscoveryService.IsPermittedMediaUri("https://live.staticflickr.com/123/a.jpg?redirect=1"))
+        throw new Exception("Flickr media origin check can be forged");
+});
+
+Check("R28 trusted Openverse source attribution survives visual artifact normalization", () =>
+{
+    var sourced = new NIRACapabilityVisualArtifact {
+        LocalPath = @"C:\NIRAAgent\visual-artifacts\commons-cache\openverse.jpg",
+        SourceUri = "https://www.flickr.com/photos/author/123456/",
+        PresentToUser = true
+    }.Normalize();
+    if (sourced.SourceUri != "https://www.flickr.com/photos/author/123456/" ||
+        (sourced with { SourceUri = "https://www.flickr.com.evil.test/photos/a/" }).Normalize().SourceUri.Length != 0)
+        throw new Exception("Openverse's verified Flickr source page was lost or an unsafe page was accepted");
+});
+
+Check("R29 image HTTPS transport prefers IPv4 without disabling TLS, proxy or host restrictions", () =>
+{
+    Type provider = typeof(NIRACommonsImageDiscoveryService);
+    MethodInfo factory = provider.GetMethod("CreateImageHttpHandler", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new Exception("Image transport factory not found");
+    using var handler = (System.Net.Http.SocketsHttpHandler)(factory.Invoke(null, null)
+        ?? throw new Exception("Image HTTP handler was not constructed"));
+    if (handler.ConnectCallback is null || handler.AllowAutoRedirect || handler.UseCookies || !handler.UseProxy)
+        throw new Exception("Image HTTP transport lost dual-stack handling or safe handler settings");
+    MethodInfo connector = provider.GetMethod("ConnectPreferIPv4Async", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new Exception("IPv4-preferred image connector not found");
+    if (!connector.IsStatic ||
+        NIRACommonsImageDiscoveryService.IsPermittedMediaUri("https://127.0.0.1/wikipedia/commons/test.jpg") ||
+        NIRACommonsImageDiscoveryService.IsPermittedMediaUri("http://upload.wikimedia.org/wikipedia/commons/a.jpg"))
+        throw new Exception("Image transport weakened safe URL restrictions");
+});
+
+Check("R30 Openverse keeps an independent verified backup media URL", () =>
+{
+    const string json = """
+        {"results":[{"title":"Pyramid daytime", "creator":"Test photographer",
+          "license":"by","license_version":"2.0",
+          "foreign_landing_url":"https://www.flickr.com/photos/example/12345/",
+          "thumbnail":"https://live.staticflickr.com/10/thumb_b.jpg",
+          "url":"https://live.staticflickr.com/10/original_o.jpg",
+          "mature":false}]}
+        """;
+    var images = NIRACommonsImageDiscoveryService.ParseOpenverseSearchResponse(json, 3);
+    if (images.Count != 1 || images[0].MediaUrl != "https://live.staticflickr.com/10/thumb_b.jpg" ||
+        images[0].AlternateMediaUrl != "https://live.staticflickr.com/10/original_o.jpg" ||
+        !NIRACommonsImageDiscoveryService.IsPermittedMediaUri(images[0].AlternateMediaUrl))
+        throw new Exception("Alternate approved image CDN source was lost");
+    var failure = new NIRAImageRetrievalUnavailableException("HTTP403");
+    if (!failure.Message.StartsWith("IMAGE_RETRIEVAL_UNAVAILABLE:", StringComparison.Ordinal))
+        throw new Exception("Image retrieval failures must have a typed, terminal marker");
+});
+
+Check("R31 Commons current thumbnail host passes strict grounded provenance", () =>
+{
+    // Current real Commons API responses use thumb.wikimedia.org rather than
+    // exclusively upload.wikimedia.org. The old parser accepted 0 of 12.
+    const string json = """
+        {"query":{"pages":[
+           {"index":1,"title":"File:Pyramid_Giza.jpg","imageinfo":[{
+             "mime":"image/jpeg","width":2500,"height":1500,
+             "thumburl":"https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/Pyramid_Giza.jpg/1000px-Pyramid_Giza.jpg",
+             "url":"https://upload.wikimedia.org/wikipedia/commons/a/ab/Pyramid_Giza.jpg",
+             "descriptionurl":"https://commons.wikimedia.org/wiki/File:Pyramid_Giza.jpg",
+             "extmetadata":{"Artist":{"value":"<b>Verified author</b>"},"LicenseShortName":{"value":"CC BY-SA 4.0"}}
+           }]},
+           {"index":2,"title":"File:Attack.jpg","imageinfo":[{
+             "mime":"image/jpeg","thumburl":"https://thumb.wikimedia.org.evil.test/wikipedia/commons/a.jpg",
+             "url":"https://127.0.0.1/private.jpg",
+             "descriptionurl":"https://commons.wikimedia.org/wiki/File:Attack.jpg"
+           }]}
+        ]}}
+        """;
+    var matches = NIRACommonsImageDiscoveryService.ParseCommonsSearchResponse(json, 6);
+    if (matches.Count != 1 ||
+        matches[0].MediaUrl != "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/Pyramid_Giza.jpg/1000px-Pyramid_Giza.jpg" ||
+        matches[0].AlternateMediaUrl != "https://upload.wikimedia.org/wikipedia/commons/a/ab/Pyramid_Giza.jpg" ||
+        matches[0].Author != "Verified author" || matches[0].License != "CC BY-SA 4.0")
+        throw new Exception("Commons current thumbnails were discarded or original alternative was lost");
+    string[] forbidden = {
+        "https://thumb.wikimedia.org.evil.test/wikipedia/commons/a.jpg",
+        "https://thumb.wikimedia.org@127.0.0.1/wikipedia/commons/a.jpg",
+        "http://thumb.wikimedia.org/wikipedia/commons/a.jpg",
+        "https://thumb.wikimedia.org/other/a.jpg",
+        "https://thumb.wikimedia.org/wikipedia/commons/a.jpg?redirect=1",
+        "https://api.openverse.org/v1/images/example/thumb/"
+    };
+    if (forbidden.Any(NIRACommonsImageDiscoveryService.IsPermittedMediaUri) ||
+        !NIRACommonsImageDiscoveryService.IsPermittedMediaUri(matches[0].MediaUrl))
+        throw new Exception("R31 official media allowlist accepted an unauthorized URL");
+});
+
+Check("R31 Openverse proxy thumbnails fall back to approved Flickr originals", () =>
+{
+    const string json = """
+        {"results":[{"title":"Great Pyramid","creator":"Test Creator","license":"by",
+         "foreign_landing_url":"https://www.flickr.com/photos/test/123/",
+         "thumbnail":"https://api.openverse.org/v1/images/xyz/thumb/",
+         "url":"https://live.staticflickr.com/65535/original_o.jpg","mature":false}]}
+        """;
+    var candidates = NIRACommonsImageDiscoveryService.ParseOpenverseSearchResponse(json, 4);
+    if (candidates.Count != 1 ||
+        candidates[0].MediaUrl != "https://live.staticflickr.com/65535/original_o.jpg" ||
+        candidates[0].AlternateMediaUrl.Length != 0)
+        throw new Exception("Openverse proxy thumbnail prevented valid original image selection");
+});
+
+Check("R32 standalone reference links have bounded, clickable HTTP(S) destinations", () =>
+{
+    if (!NIRAResourceLinkPolicy.TryParse(
+        "Source: [Great Pyramid museum collection](https://museum.example.org/giza)", out var source) ||
+        source?.Kind != "SOURCE" || source.Label != "Great Pyramid museum collection" ||
+        source.Host != "museum.example.org")
+        throw new Exception("Descriptive sourced link was not identified");
+    if (!NIRAResourceLinkPolicy.TryParse(
+        "[Further reading](https://example.org/articles/robotics)", out var ordinary) ||
+        ordinary?.Kind != "REFERENCE")
+        throw new Exception("Independent Markdown resource link was lost");
+    string[] rejected = {
+        "[run command](file:///c:/Windows/system32/cmd.exe)",
+        "Source: [evil](https://example.com@127.0.0.1/private)",
+        "Flickr", // a bare provider name is NOT a clickable source
+        "Learn more [naturally](https://example.org/about) in this paragraph."
+    };
+    if (rejected.Any(line => NIRAResourceLinkPolicy.TryParse(line, out _)))
+        throw new Exception("Source presentation promoted non-standalone or invalid URLs");
+});
+
+Check("R32 photo credits are separate from source, license URL and generic visual captions", () =>
+{
+    NIRAReferenceImageCredit photo = NIRAReferenceImageCreditPolicy.Read(
+        "Openverse • girolame • BY 2.0 • License: https://creativecommons.org/licenses/by/2.0/",
+        "https://www.flickr.com/photos/91241612@N00/2427530661");
+    if (!photo.IsStructured || photo.Provider != "Openverse" || photo.Creator != "girolame" ||
+        photo.License != "CC BY 2.0" || photo.LinkLabel != "View on Flickr  ↗")
+        throw new Exception("Photo author/provider/license were not separated for the new image footer");
+    NIRAReferenceImageCredit wiki = NIRAReferenceImageCreditPolicy.Read(
+        "Wikimedia Commons • Photographer • CC BY-SA 4.0",
+        "https://commons.wikimedia.org/wiki/File:Example.jpg");
+    if (!wiki.IsStructured || wiki.LinkLabel != "View on Wikimedia Commons  ↗" ||
+        wiki.License != "CC BY-SA 4.0")
+        throw new Exception("Commons attribution/source label was lost");
+    NIRAReferenceImageCredit screenshot = NIRAReferenceImageCreditPolicy.Read(
+        "Screenshot of user's desktop", "");
+    if (screenshot.IsStructured || screenshot.Creator.Length != 0)
+        throw new Exception("Unsourced screenshots cannot invent photo credits");
+});
+
+// R34 gallery tests: file system only, ZERO LLM/network requests.
+Check("R34 persistent categorized gallery deduplicates and retains verified sources", () =>
+{
+    string temp = Path.Combine(Path.GetTempPath(), "nira-gallery-test-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(temp);
+    try
+    {
+        string original = Path.Combine(temp, "test.png");
+        // Valid minimal PNG signature is sufficient for the catalog's source gate.
+        File.WriteAllBytes(original, Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/BGAAAAAASUVORK5CYII="));
+        string config = Path.Combine(temp, "settings");
+        var gallery = new NIRAGalleryLibraryService(config);
+        var upload = gallery.Import(original, NIRAGalleryCategory.Uploaded, "My test photo")
+            ?? throw new Exception("User upload was not imported");
+        if (gallery.Import(original, NIRAGalleryCategory.Uploaded)?.Id != upload.Id)
+            throw new Exception("Same category/content should deduplicate");
+        var web = gallery.Import(original, NIRAGalleryCategory.WebFound, "Reference", "Test credit", "https://commons.wikimedia.org/wiki/File:Example.png")
+            ?? throw new Exception("Verified web import was rejected");
+        if (gallery.Items.Count != 2 || web.Category != NIRAGalleryCategory.WebFound ||
+            !web.SourceUri.StartsWith("https://commons.wikimedia.org/", StringComparison.Ordinal) ||
+            !File.Exists(gallery.ResolvePath(upload)))
+            throw new Exception("Categories, source attribution, or library copies missing");
+        if (gallery.Items.Any(x => x.Category == NIRAGalleryCategory.AiGenerated))
+            throw new Exception("Gallery must not fabricate AI-generated images");
+        var reloaded = new NIRAGalleryLibraryService(config);
+        if (reloaded.Items.Count != 2 || !File.Exists(reloaded.ResolvePath(web)))
+            throw new Exception("Gallery index did not survive restart");
+        string newRoot = Path.Combine(temp, "moved");
+        gallery.MoveLibrary(newRoot);
+        if (!string.Equals(gallery.RootFolder, newRoot, StringComparison.OrdinalIgnoreCase) ||
+            !File.Exists(gallery.ResolvePath(upload)) || !File.Exists(gallery.ResolvePath(web)) ||
+            !File.Exists(original))
+            throw new Exception("Verified relocation lost images or modified original upload");
+        if (new NIRAGalleryLibraryService(config).RootFolder != newRoot)
+            throw new Exception("Relocated folder was not persisted across restart");
+        string occupied = Path.Combine(temp, "occupied");
+        Directory.CreateDirectory(occupied);
+        File.WriteAllText(Path.Combine(occupied, "keep.txt"), "owned by user");
+        Throws<InvalidOperationException>(() => gallery.MoveLibrary(occupied));
+        if (!File.Exists(Path.Combine(occupied, "keep.txt")) || gallery.RootFolder != newRoot)
+            throw new Exception("Rejected destination damaged existing files");
+        Throws<InvalidOperationException>(() => gallery.MoveLibrary(Path.Combine(newRoot, "nested")));
+    }
+    finally { if (Directory.Exists(temp)) Directory.Delete(temp, recursive: true); }
+});
+
+// R33: all following checks are offline; no Ollama calls or internet.
+Check("R33 bullet references render as resource rows without losing URL safety", () =>
+{
+    string[] examples = {
+        "- [Britannica: Great Pyramid of Giza](https://www.britannica.com/topic/Great-Pyramid-of-Giza)",
+        "* [UNESCO: Memphis and its Necropolis](https://whc.unesco.org/en/list/86/)",
+        "2. [Official reference](https://example.org/reference)"
+    };
+    foreach (string line in examples)
+        if (!NIRAResourceLinkPolicy.TryParse(line, out var link) || link is null ||
+            !link.Address.StartsWith("https://", StringComparison.Ordinal))
+            throw new Exception("Bulleted external link was not recognized as a standalone reference");
+    string[] invalid = {
+        "- [Unsafe](file:///etc/passwd)",
+        "- [Invalid](https://example.org@127.0.0.1/secret)",
+        "- Read a [link](https://example.org) in a sentence"
+    };
+    if (invalid.Any(line => NIRAResourceLinkPolicy.TryParse(line, out _)))
+        throw new Exception("Unsafe/mixed links were promoted to dedicated reference cards");
+});
+
+Check("R33 only duplicate photo metadata is suppressed with actual retrieved evidence", () =>
+{
+    var duplicate = new NIRARichBlock {
+        Type = "card", Title = "Image Details",
+        Text = "PHOTOGRAPHER: girolame\nSOURCE: Flickr\nLICENSE: CC BY 2.0"
+    };
+    if (!NIRAImageCreditLayoutPolicy.IsDuplicatePhotoCredit(duplicate, true) ||
+        NIRAImageCreditLayoutPolicy.IsDuplicatePhotoCredit(duplicate, false) ||
+        NIRAImageCreditLayoutPolicy.IsDuplicatePhotoCredit(
+            duplicate with { Title = "Pyramid construction", Text = "Architecture of Giza" }, true) ||
+        NIRAImageCreditLayoutPolicy.IsDuplicatePhotoCredit(
+            duplicate with { Text = "Photographer: X\nArchitecture: built with limestone" }, true))
+        throw new Exception("Photo credit dedup hid actual commentary or unsourced content");
+});
+
+Check("R33 previously retrieved images cannot be reclassified as provider outage", () =>
+{
+    MethodInfo method = typeof(NIRAExecutive).GetMethod(
+        "ShouldMarkImageProviderUnavailable", BindingFlags.Static | BindingFlags.NonPublic)
+        ?? throw new Exception("Missing run-wide image outcome decision");
+    var failed = new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.ImageRetrieve,
+        Status = NIRACapabilityResultStatus.Failed
+    };
+    var items = new [] { failed };
+    bool Should(int count) => (bool)(method.Invoke(null, new object[] { count, items }) ?? false);
+    if (!Should(0) || Should(1) || Should(3))
+        throw new Exception("Failed extra candidate undid a verified image retrieval");
+});
+
+Check("R27 a provider outage blocks subsequent image searches without any network wait", () =>
+{
+    using var provider = new NIRACommonsImageDiscoveryService();
+    Type type = typeof(NIRACommonsImageDiscoveryService);
+    var until = type.GetField("_searchUnavailableUntilUtc", BindingFlags.NonPublic | BindingFlags.Instance)
+        ?? throw new Exception("Provider cooldown field not found");
+    var kind = type.GetField("_lastSearchFailureKind", BindingFlags.NonPublic | BindingFlags.Instance)
+        ?? throw new Exception("Provider failure classification not found");
+    until.SetValue(provider, DateTimeOffset.UtcNow.AddMinutes(1));
+    kind.SetValue(provider, "Timeout");
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    Throws<NIRAImageProviderUnavailableException>(() =>
+        provider.SearchAsync("Karnak temple", 5).GetAwaiter().GetResult());
+    watch.Stop();
+    if (watch.Elapsed > TimeSpan.FromSeconds(2))
+        throw new Exception("Repeated image search waited for a network timeout instead of using cooldown.");
+});
+
+Check("R27 free Wikipedia image fallback retains trusted Wikimedia media and file provenance", () =>
+{
+    const string response = """
+        {"query":{"pages":[
+            {"index":1,"title":"Karnak","pageimage":"Karnak hall.jpg",
+             "thumbnail":{"source":"https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Karnak.jpg/1000px-Karnak.jpg","width":1000,"height":700}},
+            {"index":2,"title":"Bad host","pageimage":"Unsafe.jpg",
+             "thumbnail":{"source":"https://localhost/private.jpg","width":1000,"height":700}}
+        ]}}
+        """;
+    var results = NIRACommonsImageDiscoveryService.ParseWikipediaFreeImageResponse(response, 6);
+    if (results.Count != 1 || results[0].Title != "Karnak" ||
+        results[0].SourceUri != "https://commons.wikimedia.org/wiki/File:Karnak_hall.jpg" ||
+        !results[0].MediaUrl.StartsWith("https://upload.wikimedia.org/", StringComparison.Ordinal) ||
+        results[0].Author.Length != 0 ||
+        !results[0].Description.Contains("file page", StringComparison.Ordinal))
+        throw new Exception("Wikipedia alternate image source lost source grounding or accepted unsafe media.");
+});
+
+Check("R27 image provider outages use a bounded cooldown and identifiable reason", () =>
+{
+    if (NIRACommonsImageDiscoveryService.SearchNetworkTimeout > TimeSpan.FromSeconds(12) ||
+        NIRACommonsImageDiscoveryService.SearchFailureCooldown < TimeSpan.FromSeconds(30) ||
+        NIRACommonsImageDiscoveryService.ClassifyProviderFailure(
+            new OperationCanceledException()) != "Timeout" ||
+        NIRACommonsImageDiscoveryService.ClassifyProviderFailure(
+            new HttpRequestException("rate", null, System.Net.HttpStatusCode.TooManyRequests)) != "RateLimited" ||
+        NIRACommonsImageDiscoveryService.ClassifyProviderFailure(
+            new HttpRequestException("offline")) != "NetworkError")
+        throw new Exception("Image source failures must not cause repeated long network attempts.");
+    var failed = new NIRAImageProviderUnavailableException("Timeout", new TimeoutException());
+    if (!failed.Message.StartsWith("IMAGE_PROVIDER_UNAVAILABLE:", StringComparison.Ordinal) ||
+        !failed.Message.Contains("Do not retry", StringComparison.Ordinal))
+        throw new Exception("Provider failure must expose a non-retry recovery boundary.");
+});
+
+Check("R25 nested rich text objects render as content, not leaked JSON field names", () =>
+{
+    using JsonDocument document = JsonDocument.Parse("""
+        {"displayBlocks":[
+          {"type":"tabs","title":"Robot","items":["Costs","Stages"],
+           "panels":[{"text":"### Primary costs\n- Materials\n- Certification"},
+                     {"heading":"Phases","steps":["Prototype","Test"]}]},
+          {"type":"timeline","title":"AI history","items":[
+            {"date":"1980s","title":"Expert systems","text":"Domain knowledge"},
+            {"year":"2017","title":"Transformer","description":"Attention models"}]},
+          {"type":"checklist","title":"Optimization","items":[
+            {"text":"Review startup programs","checked":false},
+            {"text":"Check drive health","description":"SMART status"}]}
+        ]}
+        """);
+    var blocks = NIRARichBlockJsonReader.Read(document.RootElement);
+    if (blocks.Count != 3 || blocks[0].Type != "tabs" || blocks[1].Type != "timeline" ||
+        blocks[2].Type != "checklist" ||
+        !blocks[0].Panels[0].StartsWith("### Primary costs", StringComparison.Ordinal) ||
+        !blocks[0].Panels[1].Contains("- Prototype", StringComparison.Ordinal) ||
+        !blocks[1].Items[0].StartsWith("1980s — Expert systems\n", StringComparison.Ordinal) ||
+        !blocks[2].Items[0].Equals("Review startup programs", StringComparison.Ordinal) ||
+        blocks.Any(b => b.Items.Any(i => i.Contains("checked:", StringComparison.OrdinalIgnoreCase))) ||
+        blocks[0].Panels.Any(p => p.Contains("text:", StringComparison.OrdinalIgnoreCase)))
+        throw new Exception("Nested rich data was flattened into label dumps or rejected");
+});
+
+Check("R24 adaptive rich presentation stays useful without a forced template", () =>
+{
+    string directory = LocatePromptFolder() ?? throw new Exception("No production prompt folder");
+    Type compiler = typeof(NIRACognitionService).Assembly.GetType(
+        "NIRAAgent.AI.Cognition.NIRACognitionPromptCompiler", throwOnError: true)!;
+    MethodInfo bootstrap = compiler.GetMethod("BootstrapSystem",
+        BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+        ?? throw new Exception("Missing first-call compiler");
+    string personality = File.ReadAllText(Path.Combine(directory, "nira_personality.yaml"));
+    string prompt = (string?)bootstrap.Invoke(null, new object[] { personality }) ?? string.Empty;
+    string focused = File.ReadAllText(Path.Combine(directory, "cognition.yaml"));
+    string contract = File.ReadAllText(Path.Combine(directory, "cognition_contract.yaml"));
+    if (!prompt.Contains("INTELLIGENT RICH COMPOSITION", StringComparison.Ordinal) ||
+        !focused.Contains("primary presentation for naturally structured material", StringComparison.Ordinal) ||
+        !contract.Contains("purposeful typed", StringComparison.Ordinal) ||
+        !prompt.Contains("transparent prose remains natural", StringComparison.Ordinal) ||
+        prompt.Contains("always emit exactly 3 cards", StringComparison.OrdinalIgnoreCase))
+        throw new Exception("Adaptive composition contract missing, or a fixed layout was imposed");
+    if (NIRAPresentationPolicy.Normalize(Array.Empty<NIRARichBlock>()).Count != 0)
+        throw new Exception("Short conversations were given invented visual blocks");
+});
+
+Check("R24 table tabs timeline and checklist survive declarative JSON parsing", () =>
+{
+    using JsonDocument document = JsonDocument.Parse("""
+        {"displayBlocks":[
+          {"type":"table","title":"Options","columns":["Board","Best use"],
+            "rows":[["ESP32","Simple navigation"],["Pi","Vision"]]},
+          {"type":"tabs","title":"Considerations","items":["Cost","Power"],
+            "panels":["Compare budgets","Compare energy consumption"]},
+          {"type":"timeline","title":"History","items":["1956 — Research","2017 — Transformers"]},
+          {"type":"checklist","title":"Things to verify","items":["Sensors","Battery"]}
+        ]}
+        """);
+    var parsed = NIRARichBlockJsonReader.Read(document.RootElement);
+    if (parsed.Count != 4 ||
+        !parsed.Select(block => block.Type).SequenceEqual(new[] { "table", "tabs", "timeline", "checklist" }) ||
+        parsed[0].Rows.Count != 2 || parsed[1].Panels.Count != 2 ||
+        parsed[2].Items.Count != 2 || parsed[3].Items.Count != 2)
+        throw new Exception("A valid structured response was dropped or lost data");
+    if (NIRAPresentationPolicy.Normalize(new[] {
+        new NIRARichBlock { Type = "chart", Title = "Not sourced", Labels = new[] { "A", "B" },
+            Values = new[] { double.NaN, 4.0 } }
+    }).Count != 0)
+        throw new Exception("Nonfinite invented chart values should be rejected");
 });
 
 Check("R20 visual block contract preserves supported narrative and actual source", () =>
@@ -5056,7 +5797,7 @@ static string? LocatePromptFolder()
 
 ---
 
-## 8. `NIRAAgent.UI\App.xaml`
+## 12. `NIRAAgent.UI\App.xaml`
 
 **File:** `NIRAAgent.UI\App.xaml`
 
@@ -5076,7 +5817,7 @@ static string? LocatePromptFolder()
 
 ---
 
-## 9. `NIRAAgent.UI\App.xaml.cs`
+## 13. `NIRAAgent.UI\App.xaml.cs`
 
 **File:** `NIRAAgent.UI\App.xaml.cs`
 
@@ -5095,6 +5836,7 @@ using NIRAAgent.AI.Cognition;
 using NIRAAgent.Capabilities;
 using NIRAAgent.Authorization;
 using NIRAAgent.Artifacts;
+using NIRAAgent.Images;
 using NIRAAgent.Agent.State;
 using NIRAAgent.Character.Dynamics;
 using NIRAAgent.Character.History;
@@ -5609,6 +6351,11 @@ public partial class App : WpfApplication
             builder.Services.AddSingleton<
                 INIRACapabilityHandler,
                 NIRAHttpDownloadCapabilityHandler>();
+
+            // Scoped public image discovery; no Playwright browser required.
+            builder.Services.AddSingleton<NIRACommonsImageDiscoveryService>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRAImageSearchCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRAImageRetrieveCapabilityHandler>();
 
 
             builder.Services.AddSingleton<
@@ -6321,7 +7068,7 @@ public partial class App : WpfApplication
 
 ---
 
-## 10. `NIRAAgent.UI\AssemblyInfo.cs`
+## 14. `NIRAAgent.UI\AssemblyInfo.cs`
 
 **File:** `NIRAAgent.UI\AssemblyInfo.cs`
 
@@ -6345,7 +7092,7 @@ using System.Windows;
 
 ---
 
-## 11. `NIRAAgent.UI\Companion\CompanionWindow.xaml`
+## 15. `NIRAAgent.UI\Companion\CompanionWindow.xaml`
 
 **File:** `NIRAAgent.UI\Companion\CompanionWindow.xaml`
 
@@ -6385,7 +7132,7 @@ using System.Windows;
 
 ---
 
-## 12. `NIRAAgent.UI\Companion\CompanionWindow.xaml.cs`
+## 16. `NIRAAgent.UI\Companion\CompanionWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\Companion\CompanionWindow.xaml.cs`
 
@@ -8747,7 +9494,7 @@ public partial class CompanionWindow
 
 ---
 
-## 13. `NIRAAgent.UI\Companion\NIRABlobShowcaseWindow.xaml`
+## 17. `NIRAAgent.UI\Companion\NIRABlobShowcaseWindow.xaml`
 
 **File:** `NIRAAgent.UI\Companion\NIRABlobShowcaseWindow.xaml`
 
@@ -8884,7 +9631,7 @@ public partial class CompanionWindow
 
 ---
 
-## 14. `NIRAAgent.UI\Companion\NIRABlobShowcaseWindow.xaml.cs`
+## 18. `NIRAAgent.UI\Companion\NIRABlobShowcaseWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\Companion\NIRABlobShowcaseWindow.xaml.cs`
 
@@ -9037,7 +9784,7 @@ public partial class NIRABlobShowcaseWindow : Window
 
 ---
 
-## 15. `NIRAAgent.UI\Companion\NIRABlobStyleShowcaseWindow.xaml`
+## 19. `NIRAAgent.UI\Companion\NIRABlobStyleShowcaseWindow.xaml`
 
 **File:** `NIRAAgent.UI\Companion\NIRABlobStyleShowcaseWindow.xaml`
 
@@ -9173,7 +9920,7 @@ public partial class NIRABlobShowcaseWindow : Window
 
 ---
 
-## 16. `NIRAAgent.UI\Companion\NIRABlobStyleShowcaseWindow.xaml.cs`
+## 20. `NIRAAgent.UI\Companion\NIRABlobStyleShowcaseWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\Companion\NIRABlobStyleShowcaseWindow.xaml.cs`
 
@@ -9383,7 +10130,7 @@ public partial class NIRABlobStyleShowcaseWindow
 
 ---
 
-## 17. `NIRAAgent.UI\Companion\Particles\IParticleFormProvider.cs`
+## 21. `NIRAAgent.UI\Companion\Particles\IParticleFormProvider.cs`
 
 **File:** `NIRAAgent.UI\Companion\Particles\IParticleFormProvider.cs`
 
@@ -9413,7 +10160,7 @@ public interface IParticleFormProvider
 
 ---
 
-## 18. `NIRAAgent.UI\Companion\Particles\OrbParticleFormProvider.cs`
+## 22. `NIRAAgent.UI\Companion\Particles\OrbParticleFormProvider.cs`
 
 **File:** `NIRAAgent.UI\Companion\Particles\OrbParticleFormProvider.cs`
 
@@ -10889,7 +11636,7 @@ public sealed class OrbParticleFormProvider
 
 ---
 
-## 19. `NIRAAgent.UI\Companion\Particles\ParticleDensityProfile.cs`
+## 23. `NIRAAgent.UI\Companion\Particles\ParticleDensityProfile.cs`
 
 **File:** `NIRAAgent.UI\Companion\Particles\ParticleDensityProfile.cs`
 
@@ -10962,7 +11709,7 @@ public sealed record ParticleDensityProfile(
 
 ---
 
-## 20. `NIRAAgent.UI\Companion\Particles\ParticleEntityControl.cs`
+## 24. `NIRAAgent.UI\Companion\Particles\ParticleEntityControl.cs`
 
 **File:** `NIRAAgent.UI\Companion\Particles\ParticleEntityControl.cs`
 
@@ -12013,7 +12760,7 @@ public sealed class ParticleEntityControl
 
 ---
 
-## 21. `NIRAAgent.UI\Companion\Particles\ParticleFormRegistry.cs`
+## 25. `NIRAAgent.UI\Companion\Particles\ParticleFormRegistry.cs`
 
 **File:** `NIRAAgent.UI\Companion\Particles\ParticleFormRegistry.cs`
 
@@ -12122,7 +12869,7 @@ public sealed class ParticleFormRegistry
 
 ---
 
-## 22. `NIRAAgent.UI\Companion\Particles\ParticleMorphEngine.cs`
+## 26. `NIRAAgent.UI\Companion\Particles\ParticleMorphEngine.cs`
 
 **File:** `NIRAAgent.UI\Companion\Particles\ParticleMorphEngine.cs`
 
@@ -13391,7 +14138,7 @@ public readonly record struct ParticleRenderState(
 
 ---
 
-## 23. `NIRAAgent.UI\Companion\Particles\ParticleSizeBand.cs`
+## 27. `NIRAAgent.UI\Companion\Particles\ParticleSizeBand.cs`
 
 **File:** `NIRAAgent.UI\Companion\Particles\ParticleSizeBand.cs`
 
@@ -13426,7 +14173,7 @@ public enum ParticleSizeBand
 
 ---
 
-## 24. `NIRAAgent.UI\Companion\Particles\ParticleTarget.cs`
+## 28. `NIRAAgent.UI\Companion\Particles\ParticleTarget.cs`
 
 **File:** `NIRAAgent.UI\Companion\Particles\ParticleTarget.cs`
 
@@ -13491,7 +14238,7 @@ public readonly record struct ParticleTarget(
 
 ---
 
-## 25. `NIRAAgent.UI\CredentialPromptWindow.xaml`
+## 29. `NIRAAgent.UI\CredentialPromptWindow.xaml`
 
 **File:** `NIRAAgent.UI\CredentialPromptWindow.xaml`
 
@@ -13616,7 +14363,7 @@ public readonly record struct ParticleTarget(
 
 ---
 
-## 26. `NIRAAgent.UI\CredentialPromptWindow.xaml.cs`
+## 30. `NIRAAgent.UI\CredentialPromptWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\CredentialPromptWindow.xaml.cs`
 
@@ -13798,7 +14545,352 @@ public partial class CredentialPromptWindow : Window
 
 ---
 
-## 27. `NIRAAgent.UI\MainWindow.xaml`
+## 31. `NIRAAgent.UI\Gallery\NIRAGalleryPage.xaml`
+
+**File:** `NIRAAgent.UI\Gallery\NIRAGalleryPage.xaml`
+
+```xml
+<UserControl x:Class="NIRAAgent.UI.Gallery.NIRAGalleryPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="Transparent" Foreground="{DynamicResource NIRATextBrush}"
+             FontFamily="Segoe UI Variable Text, Segoe UI">
+    <UserControl.Resources>
+        <Style x:Key="GalleryNavStyle" TargetType="Button">
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
+            <Setter Property="Background" Value="{DynamicResource NIRAChipBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource NIRAGlassBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="14,12"/>
+            <Setter Property="Margin" Value="0,0,0,9"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="13">
+                            <ContentPresenter Margin="{TemplateBinding Padding}" VerticalAlignment="Center" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="Tag" Value="ACTIVE">
+                    <Setter Property="Background" Value="{DynamicResource NIRACardHoverBrush}"/>
+                    <Setter Property="BorderBrush" Value="{DynamicResource NIRABlueBrush}"/>
+                    <Setter Property="FontWeight" Value="SemiBold"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="GalleryActionStyle" TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource NIRAChipBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource NIRAGlassBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="13,9"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template"><Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border CornerRadius="10" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value></Setter>
+        </Style>
+    </UserControl.Resources>
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="236"/>
+            <ColumnDefinition Width="14"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <!-- The Gallery has its own left navigation; it never replaces NIRA's presence panel permanently. -->
+        <Border Grid.Column="0" CornerRadius="19" Background="{DynamicResource NIRAGlassStrongTintBrush}"
+                BorderBrush="{DynamicResource NIRAGlassBorderBrush}" BorderThickness="1" Padding="17,22">
+            <DockPanel LastChildFill="True">
+                <StackPanel DockPanel.Dock="Top">
+                    <TextBlock Text="MEDIA LIBRARY" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource NIRACyanBrush}"/>
+                    <TextBlock Text="Your Gallery" FontFamily="Segoe UI Variable Display, Segoe UI" FontSize="25"
+                               Margin="0,8,0,3" FontWeight="SemiBold"/>
+                    <TextBlock Text="Saved pictures, all in one place." FontSize="11" TextWrapping="Wrap"
+                               Foreground="{DynamicResource NIRASecondaryBrush}" Margin="0,0,0,24"/>
+                    <Button x:Name="UploadedButton" Content="▣   Uploaded images" Click="Uploaded_Click" Tag="ACTIVE"
+                            Style="{StaticResource GalleryNavStyle}"/>
+                    <Button x:Name="WebButton" Content="◎   Found on web" Click="Web_Click"
+                            Style="{StaticResource GalleryNavStyle}"/>
+                    <Button x:Name="GeneratedButton" Content="✧   AI generated" Click="Generated_Click"
+                            Style="{StaticResource GalleryNavStyle}"/>
+                </StackPanel>
+                <StackPanel DockPanel.Dock="Bottom" VerticalAlignment="Bottom">
+                    <Border Height="1" Margin="0,12,0,13" Background="{DynamicResource NIRAGlassBorderBrush}"/>
+                    <TextBlock Text="PRIVATE LOCAL LIBRARY" FontSize="9" FontWeight="SemiBold"
+                               Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                    <TextBlock Text="Original uploads and chat evidence remain untouched."
+                               TextWrapping="Wrap" FontSize="10.5" Margin="0,7,0,0"
+                               Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+        <Border Grid.Column="2" CornerRadius="19" BorderThickness="1"
+                BorderBrush="{DynamicResource NIRAGlassBorderBrush}" Background="{DynamicResource NIRAGlassTintBrush}"
+                Padding="20,17">
+            <Grid>
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                <StackPanel Grid.Row="0">
+                    <DockPanel LastChildFill="True">
+                        <StackPanel DockPanel.Dock="Left">
+                            <TextBlock x:Name="SectionTitle" Text="Uploaded images" FontSize="23" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="SectionSummary" Text="Images you share with NIRA" FontSize="11" Margin="0,5,0,0"
+                                       Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button x:Name="AddButton" Content="+ Add photos" Style="{StaticResource GalleryActionStyle}"
+                                    Margin="0,0,8,0" Click="Add_Click"/>
+                            <Button Content="⟳ Refresh" Style="{StaticResource GalleryActionStyle}" Click="Refresh_Click"/>
+                        </StackPanel>
+                    </DockPanel>
+                    <TextBlock Text="GALLERY FOLDER" FontSize="9.5" FontWeight="SemiBold" Margin="0,22,0,7"
+                               Foreground="{DynamicResource NIRACyanBrush}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" BorderThickness="1" CornerRadius="10" Padding="11,9" MinHeight="39"
+                                Background="{DynamicResource NIRAChipBrush}" BorderBrush="{DynamicResource NIRAGlassBorderBrush}">
+                            <TextBlock x:Name="StoragePathText" FontSize="11.5" TextTrimming="CharacterEllipsis"/>
+                        </Border>
+                        <Button Grid.Column="1" Content="Change folder" Margin="8,0,0,0"
+                                Style="{StaticResource GalleryActionStyle}" Click="ChangeFolder_Click"/>
+                        <Button Grid.Column="2" Content="Open" Margin="8,0,0,0"
+                                Style="{StaticResource GalleryActionStyle}" Click="OpenFolder_Click"/>
+                    </Grid>
+                </StackPanel>
+                <Grid Grid.Row="1" Margin="0,16,0,12">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <TextBlock x:Name="StatusText" Text="Ready" FontSize="11" TextWrapping="Wrap"
+                               Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                    <TextBlock x:Name="CountText" Grid.Column="1" Text="0 photos" FontSize="11"
+                               Foreground="{DynamicResource NIRACyanBrush}"/>
+                </Grid>
+                <Grid Grid.Row="2">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <ItemsControl x:Name="ImageTiles" ItemsSource="{Binding Tiles}">
+                            <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate><DataTemplate>
+                                <Button Tag="{Binding}" Click="Image_Click" Cursor="Hand" Background="Transparent" BorderThickness="0"
+                                        Margin="0,0,13,15" Padding="0" ToolTip="Open photo">
+                                    <Border Width="220" CornerRadius="14" ClipToBounds="True" BorderThickness="1"
+                                            BorderBrush="{DynamicResource NIRAGlassBorderBrush}" Background="{DynamicResource NIRAChipBrush}">
+                                        <StackPanel>
+                                            <Border Height="150" Background="{DynamicResource NIRAChipBrush}">
+                                                <Image Source="{Binding Preview}" Stretch="Uniform"/>
+                                            </Border>
+                                            <StackPanel Margin="12,11,12,12">
+                                                <TextBlock Text="{Binding Title}" FontSize="12" FontWeight="SemiBold"
+                                                           TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding Credit}" FontSize="10.5" Margin="0,5,0,0"
+                                                           Foreground="{DynamicResource NIRASecondaryBrush}" TextTrimming="CharacterEllipsis"/>
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Border>
+                                </Button>
+                            </DataTemplate></ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                    <StackPanel x:Name="EmptyState" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                MaxWidth="410">
+                        <TextBlock Text="✧" FontSize="40" Foreground="{DynamicResource NIRABlueBrush}" HorizontalAlignment="Center"/>
+                        <TextBlock x:Name="EmptyTitle" Text="No images yet" Margin="0,12,0,0" FontSize="19"
+                                   HorizontalAlignment="Center" FontWeight="SemiBold"/>
+                        <TextBlock x:Name="EmptyDescription" Text="Images will appear here as they are added."
+                                   Margin="0,9,0,0" TextWrapping="Wrap" TextAlignment="Center" FontSize="11.5"
+                                   Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                    </StackPanel>
+                </Grid>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>
+```
+
+---
+
+## 32. `NIRAAgent.UI\Gallery\NIRAGalleryPage.xaml.cs`
+
+**File:** `NIRAAgent.UI\Gallery\NIRAGalleryPage.xaml.cs`
+
+```csharp
+using System.IO;
+using System.Collections.ObjectModel;
+using System.Diagnostics;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using NIRAAgent.Artifacts;
+using NIRAAgent.Gallery;
+using NIRAAgent.UI.ViewModels;
+using NIRAAgent.UI.Visuals;
+using Microsoft.Win32;
+
+namespace NIRAAgent.UI.Gallery;
+
+public partial class NIRAGalleryPage : UserControl
+{
+    private NIRAGalleryLibraryService? _library;
+    private NIRAGalleryCategory _category = NIRAGalleryCategory.Uploaded;
+    public ObservableCollection<NIRAGalleryTile> Tiles { get; } = new();
+    public NIRAGalleryPage()
+    {
+        InitializeComponent();
+        DataContext = this;
+    }
+
+    public void Initialize(NIRAGalleryLibraryService library)
+    {
+        _library = library;
+        RefreshGallery();
+    }
+
+    public void RefreshGallery()
+    {
+        if (_library == null) return;
+        StoragePathText.Text = _library.RootFolder;
+        Tiles.Clear();
+        var all = _library.Items.Where(x => x.Category == _category).ToArray();
+        foreach (var item in all.Take(240))
+        {
+            string path = _library.ResolvePath(item);
+            if (File.Exists(path)) Tiles.Add(new NIRAGalleryTile(item, path));
+        }
+        CountText.Text = $"{all.Length} photo{(all.Length == 1 ? "" : "s")}";
+        StatusText.Text = all.Length > 240 ? "Showing 240 newest images. Older files remain safely stored." : "Local library • Images kept on your PC";
+        EmptyState.Visibility = Tiles.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        EmptyTitle.Text = _category == NIRAGalleryCategory.AiGenerated ? "AI image generation is not connected yet" : "No images yet";
+        EmptyDescription.Text = _category switch
+        {
+            NIRAGalleryCategory.Uploaded => "Photos you send to NIRA are copied here automatically. You can also add photos yourself.",
+            NIRAGalleryCategory.WebFound => "Verified web images NIRA retrieves will appear here with their original source.",
+            _ => "This section is ready for NIRA's future image-generation capability. No invented or placeholder pictures."
+        };
+        AddButton.Visibility = _category == NIRAGalleryCategory.Uploaded ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void SetCategory(NIRAGalleryCategory category)
+    {
+        _category = category;
+        UploadedButton.Tag = category == NIRAGalleryCategory.Uploaded ? "ACTIVE" : null;
+        WebButton.Tag = category == NIRAGalleryCategory.WebFound ? "ACTIVE" : null;
+        GeneratedButton.Tag = category == NIRAGalleryCategory.AiGenerated ? "ACTIVE" : null;
+        SectionTitle.Text = category switch
+        {
+            NIRAGalleryCategory.Uploaded => "Uploaded images",
+            NIRAGalleryCategory.WebFound => "Found on the web",
+            _ => "AI generated images"
+        };
+        SectionSummary.Text = category switch
+        {
+            NIRAGalleryCategory.Uploaded => "Images you share with NIRA",
+            NIRAGalleryCategory.WebFound => "Verified pictures NIRA has discovered",
+            _ => "Images NIRA creates in the future"
+        };
+        RefreshGallery();
+    }
+    private void Uploaded_Click(object sender, RoutedEventArgs e) => SetCategory(NIRAGalleryCategory.Uploaded);
+    private void Web_Click(object sender, RoutedEventArgs e) => SetCategory(NIRAGalleryCategory.WebFound);
+    private void Generated_Click(object sender, RoutedEventArgs e) => SetCategory(NIRAGalleryCategory.AiGenerated);
+    private void Refresh_Click(object sender, RoutedEventArgs e) => RefreshGallery();
+
+    private async void Add_Click(object sender, RoutedEventArgs e)
+    {
+        if (_library == null) return;
+        OpenFileDialog dialog = new()
+        {
+            Title = "Add photos to NIRA Gallery", Multiselect = true,
+            Filter = "Pictures|*.jpg;*.jpeg;*.png;*.gif;*.bmp"
+        };
+        if (dialog.ShowDialog(Window.GetWindow(this)) != true) return;
+        AddButton.IsEnabled = false;
+        try
+        {
+            int count = await Task.Run(() => dialog.FileNames.Count(path =>
+                _library.Import(path, NIRAGalleryCategory.Uploaded) != null));
+            RefreshGallery();
+            StatusText.Text = $"{count} image(s) added or already in the library.";
+        }
+        catch (Exception ex) { MessageBox.Show(Window.GetWindow(this), ex.Message, "Gallery import", MessageBoxButton.OK, MessageBoxImage.Warning); }
+        finally { AddButton.IsEnabled = true; }
+    }
+
+    private async void ChangeFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (_library == null) return;
+        OpenFolderDialog dialog = new()
+        {
+            Title = "Choose an empty folder for NIRA Gallery",
+            Multiselect = false
+        };
+        if (dialog.ShowDialog(Window.GetWindow(this)) != true) return;
+        string target = dialog.FolderName;
+        var confirmation = MessageBox.Show(Window.GetWindow(this),
+            "Move all images managed by NIRA Gallery to this folder?\n\n" + target +
+            "\n\nNIRA will copy and verify the files before changing the saved location. Original user uploads and past chat caches will not be moved.",
+            "Move gallery storage", MessageBoxButton.YesNo, MessageBoxImage.Question);
+        if (confirmation != MessageBoxResult.Yes) return;
+        IsEnabled = false;
+        try
+        {
+            await Task.Run(() => _library.MoveLibrary(target));
+            RefreshGallery();
+            StatusText.Text = "Gallery library moved and verified successfully.";
+        }
+        catch (Exception ex) { MessageBox.Show(Window.GetWindow(this), ex.Message, "Gallery storage unchanged", MessageBoxButton.OK, MessageBoxImage.Warning); }
+        finally { IsEnabled = true; }
+    }
+    private void OpenFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (_library == null) return;
+        try { Process.Start(new ProcessStartInfo("explorer.exe", $"\"{_library.RootFolder}\"") { UseShellExecute = true }); }
+        catch (Exception ex) { StatusText.Text = ex.Message; }
+    }
+
+    private void Image_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: NIRAGalleryTile selected }) return;
+        var gallery = Tiles.ToArray();
+        int index = Array.IndexOf(gallery, selected);
+        if (index < 0) return;
+        int start = Math.Max(0, index - 12);
+        int end = Math.Min(gallery.Length, index + 13);
+        var images = gallery[start..end].Select(t => new VisualArtifactViewModel(new NIRAVisualArtifact
+        {
+            ArtifactId = t.Record.Id,
+            LocalPath = t.FullPath,
+            Title = t.Record.Title,
+            Caption = t.Record.Credit,
+            SourceUri = t.Record.SourceUri,
+            SourceKind = NIRAVisualArtifactSourceKind.LocalImage
+        })).ToArray();
+        var window = new NIRAUserAttachmentGalleryWindow(images, index - start) { Owner = Window.GetWindow(this) };
+        window.ShowDialog();
+    }
+}
+
+public sealed record NIRAGalleryTile(NIRAGalleryItem Record, string FullPath)
+{
+    public string Title => Record.Title;
+    public string Credit => Record.Credit.Length > 0 ? Record.Credit : Record.Category switch
+    {
+        NIRAGalleryCategory.Uploaded => "Your uploaded photo",
+        NIRAGalleryCategory.WebFound => "Web reference photo",
+        _ => "Generated image"
+    };
+    public ImageSource? Preview { get; } = VisualArtifactViewModel.TryLoadPreview(FullPath, 350);
+}
+```
+
+---
+
+## 33. `NIRAAgent.UI\MainWindow.xaml`
 
 **File:** `NIRAAgent.UI\MainWindow.xaml`
 
@@ -13811,6 +14903,7 @@ public partial class CredentialPromptWindow : Window
         xmlns:ui="clr-namespace:NIRAAgent.UI"
         xmlns:present="clr-namespace:NIRAAgent.UI.Presentation"
         xmlns:typing="clr-namespace:NIRAAgent.UI.Typing"
+        xmlns:gallery="clr-namespace:NIRAAgent.UI.Gallery"
         Title="NIRA by ELVARA"
         Icon="Assets/Nira-Icon.ico"
         Width="1440"
@@ -14390,47 +15483,150 @@ public partial class CredentialPromptWindow : Window
                                 </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemContainerStyle>
                                     <Style TargetType="ContentPresenter">
-                                        <Setter Property="Margin" Value="0,0,7,0"/>
+                                        <Setter Property="Margin" Value="0,0,9,0"/>
                                     </Style>
                                 </ItemsControl.ItemContainerStyle>
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <Grid>
+                                            <!-- Source-grounded photo display. The media is the
+                                                 focal point; metadata lives in a readable footer.
+                                                 Width follows the chat column up to 760px. -->
                                             <Border x:Name="AssistantSingleImageCard"
-                                                    CornerRadius="14" ClipToBounds="True"
+                                                    CornerRadius="17" ClipToBounds="True"
                                                     Background="{DynamicResource NIRAComposerBadgeBrush}"
                                                     BorderBrush="{DynamicResource NIRAComposerEdgeBrush}"
                                                     BorderThickness="1" Visibility="Collapsed">
-                                                <Grid Width="520" MaxWidth="520">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="195"/>
-                                                        <ColumnDefinition Width="*"/>
-                                                    </Grid.ColumnDefinitions>
-                                                    <Border Grid.Column="0" ClipToBounds="True" Background="#FF080E1C"
-                                                            MouseLeftButtonUp="UserImageGalleryTile_MouseLeftButtonUp" Cursor="Hand">
-                                                        <Image Source="{Binding PreviewImage}" Width="195" Height="147"
-                                                               Stretch="UniformToFill" SnapsToDevicePixels="True"/>
+                                                <Grid Width="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType={x:Type ItemsControl}}}"
+                                                      MaxWidth="640">
+                                                    <Grid.RowDefinitions>
+                                                        <RowDefinition Height="Auto"/>
+                                                        <RowDefinition Height="Auto"/>
+                                                    </Grid.RowDefinitions>
+                                                    <Border Grid.Row="0" Height="315" ClipToBounds="True"
+                                                            Background="#FF091529" Cursor="Hand"
+                                                            ToolTip="Open image at full size"
+                                                            MouseLeftButtonUp="UserImageGalleryTile_MouseLeftButtonUp">
+                                                        <Grid>
+                                                            <Image Source="{Binding PreviewImage}" Stretch="Uniform"
+                                                                   RenderOptions.BitmapScalingMode="HighQuality"
+                                                                   SnapsToDevicePixels="True"/>
+                                                            <Border Background="#A5091730" HorizontalAlignment="Left"
+                                                                    VerticalAlignment="Top" Margin="14"
+                                                                    Padding="10,6" CornerRadius="8"
+                                                                    IsHitTestVisible="False">
+                                                                <StackPanel Orientation="Horizontal">
+                                                                    <TextBlock Text="✦" FontSize="12" Margin="0,0,7,0"
+                                                                               Foreground="#FF7EE3FF"/>
+                                                                    <TextBlock Text="NIRA  /  IMAGE REFERENCE" FontSize="10"
+                                                                               FontWeight="SemiBold" Foreground="White"/>
+                                                                </StackPanel>
+                                                            </Border>
+                                                            <Border HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                                                    Margin="0,0,13,13" Padding="10,6"
+                                                                    Background="#B0081730" CornerRadius="8"
+                                                                    IsHitTestVisible="False">
+                                                                <TextBlock Text="↗  VIEW FULL IMAGE" FontSize="10"
+                                                                           FontWeight="SemiBold" Foreground="White"/>
+                                                            </Border>
+                                                        </Grid>
                                                     </Border>
-                                                    <StackPanel Grid.Column="1" Margin="13,12,14,12"
-                                                                VerticalAlignment="Center">
-                                                        <TextBlock Text="{Binding Title}" FontSize="13"
+                                                    <StackPanel Grid.Row="1" Margin="18,15,18,16">
+                                                        <TextBlock Text="{Binding CreditProvider}" FontSize="10"
+                                                                   FontWeight="SemiBold" Foreground="{DynamicResource NIRACyanBrush}"
+                                                                   Margin="0,0,0,5">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding HasStructuredCredit}" Value="False">
+                                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                        <TextBlock Text="{Binding Title}" FontSize="17"
                                                                    FontWeight="SemiBold" TextWrapping="Wrap"
                                                                    Foreground="{DynamicResource NIRATextBrush}"/>
-                                                        <TextBlock Text="{Binding Caption}" FontSize="11"
-                                                                   Margin="0,6,0,0" TextWrapping="Wrap" MaxHeight="73"
-                                                                   Foreground="{DynamicResource NIRASecondaryBrush}"/>
-                                                        <Button x:Name="AssistantImageSourceButton" Content="Open image source  ↗"
-                                                                Tag="{Binding SourceUri}" ToolTip="Open the verified image's original source"
-                                                                Background="Transparent" BorderThickness="0"
-                                                                Padding="0" Margin="0,8,0,0"
-                                                                HorizontalAlignment="Left"
+                                                        <WrapPanel Margin="0,9,0,0">
+                                                            <WrapPanel.Style>
+                                                                <Style TargetType="WrapPanel">
+                                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding HasStructuredCredit}" Value="False">
+                                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </WrapPanel.Style>
+                                                            <TextBlock Text="PHOTO BY  " FontSize="10.5"
+                                                                       Foreground="{DynamicResource NIRASecondaryBrush}"
+                                                                       VerticalAlignment="Center">
+                                                                <TextBlock.Style>
+                                                                    <Style TargetType="TextBlock">
+                                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding HasCreditCreator}" Value="False">
+                                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </TextBlock.Style>
+                                                            </TextBlock>
+                                                            <TextBlock Text="{Binding CreditCreator}" FontSize="11.5"
+                                                                       FontWeight="SemiBold" Margin="0,0,15,0"
+                                                                       Foreground="{DynamicResource NIRATextBrush}"/>
+                                                            <TextBlock Text="{Binding CreditLicense}" FontSize="10.5"
+                                                                       VerticalAlignment="Center"
+                                                                       Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                                                        </WrapPanel>
+                                                        <TextBlock Text="{Binding ReferenceCaption}" FontSize="11.5"
+                                                                   Margin="0,8,0,0" TextWrapping="Wrap"
+                                                                   Foreground="{DynamicResource NIRASecondaryBrush}">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding HasReferenceCaption}" Value="False">
+                                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                        <Button x:Name="AssistantImageSourceButton"
+                                                                Content="{Binding SourceActionLabel}"
+                                                                Tag="{Binding SourceUri}"
+                                                                ToolTip="Open the original credited source page"
+                                                                Margin="0,13,0,0" Padding="12,8"
+                                                                HorizontalAlignment="Left" Cursor="Hand"
+                                                                FontSize="11.5" FontWeight="SemiBold"
                                                                 Foreground="{DynamicResource NIRABlueBrush}"
-                                                                Cursor="Hand" FontSize="11" FontWeight="SemiBold"
-                                                                Click="VisualArtifactOpenSource_Click"/>
+                                                                Click="VisualArtifactOpenSource_Click">
+                                                            <Button.Template>
+                                                                <ControlTemplate TargetType="Button">
+                                                                    <Border x:Name="SourcePill"
+                                                                            Background="{DynamicResource NIRAGlassStrongTintBrush}"
+                                                                            BorderBrush="{DynamicResource NIRAComposerEdgeBrush}"
+                                                                            BorderThickness="1" CornerRadius="9"
+                                                                            Padding="{TemplateBinding Padding}">
+                                                                        <ContentPresenter HorizontalAlignment="Center"
+                                                                                          VerticalAlignment="Center"/>
+                                                                    </Border>
+                                                                    <ControlTemplate.Triggers>
+                                                                        <Trigger Property="IsMouseOver" Value="True">
+                                                                            <Setter TargetName="SourcePill" Property="BorderBrush"
+                                                                                    Value="{DynamicResource NIRACyanBrush}"/>
+                                                                        </Trigger>
+                                                                    </ControlTemplate.Triggers>
+                                                                </ControlTemplate>
+                                                            </Button.Template>
+                                                        </Button>
                                                     </StackPanel>
                                                 </Grid>
                                             </Border>
-                                            <Border x:Name="AssistantStripTile" Width="164" Height="108"
+                                            <Border x:Name="AssistantStripTile" Width="192" Height="144"
                                                     CornerRadius="11" ClipToBounds="True"
                                                     Background="{DynamicResource NIRAComposerBadgeBrush}"
                                                     BorderBrush="{DynamicResource NIRAComposerEdgeBrush}"
@@ -14457,6 +15653,22 @@ public partial class CredentialPromptWindow : Window
                                                     <Image x:Name="AssistantStripImage" Source="{Binding PreviewImage}"
                                                            Stretch="UniformToFill" SnapsToDevicePixels="True"/>
                                                     <Border x:Name="AssistantOverflowShade" Background="#00000000"/>
+                                                    <Border x:Name="AssistantStripLabelShade" Height="51"
+                                                            VerticalAlignment="Bottom" IsHitTestVisible="False">
+                                                        <Border.Background>
+                                                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                                                <GradientStop Color="#0709152B" Offset="0"/>
+                                                                <GradientStop Color="#DB081426" Offset="1"/>
+                                                            </LinearGradientBrush>
+                                                        </Border.Background>
+                                                        <StackPanel Margin="10,6,10,6" VerticalAlignment="Bottom">
+                                                            <TextBlock Text="{Binding Title}" FontSize="11"
+                                                                       FontWeight="SemiBold" Foreground="White"
+                                                                       TextTrimming="CharacterEllipsis"/>
+                                                            <TextBlock Text="{Binding CreditProvider}" FontSize="9"
+                                                                       Foreground="#FFD5EDFF" Margin="0,2,0,0"/>
+                                                        </StackPanel>
+                                                    </Border>
                                                     <TextBlock x:Name="AssistantOverflowBadge" Visibility="Collapsed"
                                                                Text="{Binding OverflowLabel}" Foreground="White"
                                                                FontWeight="SemiBold" FontSize="20"
@@ -14478,6 +15690,7 @@ public partial class CredentialPromptWindow : Window
                                             <DataTrigger Binding="{Binding IsOverflowTile}" Value="True">
                                                 <Setter TargetName="AssistantOverflowShade" Property="Background" Value="#B2091832"/>
                                                 <Setter TargetName="AssistantOverflowBadge" Property="Visibility" Value="Visible"/>
+                                                <Setter TargetName="AssistantStripLabelShade" Property="Visibility" Value="Collapsed"/>
                                                 <Setter TargetName="AssistantStripImage" Property="Effect">
                                                     <Setter.Value><BlurEffect Radius="7"/></Setter.Value>
                                                 </Setter>
@@ -15558,7 +16771,7 @@ public partial class CredentialPromptWindow : Window
                 </StackPanel>
 
                 <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="20,0,20,0">
-                    <Button Style="{StaticResource NavButtonStyle}" Content="Chat" Tag="ACTIVE"/>
+                    <Button x:Name="ChatNavButton" Style="{StaticResource NavButtonStyle}" Content="Chat" Tag="ACTIVE" Click="OpenChat_Click"/>
                     <Button Style="{StaticResource NavButtonStyle}" Content="Memory"
                             Tag="Show me the most relevant things you remember about our current work."
                             Click="QuickPrompt_Click"/>
@@ -15571,6 +16784,8 @@ public partial class CredentialPromptWindow : Window
                     <Button Style="{StaticResource NavButtonStyle}" Content="System"
                             Tag="Give me a concise status of your current system state and active work."
                             Click="QuickPrompt_Click"/>
+                    <Button x:Name="GalleryNavButton" Style="{StaticResource NavButtonStyle}" Content="Gallery"
+                            ToolTip="Open your saved image library" Click="OpenGallery_Click"/>
                 </StackPanel>
 
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
@@ -16381,13 +17596,16 @@ public partial class CredentialPromptWindow : Window
                 Grid.RowSpan="2" Panel.ZIndex="900"
                 Background="#F201040A" Opacity="0"
                 Visibility="Visible" IsHitTestVisible="False"/>
+        <!-- R34: Real local Gallery page. Chat stays alive underneath, with no LLM work. -->
+        <gallery:NIRAGalleryPage x:Name="GalleryPage" Grid.Row="1" Margin="12,10,12,12"
+                                 Visibility="Collapsed" Panel.ZIndex="8"/>
     </Grid>
 </Window>
 ```
 
 ---
 
-## 28. `NIRAAgent.UI\MainWindow.xaml.cs`
+## 34. `NIRAAgent.UI\MainWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\MainWindow.xaml.cs`
 
@@ -16396,6 +17614,7 @@ public partial class CredentialPromptWindow : Window
  * filename: MainWindow.xaml.cs
  */
 
+using System.IO;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Windows;
@@ -16409,6 +17628,8 @@ using System.Windows.Shapes;
 using NIRAAgent.Agent.State;
 using NIRAAgent.Conversation;
 using NIRAAgent.Artifacts;
+using NIRAAgent.Gallery;
+using NIRAAgent.UI.Gallery;
 using NIRAAgent.Authorization;
 using NIRAAgent.Branches;
 using NIRAAgent.Self.Model;
@@ -16522,6 +17743,7 @@ public partial class MainWindow : Window
     private readonly MainWindowViewModel _viewModel;
     private NIRAConversationArchiveStore? _conversationArchive;
     private NIRAVisualArtifactToastWindow? _visualArtifactToast;
+    private readonly NIRAGalleryLibraryService _galleryLibrary = new();
 
     public void AttachAuthorization(NIRAAuthorityStore store,
         NIRAScopedCapabilityAuthorizer authorizer, NIRACapabilityApprovalBroker broker)
@@ -16849,6 +18071,8 @@ public partial class MainWindow : Window
         DataContext =
             _viewModel;
 
+        GalleryPage.Initialize(_galleryLibrary);
+
         _viewModel.Messages.CollectionChanged +=
             Messages_CollectionChanged;
 
@@ -17005,10 +18229,67 @@ public partial class MainWindow : Window
         };
     }
 
+    private void OpenGallery_Click(object sender, RoutedEventArgs e)
+    {
+        MainWorkspace.Visibility = Visibility.Collapsed;
+        GalleryPage.Visibility = Visibility.Visible;
+        ChatNavButton.Tag = null;
+        GalleryNavButton.Tag = "ACTIVE";
+        ImportVisibleChatImages();
+        GalleryPage.RefreshGallery();
+    }
+
+    private void OpenChat_Click(object sender, RoutedEventArgs e)
+    {
+        GalleryPage.Visibility = Visibility.Collapsed;
+        MainWorkspace.Visibility = Visibility.Visible;
+        GalleryNavButton.Tag = null;
+        ChatNavButton.Tag = "ACTIVE";
+    }
+
+    private void ImportVisibleChatImages()
+    {
+        foreach (ChatMessageViewModel msg in _viewModel.Messages)
+        {
+            if (msg.Role.Equals("user", StringComparison.OrdinalIgnoreCase))
+                foreach (var image in msg.GetUserImageArtifacts())
+                    QueueGalleryImport(image.Artifact, NIRAGalleryCategory.Uploaded);
+            else
+                foreach (var image in msg.GetAssistantImageArtifacts())
+                    if (!string.IsNullOrWhiteSpace(image.SourceUri))
+                        QueueGalleryImport(image.Artifact, NIRAGalleryCategory.WebFound);
+        }
+    }
+
+    // No model request. Gallery gets independent durable copies of successfully
+    // displayed images. Failures never affect chat or visual artifact delivery.
+    private void QueueGalleryImport(NIRAVisualArtifact artifact, NIRAGalleryCategory category)
+    {
+        if (string.IsNullOrWhiteSpace(artifact.LocalPath) || !File.Exists(artifact.LocalPath)) return;
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var item = _galleryLibrary.Import(artifact.LocalPath, category,
+                    artifact.Title, artifact.Caption, artifact.SourceUri);
+                if (item != null)
+                    Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        if (GalleryPage.Visibility == Visibility.Visible) GalleryPage.RefreshGallery();
+                    }));
+            }
+            catch (Exception ex)
+            {
+                NIRADiagnosticTrace.Event("GALLERY-IMPORT", "Outcome=Failed Kind=" + ex.GetType().Name);
+            }
+        });
+    }
+
     private void QuickPrompt_Click(
         object sender,
         RoutedEventArgs e)
     {
+        OpenChat_Click(sender, e);
         if (sender is not Button button ||
             button.Tag is not string prompt ||
             string.IsNullOrWhiteSpace(prompt))
@@ -18921,6 +20202,9 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (!string.IsNullOrWhiteSpace(artifact.SourceUri))
+            QueueGalleryImport(artifact, NIRAGalleryCategory.WebFound);
+
         bool chatActive =
             IsVisible
             &&
@@ -19175,6 +20459,9 @@ public partial class MainWindow : Window
             {
                 message.PropertyChanged +=
                     Message_PropertyChanged;
+                if (message.Role.Equals("user", StringComparison.OrdinalIgnoreCase))
+                    foreach (var photo in message.GetUserImageArtifacts())
+                        QueueGalleryImport(photo.Artifact, NIRAGalleryCategory.Uploaded);
             }
         }
 
@@ -19885,7 +21172,7 @@ public partial class MainWindow : Window
 
 ---
 
-## 29. `NIRAAgent.UI\Models\ChatMessage.cs`
+## 35. `NIRAAgent.UI\Models\ChatMessage.cs`
 
 **File:** `NIRAAgent.UI\Models\ChatMessage.cs`
 
@@ -19934,7 +21221,7 @@ public sealed class ChatMessage
 
 ---
 
-## 30. `NIRAAgent.UI\NIRAAgent.UI.csproj`
+## 36. `NIRAAgent.UI\NIRAAgent.UI.csproj`
 
 **File:** `NIRAAgent.UI\NIRAAgent.UI.csproj`
 
@@ -20117,7 +21404,7 @@ public sealed class ChatMessage
 
 ---
 
-## 31. `NIRAAgent.UI\NIRABackdropBorder.cs`
+## 37. `NIRAAgent.UI\NIRABackdropBorder.cs`
 
 **File:** `NIRAAgent.UI\NIRABackdropBorder.cs`
 
@@ -20401,7 +21688,7 @@ public sealed class NIRABackdropBorder : Border
 
 ---
 
-## 32. `NIRAAgent.UI\NIRAUiParticleTransition.cs`
+## 38. `NIRAAgent.UI\NIRAUiParticleTransition.cs`
 
 **File:** `NIRAAgent.UI\NIRAUiParticleTransition.cs`
 
@@ -20720,7 +22007,7 @@ internal static class NIRAUiParticleTransition
 
 ---
 
-## 33. `NIRAAgent.UI\NIRAUtilityBackdropBorder.cs`
+## 39. `NIRAAgent.UI\NIRAUtilityBackdropBorder.cs`
 
 **File:** `NIRAAgent.UI\NIRAUtilityBackdropBorder.cs`
 
@@ -20980,7 +22267,7 @@ public sealed class NIRAUtilityBackdropBorder : Border
 
 ---
 
-## 34. `NIRAAgent.UI\NIRAWorkAreaWindowGuard.cs`
+## 40. `NIRAAgent.UI\NIRAWorkAreaWindowGuard.cs`
 
 **File:** `NIRAAgent.UI\NIRAWorkAreaWindowGuard.cs`
 
@@ -21179,7 +22466,7 @@ internal sealed class NIRAWorkAreaWindowGuard : IDisposable
 
 ---
 
-## 35. `NIRAAgent.UI\OllamaApiKeyWindow.xaml`
+## 41. `NIRAAgent.UI\OllamaApiKeyWindow.xaml`
 
 **File:** `NIRAAgent.UI\OllamaApiKeyWindow.xaml`
 
@@ -21362,7 +22649,7 @@ internal sealed class NIRAWorkAreaWindowGuard : IDisposable
 
 ---
 
-## 36. `NIRAAgent.UI\OllamaApiKeyWindow.xaml.cs`
+## 42. `NIRAAgent.UI\OllamaApiKeyWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\OllamaApiKeyWindow.xaml.cs`
 
@@ -21518,7 +22805,7 @@ public partial class OllamaApiKeyWindow : Window
 
 ---
 
-## 37. `NIRAAgent.UI\PastChatWindow.cs`
+## 43. `NIRAAgent.UI\PastChatWindow.cs`
 
 **File:** `NIRAAgent.UI\PastChatWindow.cs`
 
@@ -22139,7 +23426,7 @@ public sealed class PastChatWindow : Window
 
 ---
 
-## 38. `NIRAAgent.UI\PermissionsWindow.xaml`
+## 44. `NIRAAgent.UI\PermissionsWindow.xaml`
 
 **File:** `NIRAAgent.UI\PermissionsWindow.xaml`
 
@@ -22664,7 +23951,7 @@ public sealed class PastChatWindow : Window
 
 ---
 
-## 39. `NIRAAgent.UI\PermissionsWindow.xaml.cs`
+## 45. `NIRAAgent.UI\PermissionsWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\PermissionsWindow.xaml.cs`
 
@@ -23257,7 +24544,7 @@ public partial class PermissionsWindow : Window
 
 ---
 
-## 40. `NIRAAgent.UI\PermissionToastWindow.xaml`
+## 46. `NIRAAgent.UI\PermissionToastWindow.xaml`
 
 **File:** `NIRAAgent.UI\PermissionToastWindow.xaml`
 
@@ -23525,7 +24812,7 @@ public partial class PermissionsWindow : Window
 
 ---
 
-## 41. `NIRAAgent.UI\PermissionToastWindow.xaml.cs`
+## 47. `NIRAAgent.UI\PermissionToastWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\PermissionToastWindow.xaml.cs`
 
@@ -24484,24 +25771,24 @@ public partial class PermissionToastWindow : Window
 
 ---
 
-## 42. `NIRAAgent.UI\Presentation\NIRAChatDocument.cs`
+## 48. `NIRAAgent.UI\Presentation\NIRAChatDocument.cs`
 
 **File:** `NIRAAgent.UI\Presentation\NIRAChatDocument.cs`
 
 ```csharp
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using System.Text.RegularExpressions;
+using NIRAAgent.Presentation;
 
 namespace NIRAAgent.UI.Presentation;
 
 /// <summary>
-/// Layout-only document typography. Reuses the trusted NIRAStyledChatText
-/// inline parser for clickable web links, emphasis and literal code; it never
-/// interprets or executes model-supplied XAML/HTML and never fetches resources.
-/// The model may emit ordinary speech; visual hierarchy is only applied where
-/// explicit line breaks/Markdown delimiters supply a structure.
+/// Safe document layout for assistant prose. Explicit Markdown is rendered as
+/// native WPF controls; ordinary conversation remains ordinary paragraphs.
+/// Typed displayBlocks remain the preferred format for tabs/cards/timelines.
+/// This parser never executes model-authored markup or invents facts.
 /// </summary>
 public static class NIRAChatDocument
 {
@@ -24514,17 +25801,26 @@ public static class NIRAChatDocument
     public static string GetText(DependencyObject element) =>
         (string)element.GetValue(TextProperty);
 
+    private static readonly Regex Heading = new(@"^\s{0,3}(#{1,4})\s+(.+)$",
+        RegexOptions.CultureInvariant);
+    private static readonly Regex Bullet = new(@"^\s{0,3}(?<mark>[-*+]|\d{1,3}[.)])\s+(?<body>.*)$",
+        RegexOptions.CultureInvariant);
+    private static readonly Regex Task = new(@"^\s{0,3}[-*+]\s+\[(?<done>[ xX])\]\s+(?<body>.+)$",
+        RegexOptions.CultureInvariant);
+    private static readonly Regex TableSeparator = new(@"^:?-{3,}:?$",
+        RegexOptions.CultureInvariant);
+
     private static void OnChanged(DependencyObject element, DependencyPropertyChangedEventArgs e)
     {
         if (element is not StackPanel root) return;
         root.Children.Clear();
-        string source = ((string?)e.NewValue ?? "").Replace("\r\n", "\n").Replace('\r', '\n');
+        string source = ((string?)e.NewValue ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n');
         if (string.IsNullOrWhiteSpace(source)) return;
 
         string[] lines = source.Split('\n');
         var paragraph = new List<string>();
         var code = new List<string>();
-        bool codeFence = false;
+        bool inCode = false;
 
         void FlushParagraph()
         {
@@ -24541,40 +25837,102 @@ public static class NIRAChatDocument
                 new Thickness(12, 10, 12, 10));
             body.FontFamily = new FontFamily("Cascadia Code, Consolas");
             var frame = new Border { CornerRadius = new CornerRadius(10),
-                Padding = new Thickness(0), Margin = new Thickness(0, 3, 0, 14),
-                BorderThickness = new Thickness(1), Child = body };
+                Margin = new Thickness(0, 3, 0, 14), BorderThickness = new Thickness(1), Child = body };
             frame.SetResourceReference(Border.BackgroundProperty, "NIRAGlassStrongTintBrush");
             frame.SetResourceReference(Border.BorderBrushProperty, "NIRAGlassBorderBrush");
             root.Children.Add(frame);
             code.Clear();
         }
 
-        foreach (string original in lines)
+        for (int i = 0; i < lines.Length; i++)
         {
-            string line = original.TrimEnd();
+            string line = lines[i].TrimEnd();
             if (line.TrimStart().StartsWith("```", StringComparison.Ordinal))
             {
                 FlushParagraph();
-                if (codeFence) FlushCode();
-                codeFence = !codeFence;
+                if (inCode) FlushCode();
+                inCode = !inCode;
                 continue;
             }
-            if (codeFence) { code.Add(line); continue; }
+            if (inCode) { code.Add(line); continue; }
             if (string.IsNullOrWhiteSpace(line)) { FlushParagraph(); continue; }
 
-            Match heading = Regex.Match(line, @"^\s{0,3}(#{1,3})\s+(.+)$");
+            // Markdown table: recognize an actual header + separator before
+            // converting anything. Never guess that pipe-delimited prose is data.
+            if (i + 2 < lines.Length &&
+                TryTableHeader(lines[i], lines[i + 1], out string[] headers))
+            {
+                var rows = new List<IReadOnlyList<string>>();
+                int next = i + 2;
+                while (next < lines.Length && rows.Count < 40 &&
+                       TryCells(lines[next], out string[] cells) && cells.Length == headers.Length)
+                {
+                    rows.Add(cells);
+                    next++;
+                }
+                if (rows.Count > 0)
+                {
+                    FlushParagraph();
+                    root.Children.Add(NIRARichBlockRenderer.Render(new NIRARichBlock
+                    {
+                        Type = "table", Columns = headers, Rows = rows
+                    }));
+                    i = next - 1;
+                    continue;
+                }
+            }
+
+            // Markdown task syntax has real interactive checkboxes. This is
+            // local display state, not a NIRA goal, action, or claim of completion.
+            if (Task.IsMatch(line))
+            {
+                var items = new List<string>();
+                var checkedIndices = new List<int>();
+                int next = i;
+                while (next < lines.Length && items.Count < 24)
+                {
+                    Match match = Task.Match(lines[next]);
+                    if (!match.Success) break;
+                    if (!string.Equals(match.Groups["done"].Value, " ", StringComparison.Ordinal))
+                        checkedIndices.Add(items.Count);
+                    items.Add(match.Groups["body"].Value.Trim());
+                    next++;
+                }
+                FlushParagraph();
+                root.Children.Add(NIRARichBlockRenderer.Render(new NIRARichBlock
+                {
+                    Type = "checklist", Title = "Checklist", Items = items
+                }, new NIRARichInteractionState { CheckedIndices = checkedIndices }));
+                i = next - 1;
+                continue;
+            }
+
+            // A standalone Markdown source/reference is a compact themed
+            // clickable resource row. Do not mistake an inline prose link for
+            // a source card or imply that an LLM-authored URL was verified.
+            if (NIRAResourceLinkPolicy.TryParse(line, out var resource) && resource != null)
+            {
+                FlushParagraph();
+                root.Children.Add(MakeReferenceRow(resource));
+                continue;
+            }
+
+            Match heading = Heading.Match(line);
             if (heading.Success)
             {
                 FlushParagraph();
                 int depth = heading.Groups[1].Length;
-                var title = MakeText(heading.Groups[2].Value, depth == 1 ? 23 : depth == 2 ? 19 : 16,
-                    depth == 1 ? 33 : 28, new Thickness(0, depth == 1 ? 19 : 15, 0, 12));
+                double size = depth switch { 1 => 23, 2 => 19, 3 => 16, _ => 14.5 };
+                var title = MakeText(heading.Groups[2].Value, size,
+                    depth == 1 ? 33 : 28,
+                    new Thickness(0, depth == 1 ? 19 : 15, 0, 12));
                 title.FontWeight = FontWeights.SemiBold;
-                if (depth <= 2) title.SetResourceReference(TextBlock.ForegroundProperty, "NIRACyanBrush");
+                if (depth <= 2)
+                    title.SetResourceReference(TextBlock.ForegroundProperty, "NIRACyanBrush");
                 root.Children.Add(title);
                 continue;
             }
-            Match bullet = Regex.Match(line, @"^\s{0,3}(?<mark>[-*+]|\d{1,3}[.)])\s+(?<body>.*)$");
+            Match bullet = Bullet.Match(line);
             if (bullet.Success)
             {
                 FlushParagraph();
@@ -24617,6 +25975,55 @@ public static class NIRAChatDocument
         FlushParagraph(); FlushCode();
     }
 
+    private static Border MakeReferenceRow(NIRAResourceLinkPresentation resource)
+    {
+        var panel = new StackPanel { Margin = new Thickness(13, 9, 13, 9) };
+        var heading = MakeText(resource.Kind + "  /  " + resource.Host, 10.5, 16,
+            new Thickness(0, 0, 0, 5));
+        heading.FontWeight = FontWeights.SemiBold;
+        heading.SetResourceReference(TextBlock.ForegroundProperty, "NIRASecondaryBrush");
+        panel.Children.Add(heading);
+        var link = MakeText($"[{resource.Label}  ↗]({resource.Address})", 13, 21,
+            new Thickness(0));
+        link.FontWeight = FontWeights.SemiBold;
+        panel.Children.Add(link);
+        var frame = new Border { Child = panel, CornerRadius = new CornerRadius(11),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            MaxWidth = 540, BorderThickness = new Thickness(1),
+            Margin = new Thickness(0, 3, 0, 14) };
+        frame.SetResourceReference(Border.BackgroundProperty, "NIRAGlassStrongTintBrush");
+        frame.SetResourceReference(Border.BorderBrushProperty, "NIRAGlassBorderBrush");
+        return frame;
+    }
+
+    // Only explicit Markdown table syntax is accepted: a heading row, a
+    // --- separator row, then at least one complete data row.
+    private static bool TryTableHeader(string header, string separator, out string[] columns)
+    {
+        columns = Array.Empty<string>();
+        if (!TryCells(header, out string[] cells) || cells.Length < 2 || cells.Length > 8 ||
+            !TryCells(separator, out string[] separators) || separators.Length != cells.Length ||
+            separators.Any(cell => !TableSeparator.IsMatch(cell)) ||
+            cells.Any(string.IsNullOrWhiteSpace)) return false;
+        columns = cells;
+        return true;
+    }
+
+    private static bool TryCells(string line, out string[] cells)
+    {
+        cells = Array.Empty<string>();
+        string content = line.Trim();
+        if (!content.Contains('|')) return false;
+        // Split on unescaped bars. A displayed literal \| stays in its cell.
+        var parts = Regex.Split(content, @"(?<!\\)\|").ToList();
+        if (content.StartsWith('|')) parts.RemoveAt(0);
+        if (content.EndsWith('|')) parts.RemoveAt(parts.Count - 1);
+        if (parts.Count is < 2 or > 8) return false;
+        cells = parts.Select(cell => cell.Trim().Replace(@"\|", "|", StringComparison.Ordinal))
+            .ToArray();
+        return true;
+    }
+
     private static TextBlock MakeText(string value, double size, double lineHeight, Thickness margin)
     {
         var text = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = size,
@@ -24631,7 +26038,7 @@ public static class NIRAChatDocument
 
 ---
 
-## 43. `NIRAAgent.UI\Presentation\NIRARichBlockRenderer.cs`
+## 49. `NIRAAgent.UI\Presentation\NIRARichBlockRenderer.cs`
 
 **File:** `NIRAAgent.UI\Presentation\NIRARichBlockRenderer.cs`
 
@@ -24793,8 +26200,11 @@ public static class NIRARichBlockRenderer
     public static FrameworkElement RenderCardGroup(IEnumerable<NIRARichBlock> cards)
     {
         var collection = cards.ToList();
-        return ResponsiveTiles(collection.Select((card, i) => (FrameworkElement)Card(card, i))
-            .ToList(), 3, 282, 9);
+        // Long explanatory cards need generous reading width. Three columns are
+        // reserved for genuinely compact cards, not dense technical prose.
+        bool substantial = collection.Any(card => card.Text.Length > 175 || card.Title.Length > 29);
+        return ResponsiveTiles(collection.Select((card, i) => (FrameworkElement)Card(card, i, true))
+            .ToList(), substantial ? 2 : 3, substantial ? 355 : 260, 13);
     }
 
     public static FrameworkElement RenderMetricGroup(IEnumerable<NIRARichBlock> metrics)
@@ -24847,27 +26257,36 @@ public static class NIRARichBlockRenderer
     private static Border Insight(NIRARichBlock block)
     {
         var content = new StackPanel();
+        // R23: An insight is a quiet inline emphasis, not a fixed gold footer.
+        // The cognition decision controls whether the note exists at all.
         content.Children.Add(SemanticHeading("✦", block.Title.Length > 0 ?
-            block.Title : "Worth noting", Palette[3]));
+            block.Title : "Note", Palette[1]));
         if (block.Text.Length > 0)
         {
             var body = Text(block.Text, 13.4);
             body.Margin = new Thickness(37, 9, 0, 0);
             content.Children.Add(body);
         }
-        return DesignedSurface(content, Palette[3], 17);
+        return DesignedSurface(content, Palette[1], 13);
     }
 
     private static Border Source(NIRARichBlock block)
     {
+        // A model-authored source block is a useful resource LINK, not proof
+        // that the page has been fetched. Keep the actual URL in the click
+        // destination and use a legible title/host instead of dumping it raw.
         var content = new StackPanel();
-        content.Children.Add(SemanticHeading("↗", block.Title.Length > 0 ?
-            block.Title : "Source", Palette[4]));
-        var link = Text(block.Text, 13.1, false, "NIRACyanBrush");
-        link.Margin = new Thickness(37, 8, 0, 0);
+        string title = block.Title.Length > 0 ? block.Title : "Reference";
+        content.Children.Add(SemanticHeading("↗", title, Palette[4]));
+        string shown = block.Text;
+        if (Uri.TryCreate(block.Text, UriKind.Absolute, out Uri? url) &&
+            url.Scheme is "http" or "https")
+        {
+            shown = $"[Visit {url.Host}  ↗]({url.AbsoluteUri})";
+        }
+        var link = Text(shown, 13.1, true, "NIRACyanBrush");
+        link.Margin = new Thickness(37, 10, 0, 0);
         content.Children.Add(link);
-        // The existing inline URL parser controls click navigation. A source
-        // block must already have a URL accepted by NIRAPresentationPolicy.
         return DesignedSurface(content, Palette[4], 17);
     }
 
@@ -24928,15 +26347,48 @@ public static class NIRARichBlockRenderer
         var root = new StackPanel();
         if (block.Title.Length > 0)
         {
-            var heading = Text(block.Title, 15, true);
-            heading.Margin = new Thickness(0, 0, 0, 9);
+            var heading = Text(block.Title, 16.1, true);
+            heading.Margin = new Thickness(0, 0, 0, 12);
             root.Children.Add(heading);
         }
         if (!string.IsNullOrWhiteSpace(block.Text))
-            root.Children.Add(Text(block.Text, 13.2));
+        {
+            // Labeled, multiline explanations deserve distinct subheadings
+            // instead of an uninterrupted dense paragraph. Do not invent labels.
+            string copy = block.Text.Replace("\r\n", "\n").Replace('\r', '\n');
+            copy = Regex.Replace(copy,
+                @"(?<=\S)[ \t]+(?=\*{0,2}(?:Benefits|Challenges|Applications|Advantages|Disadvantages|Risks|Limitations|Best for|Trade-offs)\*{0,2}:\*{0,2})",
+                "\n", RegexOptions.CultureInvariant);
+            var lines = copy.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            int labeled = lines.Count(line => Regex.IsMatch(line.Trim(),
+                @"^\*{0,2}[\p{L}][\p{L}0-9 &/()\-]{2,34}\*{0,2}:\*{0,2}\s*\S", RegexOptions.CultureInvariant));
+            if (labeled >= 2)
+            {
+                foreach (string original in lines)
+                {
+                    string line = original.Trim();
+                    var part = Regex.Match(line, @"^\*{0,2}(?<name>[\p{L}][\p{L}0-9 &/()\-]{2,34})\*{0,2}:\*{0,2}\s*(?<detail>.*)$");
+                    if (part.Success)
+                    {
+                        var label = Text(part.Groups["name"].Value.ToUpperInvariant(), 10.7, true, "NIRACyanBrush");
+                        label.Margin = new Thickness(0, 13, 0, 4);
+                        root.Children.Add(label);
+                        if (!string.IsNullOrWhiteSpace(part.Groups["detail"].Value))
+                            root.Children.Add(Text(part.Groups["detail"].Value, 13.4));
+                    }
+                    else
+                    {
+                        var paragraph = Text(line, 13.4);
+                        paragraph.Margin = new Thickness(0, 7, 0, 0);
+                        root.Children.Add(paragraph);
+                    }
+                }
+            }
+            else root.Children.Add(Text(block.Text, 13.4));
+        }
         // Subtle hue variation only for an ACTUAL group, never arbitrary
         // numbering: cards are often choices rather than sequential actions.
-        return DesignedSurface(root, grouped ? Palette[index % 3] : Palette[0], 17);
+        return DesignedSurface(root, grouped ? Palette[index % 3] : Palette[0], 21);
     }
 
     private static UIElement Body(NIRARichBlock block)
@@ -25165,10 +26617,23 @@ public static class NIRARichBlockRenderer
         @"```(?<language>[^`\r\n]*)\r?\n(?<source>[\s\S]*?)\r?\n?```",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    // The chat document parser renders actual headings, bullets and tables in
+    // tab panels. It never evaluates scripts or model-defined UI actions.
+    private static FrameworkElement TabMarkdown(string markdown)
+    {
+        var panel = new StackPanel { HorizontalAlignment = HorizontalAlignment.Stretch };
+        NIRAChatDocument.SetText(panel, markdown);
+        return panel;
+    }
+
     private static UIElement TabPanelContent(string text, string tabLabel)
     {
         var content = new StackPanel { Margin = new Thickness(3, 5, 3, 9) };
         string source = (text ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n');
+        // R24 archives may already contain the older flattened object form.
+        // Strip only the leading field label, not actual authored content.
+        source = Regex.Replace(source, @"^\s*(?:text|body|content):\s*(?=\S)", string.Empty,
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         MatchCollection fences = TabCodeFence.Matches(source);
         if (fences.Count == 0)
         {
@@ -25184,7 +26649,7 @@ public static class NIRARichBlockRenderer
                     Type = "code", Text = source.Trim(), Title = "Example"
                 }));
             }
-            else content.Children.Add(Text(source, 13));
+            else content.Children.Add(TabMarkdown(source));
             return content;
         }
 
@@ -25196,9 +26661,7 @@ public static class NIRARichBlockRenderer
                 string prose = source[cursor..fence.Index].Trim();
                 if (prose.Length > 0)
                 {
-                    var paragraph = Text(prose, 13);
-                    paragraph.Margin = new Thickness(0, 0, 0, 10);
-                    content.Children.Add(paragraph);
+                    content.Children.Add(TabMarkdown(prose));
                 }
             }
             string code = fence.Groups["source"].Value.Trim('\n');
@@ -25218,7 +26681,7 @@ public static class NIRARichBlockRenderer
         if (cursor < source.Length)
         {
             string trailing = source[cursor..].Trim();
-            if (trailing.Length > 0) content.Children.Add(Text(trailing, 13));
+            if (trailing.Length > 0) content.Children.Add(TabMarkdown(trailing));
         }
         return content;
     }
@@ -25343,11 +26806,23 @@ public static class NIRARichBlockRenderer
 
         for (int i = 0; i < block.Items.Count; i++)
         {
-            var item = block.Items[i];
-            // Only format an explicit day/stage + task separator, never invent one.
-            var split = Regex.Match(item, @"^\s*(?<when>[^—–:]{1,55})\s*[—–:]\s*(?<task>.+)$");
-            string when = split.Success ? split.Groups["when"].Value.Trim() : "Step";
+            string item = block.Items[i];
+            // Compatibility for earlier archived responses whose JSON objects
+            // were flattened into "1980s; title: ...; text: ...".
+            var legacy = Regex.Match(item,
+                @"^\s*(?:(?:date|year|period):\s*)?(?<when>[^;\r\n]+);\s*title:\s*(?<title>[^;\r\n]+);\s*text:\s*(?<body>[\s\S]+)$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (legacy.Success)
+                item = legacy.Groups["when"].Value.Trim() + " — " +
+                    legacy.Groups["title"].Value.Trim() + "\n" + legacy.Groups["body"].Value.Trim();
+            // Only display a real authored date/stage. No placeholder DATE.
+            var split = Regex.Match(item,
+                @"^\s*(?<when>[^—–:\r\n]{1,55})\s*[—–:]\s*(?<task>[\s\S]+)$");
+            string when = split.Success ? split.Groups["when"].Value.Trim() : $"MILESTONE {i + 1:00}";
             string task = split.Success ? split.Groups["task"].Value.Trim() : item;
+            int lineBreak = task.IndexOf('\n');
+            string milestoneTitle = lineBreak < 0 ? task.Trim() : task[..lineBreak].Trim();
+            string milestoneDetail = lineBreak < 0 ? string.Empty : task[(lineBreak + 1)..].Trim();
             var line = new Grid { Margin = new Thickness(0, 0, 0, i == block.Items.Count - 1 ? 0 : 14) };
             line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(34) });
             line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -25394,7 +26869,13 @@ public static class NIRARichBlockRenderer
             var stage = Text(when.ToUpperInvariant(), 11.5, true, "NIRACyanBrush");
             stage.Margin = new Thickness(0, 0, 0, 7);
             body.Children.Add(stage);
-            body.Children.Add(Text(task, 14.2));
+            body.Children.Add(Text(milestoneTitle, 14.4, milestoneDetail.Length > 0));
+            if (milestoneDetail.Length > 0)
+            {
+                var detail = Text(milestoneDetail, 13.4);
+                detail.Margin = new Thickness(0, 7, 0, 0);
+                body.Children.Add(detail);
+            }
             card.Child = body;
             Grid.SetColumn(card, 1);
             line.Children.Add(card);
@@ -25418,7 +26899,7 @@ public static class NIRARichBlockRenderer
             { RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent) });
         var content = new FrameworkElementFactory(typeof(ContentPresenter));
         content.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
-        content.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        content.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Stretch);
         content.SetBinding(ContentPresenter.ContentProperty, new Binding("Content")
             { RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent) });
         border.AppendChild(content);
@@ -25447,28 +26928,44 @@ public static class NIRARichBlockRenderer
         {
             int itemIndex = i;
             string item = block.Items[i];
+            // Older persisted checklists serialized {text, checked} as a label
+            // dump. Display the task only; historic model flags do not certify
+            // completion or change the user's saved manual check state.
+            var legacyTask = Regex.Match(item,
+                @"^\s*(?:text|task):\s*(?<body>[\s\S]*?)(?:;\s*(?:checked|done):\s*(?:true|false))?\s*$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (legacyTask.Success) item = legacyTask.Groups["body"].Value.Trim();
             bool completed = checkedItems.Contains(i);
-            var row = new DockPanel { LastChildFill = true, Margin = new Thickness(15, 12, 15, 12) };
+            // Grid + Auto layout: long labels may grow to two or more lines.
+            // A fixed button height/centered content clipped the previous rows.
+            var row = new Grid { Margin = new Thickness(15, 12, 15, 12),
+                HorizontalAlignment = HorizontalAlignment.Stretch, ClipToBounds = false };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(34) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             var glyph = new Border { Width = 21, Height = 21, CornerRadius = new CornerRadius(6),
-                BorderThickness = new Thickness(1.4), Margin = new Thickness(0, 0, 12, 0),
-                VerticalAlignment = VerticalAlignment.Center };
+                BorderThickness = new Thickness(1.4), Margin = new Thickness(0, 2, 0, 0),
+                VerticalAlignment = VerticalAlignment.Top };
             Theme(glyph, Border.BorderBrushProperty, "NIRACyanBrush");
             Theme(glyph, Border.BackgroundProperty, "NIRAGlassStrongTintBrush");
             var tick = Text("✓", 15, true, "NIRACyanBrush");
             tick.TextAlignment = TextAlignment.Center;
             tick.Visibility = completed ? Visibility.Visible : Visibility.Collapsed;
             glyph.Child = tick;
-            DockPanel.SetDock(glyph, Dock.Left);
+            Grid.SetColumn(glyph, 0);
             row.Children.Add(glyph);
-            var label = Text(item, 14);
-            label.VerticalAlignment = VerticalAlignment.Center;
+            var label = Text(item, 13.5);
+            label.HorizontalAlignment = HorizontalAlignment.Stretch;
+            label.VerticalAlignment = VerticalAlignment.Top;
+            label.TextTrimming = TextTrimming.None;
+            Grid.SetColumn(label, 1);
             label.TextDecorations = completed ? TextDecorations.Strikethrough : null;
             label.Opacity = completed ? .67 : 1;
             row.Children.Add(label);
             var button = new Button { Content = row, Template = rowTemplate,
                 Margin = new Thickness(0, 0, 0, 9), Padding = new Thickness(0),
                 HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                Cursor = System.Windows.Input.Cursors.Hand, MinHeight = 43,
+                Cursor = System.Windows.Input.Cursors.Hand, MinHeight = 52,
+                VerticalContentAlignment = VerticalAlignment.Stretch,
                 ToolTip = "Manual checkbox; does not execute or verify NIRA work" };
             Theme(button, Control.BackgroundProperty, "NIRAGlassStrongTintBrush");
             Theme(button, Control.BorderBrushProperty, "NIRAGlassBorderBrush");
@@ -25684,7 +27181,7 @@ public static class NIRARichBlockRenderer
 
 ---
 
-## 44. `NIRAAgent.UI\Presentation\NIRAStyledChatText.cs`
+## 50. `NIRAAgent.UI\Presentation\NIRAStyledChatText.cs`
 
 **File:** `NIRAAgent.UI\Presentation\NIRAStyledChatText.cs`
 
@@ -25865,7 +27362,7 @@ public static class NIRAStyledChatText
 
 ---
 
-## 45. `NIRAAgent.UI\SettingsWindow.xaml`
+## 51. `NIRAAgent.UI\SettingsWindow.xaml`
 
 **File:** `NIRAAgent.UI\SettingsWindow.xaml`
 
@@ -26358,7 +27855,7 @@ public static class NIRAStyledChatText
 
 ---
 
-## 46. `NIRAAgent.UI\SettingsWindow.xaml.cs`
+## 52. `NIRAAgent.UI\SettingsWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\SettingsWindow.xaml.cs`
 
@@ -26711,7 +28208,7 @@ public partial class SettingsWindow : Window
 
 ---
 
-## 47. `NIRAAgent.UI\Themes\NIRATheme.xaml`
+## 53. `NIRAAgent.UI\Themes\NIRATheme.xaml`
 
 **File:** `NIRAAgent.UI\Themes\NIRATheme.xaml`
 
@@ -27163,7 +28660,7 @@ public partial class SettingsWindow : Window
 
 ---
 
-## 48. `NIRAAgent.UI\Theming\NIRAMotion.cs`
+## 54. `NIRAAgent.UI\Theming\NIRAMotion.cs`
 
 **File:** `NIRAAgent.UI\Theming\NIRAMotion.cs`
 
@@ -27283,7 +28780,7 @@ public static class NIRAMotion
 
 ---
 
-## 49. `NIRAAgent.UI\Theming\NIRAThemeGlyph.cs`
+## 55. `NIRAAgent.UI\Theming\NIRAThemeGlyph.cs`
 
 **File:** `NIRAAgent.UI\Theming\NIRAThemeGlyph.cs`
 
@@ -27377,7 +28874,7 @@ internal static class NIRAThemeGlyph
 
 ---
 
-## 50. `NIRAAgent.UI\Theming\NIRAThemeManager.cs`
+## 56. `NIRAAgent.UI\Theming\NIRAThemeManager.cs`
 
 **File:** `NIRAAgent.UI\Theming\NIRAThemeManager.cs`
 
@@ -27651,7 +29148,7 @@ public static class NIRAThemeManager
 
 ---
 
-## 51. `NIRAAgent.UI\Typing\NIRATypingIndicator.cs`
+## 57. `NIRAAgent.UI\Typing\NIRATypingIndicator.cs`
 
 **File:** `NIRAAgent.UI\Typing\NIRATypingIndicator.cs`
 
@@ -28011,7 +29508,7 @@ public sealed class NIRATypingIndicator : FrameworkElement
 
 ---
 
-## 52. `NIRAAgent.UI\Typing\TypingStyle.cs`
+## 58. `NIRAAgent.UI\Typing\TypingStyle.cs`
 
 **File:** `NIRAAgent.UI\Typing\TypingStyle.cs`
 
@@ -28026,7 +29523,7 @@ public enum TypingStyle
 
 ---
 
-## 53. `NIRAAgent.UI\ViewModels\AsyncRelayCommand.cs`
+## 59. `NIRAAgent.UI\ViewModels\AsyncRelayCommand.cs`
 
 **File:** `NIRAAgent.UI\ViewModels\AsyncRelayCommand.cs`
 
@@ -28086,7 +29583,7 @@ public sealed class AsyncRelayCommand : ICommand
 
 ---
 
-## 54. `NIRAAgent.UI\ViewModels\ChatMessageTemplateSelector.cs`
+## 60. `NIRAAgent.UI\ViewModels\ChatMessageTemplateSelector.cs`
 
 **File:** `NIRAAgent.UI\ViewModels\ChatMessageTemplateSelector.cs`
 
@@ -28127,7 +29624,7 @@ public sealed class ChatMessageTemplateSelector : DataTemplateSelector
 
 ---
 
-## 55. `NIRAAgent.UI\ViewModels\ChatMessageViewModel.cs`
+## 61. `NIRAAgent.UI\ViewModels\ChatMessageViewModel.cs`
 
 **File:** `NIRAAgent.UI\ViewModels\ChatMessageViewModel.cs`
 
@@ -28402,7 +29899,7 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         int visible = Math.Min(count, 3);
         for (int index = 0; index < visible; index++)
         {
-            bool overflow = count >= 3 && index == 2;
+            bool overflow = count > 3 && index == 2;
             target.Add(new NIRAUserImageGalleryTileViewModel(
                 this, images[index], index,
                 hiddenCount: overflow ? count - 2 : 0,
@@ -28413,7 +29910,21 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
     }
 
     public ObservableCollection<FrameworkElement> RichElements { get; } = new();
+    private readonly List<(FrameworkElement View, NIRARichBlock Block)> _photoCreditFrames = new();
     public bool HasRichElements => RichElements.Count > 0;
+    private bool HasRetrievedCreditedImage => VisualArtifacts.Any(image =>
+        image.HasStructuredCredit && image.HasSourceUri);
+
+    private void SuppressDuplicatePhotoCreditFrames()
+    {
+        if (!HasRetrievedCreditedImage) return;
+        foreach (var entry in _photoCreditFrames.ToArray())
+        {
+            if (!NIRAImageCreditLayoutPolicy.IsDuplicatePhotoCredit(entry.Block, true)) continue;
+            RichElements.Remove(entry.View);
+            _photoCreditFrames.Remove(entry);
+        }
+    }
 
     public void AddRichBlocks(IReadOnlyList<NIRARichBlock> blocks,
         NIRAConversationArchiveStore? archive = null, Guid? messageId = null,
@@ -28437,10 +29948,22 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
                 string type = normalized[index].Type;
                 var group = new List<NIRARichBlock>();
                 while (index < normalized.Count && normalized[index].Type == type)
+                {
+                    // Credit-only cards must remain independent of other cards,
+                    // so a later trusted image can suppress only the duplicate.
+                    bool isCredit = NIRAImageCreditLayoutPolicy.IsDuplicatePhotoCredit(normalized[index], true);
+                    if (isCredit && group.Count > 0) break;
                     group.Add(normalized[index++]);
-                RichElements.Add(type == "card"
+                    if (isCredit) break;
+                }
+                if (group.Count == 1 && NIRAImageCreditLayoutPolicy.IsDuplicatePhotoCredit(
+                        group[0], HasRetrievedCreditedImage)) continue;
+                FrameworkElement rendered = type == "card"
                     ? NIRARichBlockRenderer.RenderCardGroup(group)
-                    : NIRARichBlockRenderer.RenderMetricGroup(group));
+                    : NIRARichBlockRenderer.RenderMetricGroup(group);
+                RichElements.Add(rendered);
+                if (group.Count == 1 && NIRAImageCreditLayoutPolicy.IsDuplicatePhotoCredit(group[0], true))
+                    _photoCreditFrames.Add((rendered, group[0]));
             }
             else
             {
@@ -28457,7 +29980,12 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
                             Debug.WriteLine($"[RichInteraction] STATE_SAVE_FAILED | {ex.GetType().Name}");
                         }
                     };
-                RichElements.Add(NIRARichBlockRenderer.Render(block, saved, persist, followUp));
+                if (NIRAImageCreditLayoutPolicy.IsDuplicatePhotoCredit(block, HasRetrievedCreditedImage))
+                    continue;
+                FrameworkElement rendered = NIRARichBlockRenderer.Render(block, saved, persist, followUp);
+                RichElements.Add(rendered);
+                if (NIRAImageCreditLayoutPolicy.IsDuplicatePhotoCredit(block, true))
+                    _photoCreditFrames.Add((rendered, block));
             }
         }
     }
@@ -28529,6 +30057,7 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
             (_, _) =>
             {
                 RebuildAssistantImageGalleryTiles();
+                SuppressDuplicatePhotoCreditFrames();
                 OnPropertyChanged(
                     nameof(HasVisualArtifacts));
                 OnPropertyChanged(
@@ -28623,6 +30152,15 @@ public sealed class NIRAUserImageGalleryTileViewModel
     public bool HasCaption => Artifact.HasCaption;
     public string SourceUri => Artifact.SourceUri;
     public bool HasSourceUri => Artifact.HasSourceUri;
+    public bool HasStructuredCredit => Artifact.HasStructuredCredit;
+    public string CreditProvider => Artifact.CreditProvider;
+    public string CreditCreator => Artifact.CreditCreator;
+    public bool HasCreditCreator => Artifact.HasCreditCreator;
+    public string CreditLicense => Artifact.CreditLicense;
+    public bool HasCreditLicense => Artifact.HasCreditLicense;
+    public string SourceActionLabel => Artifact.SourceActionLabel;
+    public string ReferenceCaption => Artifact.ReferenceCaption;
+    public bool HasReferenceCaption => Artifact.HasReferenceCaption;
     public IReadOnlyList<VisualArtifactViewModel> GetGalleryImages() =>
         IsAssistantTile ? Owner.GetAssistantImageArtifacts() : Owner.GetUserImageArtifacts();
     public ImageSource? PreviewImage => Artifact.PreviewImage;
@@ -28633,7 +30171,7 @@ public sealed class NIRAUserImageGalleryTileViewModel
 
 ---
 
-## 56. `NIRAAgent.UI\ViewModels\MainWindowViewModel.cs`
+## 62. `NIRAAgent.UI\ViewModels\MainWindowViewModel.cs`
 
 **File:** `NIRAAgent.UI\ViewModels\MainWindowViewModel.cs`
 
@@ -29691,7 +31229,7 @@ public sealed record NIRAComposerGalleryTile(NIRAComposerAttachment Attachment, 
 
 ---
 
-## 57. `NIRAAgent.UI\ViewModels\NIRAVisualAnnotationRenderer.cs`
+## 63. `NIRAAgent.UI\ViewModels\NIRAVisualAnnotationRenderer.cs`
 
 **File:** `NIRAAgent.UI\ViewModels\NIRAVisualAnnotationRenderer.cs`
 
@@ -29758,7 +31296,7 @@ public static class NIRAVisualAnnotationRenderer
 
 ---
 
-## 58. `NIRAAgent.UI\ViewModels\VisualArtifactViewModel.cs`
+## 64. `NIRAAgent.UI\ViewModels\VisualArtifactViewModel.cs`
 
 **File:** `NIRAAgent.UI\ViewModels\VisualArtifactViewModel.cs`
 
@@ -29780,6 +31318,7 @@ using System.Windows.Media.Imaging;
 
 using NIRAAgent.Artifacts;
 using NIRAAgent.Diagnostics;
+using NIRAAgent.Presentation;
 
 namespace NIRAAgent.UI.ViewModels;
 
@@ -29819,6 +31358,21 @@ public sealed class VisualArtifactViewModel : INotifyPropertyChanged
     public string SourceUri => Artifact.SourceUri;
     public bool HasSourceUri => Uri.TryCreate(SourceUri, UriKind.Absolute, out var parsed)
         && (parsed.Scheme == Uri.UriSchemeHttps || parsed.Scheme == Uri.UriSchemeHttp);
+
+    // Structured labels are derived from already retrieved, attributed images.
+    // Other visual artifacts keep their original caption rather than being
+    // misidentified as stock photography or as a licensed reference image.
+    private NIRAReferenceImageCredit Credit =>
+        NIRAReferenceImageCreditPolicy.Read(Artifact.Caption, SourceUri);
+    public bool HasStructuredCredit => Credit.IsStructured;
+    public string CreditProvider => Credit.Provider;
+    public string CreditCreator => Credit.Creator;
+    public bool HasCreditCreator => Credit.HasCreator;
+    public string CreditLicense => Credit.License;
+    public bool HasCreditLicense => Credit.HasLicense;
+    public string SourceActionLabel => Credit.LinkLabel;
+    public string ReferenceCaption => Credit.IsStructured ? "" : Caption;
+    public bool HasReferenceCaption => !Credit.IsStructured && HasCaption;
 
 
     public ImageSource? PreviewImage
@@ -29951,7 +31505,7 @@ public sealed class VisualArtifactViewModel : INotifyPropertyChanged
 
 ---
 
-## 59. `NIRAAgent.UI\Vision\NIRAForegroundWorkCoordinator.cs`
+## 65. `NIRAAgent.UI\Vision\NIRAForegroundWorkCoordinator.cs`
 
 **File:** `NIRAAgent.UI\Vision\NIRAForegroundWorkCoordinator.cs`
 
@@ -30133,7 +31687,7 @@ internal static class NIRAForegroundWorkNotice
 
 ---
 
-## 60. `NIRAAgent.UI\Vision\WindowsAccessibilityBackend.cs`
+## 66. `NIRAAgent.UI\Vision\WindowsAccessibilityBackend.cs`
 
 **File:** `NIRAAgent.UI\Vision\WindowsAccessibilityBackend.cs`
 
@@ -30256,7 +31810,7 @@ public sealed class WindowsAccessibilityBackend : INIRADesktopAccessibilityBacke
 
 ---
 
-## 61. `NIRAAgent.UI\Vision\WindowsDesktopInteractionBackend.cs`
+## 67. `NIRAAgent.UI\Vision\WindowsDesktopInteractionBackend.cs`
 
 **File:** `NIRAAgent.UI\Vision\WindowsDesktopInteractionBackend.cs`
 
@@ -31051,7 +32605,7 @@ public sealed class WindowsDesktopInteractionBackend : INIRADesktopInteractionBa
 
 ---
 
-## 62. `NIRAAgent.UI\Vision\WindowsScreenCaptureBackend.cs`
+## 68. `NIRAAgent.UI\Vision\WindowsScreenCaptureBackend.cs`
 
 **File:** `NIRAAgent.UI\Vision\WindowsScreenCaptureBackend.cs`
 
@@ -32374,7 +33928,7 @@ public sealed class WindowsScreenCaptureBackend
 
 ---
 
-## 63. `NIRAAgent.UI\Visuals\NIRAUserAttachmentGalleryWindow.xaml`
+## 69. `NIRAAgent.UI\Visuals\NIRAUserAttachmentGalleryWindow.xaml`
 
 **File:** `NIRAAgent.UI\Visuals\NIRAUserAttachmentGalleryWindow.xaml`
 
@@ -32580,7 +34134,7 @@ public sealed class WindowsScreenCaptureBackend
 
 ---
 
-## 64. `NIRAAgent.UI\Visuals\NIRAUserAttachmentGalleryWindow.xaml.cs`
+## 70. `NIRAAgent.UI\Visuals\NIRAUserAttachmentGalleryWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\Visuals\NIRAUserAttachmentGalleryWindow.xaml.cs`
 
@@ -32829,7 +34383,7 @@ public partial class NIRAUserAttachmentGalleryWindow : Window, INotifyPropertyCh
 
 ---
 
-## 65. `NIRAAgent.UI\Visuals\NIRAVisualArtifactToastWindow.xaml`
+## 71. `NIRAAgent.UI\Visuals\NIRAVisualArtifactToastWindow.xaml`
 
 **File:** `NIRAAgent.UI\Visuals\NIRAVisualArtifactToastWindow.xaml`
 
@@ -33043,7 +34597,7 @@ public partial class NIRAUserAttachmentGalleryWindow : Window, INotifyPropertyCh
 
 ---
 
-## 66. `NIRAAgent.UI\Visuals\NIRAVisualArtifactToastWindow.xaml.cs`
+## 72. `NIRAAgent.UI\Visuals\NIRAVisualArtifactToastWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\Visuals\NIRAVisualArtifactToastWindow.xaml.cs`
 
@@ -33487,7 +35041,7 @@ public partial class NIRAVisualArtifactToastWindow : Window
 
 ---
 
-## 67. `NIRAAgent.UI\Visuals\NIRAVisualArtifactViewerWindow.xaml`
+## 73. `NIRAAgent.UI\Visuals\NIRAVisualArtifactViewerWindow.xaml`
 
 **File:** `NIRAAgent.UI\Visuals\NIRAVisualArtifactViewerWindow.xaml`
 
@@ -33560,20 +35114,56 @@ public partial class NIRAVisualArtifactToastWindow : Window
         <StackPanel Grid.Row="2" Margin="24,18,24,15">
             <TextBlock Text="{Binding Title}" FontSize="18" FontWeight="SemiBold"
                        TextTrimming="CharacterEllipsis"/>
-            <TextBlock Text="{Binding Caption}" Margin="0,6,0,0"
+            <TextBlock Text="{Binding ReferenceCaption}" Margin="0,6,0,0"
                        FontSize="12" MaxHeight="66" TextWrapping="Wrap"
                        Foreground="{DynamicResource NIRASecondaryBrush}">
                 <TextBlock.Style>
                     <Style TargetType="TextBlock">
                         <Setter Property="Visibility" Value="Visible"/>
                         <Style.Triggers>
-                            <DataTrigger Binding="{Binding HasCaption}" Value="False">
+                            <DataTrigger Binding="{Binding HasReferenceCaption}" Value="False">
                                 <Setter Property="Visibility" Value="Collapsed"/>
                             </DataTrigger>
                         </Style.Triggers>
                     </Style>
                 </TextBlock.Style>
             </TextBlock>
+            <WrapPanel Margin="0,8,0,0">
+                <WrapPanel.Style>
+                    <Style TargetType="WrapPanel">
+                        <Setter Property="Visibility" Value="Visible"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasStructuredCredit}" Value="False">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </WrapPanel.Style>
+                <TextBlock Text="{Binding CreditProvider}" FontSize="11"
+                           FontWeight="SemiBold" Margin="0,0,14,0"
+                           Foreground="{DynamicResource NIRACyanBrush}"/>
+                <TextBlock Text="{Binding CreditCreator}" FontSize="11"
+                           Margin="0,0,14,0"
+                           Foreground="{DynamicResource NIRATextBrush}"/>
+                <TextBlock Text="{Binding CreditLicense}" FontSize="11"
+                           Foreground="{DynamicResource NIRASecondaryBrush}"/>
+            </WrapPanel>
+            <Button Content="{Binding SourceActionLabel}" Tag="{Binding SourceUri}"
+                    Click="Viewer_OpenSource_Click" HorizontalAlignment="Left"
+                    Margin="0,12,0,0" Padding="11,7" FontSize="11"
+                    ToolTip="Open the original image source page"
+                    Foreground="{DynamicResource NIRABlueBrush}" Cursor="Hand">
+                <Button.Style>
+                    <Style TargetType="Button" BasedOn="{StaticResource NIRASecondaryButtonStyle}">
+                        <Setter Property="Visibility" Value="Visible"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasSourceUri}" Value="False">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
         </StackPanel>
         <Border Grid.Row="3" Margin="18,0,18,18" Padding="11"
                 Background="{DynamicResource NIRAPanelStrongBrush}"
@@ -33593,7 +35183,7 @@ public partial class NIRAVisualArtifactToastWindow : Window
 
 ---
 
-## 68. `NIRAAgent.UI\Visuals\NIRAVisualArtifactViewerWindow.xaml.cs`
+## 74. `NIRAAgent.UI\Visuals\NIRAVisualArtifactViewerWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\Visuals\NIRAVisualArtifactViewerWindow.xaml.cs`
 
@@ -33704,6 +35294,27 @@ public partial class NIRAVisualArtifactViewerWindow : Window
     private void MaximizeButton_Click(object sender, RoutedEventArgs e) =>
         WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
 
+    private void Viewer_OpenSource_Click(object sender, RoutedEventArgs e)
+    {
+        // Only user-initiated navigation to the source URI already carried by
+        // the verified visual artifact. No remote media fetch in the viewer.
+        if (sender is not System.Windows.Controls.Button button ||
+            button.Tag is not string address ||
+            !Uri.TryCreate(address, UriKind.Absolute, out Uri? uri) ||
+            (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp))
+            return;
+        try
+        {
+            Process.Start(new ProcessStartInfo { FileName = uri.AbsoluteUri, UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            NIRADiagnosticTrace.Event("IMAGE-SOURCE-OPEN", $"Error={ex.GetType().Name}");
+            MessageBox.Show(this, "That image source could not be opened.",
+                "NIRA image source", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+    }
+
     private void CloseButton_Click(
         object sender,
         RoutedEventArgs e)
@@ -33715,7 +35326,7 @@ public partial class NIRAVisualArtifactViewerWindow : Window
 
 ---
 
-## 69. `NIRAAgent.UI\Visuals\NIRAVisualToastPlacementService.cs`
+## 75. `NIRAAgent.UI\Visuals\NIRAVisualToastPlacementService.cs`
 
 **File:** `NIRAAgent.UI\Visuals\NIRAVisualToastPlacementService.cs`
 
@@ -34132,7 +35743,7 @@ public sealed class NIRAVisualToastPlacementService
 
 ---
 
-## 70. `NIRAAgent\Agent\State\NIRAStateService.cs`
+## 76. `NIRAAgent\Agent\State\NIRAStateService.cs`
 
 **File:** `NIRAAgent\Agent\State\NIRAStateService.cs`
 
@@ -34459,7 +36070,7 @@ public sealed class NIRAStateService
 
 ---
 
-## 71. `NIRAAgent\AI\Cognition\NIRACharacterDeliveryPolicy.cs`
+## 77. `NIRAAgent\AI\Cognition\NIRACharacterDeliveryPolicy.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRACharacterDeliveryPolicy.cs`
 
@@ -34820,7 +36431,7 @@ internal readonly record struct NIRACharacterDeliveryAssessment(
 
 ---
 
-## 72. `NIRAAgent\AI\Cognition\NIRACognitionContext.cs`
+## 78. `NIRAAgent\AI\Cognition\NIRACognitionContext.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRACognitionContext.cs`
 
@@ -35064,7 +36675,7 @@ public sealed record NIRACognitionContext
 
 ---
 
-## 73. `NIRAAgent\AI\Cognition\NIRACognitionContextBuilder.cs`
+## 79. `NIRAAgent\AI\Cognition\NIRACognitionContextBuilder.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRACognitionContextBuilder.cs`
 
@@ -36110,7 +37721,7 @@ public sealed class NIRACognitionContextBuilder
 
 ---
 
-## 74. `NIRAAgent\AI\Cognition\NIRACognitionContracts.cs`
+## 80. `NIRAAgent\AI\Cognition\NIRACognitionContracts.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRACognitionContracts.cs`
 
@@ -36501,7 +38112,7 @@ public sealed record NIRACognitionAppraisalProposal
 
 ---
 
-## 75. `NIRAAgent\AI\Cognition\NIRACognitionPromptCompiler.cs`
+## 81. `NIRAAgent\AI\Cognition\NIRACognitionPromptCompiler.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRACognitionPromptCompiler.cs`
 
@@ -36547,40 +38158,74 @@ internal static class NIRACognitionPromptCompiler
           user did not literally say "show an image"; if retrieval or authorized
           download fails, explain the limitation instead of inventing a picture.
           Do not fetch pictures for ordinary text facts, sensitive content or chat.
-        - Finding an image-result webpage is NOT the same as obtaining the image.
-          Use a genuine observed direct image-file URL and the authorized
-          http.download primitive to a permitted existing directory; only a
-          verified successful download/local image evidence can be included in
-          visualPresentations. Its sourceUri is attribution, not a fetch command.
-          If access/download is unavailable, give the clickable verified source
-          or explain the limitation; never say a picture was shown if it wasn't.
-          Reuse existing visual evidence when possible. For images from the web,
-          prefer direct, permitted resources rather than repeating searches on
-          bot/verification pages; respect access challenges and site restrictions.
-        - DESIGN IMPORTANT EXPLANATIONS AS A VISUAL COMPOSITION, NOT A WORD DOCUMENT.
-          NIRA's natural reply text is transparent and full-width; never fill it
-          with a long generic numbered essay when meaningful typed components
-          can convey the substance more clearly. In the SAME cognition JSON,
-          write a short characterful 1–3 sentence introduction in reply, then
-          represent the distinct grounded ideas in selective displayBlocks:
-          2–4 actual card objects for meaningful concepts/options, a real table
-          for a comparison, hero for one major subject, insight for a genuine
-          takeaway, source for an actually known HTTP(S) reference, verified
-          metrics for real numbers, timeline for actual ordered phases, and code
-          for actual source. The UI gives these types bold colored gradients,
-          full-width emphasis, responsive tile layouts and strong hierarchy.
-          Do not use plain bullets as a substitute for visual cards on a truly
-          multi-faceted explanation. Keep a complete natural speech takeaway.
-          Use a single cognition call to decide content AND presentation; NEVER
-          make another model call merely to decorate or summarize existing work.
-          Do not invent metrics, citations, sources, images or external facts.
-          Casual greetings, jokes, feelings and short answers remain unboxed text.
-        - For multi-part explanations, place grounded typed information in
-          displayBlocks and relevant actually-obtained images in visualPresentations.
-          Genuine image artifacts should be labelled so readers can associate
-          them with the right part of the text; the UI may display the image strip
-          after the main explanation when precise placement is unavailable.
-          Do not fabricate a card or image to make the answer look complete.
+        - For specific visual subjects, choose an appropriate source and keep
+          search-result discovery separate from verified image-file retrieval.
+          The independent Openverse/Wikimedia route below is preferred when available; for
+          image sources outside the trusted image capabilities first verify the direct image-file URL with
+          an authorized read-only browser/HTTP observation, then use the normal
+          authorized http.download primitive to a permitted absolute file path.
+          Only a successful, evidenced download may be supplied as a localPath
+          in visualPresentations. A result page, thumbnail link or search snippet
+          alone is not proof that an image has been displayed. This fallback
+          still obeys ordinary network and filesystem permissions; it does not
+          grant browsing or download authority.
+        - For real historical places, artifacts, wildlife and similar visually
+          meaningful topics, image.search can return actual Openverse/Wikimedia
+          image candidates without Playwright or an API key. A candidate is not
+          yet a displayed image. Select relevant results from its grounded
+          source and licensing metadata, then call image.retrieve with the
+          EXACT returned candidateId. A successful retrieve automatically queues
+          a verified image in chat with its source page and attribution.
+          Never invent candidateId, source URL, path or license. If both open-license image indexes
+          lack suitable results, use other authorized tools only when
+          warranted; never replace actual pixels with a made-up image card.
+          Use one carefully targeted image.search per initial capability batch,
+          not several simultaneous speculative queries. Search candidates first,
+          then retrieve their exact candidateIds. If the provider times out,
+          is rate-limited, or becomes temporarily unavailable, do NOT retry
+          synonym searches in the same task. Explain the missing pictures,
+          finish any answer that does not depend on retrieved image evidence,
+          and use no extra cognition round solely for image formatting.
+          Do not repeat image.retrieve results in visualPresentations.
+          The inline image card already includes the verified photographer, license and
+          original source link. Do not add a redundant "Source: Flickr" prose line.
+          Never add an "Image Details", "Photo Credits" or "Image Attribution"
+          displayBlock when its only contents repeat the image card's trusted
+          photographer, license and source. A paragraph can introduce the subject.
+          When images are requested for several different places or subjects,
+          distinguish actual verified source titles; multiple photos of one
+          location do not prove that all subjects have been covered. A later failed
+          candidateId cannot undo previously successfully retrieved photographs.
+          For separate reference resources use descriptive Markdown links with
+          exact supported HTTP(S) URLs; do not substitute a plain provider name.
+          Do not fetch pictures for routine text facts or personal chat.
+        - INTELLIGENT RICH COMPOSITION: For substantial structured explanations,
+          comparisons, timelines, tutorials, plans or alternatives, make the
+          screen look like a deliberately composed professional document.
+          Use typed displayBlocks with REAL content as the normal choice when
+          the subject naturally fits: compare concrete attributes in a table,
+          alternatives in a few cards, dated/ordered changes in a timeline,
+          actions in a manual checklist, meaningful alternate perspectives in
+          tabs, and grounded numbers in metric/chart/progress blocks.
+          Complement blocks with a concise human lead-in, not a duplicate wall
+          of prose. A multifaceted question may deserve several DIFFERENT block
+          types. For casual, emotional, philosophical, or purely conversational
+          exchanges, transparent prose remains natural. The presentation is
+          chosen by actual content, not by a quota or habitual card template.
+          Never invent facts or model-owned controls to decorate an answer.
+          Never automatically attach an insight, summary, hero, card group or
+          colored conclusion at the end. An important conclusion may simply be
+          a sentence in NIRA's own voice. Do not use a visual block to repeat
+          prose already said or to fill an otherwise empty place on screen.
+          All model-authored blocks, when useful, come from THIS cognition JSON;
+          do not make an extra model call for presentation.
+          Never invent metrics, sources, images, dates or external observations.
+          Ordinary interpersonal chat should stay natural and transparent.
+        - For any explanation, NIRA decides the reading flow based on actual
+          substance, not a prescribed opening/body/closing structure. If
+          verified images are available, associate each with its actual subject;
+          the UI may append the gallery when precise inline placement is not
+          supported. Never invent a card or image to make the reply look richer.
         - An image-centric request should not be silently converted into prose
           when a permitted read-only retrieval path is available. Request the
           necessary actual capability in THIS decision. If no appropriate tool
@@ -36733,13 +38378,15 @@ internal static class NIRACognitionPromptCompiler
         TWO PRESENTATION CHANNELS: "reply" is screen content and "speech"
         is the independent spoken wording. They MUST describe the same grounded facts.
         For brief social conversation, natural plain prose is best and speech may
-        be empty to reuse reply. For explanations, comparisons, drive/process/file
-        reports, multi-step work and lists, make the desktop readable at a glance:
-        put a short contextual summary in reply and place substantial information
-        in correctly typed displayBlocks (table, metric, card, list, code, etc.).
-        Do not leave displayBlocks empty by habit on a data-rich answer. A table
-        needs columns and rows, a metric needs title and text; every number must
-        come from the evidence. Avoid duplicating a full table in reply or speech.
+        be empty to reuse reply. For detailed explanations, comparisons, how-tos,
+        historical sequences, plans, options and data-heavy results, prefer
+        factual typed displayBlocks that fit the actual subject: table, cards,
+        timeline, checklist, tabs, metric, chart or code. Use more than one
+        complementary type when its content is distinct; otherwise stay concise.
+        Don't hide a natural structure inside uninterrupted paragraphs, and don't
+        fill blocks just to meet a quota or imitate the previous reply.
+        A table needs columns and rows, a metric needs title and text; every
+        number must come from evidence. Avoid duplicating block data in prose.
         If prose uses Markdown headings, bullets, **emphasis** or `inline code`,
         those are SCREEN markup only; never speak punctuation or markup tokens.
         Speech should convey the important findings in conversational language,
@@ -37148,49 +38795,48 @@ internal static class NIRACognitionPromptCompiler
         informative sentences (roughly 35–75 words), not 3–10 words. Honor
         explicit brevity by removing filler, NOT by losing the explanation.
         Keep both channels faithful to the same user-provided facts.
-        The visual layout is a CHOICE, not a routine or completion criterion.
-        Speak naturally with a transparent, full-width screen reply. An ordinary
-        explanation, including a detailed one, can be entirely prose with ZERO
-        displayBlocks. Do NOT default to a hero, three cards, and an insight, or
-        try to make every conversation look like a dashboard. When there is a
-        real reason for one specific visual form, add the smallest number of
-        evidence-grounded typed displayBlocks in this SAME JSON call: e.g. a
-        table for comparisons with multiple concrete dimensions, a code panel
-        for code, a timeline for established events, a source link for an actual
-        URL, compact cards for clearly distinct alternatives, metrics for known
-        measurements. Preserve a coherent narrative around the components;
-        avoid an unrelated preamble, repeated content, artificial headings,
-        decorative closing panels, and constant three-column layouts. The
+        For substantial informational requests, actively design the SCREEN
+        instead of defaulting to an unbroken prose essay. Use actual typed
+        displayBlocks in THIS cognition JSON for content with inherent structure:
+        attribute comparisons -> table; distinct choices -> multiple cards;
+        chronological events -> timeline; practical steps -> checklist or list;
+        contrasting viewpoints or detailed sections -> tabs; numeric data ->
+        metrics, charts or progress only when grounded. Different useful types
+        may appear together when they contribute different information.
+        Give the reader a short, recognizable NIRA introduction and any
+        connective explanation, then put the real structured detail in blocks;
+        do NOT first write the full answer as paragraphs and repeat it below.
+        Transparent prose remains correct for brief chat, interpersonal,
+        exploratory and subjective discussions when no component adds clarity.
+        No fixed format, quota, always-on footer, or identical card template.
+        Never create source links, numbers, checked statuses or images without
+        underlying evidence; don't run an additional model call for styling. The
         UI renders any blocks in a restrained style unified with the prose.
         Do not invent numbers, images, quotations, facts, or URLs to decorate
         answers. Only the established authorized visualPresentations pipeline
-        may show real images. This change provides NO new image retrieval.
+        may show real images. Native image.search / image.retrieve provide
+        openly licensed reference-image discovery and verified automatic inline delivery;
+        neither accepts model-invented local paths or remote URLs.
         Never use another LLM call solely to choose or refine styling.
-        For data-rich responses displayBlocks may contain typed
-        hero/insight/source/heading/text/card/metric/table/chart/code/details/
-        list/quote/timeline/checklist/progress/tabs/followups blocks. For timelines emit
-        {"type":"timeline","title":"Plan","items":["Monday — Research","Tuesday — Design"]}.
-        For locally interactive checklists emit
-        {"type":"checklist","title":"Tasks","items":["Research","Design"]}.
-        For a visual completion bar emit
-        {"type":"progress","title":"Reading progress","value":7,"maximum":12,"unit":"chapters"}.
-        New styled block examples, each with ACTUAL answer content:
-        {"type":"hero","title":"Main subject","text":"Grounded overview"},
-        {"type":"insight","title":"Why it matters","text":"Grounded takeaway"},
-        {"type":"source","title":"Read the reference","text":"https://real-supplied-source.example/path"}.
-        That last URL is only a SHAPE demonstration, never a source to cite
-        or use in a user response. A real source must be actually known or
-        observed; never extrapolate an external link.
-        For a tabbed explanation emit ONE tabs block with 2–5 parallel
-        "items" (short tab labels) and "panels" (corresponding real content),
-        e.g. {"type":"tabs","title":"Explanation","items":["Overview","Example"],
-        "panels":["Overview explanation","Example explanation"]}.
-        For optional next questions emit {"type":"followups","title":"Explore next",
-        "items":["Explain further","Give an example"]}. A follow-up is ONLY
-        submitted if the user clicks it; never trigger a capability or goal
-        from a displayed option. Provide an informative speech summary without
-        reading tabs or buttons aloud. Contiguous metrics become compact tiles,
-        e.g. three separate metric blocks for total, average and peak.
+        AVAILABLE DISPLAY BLOCK TYPES (OPTIONAL, NOT A RECIPE):
+        heading, text, hero, insight, source, card, metric, table, chart, code,
+        details, list, quote, timeline, checklist, progress, tabs, followups.
+        For a timeline use ordered, grounded items; for a checklist use real
+        checkable items; for a progress indicator supply numeric value and
+        maximum. A tabbed block requires 2–5 labels with equally many meaningful
+        text panels. Followup buttons are suggestions and only submit a user
+        message after the user clicks. The model never supplies event handlers.
+        'hero' and 'insight' are optional tools for rare emphatic material,
+        NEVER default beginnings or endings. They are not superior to prose.
+        Previous NIRA responses are context for MEANING, not an example of how
+        THIS response should be formatted. Do not imitate prior card grids,
+        highlighted conclusions, numbered frameworks or timeline designs.
+        Speak about the actual content without reading UI labels aloud.
+        One answer may need no blocks; another may need exactly one; a third
+        may genuinely warrant a combination. NIRA can creatively choose a
+        bespoke arrangement rather than defaulting to either plain paragraphs
+        or the same familiar card layouts. Decide on merit, not variation
+        for its own sake. A known link must be actual, not extrapolated.
         When timeline AND checklist are requested, provide TWO separate typed blocks;
         NEVER substitute table blocks with a Done column or static [ ] strings.
         When progress is requested, NEVER substitute a card with textual percent;
@@ -37779,12 +39425,15 @@ internal static class NIRACognitionPromptCompiler
             "A textual picture description does not display a picture. " +
             "Do not add web work to unrelated casual or self-contained replies.");
         Add(b, "CURRENT-TURN SCREEN COMPOSITION",
-            "A brief interpersonal response is plain conversational text. But a " +
-            "substantial explanation, research result, how-to or comparison should " +
-            "read like a designed full-width document: short meaningful sections " +
-            "with Markdown headings, selective bold, bullets and natural spacing. " +
-            "Emit ACTUAL typed displayBlocks for evidence-backed cards, tables, " +
-            "metrics, timelines or code when useful; don't just describe them. " +
+            "Short interpersonal conversation remains natural prose. For substantial " +
+            "explanations, history, choices, comparisons, tutorials and plans, " +
+            "design a professional reading experience. Emit ACTUAL typed " +
+            "displayBlocks for the real structure: comparison tables, distinct " +
+            "option cards, chronological timelines, checkable action lists, " +
+            "2-5 meaningful tabs, source-grounded statistics or code. Mix " +
+            "complementary formats when justified; don't repeat block contents " +
+            "in a long plain-text intro. Use clear Markdown section headings " +
+            "for connective prose, not unsupported cosmetic panels. " +
             "When real pictures are central, attempt a grounded image capability " +
             "and verified visualPresentations instead of answering only with an " +
             "appearance description. Do not invent visuals, sources or tool calls. " +
@@ -38626,7 +40275,7 @@ internal static class NIRACognitionPromptCompiler
 
 ---
 
-## 76. `NIRAAgent\AI\Cognition\NIRACognitionService.cs`
+## 82. `NIRAAgent\AI\Cognition\NIRACognitionService.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRACognitionService.cs`
 
@@ -42219,7 +43868,7 @@ internal sealed class NIRABranchEvidenceSourceJsonConverter
 
 ---
 
-## 77. `NIRAAgent\AI\Cognition\NIRAConversationFastPath.cs`
+## 83. `NIRAAgent\AI\Cognition\NIRAConversationFastPath.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRAConversationFastPath.cs`
 
@@ -42267,7 +43916,7 @@ public static class NIRAConversationFastPath
 
 ---
 
-## 78. `NIRAAgent\AI\Cognition\NIRAImageInput.cs`
+## 84. `NIRAAgent\AI\Cognition\NIRAImageInput.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRAImageInput.cs`
 
@@ -42390,7 +44039,7 @@ public sealed record NIRAImageBatch(int FirstImageNumber, IReadOnlyList<string> 
 
 ---
 
-## 79. `NIRAAgent\AI\Cognition\NIRAProductionContinuityPolicy.cs`
+## 85. `NIRAAgent\AI\Cognition\NIRAProductionContinuityPolicy.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRAProductionContinuityPolicy.cs`
 
@@ -42505,7 +44154,7 @@ public static class NIRAProductionContinuityPolicy
 
 ---
 
-## 80. `NIRAAgent\AI\Cognition\NIRAPublicCharacterDelivery.cs`
+## 86. `NIRAAgent\AI\Cognition\NIRAPublicCharacterDelivery.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRAPublicCharacterDelivery.cs`
 
@@ -42635,7 +44284,7 @@ public static class NIRAPublicCharacterDelivery
 
 ---
 
-## 81. `NIRAAgent\AI\Cognition\NIRAResponseRealizationService.cs`
+## 87. `NIRAAgent\AI\Cognition\NIRAResponseRealizationService.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRAResponseRealizationService.cs`
 
@@ -43953,7 +45602,7 @@ public sealed record NIRAResponseRealizationRequest
 
 ---
 
-## 82. `NIRAAgent\AI\Cognition\NIRAScopedApplicationPromptCatalog.cs`
+## 88. `NIRAAgent\AI\Cognition\NIRAScopedApplicationPromptCatalog.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRAScopedApplicationPromptCatalog.cs`
 
@@ -44126,7 +45775,7 @@ internal readonly record struct NIRAScopedPromptSelection(
 
 ---
 
-## 83. `NIRAAgent\AI\Cognition\NIRATaskCompletionReviewService.cs`
+## 89. `NIRAAgent\AI\Cognition\NIRATaskCompletionReviewService.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRATaskCompletionReviewService.cs`
 
@@ -44660,7 +46309,7 @@ public sealed record NIRATaskCompletionReview(
 
 ---
 
-## 84. `NIRAAgent\AI\Ollama\NIRAModelSelection.cs`
+## 90. `NIRAAgent\AI\Ollama\NIRAModelSelection.cs`
 
 **File:** `NIRAAgent\AI\Ollama\NIRAModelSelection.cs`
 
@@ -44937,7 +46586,7 @@ public static class NIRAModelSelection
 
 ---
 
-## 85. `NIRAAgent\AI\Ollama\NIRAOllamaApiKeyService.cs`
+## 91. `NIRAAgent\AI\Ollama\NIRAOllamaApiKeyService.cs`
 
 **File:** `NIRAAgent\AI\Ollama\NIRAOllamaApiKeyService.cs`
 
@@ -45796,7 +47445,7 @@ public sealed class NIRAOllamaApiKeyService : IDisposable
 
 ---
 
-## 86. `NIRAAgent\AI\Ollama\ollamaClient.cs`
+## 92. `NIRAAgent\AI\Ollama\ollamaClient.cs`
 
 **File:** `NIRAAgent\AI\Ollama\ollamaClient.cs`
 
@@ -46354,7 +48003,7 @@ public sealed class OllamaClient : IDisposable
 
 ---
 
-## 87. `NIRAAgent\Artifacts\NIRAVisualArtifactContracts.cs`
+## 93. `NIRAAgent\Artifacts\NIRAVisualArtifactContracts.cs`
 
 **File:** `NIRAAgent\Artifacts\NIRAVisualArtifactContracts.cs`
 
@@ -46656,7 +48305,7 @@ public sealed record NIRAVisualArtifact
 
 ---
 
-## 88. `NIRAAgent\Artifacts\NIRAVisualArtifactService.cs`
+## 94. `NIRAAgent\Artifacts\NIRAVisualArtifactService.cs`
 
 **File:** `NIRAAgent\Artifacts\NIRAVisualArtifactService.cs`
 
@@ -47256,7 +48905,7 @@ public sealed class NIRAVisualArtifactService
 
 ---
 
-## 89. `NIRAAgent\Authorization\NIRAAuthorityContracts.cs`
+## 95. `NIRAAgent\Authorization\NIRAAuthorityContracts.cs`
 
 **File:** `NIRAAgent\Authorization\NIRAAuthorityContracts.cs`
 
@@ -47395,7 +49044,7 @@ public sealed record NIRAAuthorityAuditRow
 
 ---
 
-## 90. `NIRAAgent\Authorization\NIRAAuthorityExecutionContext.cs`
+## 96. `NIRAAgent\Authorization\NIRAAuthorityExecutionContext.cs`
 
 **File:** `NIRAAgent\Authorization\NIRAAuthorityExecutionContext.cs`
 
@@ -47469,7 +49118,7 @@ public sealed class NIRAAuthorityExecutionContextAccessor
 
 ---
 
-## 91. `NIRAAgent\Authorization\NIRAAuthorityExecutionProfiles.cs`
+## 97. `NIRAAgent\Authorization\NIRAAuthorityExecutionProfiles.cs`
 
 **File:** `NIRAAgent\Authorization\NIRAAuthorityExecutionProfiles.cs`
 
@@ -47948,7 +49597,7 @@ public static class NIRAAuthorityExecutionProfiles
 
 ---
 
-## 92. `NIRAAgent\Authorization\NIRAAuthorityStore.cs`
+## 98. `NIRAAgent\Authorization\NIRAAuthorityStore.cs`
 
 **File:** `NIRAAgent\Authorization\NIRAAuthorityStore.cs`
 
@@ -48246,7 +49895,7 @@ public sealed class NIRAAuthorityStore
 
 ---
 
-## 93. `NIRAAgent\Authorization\NIRACapabilityApprovalBroker.cs`
+## 99. `NIRAAgent\Authorization\NIRACapabilityApprovalBroker.cs`
 
 **File:** `NIRAAgent\Authorization\NIRACapabilityApprovalBroker.cs`
 
@@ -48316,7 +49965,7 @@ public sealed class NIRACapabilityApprovalBroker
 
 ---
 
-## 94. `NIRAAgent\Authorization\NIRACapabilityRequestPolicy.cs`
+## 100. `NIRAAgent\Authorization\NIRACapabilityRequestPolicy.cs`
 
 **File:** `NIRAAgent\Authorization\NIRACapabilityRequestPolicy.cs`
 
@@ -49078,7 +50727,7 @@ public sealed class NIRACapabilityRequestPolicy
 
 ---
 
-## 95. `NIRAAgent\Authorization\NIRACredentialBroker.cs`
+## 101. `NIRAAgent\Authorization\NIRACredentialBroker.cs`
 
 **File:** `NIRAAgent\Authorization\NIRACredentialBroker.cs`
 
@@ -49374,7 +51023,7 @@ public sealed class NIRACredentialBroker
 
 ---
 
-## 96. `NIRAAgent\Authorization\NIRACredentialContracts.cs`
+## 102. `NIRAAgent\Authorization\NIRACredentialContracts.cs`
 
 **File:** `NIRAAgent\Authorization\NIRACredentialContracts.cs`
 
@@ -49435,7 +51084,7 @@ public sealed record NIRACredentialPromptResponse
 
 ---
 
-## 97. `NIRAAgent\Authorization\NIRACredentialStore.cs`
+## 103. `NIRAAgent\Authorization\NIRACredentialStore.cs`
 
 **File:** `NIRAAgent\Authorization\NIRACredentialStore.cs`
 
@@ -50034,7 +51683,7 @@ public sealed class NIRACredentialStore
 
 ---
 
-## 98. `NIRAAgent\Authorization\NIRARiskAdaptiveAuthority.cs`
+## 104. `NIRAAgent\Authorization\NIRARiskAdaptiveAuthority.cs`
 
 **File:** `NIRAAgent\Authorization\NIRARiskAdaptiveAuthority.cs`
 
@@ -50339,7 +51988,7 @@ public static class NIRARiskAdaptiveAuthority
 
 ---
 
-## 99. `NIRAAgent\Authorization\NIRAScopedCapabilityAuthorizer.cs`
+## 105. `NIRAAgent\Authorization\NIRAScopedCapabilityAuthorizer.cs`
 
 **File:** `NIRAAgent\Authorization\NIRAScopedCapabilityAuthorizer.cs`
 
@@ -51275,7 +52924,7 @@ public sealed class NIRAScopedCapabilityAuthorizer : INIRACapabilityAuthorizer
 
 ---
 
-## 100. `NIRAAgent\Branches\NIRABranchContracts.cs`
+## 106. `NIRAAgent\Branches\NIRABranchContracts.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchContracts.cs`
 
@@ -51791,7 +53440,7 @@ public sealed record NIRABranchResultEvent
 
 ---
 
-## 101. `NIRAAgent\Branches\NIRABranchRunnerService.cs`
+## 107. `NIRAAgent\Branches\NIRABranchRunnerService.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchRunnerService.cs`
 
@@ -53036,7 +54685,7 @@ public sealed class NIRABranchRunnerService
 
 ---
 
-## 102. `NIRAAgent\Branches\NIRABranchService.cs`
+## 108. `NIRAAgent\Branches\NIRABranchService.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchService.cs`
 
@@ -55165,7 +56814,7 @@ public sealed class NIRABranchService
 
 ---
 
-## 103. `NIRAAgent\Branches\NIRABranchStore.cs`
+## 109. `NIRAAgent\Branches\NIRABranchStore.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchStore.cs`
 
@@ -56145,7 +57794,7 @@ public sealed class NIRABranchStore
 
 ---
 
-## 104. `NIRAAgent\Branches\NIRABranchWorkContracts.cs`
+## 110. `NIRAAgent\Branches\NIRABranchWorkContracts.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchWorkContracts.cs`
 
@@ -56580,7 +58229,7 @@ public sealed record NIRABranchWorkResultEvent
 
 ---
 
-## 105. `NIRAAgent\Branches\NIRABranchWorkLoopGuard.cs`
+## 111. `NIRAAgent\Branches\NIRABranchWorkLoopGuard.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchWorkLoopGuard.cs`
 
@@ -56813,7 +58462,7 @@ internal static class NIRABranchWorkLoopGuard
 
 ---
 
-## 106. `NIRAAgent\Branches\NIRABranchWorkReconsiderationService.cs`
+## 112. `NIRAAgent\Branches\NIRABranchWorkReconsiderationService.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchWorkReconsiderationService.cs`
 
@@ -57217,7 +58866,7 @@ public sealed class NIRABranchWorkReconsiderationService
 
 ---
 
-## 107. `NIRAAgent\Branches\NIRABranchWorkService.cs`
+## 113. `NIRAAgent\Branches\NIRABranchWorkService.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchWorkService.cs`
 
@@ -58563,7 +60212,7 @@ public sealed class NIRABranchWorkService
 
 ---
 
-## 108. `NIRAAgent\Branches\NIRABranchWorkStore.cs`
+## 114. `NIRAAgent\Branches\NIRABranchWorkStore.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchWorkStore.cs`
 
@@ -59116,7 +60765,7 @@ public sealed class NIRABranchWorkStore
 
 ---
 
-## 109. `NIRAAgent\Browser\NIRABrowserActionJournal.cs`
+## 115. `NIRAAgent\Browser\NIRABrowserActionJournal.cs`
 
 **File:** `NIRAAgent\Browser\NIRABrowserActionJournal.cs`
 
@@ -59234,7 +60883,7 @@ internal sealed class NIRABrowserActionJournal
 
 ---
 
-## 110. `NIRAAgent\Browser\NIRABrowserContracts.cs`
+## 116. `NIRAAgent\Browser\NIRABrowserContracts.cs`
 
 **File:** `NIRAAgent\Browser\NIRABrowserContracts.cs`
 
@@ -59505,7 +61154,7 @@ public sealed record NIRABrowserDownloadResult
 
 ---
 
-## 111. `NIRAAgent\Browser\NIRABrowserService.cs`
+## 117. `NIRAAgent\Browser\NIRABrowserService.cs`
 
 **File:** `NIRAAgent\Browser\NIRABrowserService.cs`
 
@@ -64290,7 +65939,7 @@ public sealed class NIRABrowserService : IAsyncDisposable
 
 ---
 
-## 112. `NIRAAgent\Browser\NIRABrowserSiteKnowledgeStore.cs`
+## 118. `NIRAAgent\Browser\NIRABrowserSiteKnowledgeStore.cs`
 
 **File:** `NIRAAgent\Browser\NIRABrowserSiteKnowledgeStore.cs`
 
@@ -64734,7 +66383,7 @@ internal sealed class NIRABrowserSiteKnowledgeStore
 
 ---
 
-## 113. `NIRAAgent\Capabilities\ApplicationCapabilityHandlers.cs`
+## 119. `NIRAAgent\Capabilities\ApplicationCapabilityHandlers.cs`
 
 **File:** `NIRAAgent\Capabilities\ApplicationCapabilityHandlers.cs`
 
@@ -67166,7 +68815,7 @@ public sealed class NIRAApplicationResolveCapabilityHandler
 
 ---
 
-## 114. `NIRAAgent\Capabilities\BrowserCapabilityHandlers.cs`
+## 120. `NIRAAgent\Capabilities\BrowserCapabilityHandlers.cs`
 
 **File:** `NIRAAgent\Capabilities\BrowserCapabilityHandlers.cs`
 
@@ -70684,7 +72333,7 @@ public sealed class NIRABrowserUploadCapabilityHandler : INIRACapabilityHandler
 
 ---
 
-## 115. `NIRAAgent\Capabilities\DesktopCloseCapabilityHandler.cs`
+## 121. `NIRAAgent\Capabilities\DesktopCloseCapabilityHandler.cs`
 
 **File:** `NIRAAgent\Capabilities\DesktopCloseCapabilityHandler.cs`
 
@@ -70816,7 +72465,7 @@ public sealed class NIRADesktopCloseCapabilityHandler : INIRACapabilityHandler
 
 ---
 
-## 116. `NIRAAgent\Capabilities\DesktopInteractionCapabilityHandlers.cs`
+## 122. `NIRAAgent\Capabilities\DesktopInteractionCapabilityHandlers.cs`
 
 **File:** `NIRAAgent\Capabilities\DesktopInteractionCapabilityHandlers.cs`
 
@@ -70972,7 +72621,7 @@ internal static class DesktopWindowResolver
 
 ---
 
-## 117. `NIRAAgent\Capabilities\FilesystemCapabilityHandlers.cs`
+## 123. `NIRAAgent\Capabilities\FilesystemCapabilityHandlers.cs`
 
 **File:** `NIRAAgent\Capabilities\FilesystemCapabilityHandlers.cs`
 
@@ -72500,7 +74149,7 @@ internal static class NIRADirectoryRecoveryPolicy
 
 ---
 
-## 118. `NIRAAgent\Capabilities\HttpCapabilityHandlers.cs`
+## 124. `NIRAAgent\Capabilities\HttpCapabilityHandlers.cs`
 
 **File:** `NIRAAgent\Capabilities\HttpCapabilityHandlers.cs`
 
@@ -73278,7 +74927,101 @@ public sealed class NIRAHttpDownloadCapabilityHandler
 
 ---
 
-## 119. `NIRAAgent\Capabilities\NIRACapabilityArguments.cs`
+## 125. `NIRAAgent\Capabilities\ImageDiscoveryCapabilityHandlers.cs`
+
+**File:** `NIRAAgent\Capabilities\ImageDiscoveryCapabilityHandlers.cs`
+
+```csharp
+using NIRAAgent.Images;
+using System.Text;
+
+namespace NIRAAgent.Capabilities;
+
+public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
+{
+    private readonly NIRACommonsImageDiscoveryService _service;
+    public NIRAImageSearchCapabilityHandler(NIRACommonsImageDiscoveryService service) => _service = service;
+
+    public NIRACapabilityDescriptor Descriptor { get; } = new()
+    {
+        Id = NIRACapabilityIds.ImageSearch,
+        Description = "Search real openly licensed-reference image candidates from Openverse and Wikimedia Commons (no browser or API key). Returns short-lived candidateId, title, attribution, license, and source page. Then call image.retrieve with a returned candidateId to show a real image; never invent IDs or URLs.",
+        DefaultRisk = NIRACapabilityRisk.Observe,
+        Parameters = new[] {
+            new NIRACapabilityParameterDescriptor { Name="query", Type="string", Required=true, Description="Specific visual subject, 2-160 characters; e.g. Karnak temple columns." },
+            new NIRACapabilityParameterDescriptor { Name="limit", Type="integer", Required=false, Description="Number of ranked candidates, 1-12; default 6." }
+        }
+    };
+
+    public NIRACapabilityRisk ResolveRisk(NIRACapabilityRequest request) => NIRACapabilityRisk.Observe;
+
+    public async Task<NIRACapabilityHandlerResult> ExecuteAsync(NIRACapabilityRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        string query = NIRACapabilityArguments.RequireString(request, "query", 160);
+        int limit = NIRACapabilityArguments.GetInteger(request, "limit", 6, 1, 12);
+        var images = await _service.SearchAsync(query, limit, cancellationToken);
+        var output = new StringBuilder();
+        output.AppendLine($"Provider=Openverse/Wikimedia | Query={query} | Candidates={images.Count} | ResultsAreCandidatesOnly=True");
+        foreach (var item in images)
+        {
+            output.AppendLine($"CandidateId={item.CandidateId}");
+            output.AppendLine($"Provider={item.Provider}");
+            output.AppendLine($"Title={item.Title}");
+            output.AppendLine($"Description={item.Description}");
+            output.AppendLine($"Author={item.Author}");
+            output.AppendLine($"License={(item.License.Length == 0 ? "See source page" : item.License)}");
+            output.AppendLine($"LicenseUrl={item.LicenseUrl}");
+            output.AppendLine($"SourceUri={item.SourceUri}");
+            output.AppendLine($"Dimensions={item.Width}x{item.Height}");
+            output.AppendLine("---");
+        }
+        output.AppendLine("Only image.retrieve can ground actual image bytes for NIRA visual display. Candidate results alone are NOT displayed images.");
+        return new NIRACapabilityHandlerResult {
+            Summary = $"Found {images.Count} open-license reference-image candidate(s) for '{query}'. No images downloaded yet.",
+            Output = output.ToString(), ChangedSystemState = false
+        };
+    }
+}
+
+public sealed class NIRAImageRetrieveCapabilityHandler : INIRACapabilityHandler
+{
+    private readonly NIRACommonsImageDiscoveryService _service;
+    public NIRAImageRetrieveCapabilityHandler(NIRACommonsImageDiscoveryService service) => _service = service;
+
+    public NIRACapabilityDescriptor Descriptor { get; } = new()
+    {
+        Id = NIRACapabilityIds.ImageRetrieve,
+        Description = "Retrieve a verified openly licensed image candidate into NIRA's own bounded visual cache and automatically present it in chat with the real source page and author/license attribution. CandidateId MUST come from image.search. This does not write user files, require a browser, or accept a URL/path from the model.",
+        DefaultRisk = NIRACapabilityRisk.Observe,
+        Parameters = new[] {
+            new NIRACapabilityParameterDescriptor { Name="candidateId", Type="string", Required=true, Description="Exact short-lived candidateId from a successful image.search result. No URL/path." }
+        }
+    };
+
+    public NIRACapabilityRisk ResolveRisk(NIRACapabilityRequest request) => NIRACapabilityRisk.Observe;
+
+    public async Task<NIRACapabilityHandlerResult> ExecuteAsync(NIRACapabilityRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        string id = NIRACapabilityArguments.RequireString(request, "candidateId", 80);
+        var download = await _service.RetrieveAsync(id, cancellationToken);
+        return new NIRACapabilityHandlerResult {
+            Summary = $"Retrieved a real licensed reference image '{download.Title}' ({download.Bytes} bytes). Image queued for NIRA chat.",
+            Output = $"LocalPath={download.LocalPath}\nTitle={download.Title}\nCaption={download.Caption}\nSourceUri={download.SourceUri}\nSHA256={download.Sha256}\nBytes={download.Bytes}\nVerifiedImageRetrieved=True",
+            VisualArtifacts = new [] { new NIRACapabilityVisualArtifact {
+                LocalPath=download.LocalPath, Title=download.Title, Caption=download.Caption,
+                SourceUri=download.SourceUri, PresentToUser=true, Surface="InlineOnly"
+            } },
+            ChangedSystemState = false // Runtime-owned bounded visual cache, not a user-file mutation.
+        };
+    }
+}
+```
+
+---
+
+## 126. `NIRAAgent\Capabilities\NIRACapabilityArguments.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRACapabilityArguments.cs`
 
@@ -73741,7 +75484,7 @@ internal static class NIRACapabilityArguments
 
 ---
 
-## 120. `NIRAAgent\Capabilities\NIRACapabilityContracts.cs`
+## 127. `NIRAAgent\Capabilities\NIRACapabilityContracts.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRACapabilityContracts.cs`
 
@@ -73861,6 +75604,9 @@ public static class NIRACapabilityIds
 
     public const string HttpDownload =
         "http.download";
+
+    public const string ImageSearch = "image.search";
+    public const string ImageRetrieve = "image.retrieve";
 
 
     public const string BrowserSessionOpen =
@@ -74403,6 +76149,9 @@ public sealed record NIRACapabilityVisualArtifact
 
     public string Caption { get; init; } = string.Empty;
 
+    // Grounded attribution only. Never a fetch target in the presentation layer.
+    public string SourceUri { get; init; } = string.Empty;
+
     public bool PresentToUser { get; init; }
 
     public string Surface { get; init; } = "Auto";
@@ -74429,9 +76178,21 @@ public sealed record NIRACapabilityVisualArtifact
             LocalPath = hasEvidence ? string.Empty : LocalPath.Trim(),
             Title = NormalizeText(Title, 180),
             Caption = NormalizeText(Caption, 1000),
+            SourceUri = NormalizeSourceUri(SourceUri),
             Surface = surface
         };
     }
+
+    private static string NormalizeSourceUri(string? value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out Uri? uri) &&
+        uri.Scheme == Uri.UriSchemeHttps &&
+        ((uri.Host.Equals("commons.wikimedia.org", StringComparison.OrdinalIgnoreCase) &&
+          uri.AbsolutePath.StartsWith("/wiki/File:", StringComparison.Ordinal)) ||
+         (uri.Host.Equals("www.flickr.com", StringComparison.OrdinalIgnoreCase) &&
+          uri.AbsolutePath.StartsWith("/photos/", StringComparison.Ordinal))) &&
+        uri.IsDefaultPort && uri.UserInfo.Length == 0
+            ? uri.AbsoluteUri
+            : string.Empty;
 
     private static string NormalizeText(string? value, int maximum)
     {
@@ -74614,7 +76375,7 @@ public interface INIRACapabilityAuthorizer
 
 ---
 
-## 121. `NIRAAgent\Capabilities\NIRACapabilityProcessRunner.cs`
+## 128. `NIRAAgent\Capabilities\NIRACapabilityProcessRunner.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRACapabilityProcessRunner.cs`
 
@@ -74695,7 +76456,7 @@ internal static class NIRACapabilityProcessRunner
 
 ---
 
-## 122. `NIRAAgent\Capabilities\NIRACapabilityRegistry.cs`
+## 129. `NIRAAgent\Capabilities\NIRACapabilityRegistry.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRACapabilityRegistry.cs`
 
@@ -74789,7 +76550,7 @@ public sealed class NIRACapabilityRegistry
 
 ---
 
-## 123. `NIRAAgent\Capabilities\NIRACapabilityService.cs`
+## 130. `NIRAAgent\Capabilities\NIRACapabilityService.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRACapabilityService.cs`
 
@@ -75643,7 +77404,7 @@ public sealed class NIRACapabilityService
 
 ---
 
-## 124. `NIRAAgent\Capabilities\NIRADelimitedNumericAudit.cs`
+## 131. `NIRAAgent\Capabilities\NIRADelimitedNumericAudit.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRADelimitedNumericAudit.cs`
 
@@ -75754,7 +77515,7 @@ internal static class NIRADelimitedNumericAudit
 
 ---
 
-## 125. `NIRAAgent\Capabilities\NIRADirectoryUsageCapabilityHandler.cs`
+## 132. `NIRAAgent\Capabilities\NIRADirectoryUsageCapabilityHandler.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRADirectoryUsageCapabilityHandler.cs`
 
@@ -75924,7 +77685,7 @@ public sealed class NIRADirectoryUsageCapabilityHandler : INIRACapabilityHandler
 
 ---
 
-## 126. `NIRAAgent\Capabilities\NIRAFileLocationCapabilityHandler.cs`
+## 133. `NIRAAgent\Capabilities\NIRAFileLocationCapabilityHandler.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRAFileLocationCapabilityHandler.cs`
 
@@ -76377,7 +78138,7 @@ public sealed class NIRAFileLocationCapabilityHandler : INIRACapabilityHandler
 
 ---
 
-## 127. `NIRAAgent\Capabilities\NIRAStage9CapabilityAuthorizer.cs`
+## 134. `NIRAAgent\Capabilities\NIRAStage9CapabilityAuthorizer.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRAStage9CapabilityAuthorizer.cs`
 
@@ -76418,7 +78179,7 @@ public sealed class NIRAStage9CapabilityAuthorizer
 
 ---
 
-## 128. `NIRAAgent\Capabilities\NIRATemporalRelationCapabilityHandler.cs`
+## 135. `NIRAAgent\Capabilities\NIRATemporalRelationCapabilityHandler.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRATemporalRelationCapabilityHandler.cs`
 
@@ -76513,7 +78274,7 @@ public sealed class NIRATemporalRelationCapabilityHandler : INIRACapabilityHandl
 
 ---
 
-## 129. `NIRAAgent\Capabilities\NIRAWindowsKnownFolderPath.cs`
+## 136. `NIRAAgent\Capabilities\NIRAWindowsKnownFolderPath.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRAWindowsKnownFolderPath.cs`
 
@@ -76603,7 +78364,7 @@ internal static class NIRAWindowsKnownFolderPath
 
 ---
 
-## 130. `NIRAAgent\Capabilities\NIRAWindowsProtectedFolderAccessService.cs`
+## 137. `NIRAAgent\Capabilities\NIRAWindowsProtectedFolderAccessService.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRAWindowsProtectedFolderAccessService.cs`
 
@@ -76779,7 +78540,7 @@ public sealed class NIRAWindowsProtectedFolderAccessService
 
 ---
 
-## 131. `NIRAAgent\Capabilities\ProcessCapabilityHandlers.cs`
+## 138. `NIRAAgent\Capabilities\ProcessCapabilityHandlers.cs`
 
 **File:** `NIRAAgent\Capabilities\ProcessCapabilityHandlers.cs`
 
@@ -77283,7 +79044,7 @@ public sealed class NIRAProcessStopCapabilityHandler
 
 ---
 
-## 132. `NIRAAgent\Capabilities\ShellCapabilityHandler.cs`
+## 139. `NIRAAgent\Capabilities\ShellCapabilityHandler.cs`
 
 **File:** `NIRAAgent\Capabilities\ShellCapabilityHandler.cs`
 
@@ -77461,7 +79222,7 @@ public sealed class NIRAShellExecuteCapabilityHandler
 
 ---
 
-## 133. `NIRAAgent\Capabilities\SystemStorageCapabilityHandler.cs`
+## 140. `NIRAAgent\Capabilities\SystemStorageCapabilityHandler.cs`
 
 **File:** `NIRAAgent\Capabilities\SystemStorageCapabilityHandler.cs`
 
@@ -77684,7 +79445,7 @@ public sealed class NIRASystemStorageListCapabilityHandler
 
 ---
 
-## 134. `NIRAAgent\Capabilities\VisionCapabilityHandlers.cs`
+## 141. `NIRAAgent\Capabilities\VisionCapabilityHandlers.cs`
 
 **File:** `NIRAAgent\Capabilities\VisionCapabilityHandlers.cs`
 
@@ -78613,7 +80374,7 @@ public sealed class NIRAWindowAccessibilityCapabilityHandler : INIRACapabilityHa
 
 ---
 
-## 135. `NIRAAgent\Character\Appraisal\NIRACharacterExperienceAppraisal.cs`
+## 142. `NIRAAgent\Character\Appraisal\NIRACharacterExperienceAppraisal.cs`
 
 **File:** `NIRAAgent\Character\Appraisal\NIRACharacterExperienceAppraisal.cs`
 
@@ -78710,7 +80471,7 @@ public sealed record NIRACharacterExperienceAppraisal
 
 ---
 
-## 136. `NIRAAgent\Character\Appraisal\NIRAInteractionAppraisal.cs`
+## 143. `NIRAAgent\Character\Appraisal\NIRAInteractionAppraisal.cs`
 
 **File:** `NIRAAgent\Character\Appraisal\NIRAInteractionAppraisal.cs`
 
@@ -78870,7 +80631,7 @@ public sealed record NIRAInteractionAppraisal
 
 ---
 
-## 137. `NIRAAgent\Character\Appraisal\NIRASocialMeaning.cs`
+## 144. `NIRAAgent\Character\Appraisal\NIRASocialMeaning.cs`
 
 **File:** `NIRAAgent\Character\Appraisal\NIRASocialMeaning.cs`
 
@@ -79048,7 +80809,7 @@ public readonly record struct NIRASocialMeaning(
 
 ---
 
-## 138. `NIRAAgent\Character\Dynamics\NIRACharacterDynamicsService.cs`
+## 145. `NIRAAgent\Character\Dynamics\NIRACharacterDynamicsService.cs`
 
 **File:** `NIRAAgent\Character\Dynamics\NIRACharacterDynamicsService.cs`
 
@@ -80676,7 +82437,7 @@ public sealed class NIRACharacterDynamicsService
 
 ---
 
-## 139. `NIRAAgent\Character\History\NIRASocialEvent.cs`
+## 146. `NIRAAgent\Character\History\NIRASocialEvent.cs`
 
 **File:** `NIRAAgent\Character\History\NIRASocialEvent.cs`
 
@@ -80884,7 +82645,7 @@ public sealed record NIRASocialEvent
 
 ---
 
-## 140. `NIRAAgent\Character\History\NIRASocialHistoryService.cs`
+## 147. `NIRAAgent\Character\History\NIRASocialHistoryService.cs`
 
 **File:** `NIRAAgent\Character\History\NIRASocialHistoryService.cs`
 
@@ -81537,7 +83298,7 @@ public sealed class NIRASocialHistoryService
 
 ---
 
-## 141. `NIRAAgent\Character\History\NIRASocialHistorySnapshot.cs`
+## 148. `NIRAAgent\Character\History\NIRASocialHistorySnapshot.cs`
 
 **File:** `NIRAAgent\Character\History\NIRASocialHistorySnapshot.cs`
 
@@ -81582,7 +83343,7 @@ public sealed record NIRASocialHistorySnapshot
 
 ---
 
-## 142. `NIRAAgent\Character\History\NIRASocialTopicKeys.cs`
+## 149. `NIRAAgent\Character\History\NIRASocialTopicKeys.cs`
 
 **File:** `NIRAAgent\Character\History\NIRASocialTopicKeys.cs`
 
@@ -81759,7 +83520,7 @@ public static class NIRASocialTopicKeys
 
 ---
 
-## 143. `NIRAAgent\Character\Interaction\NIRAInteractionContext.cs`
+## 150. `NIRAAgent\Character\Interaction\NIRAInteractionContext.cs`
 
 **File:** `NIRAAgent\Character\Interaction\NIRAInteractionContext.cs`
 
@@ -81856,7 +83617,7 @@ public sealed record NIRAInteractionContext
 
 ---
 
-## 144. `NIRAAgent\Character\Interaction\NIRAInteractionContextBuilder.cs`
+## 151. `NIRAAgent\Character\Interaction\NIRAInteractionContextBuilder.cs`
 
 **File:** `NIRAAgent\Character\Interaction\NIRAInteractionContextBuilder.cs`
 
@@ -82089,7 +83850,7 @@ public sealed class NIRAInteractionContextBuilder
 
 ---
 
-## 145. `NIRAAgent\Character\Interaction\NIRAInteractionObservationService.cs`
+## 152. `NIRAAgent\Character\Interaction\NIRAInteractionObservationService.cs`
 
 **File:** `NIRAAgent\Character\Interaction\NIRAInteractionObservationService.cs`
 
@@ -82345,7 +84106,7 @@ public sealed class NIRAInteractionObservationService
 
 ---
 
-## 146. `NIRAAgent\Character\NIRACharacterContextFormatter.cs`
+## 153. `NIRAAgent\Character\NIRACharacterContextFormatter.cs`
 
 **File:** `NIRAAgent\Character\NIRACharacterContextFormatter.cs`
 
@@ -82733,7 +84494,7 @@ public static class NIRACharacterContextFormatter
 
 ---
 
-## 147. `NIRAAgent\Character\State\NIRAAttitudeService.cs`
+## 154. `NIRAAgent\Character\State\NIRAAttitudeService.cs`
 
 **File:** `NIRAAgent\Character\State\NIRAAttitudeService.cs`
 
@@ -82983,7 +84744,7 @@ public sealed class NIRAAttitudeService
 
 ---
 
-## 148. `NIRAAgent\Character\State\NIRAAttitudeState.cs`
+## 155. `NIRAAgent\Character\State\NIRAAttitudeState.cs`
 
 **File:** `NIRAAgent\Character\State\NIRAAttitudeState.cs`
 
@@ -83054,7 +84815,7 @@ public readonly record struct NIRAAttitudeState(
 
 ---
 
-## 149. `NIRAAgent\Character\State\NIRACharacterPersistenceService.cs`
+## 156. `NIRAAgent\Character\State\NIRACharacterPersistenceService.cs`
 
 **File:** `NIRAAgent\Character\State\NIRACharacterPersistenceService.cs`
 
@@ -83239,7 +85000,7 @@ public sealed class NIRACharacterPersistenceService
 
 ---
 
-## 150. `NIRAAgent\Character\State\NIRACharacterSnapshot.cs`
+## 157. `NIRAAgent\Character\State\NIRACharacterSnapshot.cs`
 
 **File:** `NIRAAgent\Character\State\NIRACharacterSnapshot.cs`
 
@@ -83297,7 +85058,7 @@ public readonly record struct NIRACharacterSnapshot(
 
 ---
 
-## 151. `NIRAAgent\Character\State\NIRACharacterStateService.cs`
+## 158. `NIRAAgent\Character\State\NIRACharacterStateService.cs`
 
 **File:** `NIRAAgent\Character\State\NIRACharacterStateService.cs`
 
@@ -83567,7 +85328,7 @@ public sealed class NIRACharacterStateService
 
 ---
 
-## 152. `NIRAAgent\Character\State\NIRACharacterStateStore.cs`
+## 159. `NIRAAgent\Character\State\NIRACharacterStateStore.cs`
 
 **File:** `NIRAAgent\Character\State\NIRACharacterStateStore.cs`
 
@@ -84123,7 +85884,7 @@ public sealed class NIRACharacterStateStore
 
 ---
 
-## 153. `NIRAAgent\Character\State\NIRAMoodState.cs`
+## 160. `NIRAAgent\Character\State\NIRAMoodState.cs`
 
 **File:** `NIRAAgent\Character\State\NIRAMoodState.cs`
 
@@ -84216,7 +85977,7 @@ public readonly record struct NIRAMoodState(
 
 ---
 
-## 154. `NIRAAgent\Character\State\NIRARelationshipState.cs`
+## 161. `NIRAAgent\Character\State\NIRARelationshipState.cs`
 
 **File:** `NIRAAgent\Character\State\NIRARelationshipState.cs`
 
@@ -84321,7 +86082,7 @@ public readonly record struct NIRARelationshipState(
 
 ---
 
-## 155. `NIRAAgent\Character\State\NIRASituationState.cs`
+## 162. `NIRAAgent\Character\State\NIRASituationState.cs`
 
 **File:** `NIRAAgent\Character\State\NIRASituationState.cs`
 
@@ -84379,7 +86140,7 @@ public readonly record struct NIRASituationState(
 
 ---
 
-## 156. `NIRAAgent\Conversation\ConversationManager.cs`
+## 163. `NIRAAgent\Conversation\ConversationManager.cs`
 
 **File:** `NIRAAgent\Conversation\ConversationManager.cs`
 
@@ -85450,7 +87211,7 @@ public sealed record ConversationContextSnapshot
 
 ---
 
-## 157. `NIRAAgent\Conversation\ConversationPendingTask.cs`
+## 164. `NIRAAgent\Conversation\ConversationPendingTask.cs`
 
 **File:** `NIRAAgent\Conversation\ConversationPendingTask.cs`
 
@@ -85466,7 +87227,7 @@ public sealed record ConversationPendingTask(
 
 ---
 
-## 158. `NIRAAgent\Conversation\NIRAConversationArchiveStore.cs`
+## 165. `NIRAAgent\Conversation\NIRAConversationArchiveStore.cs`
 
 **File:** `NIRAAgent\Conversation\NIRAConversationArchiveStore.cs`
 
@@ -86760,7 +88521,7 @@ public sealed record NIRAArchivedChatTurn(Guid MessageId, string Role, string Co
 
 ---
 
-## 159. `NIRAAgent\Conversation\NIRAConversationSearchRequest.cs`
+## 166. `NIRAAgent\Conversation\NIRAConversationSearchRequest.cs`
 
 **File:** `NIRAAgent\Conversation\NIRAConversationSearchRequest.cs`
 
@@ -86807,7 +88568,7 @@ public sealed record NIRAArchivedConversationHit(
 
 ---
 
-## 160. `NIRAAgent\Diagnostics\NIRADiagnosticTrace.cs`
+## 167. `NIRAAgent\Diagnostics\NIRADiagnosticTrace.cs`
 
 **File:** `NIRAAgent\Diagnostics\NIRADiagnosticTrace.cs`
 
@@ -86982,7 +88743,7 @@ public static class NIRADiagnosticTrace
 
 ---
 
-## 161. `NIRAAgent\Embodiment\Body\NIRABodyCommand.cs`
+## 168. `NIRAAgent\Embodiment\Body\NIRABodyCommand.cs`
 
 **File:** `NIRAAgent\Embodiment\Body\NIRABodyCommand.cs`
 
@@ -87170,7 +88931,7 @@ public sealed record NIRABodyCommand
 
 ---
 
-## 162. `NIRAAgent\Embodiment\Body\NIRABodyCommandService.cs`
+## 169. `NIRAAgent\Embodiment\Body\NIRABodyCommandService.cs`
 
 **File:** `NIRAAgent\Embodiment\Body\NIRABodyCommandService.cs`
 
@@ -87318,7 +89079,7 @@ public sealed class NIRABodyCommandService
 
 ---
 
-## 163. `NIRAAgent\Embodiment\Body\NIRABodyControllerService.cs`
+## 170. `NIRAAgent\Embodiment\Body\NIRABodyControllerService.cs`
 
 **File:** `NIRAAgent\Embodiment\Body\NIRABodyControllerService.cs`
 
@@ -87550,7 +89311,7 @@ public sealed class NIRABodyControllerService
 
 ---
 
-## 164. `NIRAAgent\Embodiment\Body\NIRABodyPlacementService.cs`
+## 171. `NIRAAgent\Embodiment\Body\NIRABodyPlacementService.cs`
 
 **File:** `NIRAAgent\Embodiment\Body\NIRABodyPlacementService.cs`
 
@@ -87829,7 +89590,7 @@ public sealed class NIRABodyPlacementService
 
 ---
 
-## 165. `NIRAAgent\Embodiment\Body\NIRABodyPlacementStore.cs`
+## 172. `NIRAAgent\Embodiment\Body\NIRABodyPlacementStore.cs`
 
 **File:** `NIRAAgent\Embodiment\Body\NIRABodyPlacementStore.cs`
 
@@ -88096,7 +89857,7 @@ public sealed class NIRABodyPlacementStore
 
 ---
 
-## 166. `NIRAAgent\Embodiment\NIRABlobPresetId.cs`
+## 173. `NIRAAgent\Embodiment\NIRABlobPresetId.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRABlobPresetId.cs`
 
@@ -88122,7 +89883,7 @@ public enum NIRABlobPresetId
 
 ---
 
-## 167. `NIRAAgent\Embodiment\NIRABlobPresetLibrary.cs`
+## 174. `NIRAAgent\Embodiment\NIRABlobPresetLibrary.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRABlobPresetLibrary.cs`
 
@@ -88316,7 +90077,7 @@ public static class NIRABlobPresetLibrary
 
 ---
 
-## 168. `NIRAAgent\Embodiment\NIRABlobStyleCatalog.cs`
+## 175. `NIRAAgent\Embodiment\NIRABlobStyleCatalog.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRABlobStyleCatalog.cs`
 
@@ -88396,7 +90157,7 @@ public static class NIRABlobStyleCatalog
 
 ---
 
-## 169. `NIRAAgent\Embodiment\NIRABlobStyleId.cs`
+## 176. `NIRAAgent\Embodiment\NIRABlobStyleId.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRABlobStyleId.cs`
 
@@ -88420,7 +90181,7 @@ public enum NIRABlobStyleId
 
 ---
 
-## 170. `NIRAAgent\Embodiment\NIRABlobStyleOption.cs`
+## 177. `NIRAAgent\Embodiment\NIRABlobStyleOption.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRABlobStyleOption.cs`
 
@@ -88441,7 +90202,7 @@ public sealed record NIRABlobStyleOption(
 
 ---
 
-## 171. `NIRAAgent\Embodiment\NIRAVisualExpressionIds.cs`
+## 178. `NIRAAgent\Embodiment\NIRAVisualExpressionIds.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRAVisualExpressionIds.cs`
 
@@ -88476,7 +90237,7 @@ public static class NIRAVisualExpressionIds
 
 ---
 
-## 172. `NIRAAgent\Embodiment\NIRAVisualFormIds.cs`
+## 179. `NIRAAgent\Embodiment\NIRAVisualFormIds.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRAVisualFormIds.cs`
 
@@ -88518,7 +90279,7 @@ public static class NIRAVisualFormIds
 
 ---
 
-## 173. `NIRAAgent\Embodiment\NIRAVisualIntent.cs`
+## 180. `NIRAAgent\Embodiment\NIRAVisualIntent.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRAVisualIntent.cs`
 
@@ -88877,7 +90638,7 @@ public sealed record NIRAVisualIntent
 
 ---
 
-## 174. `NIRAAgent\Embodiment\NIRAVisualIntentService.cs`
+## 181. `NIRAAgent\Embodiment\NIRAVisualIntentService.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRAVisualIntentService.cs`
 
@@ -90396,7 +92157,252 @@ public sealed class NIRAVisualIntentService
 
 ---
 
-## 175. `NIRAAgent\Goals\NIRAGoalContracts.cs`
+## 182. `NIRAAgent\Gallery\NIRAGalleryLibraryService.cs`
+
+**File:** `NIRAAgent\Gallery\NIRAGalleryLibraryService.cs`
+
+```csharp
+using System.Security.Cryptography;
+using System.Text.Json;
+
+namespace NIRAAgent.Gallery;
+
+// Persistent and intentionally separate from NIRA's transient visual evidence and
+// the original user-owned paths in conversation history. Paths in the catalog are
+// relative to RootFolder so moving the library does not invalidate its records.
+public enum NIRAGalleryCategory { Uploaded, WebFound, AiGenerated }
+
+public sealed record NIRAGalleryItem
+{
+    public Guid Id { get; init; }
+    public NIRAGalleryCategory Category { get; init; }
+    public string RelativePath { get; init; } = "";
+    public string Title { get; init; } = "";
+    public string Credit { get; init; } = "";
+    public string SourceUri { get; init; } = "";
+    public string Sha256 { get; init; } = "";
+    public DateTimeOffset AddedUtc { get; init; }
+}
+
+public sealed class NIRAGalleryLibraryService
+{
+    private static readonly HashSet<string> Extensions = new(StringComparer.OrdinalIgnoreCase)
+    { ".jpg", ".jpeg", ".png", ".gif", ".bmp" };
+    private const long MaxBytes = 40L * 1024 * 1024;
+    private readonly object _gate = new();
+    private readonly string _catalogFile;
+    private readonly string _settingsFile;
+    private List<NIRAGalleryItem> _items;
+    private string _root;
+    private sealed record Settings(string RootFolder);
+
+    public NIRAGalleryLibraryService(string? configurationFolder = null)
+    {
+        string settingsHome = configurationFolder ?? Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NIRAAgent");
+        Directory.CreateDirectory(settingsHome);
+        _settingsFile = Path.Combine(settingsHome, "gallery-settings.json");
+        _catalogFile = Path.Combine(settingsHome, "gallery-catalog.json");
+        string defaultRoot = Path.Combine(settingsHome, "gallery-library");
+        Settings? settings = ReadJson<Settings>(_settingsFile);
+        _root = Path.GetFullPath(string.IsNullOrWhiteSpace(settings?.RootFolder) ? defaultRoot : settings.RootFolder);
+        Directory.CreateDirectory(_root);
+        _items = ReadJson<List<NIRAGalleryItem>>(_catalogFile) ?? new();
+        _items = _items.Where(IsSafeItem).GroupBy(x => x.Id).Select(g => g.First()).ToList();
+    }
+
+    public string RootFolder { get { lock (_gate) return _root; } }
+    public IReadOnlyList<NIRAGalleryItem> Items { get { lock (_gate) return _items.OrderByDescending(x => x.AddedUtc).ToArray(); } }
+
+    public string ResolvePath(NIRAGalleryItem item)
+    {
+        if (!IsSafeItem(item)) throw new InvalidOperationException("Invalid gallery record path.");
+        lock (_gate) return Path.Combine(_root, item.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+    }
+
+    // Imports an image into a durable COPY; never changes the original user file,
+    // downloaded media cache, or archival chat attachment.
+    public NIRAGalleryItem? Import(string path, NIRAGalleryCategory category,
+        string? title = null, string? credit = null, string? sourceUri = null)
+    {
+        if (category is not (NIRAGalleryCategory.Uploaded or NIRAGalleryCategory.WebFound or NIRAGalleryCategory.AiGenerated))
+            throw new ArgumentOutOfRangeException(nameof(category));
+        string source = Path.GetFullPath(path);
+        var file = new FileInfo(source);
+        if (!file.Exists || !Extensions.Contains(file.Extension) || file.Length < 8 || file.Length > MaxBytes || !HasImageSignature(source, file.Extension))
+            return null;
+        string hash;
+        using (var stream = File.OpenRead(source)) hash = Convert.ToHexString(SHA256.HashData(stream));
+        lock (_gate)
+        {
+            NIRAGalleryItem? existing = _items.FirstOrDefault(x => x.Category == category && x.Sha256 == hash && File.Exists(ResolvePath(x)));
+            if (existing != null) return existing;
+            Guid id = Guid.NewGuid();
+            string sub = category.ToString();
+            string relative = sub + "/" + id.ToString("N") + file.Extension.ToLowerInvariant();
+            string destination = Path.Combine(_root, sub, id.ToString("N") + file.Extension.ToLowerInvariant());
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            string partial = destination + ".partial";
+            try
+            {
+                File.Copy(source, partial, overwrite: false);
+                using (var stream = File.OpenRead(partial))
+                    if (!string.Equals(Convert.ToHexString(SHA256.HashData(stream)), hash, StringComparison.Ordinal))
+                        throw new IOException("Gallery copy verification failed.");
+                File.Move(partial, destination);
+                NIRAGalleryItem item = new()
+                {
+                    Id = id, Category = category, RelativePath = relative,
+                    Title = Truncate(string.IsNullOrWhiteSpace(title) ? Path.GetFileNameWithoutExtension(source) : title!, 180),
+                    Credit = Truncate(credit ?? "", 500),
+                    SourceUri = Uri.TryCreate(sourceUri, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps ? uri.ToString() : "",
+                    Sha256 = hash, AddedUtc = DateTimeOffset.UtcNow
+                };
+                _items.Add(item);
+                try { WriteAtomic(_catalogFile, _items); }
+                catch { _items.Remove(item); throw; }
+                return item;
+            }
+            catch { if (File.Exists(partial)) File.Delete(partial); if (File.Exists(destination)) File.Delete(destination); throw; }
+        }
+    }
+
+    // Source remains intact until ALL copies are verified, promoted and the new
+    // settings are durably written. Any failure before commit cleans the new files.
+    public void MoveLibrary(string requestedFolder)
+    {
+        if (string.IsNullOrWhiteSpace(requestedFolder)) throw new ArgumentException("Choose a folder.", nameof(requestedFolder));
+        string target = Path.GetFullPath(requestedFolder.Trim());
+        lock (_gate)
+        {
+            if (Same(target, _root)) return;
+            if (IsInside(target, _root) || IsInside(_root, target))
+                throw new InvalidOperationException("The new gallery directory cannot contain or be inside the current directory.");
+            string config = Path.GetDirectoryName(_settingsFile)!;
+            if (Same(target, config) || IsInside(config, target))
+                throw new InvalidOperationException("Choose a gallery directory separate from NIRA's application settings.");
+            if (Path.GetPathRoot(target) == target)
+                throw new InvalidOperationException("Choose a folder, not a disk root.");
+            Directory.CreateDirectory(target);
+            string[] existing = Directory.GetFileSystemEntries(target);
+            // Never mingle with a pre-existing library or unrelated files.
+            if (existing.Length > 0)
+                throw new InvalidOperationException("Choose an empty destination folder to prevent accidental overwrites.");
+            string staged = Path.Combine(target, ".nira-gallery-migration-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(staged);
+            List<string> promotedFolders = new();
+            try
+            {
+                foreach (var item in _items)
+                {
+                    string old = ResolvePath(item);
+                    if (!File.Exists(old)) throw new FileNotFoundException("A gallery item is missing; no files were moved.", old);
+                    string dest = Path.Combine(staged, item.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+                    Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                    File.Copy(old, dest);
+                    using var stream = File.OpenRead(dest);
+                    string hash = Convert.ToHexString(SHA256.HashData(stream));
+                    if (!string.Equals(hash, item.Sha256, StringComparison.Ordinal))
+                        throw new IOException("Gallery relocation checksum mismatch. Original gallery is unchanged.");
+                }
+                foreach (var category in Enum.GetValues<NIRAGalleryCategory>())
+                {
+                    string sourceCategory = Path.Combine(staged, category.ToString());
+                    if (Directory.Exists(sourceCategory))
+                    {
+                        string promoted = Path.Combine(target, category.ToString());
+                        Directory.Move(sourceCategory, promoted);
+                        promotedFolders.Add(promoted);
+                    }
+                }
+                string oldRoot = _root;
+                // Catalog stores RELATIVE paths; only settings need updating.
+                WriteAtomic(_settingsFile, new Settings(target));
+                _root = target;
+                // Deleting original copies is cleanup, not part of the transaction.
+                // An incomplete cleanup is harmless: catalog points to new copies.
+                foreach (var item in _items)
+                {
+                    try { File.Delete(Path.Combine(oldRoot, item.RelativePath.Replace('/', Path.DirectorySeparatorChar))); }
+                    catch (IOException) { }
+                    catch (UnauthorizedAccessException) { }
+                }
+                foreach (var category in Enum.GetValues<NIRAGalleryCategory>())
+                {
+                    try { Directory.Delete(Path.Combine(oldRoot, category.ToString())); }
+                    catch (IOException) { }
+                    catch (UnauthorizedAccessException) { }
+                }
+            }
+            catch
+            {
+                // If settings committed the new root is already authoritative;
+                // never erase the only valid committed library in that case.
+                if (!Same(_root, target))
+                    foreach (string dest in promotedFolders)
+                    {
+                        try { if (Directory.Exists(dest)) Directory.Delete(dest, recursive: true); }
+                        catch (IOException) { }
+                        catch (UnauthorizedAccessException) { }
+                    }
+                throw;
+            }
+            finally
+            {
+                try { if (Directory.Exists(staged)) Directory.Delete(staged, recursive: true); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+        }
+    }
+
+    private static bool IsSafeItem(NIRAGalleryItem item)
+    {
+        string relative = item.RelativePath.Replace('\\', '/');
+        string[] segments = relative.Split('/');
+        return item.Id != Guid.Empty && segments.Length == 2 &&
+            Enum.TryParse<NIRAGalleryCategory>(segments[0], out var cat) && cat == item.Category &&
+            Path.GetFileName(segments[1]) == segments[1] &&
+            segments[1].StartsWith(item.Id.ToString("N"), StringComparison.OrdinalIgnoreCase) &&
+            Extensions.Contains(Path.GetExtension(segments[1])) && !relative.Contains("..", StringComparison.Ordinal);
+    }
+    private static bool Same(string a, string b) =>
+        string.Equals(Path.TrimEndingDirectorySeparator(a), Path.TrimEndingDirectorySeparator(b), StringComparison.OrdinalIgnoreCase);
+    private static bool IsInside(string candidate, string ancestor) =>
+        (Path.TrimEndingDirectorySeparator(candidate) + Path.DirectorySeparatorChar).StartsWith(
+            Path.TrimEndingDirectorySeparator(ancestor) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+    private static bool HasImageSignature(string path, string extension)
+    {
+        Span<byte> bytes = stackalloc byte[12];
+        using var stream = File.OpenRead(path);
+        if (stream.Read(bytes) < 8) return false;
+        return extension.ToLowerInvariant() switch
+        {
+            ".jpg" or ".jpeg" => bytes[0] == 0xff && bytes[1] == 0xd8 && bytes[2] == 0xff,
+            ".png" => bytes[..8].SequenceEqual(new byte[] {137,80,78,71,13,10,26,10}),
+            ".gif" => bytes[..3].SequenceEqual("GIF"u8),
+            ".bmp" => bytes[..2].SequenceEqual("BM"u8),
+            _ => false
+        };
+    }
+    private static string Truncate(string text, int max) { text = text.Trim(); return text.Length > max ? text[..max] : text; }
+    private static T? ReadJson<T>(string path)
+    {
+        if (!File.Exists(path)) return default;
+        return JsonSerializer.Deserialize<T>(File.ReadAllText(path));
+    }
+    private static void WriteAtomic<T>(string path, T value)
+    {
+        string temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try { File.WriteAllText(temp, JsonSerializer.Serialize(value)); File.Move(temp, path, overwrite: true); }
+        finally { if (File.Exists(temp)) File.Delete(temp); }
+    }
+}
+```
+
+---
+
+## 183. `NIRAAgent\Goals\NIRAGoalContracts.cs`
 
 **File:** `NIRAAgent\Goals\NIRAGoalContracts.cs`
 
@@ -90759,7 +92765,7 @@ public sealed record NIRAGoalApplyResult
 
 ---
 
-## 176. `NIRAAgent\Goals\NIRAGoalSchedulerService.cs`
+## 184. `NIRAAgent\Goals\NIRAGoalSchedulerService.cs`
 
 **File:** `NIRAAgent\Goals\NIRAGoalSchedulerService.cs`
 
@@ -90853,7 +92859,7 @@ public sealed class NIRAGoalSchedulerService : BackgroundService
 
 ---
 
-## 177. `NIRAAgent\Goals\NIRAGoalService.cs`
+## 185. `NIRAAgent\Goals\NIRAGoalService.cs`
 
 **File:** `NIRAAgent\Goals\NIRAGoalService.cs`
 
@@ -92173,7 +94179,7 @@ public sealed class NIRAGoalService : IHostedService
 
 ---
 
-## 178. `NIRAAgent\Goals\NIRAGoalStore.cs`
+## 186. `NIRAAgent\Goals\NIRAGoalStore.cs`
 
 **File:** `NIRAAgent\Goals\NIRAGoalStore.cs`
 
@@ -92703,7 +94709,789 @@ public sealed class NIRAGoalStore
 
 ---
 
-## 179. `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIClient.cs`
+## 187. `NIRAAgent\Images\NIRACommonsImageDiscoveryService.cs`
+
+**File:** `NIRAAgent\Images\NIRACommonsImageDiscoveryService.cs`
+
+```csharp
+using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Sockets;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using NIRAAgent.Diagnostics;
+
+namespace NIRAAgent.Images;
+
+// This provider intentionally exposes no arbitrary URL fetch primitive.
+// Every retrievable candidate must originate from a trusted Commons, Wikipedia, or Openverse API result.
+// Download locations are restricted to known media CDN hosts, never arbitrary model URLs.
+public sealed record NIRACommonsImageCandidate
+{
+    public string CandidateId { get; init; } = string.Empty;
+    public string Provider { get; init; } = "Wikimedia Commons";
+    public string Title { get; init; } = string.Empty;
+    public string Description { get; init; } = string.Empty;
+    public string Author { get; init; } = string.Empty;
+    public string License { get; init; } = string.Empty;
+    public string LicenseUrl { get; init; } = string.Empty;
+    public string SourceUri { get; init; } = string.Empty;
+    public string MediaUrl { get; init; } = string.Empty;
+    // Only the native provider supplies these; never accepted as model URLs.
+    public string AlternateMediaUrl { get; init; } = string.Empty;
+    public string SearchBatchId { get; init; } = string.Empty;
+    public string SearchQuery { get; init; } = string.Empty;
+    public int Width { get; init; }
+    public int Height { get; init; }
+}
+
+public sealed record NIRACommonsImageDownload(
+    string LocalPath, string Title, string Caption,
+    string SourceUri, string Sha256, long Bytes);
+
+public sealed class NIRAImageProviderUnavailableException : InvalidOperationException
+{
+    public string FailureKind { get; }
+    public NIRAImageProviderUnavailableException(string kind, Exception cause)
+        : base($"IMAGE_PROVIDER_UNAVAILABLE: Reference-image services are temporarily unreachable ({kind}). " +
+               "Do not retry this provider in the same task; explain the limitation and answer any non-image portion.", cause)
+    {
+        FailureKind = kind;
+    }
+}
+
+public sealed class NIRAImageRetrievalUnavailableException : InvalidOperationException
+{
+    public NIRAImageRetrievalUnavailableException(string reason, Exception? cause = null)
+        : base($"IMAGE_RETRIEVAL_UNAVAILABLE: No verified image bytes could be downloaded ({reason}). " +
+               "Do not retry image.retrieve in this task. Explain that no image was displayed.", cause) { }
+}
+
+public sealed class NIRACommonsImageDiscoveryService : IDisposable
+{
+    private const int MaxApiBytes = 1_200_000;
+    private const int MaxImageBytes = 12 * 1024 * 1024;
+    private const int MaxCandidates = 120;
+    private static readonly TimeSpan CandidateLifetime = TimeSpan.FromMinutes(35);
+    private readonly HttpClient _http;
+    private readonly SemaphoreSlim _requests = new(1, 1);
+    private readonly object _lock = new();
+    private readonly Dictionary<string, (NIRACommonsImageCandidate Candidate, DateTimeOffset Expires)> _candidates =
+        new(StringComparer.Ordinal);
+    private readonly string _cacheFolder;
+    // One provider/network outage must not become N serial 22-second timeouts
+    // when cognition requests several image.search operations in one batch.
+    private DateTimeOffset _searchUnavailableUntilUtc = DateTimeOffset.MinValue;
+    private string _lastSearchFailureKind = "";
+    public static readonly TimeSpan SearchNetworkTimeout = TimeSpan.FromSeconds(7);
+    public static readonly TimeSpan OpenverseNetworkTimeout = TimeSpan.FromSeconds(8);
+    public static readonly TimeSpan SearchFailureCooldown = TimeSpan.FromMinutes(2);
+    // Sanitized, per-search stage summary for the zero-LLM Image Lab. No URLs, user data or queries.
+    public string LastSearchStatus { get; private set; } = "NotRun";
+
+    public static string ClassifyProviderFailure(Exception exception) => exception switch
+    {
+        HttpRequestException http when http.StatusCode == HttpStatusCode.TooManyRequests => "RateLimited",
+        HttpRequestException http when http.StatusCode == HttpStatusCode.Forbidden => "AccessDenied",
+        HttpRequestException http when http.StatusCode == HttpStatusCode.ServiceUnavailable => "ServiceUnavailable",
+        HttpRequestException http when http.StatusCode != null => "HttpError",
+        HttpRequestException => "NetworkError",
+        OperationCanceledException => "Timeout",
+        _ => "UnexpectedError"
+    };
+
+    public NIRACommonsImageDiscoveryService()
+    {
+        // Do not use cookies, auto-redirect, proxy-configured credentials, or arbitrary destinations.
+        var handler = CreateImageHttpHandler();
+        _http = new HttpClient(handler, disposeHandler: true) {
+            Timeout = Timeout.InfiniteTimeSpan
+        };
+        // Operators can supply a fully identifiable UA including their contact URL/email.
+        // Never insert credentials or personal user data into this header automatically.
+        string? configured = Environment.GetEnvironmentVariable("NIRA_WIKIMEDIA_USER_AGENT");
+        string ua = !string.IsNullOrWhiteSpace(configured) &&
+                    configured.Length <= 240 && configured.All(c => c >= 32 && c <= 126)
+            ? configured
+            : "NIRAAgent/1.0 (desktop Wikimedia Commons reference image client)";
+        _http.DefaultRequestHeaders.UserAgent.ParseAdd(ua);
+        _cacheFolder = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "NIRAAgent", "visual-artifacts", "commons-cache");
+        Directory.CreateDirectory(_cacheFolder);
+        CleanupCacheBestEffort();
+    }
+
+    // R29: Prefer an IPv4 connection when both address families exist. Some
+    // dual-stack networks can resolve and even open one IPv6 TCP socket while
+    // .NET HTTPS requests stall on subsequent DNS/address selection. Preserve
+    // normal TLS certificate validation, system proxy policy, fixed source
+    // allowlists, and existing HTTP error handling. This changes only the
+    // image-service HTTP transport, never the general browser or HTTP tools.
+    private static SocketsHttpHandler CreateImageHttpHandler() => new()
+    {
+        AllowAutoRedirect = false,
+        UseCookies = false,
+        UseProxy = true,
+        AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
+        ConnectCallback = ConnectPreferIPv4Async
+    };
+
+    private static async ValueTask<Stream> ConnectPreferIPv4Async(
+        SocketsHttpConnectionContext context, CancellationToken cancellationToken)
+    {
+        IPAddress[] addresses = await Dns.GetHostAddressesAsync(
+            context.DnsEndPoint.Host, cancellationToken);
+        // Prefer A records; AAAA is a fallback. No hardcoded IPs, DNS bypass,
+        // insecure TLS fallback, redirect following or untrusted destination.
+        IPAddress[] ordered = addresses
+            .Where(address => address.AddressFamily is AddressFamily.InterNetwork or AddressFamily.InterNetworkV6)
+            .OrderBy(address => address.AddressFamily == AddressFamily.InterNetwork ? 0 : 1)
+            .Distinct().Take(8).ToArray();
+        Exception? previous = null;
+        foreach (IPAddress address in ordered)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+            try
+            {
+                using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                attempt.CancelAfter(TimeSpan.FromSeconds(3));
+                await socket.ConnectAsync(new IPEndPoint(address, context.DnsEndPoint.Port), attempt.Token);
+                NIRADiagnosticTrace.Event("IMAGE-TRANSPORT",
+                    $"Connect=Succeeded Family={(address.AddressFamily == AddressFamily.InterNetwork ? "IPv4" : "IPv6")}");
+                // The HTTP stack performs the TLS handshake and validates the
+                // certificate against the ORIGINAL hostname, not this IP.
+                return new NetworkStream(socket, ownsSocket: true);
+            }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
+                ex is SocketException or OperationCanceledException or IOException)
+            {
+                socket.Dispose();
+                previous = ex;
+            }
+            catch
+            {
+                socket.Dispose();
+                throw;
+            }
+        }
+        NIRADiagnosticTrace.Event("IMAGE-TRANSPORT", "Connect=Failed IPv4AndIPv6=True");
+        throw new HttpRequestException(
+            "Reference-image HTTPS TCP connection failed for all resolved addresses.", previous);
+    }
+
+    private static string CommonsSearchUrl(string query, int limit) =>
+        "https://commons.wikimedia.org/w/api.php?action=query&format=json" +
+        "&formatversion=2&generator=search&gsrnamespace=6&gsrlimit=" +
+        Math.Max(limit * 2, 12) + "&gsrsearch=" + Uri.EscapeDataString(query) +
+        "&prop=imageinfo&iiprop=url%7Cmime%7Csize%7Cextmetadata&iiurlwidth=1000" +
+        "&iiextmetadatalanguage=en" +
+        "&iiextmetadatafilter=Artist%7CLicenseShortName%7CLicenseUrl%7CImageDescription%7CCredit";
+
+    public async Task<IReadOnlyList<NIRACommonsImageCandidate>> SearchAsync(
+        string query, int limit, CancellationToken cancellationToken = default)
+    {
+        query = (query ?? string.Empty).Trim();
+        if (query.Length < 2 || query.Length > 160 || query.Any(char.IsControl))
+            throw new ArgumentException("Image query must contain 2-160 visible characters.");
+        if (limit is < 1 or > 12)
+            throw new ArgumentOutOfRangeException(nameof(limit), "Ask for 1-12 candidates.");
+
+        string url = CommonsSearchUrl(query, limit);
+        LastSearchStatus = "Openverse=NotAttempted Commons=NotAttempted";
+
+        await _requests.WaitAsync(cancellationToken);
+        try
+        {
+            if (DateTimeOffset.UtcNow < _searchUnavailableUntilUtc)
+            {
+                NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
+                    $"Operation=Search Outcome=Cooldown Reason={_lastSearchFailureKind} NetworkAttempt=False");
+                throw new NIRAImageProviderUnavailableException(_lastSearchFailureKind,
+                    new InvalidOperationException("Prior provider failure in this session."));
+            }
+            IReadOnlyList<NIRACommonsImageCandidate> parsed = Array.Empty<NIRACommonsImageCandidate>();
+            bool openverseReachable = false;
+            string openverseStatus = "NotAttempted";
+            string commonsStatus = "NotAttempted";
+            // Openverse is an independent open-license index, NOT another
+            // Wikimedia endpoint. A Wikimedia DNS or network outage therefore
+            // does not automatically prevent the user from seeing photographs.
+            try
+            {
+                parsed = await SearchOpenverseAsync(query, limit, cancellationToken);
+                openverseReachable = true;
+                openverseStatus = $"HTTP200 Accepted={parsed.Count}";
+            }
+            catch (HttpRequestException ex)
+            {
+                openverseStatus = $"HTTPError:{ClassifyProviderFailure(ex)}";
+                NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
+                    $"Operation=Search Stage=Openverse Outcome=Fallback Reason={ClassifyProviderFailure(ex)} HttpRequestError={ex.HttpRequestError}");
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                openverseStatus = "Timeout";
+                NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
+                    "Operation=Search Stage=Openverse Outcome=Fallback Reason=Timeout");
+            }
+            catch (JsonException)
+            {
+                openverseStatus = "InvalidJSON";
+                NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
+                    "Operation=Search Stage=Openverse Outcome=Fallback Reason=InvalidApiResponse");
+            }
+            // If Openverse found appropriate, safe thumbnails, there is no
+            // reason to run the slower Wikimedia search or make more calls.
+            if (parsed.Count == 0) try
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeout.CancelAfter(SearchNetworkTimeout);
+                using var response = await _http.GetAsync(
+                    url, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+                if (!response.IsSuccessStatusCode)
+                    throw new HttpRequestException(
+                        $"Wikimedia Commons image search returned HTTP {(int)response.StatusCode}.",
+                        null, response.StatusCode);
+                byte[] bytes = await ReadBoundedAsync(response.Content, MaxApiBytes, timeout.Token);
+                parsed = ParseCommonsSearchResponse(Encoding.UTF8.GetString(bytes), limit);
+                commonsStatus = $"HTTP200 Accepted={parsed.Count}";
+            }
+            catch (HttpRequestException ex) when (ex.StatusCode is null && openverseReachable)
+            {
+                // Openverse responded but had no suitable photos, so one
+                // alternate Wikimedia article-image lookup is worthwhile.
+                // If BOTH independent hosts failed networking, do not also
+                // spend time on Wikipedia (same infrastructure as Commons).
+                // A failed connection to commons.wikimedia.org is not proof
+                // that ALL Wikimedia endpoints are unreachable. One bounded
+                // alternative on the Wikipedia article-image index is useful.
+                // Never switch hosts for a 403/429 (policy/rate limiting).
+                commonsStatus = "NetworkError; WikipediaFallback";
+                parsed = await SearchWikipediaFreeImagesAsync(query, limit, cancellationToken);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && openverseReachable)
+            {
+                commonsStatus = "Timeout; WikipediaFallback";
+                parsed = await SearchWikipediaFreeImagesAsync(query, limit, cancellationToken);
+            }
+            // Group candidates from this one verified search. When a selected
+            // CDN URL is broken, image.retrieve may try a few OTHER results
+            // from the same query without paying for another model turn.
+            string batch = Guid.NewGuid().ToString("N");
+            parsed = parsed.Select(candidate => candidate with { SearchBatchId = batch, SearchQuery = query }).ToArray();
+            lock (_lock)
+            {
+                PruneCandidates();
+                foreach (var candidate in parsed)
+                    _candidates[candidate.CandidateId] = (candidate, DateTimeOffset.UtcNow + CandidateLifetime);
+                while (_candidates.Count > MaxCandidates)
+                {
+                    string old = _candidates.MinBy(kv => kv.Value.Expires).Key;
+                    _candidates.Remove(old);
+                }
+            }
+            _searchUnavailableUntilUtc = DateTimeOffset.MinValue;
+            _lastSearchFailureKind = "";
+            LastSearchStatus = $"Openverse={openverseStatus}; Commons={commonsStatus}; Accepted={parsed.Count}";
+            NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
+                $"Operation=Search Outcome={(parsed.Count > 0 ? "Candidates" : "Empty")} {LastSearchStatus}");
+            return parsed;
+        }
+        catch (HttpRequestException ex)
+        {
+            string kind = ClassifyProviderFailure(ex);
+            _lastSearchFailureKind = kind;
+            LastSearchStatus = $"ProviderFailure={kind}";
+            _searchUnavailableUntilUtc = DateTimeOffset.UtcNow + SearchFailureCooldown;
+            NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
+                $"Operation=Search Outcome=Unavailable Reason={kind} NetError={ex.HttpRequestError} CooldownSec={(int)SearchFailureCooldown.TotalSeconds}");
+            throw new NIRAImageProviderUnavailableException(kind, ex);
+        }
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            const string kind = "Timeout";
+            _lastSearchFailureKind = kind;
+            LastSearchStatus = $"ProviderFailure={kind}";
+            _searchUnavailableUntilUtc = DateTimeOffset.UtcNow + SearchFailureCooldown;
+            NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
+                $"Operation=Search Outcome=Unavailable Reason={kind} CooldownSec={(int)SearchFailureCooldown.TotalSeconds}");
+            throw new NIRAImageProviderUnavailableException(kind, ex);
+        }
+        finally { _requests.Release(); }
+    }
+
+
+    private async Task<IReadOnlyList<NIRACommonsImageCandidate>> SearchOpenverseAsync(
+        string query, int limit, CancellationToken cancellationToken)
+    {
+        // Anonymous, documented Openverse search; no key or browser required.
+        // It indexes openly licensed images, including Flickr and Wikimedia.
+        // Only HTTPS links from explicitly approved media CDNs can be retrieved.
+        string url = "https://api.openverse.org/v1/images/?q=" +
+            Uri.EscapeDataString(query) + "&page_size=" + Math.Clamp(limit * 3, 6, 30) +
+            "&mature=false";
+        NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
+            "Operation=Search Stage=Openverse Attempt=1 QueryLogged=False");
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(OpenverseNetworkTimeout);
+        using var response = await _http.GetAsync(url,
+            HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException("Openverse search HTTP failure", null, response.StatusCode);
+        byte[] bytes = await ReadBoundedAsync(response.Content, MaxApiBytes, timeout.Token);
+        IReadOnlyList<NIRACommonsImageCandidate> candidates =
+            ParseOpenverseSearchResponse(Encoding.UTF8.GetString(bytes), limit);
+        NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
+            $"Operation=Search Stage=Openverse Outcome=Success Accepted={candidates.Count}");
+        return candidates;
+    }
+
+    public static IReadOnlyList<NIRACommonsImageCandidate> ParseOpenverseSearchResponse(
+        string json, int limit = 8)
+    {
+        if (limit is < 1 or > 12) throw new ArgumentOutOfRangeException(nameof(limit));
+        using JsonDocument document = JsonDocument.Parse(json);
+        if (!document.RootElement.TryGetProperty("results", out var results) ||
+            results.ValueKind != JsonValueKind.Array)
+            return Array.Empty<NIRACommonsImageCandidate>();
+        List<NIRACommonsImageCandidate> found = [];
+        foreach (JsonElement item in results.EnumerateArray())
+        {
+            if (Field(item, "title").Length is < 2 or > 300) continue;
+            if (item.TryGetProperty("mature", out var mature) &&
+                mature.ValueKind == JsonValueKind.True) continue;
+            string media = Field(item, "thumbnail");
+            string original = Field(item, "url");
+            if (!IsPermittedMediaUri(media)) media = original;
+            if (!IsPermittedMediaUri(media)) continue;
+            string alternate = IsPermittedMediaUri(original) &&
+                !string.Equals(media, original, StringComparison.Ordinal) ? original : "";
+            string source = Field(item, "foreign_landing_url");
+            if (!IsPermittedSourcePage(source)) continue;
+            string license = Field(item, "license").Trim().ToLowerInvariant();
+            if (license is not ("by" or "by-sa" or "by-nd" or "by-nc" or
+                "by-nc-sa" or "by-nc-nd" or "cc0" or "pdm" or "publicdomain")) continue;
+            string licenseUrl = Field(item, "license_url");
+            if (!Uri.TryCreate(licenseUrl, UriKind.Absolute, out Uri? rights) ||
+                rights.Scheme != Uri.UriSchemeHttps ||
+                (rights.Host != "creativecommons.org" &&
+                 rights.Host != "www.creativecommons.org"))
+                licenseUrl = string.Empty;
+            int Number(string key) => item.TryGetProperty(key, out var v) &&
+                v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out int value)
+                    ? Math.Max(0, value) : 0;
+            string title = SafeText(Field(item, "title"), 180);
+            string creator = SafeText(Field(item, "creator"), 180);
+            string licenseVersion = SafeText(Field(item, "license_version"), 20);
+            string attribution = licenseVersion.Length > 0 ? license.ToUpperInvariant() + " " + licenseVersion : license.ToUpperInvariant();
+            found.Add(new NIRACommonsImageCandidate {
+                CandidateId = Guid.NewGuid().ToString("N"), Provider = "Openverse",
+                Title = title, Author = creator, License = attribution,
+                LicenseUrl = licenseUrl, SourceUri = source,
+                MediaUrl = media, AlternateMediaUrl = alternate,
+                Width = Number("width"), Height = Number("height"),
+                Description = "Openly licensed reference image; attribution and source link verified from Openverse metadata."
+            });
+            if (found.Count >= limit) break;
+        }
+        return found;
+    }
+
+    public static bool IsPermittedSourcePage(string? value)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out Uri? uri) ||
+            uri.Scheme != Uri.UriSchemeHttps || !uri.IsDefaultPort ||
+            uri.UserInfo.Length != 0 || uri.Fragment.Length != 0) return false;
+        return (uri.Host.Equals("commons.wikimedia.org", StringComparison.OrdinalIgnoreCase) &&
+                uri.AbsolutePath.StartsWith("/wiki/File:", StringComparison.Ordinal)) ||
+               (uri.Host.Equals("www.flickr.com", StringComparison.OrdinalIgnoreCase) &&
+                uri.AbsolutePath.StartsWith("/photos/", StringComparison.Ordinal));
+    }
+
+    private static string SafeText(string? value, int maxLength)
+    {
+        string trimmed = string.Join(' ', (value ?? "").Split(
+            (char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
+    }
+
+    private async Task<IReadOnlyList<NIRACommonsImageCandidate>> SearchWikipediaFreeImagesAsync(
+        string query, int limit, CancellationToken cancellationToken)
+    {
+        // Wikipedia's PageImages module only returns images passing its
+        // `pilicense=free` restriction. Original file URLs still must be
+        // upload.wikimedia.org media. File pages provide actual attribution.
+        const string baseUrl = "https://en.wikipedia.org/w/api.php?action=query&format=json" +
+            "&formatversion=2&generator=search&gsrnamespace=0&gsrlimit=12" +
+            "&prop=pageimages&piprop=name%7Cthumbnail&pilicense=free&pithumbsize=1000&gsrsearch=";
+        NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
+            "Operation=Search Stage=WikipediaFreeImagesFallback Attempt=1 QueryLogged=False");
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(8));
+        using var response = await _http.GetAsync(baseUrl + Uri.EscapeDataString(query),
+            HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException("Wikipedia free image index unavailable.",
+                null, response.StatusCode);
+        string json = Encoding.UTF8.GetString(await ReadBoundedAsync(
+            response.Content, MaxApiBytes, timeout.Token));
+        return ParseWikipediaFreeImageResponse(json, limit);
+    }
+
+    public static IReadOnlyList<NIRACommonsImageCandidate> ParseWikipediaFreeImageResponse(
+        string json, int limit = 8)
+    {
+        if (limit is < 1 or > 12) throw new ArgumentOutOfRangeException(nameof(limit));
+        using JsonDocument doc = JsonDocument.Parse(json);
+        if (!doc.RootElement.TryGetProperty("query", out var query) ||
+            !query.TryGetProperty("pages", out var pages) ||
+            pages.ValueKind != JsonValueKind.Array)
+            return Array.Empty<NIRACommonsImageCandidate>();
+        List<(int Position, NIRACommonsImageCandidate Image)> found = [];
+        foreach (JsonElement page in pages.EnumerateArray())
+        {
+            if (!page.TryGetProperty("thumbnail", out JsonElement thumbnail) ||
+                thumbnail.ValueKind != JsonValueKind.Object) continue;
+            string mediaUrl = Field(thumbnail, "source");
+            if (!IsPermittedMediaUri(mediaUrl)) continue;
+            string filename = Field(page, "pageimage").Trim();
+            string title = Field(page, "title").Trim();
+            if (filename.Length == 0 || title.Length == 0 || filename.Length > 320) continue;
+            // A real Commons file page, not an arbitrary model-owned URL.
+            string source = "https://commons.wikimedia.org/wiki/File:" +
+                Uri.EscapeDataString(filename.Replace(' ', '_'));
+            int GetInt(string key) => thumbnail.TryGetProperty(key, out var value) &&
+                value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int n) ? n : 0;
+            int position = page.TryGetProperty("index", out var index) &&
+                index.ValueKind == JsonValueKind.Number && index.TryGetInt32(out int n)
+                ? n : int.MaxValue;
+            found.Add((position, new NIRACommonsImageCandidate {
+                CandidateId = Guid.NewGuid().ToString("N"), Title = title,
+                MediaUrl = mediaUrl, SourceUri = source,
+                License = "See Wikimedia Commons file page",
+                Description = "Free-license article illustration; see its file page for author and terms.",
+                Width = GetInt("width"), Height = GetInt("height")
+            }));
+        }
+        return found.OrderBy(x => x.Position).ThenBy(x => x.Image.Title)
+            .Select(x => x.Image).Take(limit).ToArray();
+    }
+
+    public async Task<NIRACommonsImageDownload> RetrieveAsync(
+        string candidateId, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(candidateId))
+            throw new ArgumentException("A candidateId from image.search is required.");
+        NIRACommonsImageCandidate selected;
+        IReadOnlyList<NIRACommonsImageCandidate> choices;
+        lock (_lock)
+        {
+            PruneCandidates();
+            if (!_candidates.TryGetValue(candidateId, out var entry))
+                throw new InvalidOperationException(
+                    "Image candidate is unknown or expired. Call image.search again.");
+            selected = entry.Candidate;
+            // The user's selected candidate is always first. Substitutions
+            // are restricted to this exact observed search batch.
+            choices = new[] { selected }.Concat(_candidates.Values
+                .Where(e => e.Candidate.SearchBatchId == selected.SearchBatchId &&
+                    e.Candidate.CandidateId != selected.CandidateId &&
+                    selected.SearchBatchId.Length > 0)
+                .Select(e => e.Candidate)).Take(4).ToArray();
+        }
+        await _requests.WaitAsync(cancellationToken);
+        try
+        {
+            using var entire = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            entire.CancelAfter(TimeSpan.FromSeconds(19));
+            int attempts = 0;
+            Exception? lastError = null;
+            string lastReason = "No accepted image files";
+            foreach (NIRACommonsImageCandidate candidate in choices)
+            {
+                foreach (string media in new[] { candidate.MediaUrl, candidate.AlternateMediaUrl })
+                {
+                    if (attempts >= 6 || entire.IsCancellationRequested) break;
+                    if (string.IsNullOrWhiteSpace(media) || !IsPermittedMediaUri(media)) continue;
+                    attempts++;
+                    string host = new Uri(media).Host; // hostname only; never log arbitrary URL
+                    try
+                    {
+                        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(entire.Token);
+                        attempt.CancelAfter(TimeSpan.FromSeconds(7));
+                        NIRACommonsImageDownload saved = await DownloadVerifiedAsync(candidate, media, attempt.Token);
+                        NIRADiagnosticTrace.Event("IMAGE-RETRIEVE",
+                            $"Outcome=Success Host={host} Attempts={attempts} Bytes={saved.Bytes} " +
+                            $"AlternativeCandidate={candidate.CandidateId != selected.CandidateId}");
+                        return saved;
+                    }
+                    catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
+                        ex is HttpRequestException or InvalidOperationException or OperationCanceledException or IOException)
+                    {
+                        lastError = ex;
+                        lastReason = ex switch
+                        {
+                            HttpRequestException h when h.StatusCode.HasValue => $"HTTP{(int)h.StatusCode.Value}",
+                            HttpRequestException h => $"Network_{h.HttpRequestError}",
+                            OperationCanceledException => "Timeout",
+                            InvalidOperationException => "InvalidMedia",
+                            IOException => "ReadError",
+                            _ => "Unavailable"
+                        };
+                        NIRADiagnosticTrace.Event("IMAGE-RETRIEVE",
+                            $"Outcome=CandidateFailed Host={host} Reason={lastReason} Attempt={attempts}");
+                    }
+                }
+                if (attempts >= 6 || entire.IsCancellationRequested) break;
+            }
+            // R30: a reachable index can return Flickr pictures while that
+            // particular CDN is blocked in the user's network. Without a new
+            // LLM call, try a DIFFERENT approved provider for the SAME query.
+            if (selected.Provider == "Openverse" && selected.SearchQuery.Length > 0 &&
+                !entire.IsCancellationRequested)
+            {
+                try
+                {
+                    using var lookup = CancellationTokenSource.CreateLinkedTokenSource(entire.Token);
+                    lookup.CancelAfter(TimeSpan.FromSeconds(6));
+                    using var result = await _http.GetAsync(
+                        CommonsSearchUrl(selected.SearchQuery, 4),
+                        HttpCompletionOption.ResponseHeadersRead, lookup.Token);
+                    if (!result.IsSuccessStatusCode)
+                        throw new HttpRequestException("Wikimedia image lookup failed", null, result.StatusCode);
+                    byte[] json = await ReadBoundedAsync(result.Content, MaxApiBytes, lookup.Token);
+                    var commons = ParseCommonsSearchResponse(Encoding.UTF8.GetString(json), 4);
+                    NIRADiagnosticTrace.Event("IMAGE-RETRIEVE",
+                        $"Stage=IndependentCommonsFallback Candidates={commons.Count}");
+                    foreach (var photo in commons.Take(3))
+                    {
+                        if (entire.IsCancellationRequested) break;
+                        attempts++;
+                        try
+                        {
+                            using var mediaTimeout = CancellationTokenSource.CreateLinkedTokenSource(entire.Token);
+                            mediaTimeout.CancelAfter(TimeSpan.FromSeconds(6));
+                            NIRACommonsImageDownload saved = await DownloadVerifiedAsync(
+                                photo, photo.MediaUrl, mediaTimeout.Token);
+                            NIRADiagnosticTrace.Event("IMAGE-RETRIEVE",
+                                $"Outcome=Success Host={new Uri(photo.MediaUrl).Host} Attempts={attempts} " +
+                                $"Source=IndependentCommons Bytes={saved.Bytes}");
+                            return saved;
+                        }
+                        catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
+                            ex is HttpRequestException or InvalidOperationException or OperationCanceledException or IOException)
+                        {
+                            lastError = ex;
+                            lastReason = ex is HttpRequestException http && http.StatusCode.HasValue
+                                ? $"HTTP{(int)http.StatusCode.Value}" : ex.GetType().Name;
+                            NIRADiagnosticTrace.Event("IMAGE-RETRIEVE",
+                                $"Outcome=CandidateFailed Host={new Uri(photo.MediaUrl).Host} " +
+                                $"Reason={lastReason} Attempt={attempts}");
+                        }
+                    }
+                }
+                catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
+                    ex is HttpRequestException or InvalidOperationException or OperationCanceledException or JsonException)
+                {
+                    lastError = ex;
+                    lastReason = ex is HttpRequestException h && h.StatusCode.HasValue
+                        ? $"CommonsHTTP{(int)h.StatusCode.Value}" : ex.GetType().Name;
+                    NIRADiagnosticTrace.Event("IMAGE-RETRIEVE",
+                        $"Stage=IndependentCommonsFallback Outcome=Unavailable Reason={lastReason}");
+                }
+            }
+            NIRADiagnosticTrace.Event("IMAGE-RETRIEVE",
+                $"Outcome=Unavailable Reason={lastReason} Attempts={attempts}");
+            throw new NIRAImageRetrievalUnavailableException(lastReason, lastError);
+        }
+        finally { _requests.Release(); }
+    }
+
+    private async Task<NIRACommonsImageDownload> DownloadVerifiedAsync(
+        NIRACommonsImageCandidate candidate, string mediaUrl, CancellationToken token)
+    {
+        using var response = await _http.GetAsync(mediaUrl,
+            HttpCompletionOption.ResponseHeadersRead, token);
+        // Automatic redirects stay DISABLED. Redirecting to an unapproved
+        // host must never silently download bytes from somewhere else.
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException(
+                $"Reference image download returned HTTP {(int)response.StatusCode}.",
+                null, response.StatusCode);
+        if (response.Content.Headers.ContentLength is > MaxImageBytes)
+            throw new InvalidOperationException("Image exceeds the 12 MiB reference limit.");
+        string mediaType = response.Content.Headers.ContentType?.MediaType ?? "";
+        if (mediaType is not ("image/jpeg" or "image/png" or "image/gif" or "application/octet-stream"))
+            throw new InvalidOperationException("Returned resource is not a supported raster image.");
+        byte[] bytes = await ReadBoundedAsync(response.Content, MaxImageBytes, token);
+        string extension = DetectImageExtension(bytes);
+        if (extension.Length == 0)
+            throw new InvalidOperationException("Returned image signature is invalid or unsupported.");
+        string path = Path.Combine(_cacheFolder, Guid.NewGuid().ToString("N") + extension);
+        string temporary = path + ".tmp";
+        try
+        {
+            await File.WriteAllBytesAsync(temporary, bytes, token);
+            File.Move(temporary, path, overwrite: false);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+        string sha = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        string credit = string.IsNullOrWhiteSpace(candidate.Author) ? "Author listed at source" : candidate.Author;
+        string license = string.IsNullOrWhiteSpace(candidate.License) ? "license: see source" : candidate.License;
+        string caption = $"{candidate.Provider} • {credit} • {license}";
+        if (Uri.TryCreate(candidate.LicenseUrl, UriKind.Absolute, out Uri? licenseLink) &&
+            licenseLink.Scheme == Uri.UriSchemeHttps)
+            caption += $" • License: {licenseLink.AbsoluteUri}";
+        return new NIRACommonsImageDownload(path, candidate.Title, caption,
+            candidate.SourceUri, sha, bytes.Length);
+    }
+
+    public static bool IsPermittedMediaUri(string? address)
+    {
+        if (!Uri.TryCreate(address, UriKind.Absolute, out Uri? uri)) return false;
+        if (uri.Scheme != Uri.UriSchemeHttps || !uri.IsDefaultPort ||
+            uri.UserInfo.Length != 0 || uri.Query.Length != 0 ||
+            uri.Fragment.Length != 0) return false;
+        // Commons changed its thumbnail host to thumb.wikimedia.org. The
+        // returned /wikipedia/commons/... images are genuine Commons media,
+        // but the old upload-only allowlist silently discarded every result.
+        // Only exact official hostnames and Commons file paths are accepted.
+        bool commons = (uri.Host.Equals("upload.wikimedia.org", StringComparison.OrdinalIgnoreCase) ||
+                        uri.Host.Equals("thumb.wikimedia.org", StringComparison.OrdinalIgnoreCase)) &&
+            uri.AbsolutePath.StartsWith("/wikipedia/commons/", StringComparison.Ordinal);
+        bool flickr = uri.Host.Equals("live.staticflickr.com", StringComparison.OrdinalIgnoreCase) &&
+            uri.AbsolutePath.StartsWith("/", StringComparison.Ordinal) &&
+            uri.AbsolutePath.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase);
+        return commons || flickr;
+    }
+
+    public static IReadOnlyList<NIRACommonsImageCandidate> ParseCommonsSearchResponse(
+        string json, int limit = 8)
+    {
+        if (limit is < 1 or > 12) throw new ArgumentOutOfRangeException(nameof(limit));
+        using JsonDocument doc = JsonDocument.Parse(json);
+        if (!doc.RootElement.TryGetProperty("query", out var query) ||
+            !query.TryGetProperty("pages", out var pages) || pages.ValueKind != JsonValueKind.Array)
+            return Array.Empty<NIRACommonsImageCandidate>();
+        var result = new List<(int Position, NIRACommonsImageCandidate Candidate)>();
+        foreach (JsonElement page in pages.EnumerateArray())
+        {
+            if (!page.TryGetProperty("imageinfo", out var infos) || infos.ValueKind != JsonValueKind.Array ||
+                infos.GetArrayLength() == 0) continue;
+            JsonElement info = infos[0];
+            string mime = Field(info, "mime");
+            if (mime is not ("image/jpeg" or "image/png" or "image/gif")) continue;
+            string thumb = Field(info, "thumburl");
+            string original = Field(info, "url");
+            string imageUrl = IsPermittedMediaUri(thumb) ? thumb : original;
+            if (!IsPermittedMediaUri(imageUrl)) continue;
+            // The original is a backup when an official Commons thumbnail is
+            // unavailable; it is independently subject to the same allowlist.
+            string alternate = IsPermittedMediaUri(original) &&
+                !string.Equals(original, imageUrl, StringComparison.Ordinal)
+                ? original : string.Empty;
+            string source = Field(info, "descriptionurl");
+            if (!Uri.TryCreate(source, UriKind.Absolute, out Uri? sourceUri) ||
+                sourceUri.Scheme != "https" || sourceUri.Host != "commons.wikimedia.org") continue;
+            string title = Field(page, "title");
+            if (title.StartsWith("File:", StringComparison.OrdinalIgnoreCase)) title = title[5..];
+            title = title.Replace('_', ' ').Trim();
+            if (title.Length == 0) continue;
+            JsonElement metadata = info.TryGetProperty("extmetadata", out var ext) &&
+                ext.ValueKind == JsonValueKind.Object ? ext : default;
+            string Meta(string key) => metadata.ValueKind == JsonValueKind.Object &&
+                metadata.TryGetProperty(key, out var value) ? CleanHtml(Field(value, "value")) : "";
+            int GetInt(string key) => info.TryGetProperty(key, out var value) &&
+                value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int number) ? number : 0;
+            int pos = page.TryGetProperty("index", out var index) && index.ValueKind == JsonValueKind.Number && index.TryGetInt32(out int n) ? n : int.MaxValue;
+            result.Add((pos, new NIRACommonsImageCandidate {
+                CandidateId = Guid.NewGuid().ToString("N"), Title = title,
+                MediaUrl = imageUrl, AlternateMediaUrl = alternate, SourceUri = source,
+                Author = Meta("Artist"), License = Meta("LicenseShortName"),
+                LicenseUrl = Meta("LicenseUrl"), Description = Meta("ImageDescription"),
+                Width = GetInt("width"), Height = GetInt("height")
+            }));
+        }
+        return result.OrderBy(x => x.Position).ThenBy(x => x.Candidate.Title)
+            .Select(x => x.Candidate).Take(limit).ToArray();
+    }
+
+    private static string Field(JsonElement element, string property) =>
+        element.ValueKind == JsonValueKind.Object &&
+        element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString() ?? "" : "";
+
+    private static string CleanHtml(string html)
+    {
+        string text = Regex.Replace(html ?? "", "<[^>]*>", " ");
+        text = WebUtility.HtmlDecode(text);
+        text = Regex.Replace(text, @"\s+", " ").Trim();
+        return text.Length <= 320 ? text : text[..320];
+    }
+
+    private static string DetectImageExtension(byte[] bytes)
+    {
+        if (bytes.Length >= 3 && bytes[0] == 0xff && bytes[1] == 0xd8 && bytes[2] == 0xff)
+            return ".jpg";
+        if (bytes.Length >= 8 && bytes.AsSpan(0, 8).SequenceEqual(new byte[] {137,80,78,71,13,10,26,10}))
+            return ".png";
+        if (bytes.Length >= 6 && Encoding.ASCII.GetString(bytes, 0, 6) is "GIF87a" or "GIF89a")
+            return ".gif";
+        return "";
+    }
+
+    private static async Task<byte[]> ReadBoundedAsync(HttpContent content, int limit, CancellationToken ct)
+    {
+        using Stream input = await content.ReadAsStreamAsync(ct);
+        using MemoryStream output = new();
+        byte[] buffer = new byte[8192];
+        while (true)
+        {
+            int read = await input.ReadAsync(buffer, ct);
+            if (read == 0) break;
+            if (output.Length + read > limit)
+                throw new InvalidOperationException("Image provider response exceeded the bounded byte limit.");
+            output.Write(buffer, 0, read);
+        }
+        return output.ToArray();
+    }
+
+    private void PruneCandidates()
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        foreach (var item in _candidates.Where(x => x.Value.Expires <= now).Select(x => x.Key).ToArray())
+            _candidates.Remove(item);
+    }
+
+    private void CleanupCacheBestEffort()
+    {
+        try
+        {
+            foreach (string file in Directory.EnumerateFiles(_cacheFolder))
+            {
+                if (File.GetLastWriteTimeUtc(file) < DateTime.UtcNow.AddDays(-7))
+                    File.Delete(file);
+            }
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
+
+    public void Dispose()
+    {
+        _http.Dispose();
+        _requests.Dispose();
+    }
+}
+```
+
+---
+
+## 188. `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIClient.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIClient.cs`
 
@@ -93173,7 +95961,7 @@ public sealed record TradeAIReadResult
 
 ---
 
-## 180. `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIReadCapabilityHandler.cs`
+## 189. `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIReadCapabilityHandler.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIReadCapabilityHandler.cs`
 
@@ -93712,7 +96500,7 @@ public sealed class TradeAIReadCapabilityHandler
 
 ---
 
-## 181. `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeContracts.cs`
+## 190. `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeContracts.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeContracts.cs`
 
@@ -93960,7 +96748,7 @@ public sealed record NIRABridgeErrorResponse
 
 ---
 
-## 182. `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeCredentialStore.cs`
+## 191. `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeCredentialStore.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeCredentialStore.cs`
 
@@ -94359,7 +97147,7 @@ public sealed class NIRABridgeCredentialStore
 
 ---
 
-## 183. `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeOptions.cs`
+## 192. `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeOptions.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeOptions.cs`
 
@@ -94403,7 +97191,7 @@ public static class NIRABridgeOptions
 
 ---
 
-## 184. `NIRAAgent\Integrations\Elvara\Bridge\NIRALocalBridgeService.cs`
+## 193. `NIRAAgent\Integrations\Elvara\Bridge\NIRALocalBridgeService.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\Bridge\NIRALocalBridgeService.cs`
 
@@ -95475,7 +98263,7 @@ public sealed class NIRALocalBridgeService
 
 ---
 
-## 185. `NIRAAgent\Integrations\Elvara\ElvaraAppDescriptor.cs`
+## 194. `NIRAAgent\Integrations\Elvara\ElvaraAppDescriptor.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\ElvaraAppDescriptor.cs`
 
@@ -95551,7 +98339,7 @@ public sealed record ElvaraAppDescriptor
 
 ---
 
-## 186. `NIRAAgent\Integrations\Elvara\ElvaraAppRegistry.cs`
+## 195. `NIRAAgent\Integrations\Elvara\ElvaraAppRegistry.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\ElvaraAppRegistry.cs`
 
@@ -95739,7 +98527,7 @@ public sealed class ElvaraAppRegistry
 
 ---
 
-## 187. `NIRAAgent\Integrations\Elvara\NIRAExternalAppContext.cs`
+## 196. `NIRAAgent\Integrations\Elvara\NIRAExternalAppContext.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\NIRAExternalAppContext.cs`
 
@@ -95805,7 +98593,7 @@ public sealed record NIRAExternalAppContext
 
 ---
 
-## 188. `NIRAAgent\Memory\LongTerm\NIRACognitionMemoryFormatter.cs`
+## 197. `NIRAAgent\Memory\LongTerm\NIRACognitionMemoryFormatter.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRACognitionMemoryFormatter.cs`
 
@@ -96523,7 +99311,7 @@ public static class NIRACognitionMemoryFormatter
 
 ---
 
-## 189. `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryService.cs`
+## 198. `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryService.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryService.cs`
 
@@ -97965,7 +100753,7 @@ public sealed class NIRALongTermMemoryService
 
 ---
 
-## 190. `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryStore.cs`
+## 199. `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryStore.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryStore.cs`
 
@@ -100734,7 +103522,7 @@ internal sealed record NIRAStoredMemory(
 
 ---
 
-## 191. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociation.cs`
+## 200. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociation.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociation.cs`
 
@@ -100808,7 +103596,7 @@ internal sealed record NIRAStoredMemoryAssociationProfile(
 
 ---
 
-## 192. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationProfile.cs`
+## 201. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationProfile.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationProfile.cs`
 
@@ -101223,7 +104011,7 @@ public sealed record NIRAMemoryAssociationProfile
 
 ---
 
-## 193. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationService.cs`
+## 202. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationService.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationService.cs`
 
@@ -101995,7 +104783,7 @@ public sealed class NIRAMemoryAssociationService
 
 ---
 
-## 194. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociativeIndexStore.cs`
+## 203. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociativeIndexStore.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociativeIndexStore.cs`
 
@@ -103662,7 +106450,7 @@ public sealed class NIRAMemoryAssociativeIndexStore
 
 ---
 
-## 195. `NIRAAgent\Memory\LongTerm\NIRAMemoryCandidate.cs`
+## 204. `NIRAAgent\Memory\LongTerm\NIRAMemoryCandidate.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryCandidate.cs`
 
@@ -103842,7 +106630,7 @@ public sealed record NIRAMemoryCandidate
 
 ---
 
-## 196. `NIRAAgent\Memory\LongTerm\NIRAMemoryConfidencePolicy.cs`
+## 205. `NIRAAgent\Memory\LongTerm\NIRAMemoryConfidencePolicy.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryConfidencePolicy.cs`
 
@@ -104054,7 +106842,7 @@ public static class NIRAMemoryConfidencePolicy
 
 ---
 
-## 197. `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidation.cs`
+## 206. `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidation.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidation.cs`
 
@@ -104137,7 +106925,7 @@ public sealed record NIRAMemoryConsolidationResult
 
 ---
 
-## 198. `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidator.cs`
+## 207. `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidator.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidator.cs`
 
@@ -105395,7 +108183,7 @@ public sealed class NIRAMemoryConsolidator
 
 ---
 
-## 199. `NIRAAgent\Memory\LongTerm\NIRAMemoryContextService.cs`
+## 208. `NIRAAgent\Memory\LongTerm\NIRAMemoryContextService.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryContextService.cs`
 
@@ -105608,7 +108396,7 @@ public sealed class NIRAMemoryContextService
 
 ---
 
-## 200. `NIRAAgent\Memory\LongTerm\NIRAMemoryContextSnapshot.cs`
+## 209. `NIRAAgent\Memory\LongTerm\NIRAMemoryContextSnapshot.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryContextSnapshot.cs`
 
@@ -105683,7 +108471,7 @@ public sealed record NIRAMemoryContextSnapshot
 
 ---
 
-## 201. `NIRAAgent\Memory\LongTerm\NIRAMemoryEvidence.cs`
+## 210. `NIRAAgent\Memory\LongTerm\NIRAMemoryEvidence.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryEvidence.cs`
 
@@ -105766,7 +108554,7 @@ public sealed record NIRAMemoryEvidence
 
 ---
 
-## 202. `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationContext.cs`
+## 211. `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationContext.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationContext.cs`
 
@@ -106236,7 +109024,7 @@ public sealed record NIRAMemoryFormationResult
 
 ---
 
-## 203. `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationService.cs`
+## 212. `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationService.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationService.cs`
 
@@ -107212,7 +110000,7 @@ public sealed class NIRAMemoryFormationService
 
 ---
 
-## 204. `NIRAAgent\Memory\LongTerm\NIRAMemoryKind.cs`
+## 213. `NIRAAgent\Memory\LongTerm\NIRAMemoryKind.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryKind.cs`
 
@@ -107292,7 +110080,7 @@ public enum NIRAMemorySourceType
 
 ---
 
-## 205. `NIRAAgent\Memory\LongTerm\NIRAMemoryKnowledgeEntry.cs`
+## 214. `NIRAAgent\Memory\LongTerm\NIRAMemoryKnowledgeEntry.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryKnowledgeEntry.cs`
 
@@ -107324,7 +110112,7 @@ public sealed record NIRAMemoryKnowledgeEntry
 
 ---
 
-## 206. `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceReport.cs`
+## 215. `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceReport.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceReport.cs`
 
@@ -107469,7 +110257,7 @@ public sealed record NIRAMemoryMaintenanceReport
 
 ---
 
-## 207. `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceService.cs`
+## 216. `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceService.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceService.cs`
 
@@ -108078,7 +110866,7 @@ public sealed class NIRAMemoryMaintenanceService
 
 ---
 
-## 208. `NIRAAgent\Memory\LongTerm\NIRAMemoryRecord.cs`
+## 217. `NIRAAgent\Memory\LongTerm\NIRAMemoryRecord.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryRecord.cs`
 
@@ -108394,7 +111182,7 @@ public sealed record NIRAMemoryRecord
 
 ---
 
-## 209. `NIRAAgent\Memory\LongTerm\NIRAMemorySearchRequest.cs`
+## 218. `NIRAAgent\Memory\LongTerm\NIRAMemorySearchRequest.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemorySearchRequest.cs`
 
@@ -108619,7 +111407,7 @@ public sealed record NIRAMemorySearchRequest
 
 ---
 
-## 210. `NIRAAgent\Memory\LongTerm\NIRAMemorySearchResult.cs`
+## 219. `NIRAAgent\Memory\LongTerm\NIRAMemorySearchResult.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemorySearchResult.cs`
 
@@ -108725,7 +111513,7 @@ public sealed record NIRAMemorySearchResult
 
 ---
 
-## 211. `NIRAAgent\Memory\LongTerm\NIRASensitiveMemoryPolicy.cs`
+## 220. `NIRAAgent\Memory\LongTerm\NIRASensitiveMemoryPolicy.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRASensitiveMemoryPolicy.cs`
 
@@ -108895,7 +111683,7 @@ public static class NIRASensitiveMemoryPolicy
 
 ---
 
-## 212. `NIRAAgent\Mind\NIRAActiveTurnLedger.cs`
+## 221. `NIRAAgent\Mind\NIRAActiveTurnLedger.cs`
 
 **File:** `NIRAAgent\Mind\NIRAActiveTurnLedger.cs`
 
@@ -109051,7 +111839,7 @@ public sealed record NIRAActiveWorkObservation(string Context, string ObservedId
 
 ---
 
-## 213. `NIRAAgent\Mind\NIRABackgroundProcessor.cs`
+## 222. `NIRAAgent\Mind\NIRABackgroundProcessor.cs`
 
 **File:** `NIRAAgent\Mind\NIRABackgroundProcessor.cs`
 
@@ -109171,7 +111959,7 @@ public sealed class NIRABackgroundProcessor
 
 ---
 
-## 214. `NIRAAgent\Mind\NIRAContextRetrievalPolicy.cs`
+## 223. `NIRAAgent\Mind\NIRAContextRetrievalPolicy.cs`
 
 **File:** `NIRAAgent\Mind\NIRAContextRetrievalPolicy.cs`
 
@@ -109200,7 +111988,7 @@ internal static class NIRAContextRetrievalPolicy
 
 ---
 
-## 215. `NIRAAgent\Mind\NIRADesktopManualHandoffPolicy.cs`
+## 224. `NIRAAgent\Mind\NIRADesktopManualHandoffPolicy.cs`
 
 **File:** `NIRAAgent\Mind\NIRADesktopManualHandoffPolicy.cs`
 
@@ -109269,7 +112057,7 @@ internal static class NIRADesktopManualHandoffPolicy
 
 ---
 
-## 216. `NIRAAgent\Mind\NIRADesktopWriteContinuityGuard.cs`
+## 225. `NIRAAgent\Mind\NIRADesktopWriteContinuityGuard.cs`
 
 **File:** `NIRAAgent\Mind\NIRADesktopWriteContinuityGuard.cs`
 
@@ -109423,7 +112211,7 @@ internal sealed class NIRADesktopWriteContinuityGuard
 
 ---
 
-## 217. `NIRAAgent\Mind\NIRAExecutive.cs`
+## 226. `NIRAAgent\Mind\NIRAExecutive.cs`
 
 **File:** `NIRAAgent\Mind\NIRAExecutive.cs`
 
@@ -109464,6 +112252,14 @@ namespace NIRAAgent.Mind;
 
 public sealed class NIRAExecutive
 {
+    // A later invalid image candidate never erases a verified image receipt.
+    // Tested offline; no model call or provider dependency.
+    private static bool ShouldMarkImageProviderUnavailable(int alreadyRetrieved,
+        IReadOnlyList<NIRACapabilityResult> results) =>
+        alreadyRetrieved == 0 && results.Any(result =>
+            (result.CapabilityId == NIRACapabilityIds.ImageSearch ||
+             result.CapabilityId == NIRACapabilityIds.ImageRetrieve) && !result.Succeeded);
+
     // Routing and completion are orthogonal. One foreground serial operation
     // should not allocate a persistent branch; one genuinely delegated operation
     // must not be hijacked by the direct lane simply because it has one step.
@@ -110300,6 +113096,11 @@ public sealed class NIRAExecutive
         // Subsequent stagnation retains the existing fail-closed loop guard.
         bool repeatedReadRecoveryUsed = false;
         bool partialEvidenceSynthesisUsed = false;
+        // A real image provider outage gets at most ONE answer-only cognition
+        // continuation. Never spend further rounds on unchanged image failures.
+        int unavailableImageProviderCycle = 0; // Also covers exhausted image retrieval.
+        int verifiedImageRetrievalCount = 0; // Run-wide receipts, not just this capability batch.
+
 
         // Malformed model capability objects are never executed. Give cognition
         // one bounded structured correction cycle, then fail closed instead of
@@ -110523,6 +113324,38 @@ public sealed class NIRAExecutive
                     expandedCapabilityIds,
                     synthesizeFromEvidence);
 
+
+            if (unavailableImageProviderCycle > 0 && cycle > unavailableImageProviderCycle &&
+                decision.State == NIRACognitionState.Continue &&
+                decision.CapabilityRequests.All(request =>
+                    request.CapabilityId is NIRACapabilityIds.ImageSearch or NIRACapabilityIds.ImageRetrieve) &&
+                decision.GoalProposals.Count == 0 && decision.BranchProposals.Count == 0 &&
+                decision.BranchWorkProposals.Count == 0 &&
+                decision.DynamicToolProposals.Count == 0 &&
+                decision.DynamicToolInvocations.Count == 0 &&
+                decision.MemorySearches.Count == 0 &&
+                decision.ConversationSearches.Count == 0)
+            {
+                // A nonterminal follow-up to an unavailable image service has
+                // no new authoritative evidence. Do not spend a third LLM call
+                // or repeat an equivalent remote operation. No fake images.
+                const string imageFailureReply =
+                    "I couldn't download a verified reference image from the available sources. " +
+                    "I haven't displayed any pictures. I can still " +
+                    "explain the subject without them, or retry the image search later.";
+                decision = decision with
+                {
+                    State = NIRACognitionState.Blocked,
+                    EmitReply = true,
+                    Reply = imageFailureReply,
+                    Speech = imageFailureReply,
+                    DisplayBlocks = Array.Empty<NIRARichBlock>(),
+                    ReplyReady = true,
+                    DecisionSummary = "One image-provider recovery round exhausted without new evidence."
+                };
+                NIRADiagnosticTrace.Event("IMAGE-SEARCH-RECOVERY",
+                    $"Run={runId:D} Cycle={cycle} Outcome=StoppedNoEvidence FurtherImageCalls=0");
+            }
 
             decision =
                 RestrictEmbeddedElvaraDecision(
@@ -113555,6 +116388,49 @@ public sealed class NIRAExecutive
                 AppendCapabilityEvidence(
                     capabilityEvidence,
                     capabilityResults);
+
+            verifiedImageRetrievalCount += capabilityResults.Count(result =>
+                result.CapabilityId == NIRACapabilityIds.ImageRetrieve && result.Succeeded);
+
+            if (verifiedImageRetrievalCount > 0 && capabilityResults.Any(result =>
+                result.CapabilityId == NIRACapabilityIds.ImageRetrieve && !result.Succeeded))
+            {
+                // Stale candidate IDs or failed additional downloads do not undo
+                // successful image receipts from an earlier cognition cycle.
+                executiveEvidence.AppendLine();
+                executiveEvidence.AppendLine(
+                    $"VERIFIED IMAGE DELIVERY (AUTHORITATIVE): {verifiedImageRetrievalCount} real " +
+                    "image(s) were already retrieved into NIRA chat during this run. " +
+                    "Subsequent image.retrieve failures affect only those candidates; " +
+                    "do NOT say the provider was unavailable or no pictures were shown. " +
+                    "Do not issue further image.retrieve requests in this turn. " +
+                    "Finish the response grounded in the images actually retrieved; " +
+                    "different photographs of one site do not cover other requested sites.");
+                NIRADiagnosticTrace.Event("IMAGE-SEARCH-RECOVERY",
+                    $"Run={runId:D} Cycle={cycle} Outcome=PartialImageSuccess Verified={verifiedImageRetrievalCount}");
+            }
+
+            if (unavailableImageProviderCycle == 0 &&
+                ShouldMarkImageProviderUnavailable(verifiedImageRetrievalCount, capabilityResults))
+            {
+                unavailableImageProviderCycle = cycle;
+                executiveEvidence.AppendLine();
+                executiveEvidence.AppendLine(
+                    "IMAGE PROVIDER UNAVAILABLE (AUTHORITATIVE TOOL RESULT): " +
+                    "Image discovery or verified retrieval failed in this run. No image " +
+                    "file was retrieved. Do not invoke image.search or image.retrieve " +
+                    "again for this objective; multiple failed image queries are NOT " +
+                    "independent evidence. On the very next cognition turn provide " +
+                    "the useful non-image answer from supported knowledge, openly " +
+                    "state that reference images could not be displayed, and finish " +
+                    "with state=Complete. Do not claim any images or source verification, " +
+                    "and do not claim a picture was displayed, or identify a photographer " +
+                    "without authoritative source evidence. You may give a clearly " +
+                    "labeled general site or search link instead. Do not spend additional " +
+                    "reasoning turns trying the same provider.");
+                NIRADiagnosticTrace.Event("IMAGE-SEARCH-RECOVERY",
+                    $"Run={runId:D} Cycle={cycle} Outcome=ProviderUnavailable Next=OneAnswerOnlyRound");
+            }
 
             // A successful close with a fresh zero-process/zero-window OS read
             // is authoritative evidence. Prevent the model reviewer from treating
@@ -116803,6 +119679,7 @@ public sealed class NIRAExecutive
                         LocalPath = normalized.LocalPath,
                         Title = normalized.Title,
                         Caption = normalized.Caption,
+                        SourceUri = normalized.SourceUri,
                         Surface = surface
                     };
 
@@ -118599,7 +121476,7 @@ public sealed class NIRAExecutive
 
 ---
 
-## 218. `NIRAAgent\Mind\NIRAFilesystemPrerequisitePolicy.cs`
+## 227. `NIRAAgent\Mind\NIRAFilesystemPrerequisitePolicy.cs`
 
 **File:** `NIRAAgent\Mind\NIRAFilesystemPrerequisitePolicy.cs`
 
@@ -118676,7 +121553,7 @@ internal static class NIRAFilesystemPrerequisitePolicy
 
 ---
 
-## 219. `NIRAAgent\Mind\NIRAInternalWorkGate.cs`
+## 228. `NIRAAgent\Mind\NIRAInternalWorkGate.cs`
 
 **File:** `NIRAAgent\Mind\NIRAInternalWorkGate.cs`
 
@@ -118811,7 +121688,7 @@ public sealed class NIRAInternalWorkGate
 
 ---
 
-## 220. `NIRAAgent\Mind\NIRAMindActivityTracker.cs`
+## 229. `NIRAAgent\Mind\NIRAMindActivityTracker.cs`
 
 **File:** `NIRAAgent\Mind\NIRAMindActivityTracker.cs`
 
@@ -118959,7 +121836,7 @@ public sealed class NIRAMindActivityTracker
 
 ---
 
-## 221. `NIRAAgent\Mind\NIRAMindEvent.cs`
+## 230. `NIRAAgent\Mind\NIRAMindEvent.cs`
 
 **File:** `NIRAAgent\Mind\NIRAMindEvent.cs`
 
@@ -119683,7 +122560,7 @@ public sealed record NIRAMindEvent
 
 ---
 
-## 222. `NIRAAgent\Mind\NIRAMindRuntime.cs`
+## 231. `NIRAAgent\Mind\NIRAMindRuntime.cs`
 
 **File:** `NIRAAgent\Mind\NIRAMindRuntime.cs`
 
@@ -120236,7 +123113,7 @@ public sealed class NIRAMindRuntime
 
 ---
 
-## 223. `NIRAAgent\Mind\NIRAOutputChunk.cs`
+## 232. `NIRAAgent\Mind\NIRAOutputChunk.cs`
 
 **File:** `NIRAAgent\Mind\NIRAOutputChunk.cs`
 
@@ -120320,7 +123197,7 @@ public sealed record NIRAOutputChunk
 
 ---
 
-## 224. `NIRAAgent\Mind\NIRAOutputDispatcher.cs`
+## 233. `NIRAAgent\Mind\NIRAOutputDispatcher.cs`
 
 **File:** `NIRAAgent\Mind\NIRAOutputDispatcher.cs`
 
@@ -120427,7 +123304,7 @@ public sealed class NIRAOutputDispatcher
 
 ---
 
-## 225. `NIRAAgent\Mind\NIRAProcessStartContinuityGuard.cs`
+## 234. `NIRAAgent\Mind\NIRAProcessStartContinuityGuard.cs`
 
 **File:** `NIRAAgent\Mind\NIRAProcessStartContinuityGuard.cs`
 
@@ -120510,7 +123387,7 @@ internal sealed class NIRAProcessStartContinuityGuard
 
 ---
 
-## 226. `NIRAAgent\Mind\NIRAProcessStopContinuityGuard.cs`
+## 235. `NIRAAgent\Mind\NIRAProcessStopContinuityGuard.cs`
 
 **File:** `NIRAAgent\Mind\NIRAProcessStopContinuityGuard.cs`
 
@@ -120592,7 +123469,7 @@ internal sealed class NIRAProcessStopContinuityGuard
 
 ---
 
-## 227. `NIRAAgent\Mind\NIRAWindowObservationContinuityPolicy.cs`
+## 236. `NIRAAgent\Mind\NIRAWindowObservationContinuityPolicy.cs`
 
 **File:** `NIRAAgent\Mind\NIRAWindowObservationContinuityPolicy.cs`
 
@@ -120656,7 +123533,7 @@ internal static class NIRAWindowObservationContinuityPolicy
 
 ---
 
-## 228. `NIRAAgent\NIRAAgent.csproj`
+## 237. `NIRAAgent\NIRAAgent.csproj`
 
 **File:** `NIRAAgent\NIRAAgent.csproj`
 
@@ -120779,7 +123656,7 @@ internal static class NIRAWindowObservationContinuityPolicy
 
 ---
 
-## 229. `NIRAAgent\PC\Awareness\NIRAPresenceService.cs`
+## 238. `NIRAAgent\PC\Awareness\NIRAPresenceService.cs`
 
 **File:** `NIRAAgent\PC\Awareness\NIRAPresenceService.cs`
 
@@ -121191,7 +124068,7 @@ public sealed class NIRAPresenceService
 
 ---
 
-## 230. `NIRAAgent\PC\Awareness\PcAwarenessService.cs`
+## 239. `NIRAAgent\PC\Awareness\PcAwarenessService.cs`
 
 **File:** `NIRAAgent\PC\Awareness\PcAwarenessService.cs`
 
@@ -121993,7 +124870,7 @@ public sealed class PcAwarenessService
 
 ---
 
-## 231. `NIRAAgent\PC\Awareness\PcContextFormatter.cs`
+## 240. `NIRAAgent\PC\Awareness\PcContextFormatter.cs`
 
 **File:** `NIRAAgent\PC\Awareness\PcContextFormatter.cs`
 
@@ -122195,7 +125072,7 @@ public static class PcContextFormatter
 
 ---
 
-## 232. `NIRAAgent\PC\Awareness\PcWorldState.cs`
+## 241. `NIRAAgent\PC\Awareness\PcWorldState.cs`
 
 **File:** `NIRAAgent\PC\Awareness\PcWorldState.cs`
 
@@ -122772,7 +125649,7 @@ public readonly record struct PcRectangle(
 
 ---
 
-## 233. `NIRAAgent\PC\Awareness\PcWorldStateService.cs`
+## 242. `NIRAAgent\PC\Awareness\PcWorldStateService.cs`
 
 **File:** `NIRAAgent\PC\Awareness\PcWorldStateService.cs`
 
@@ -123212,7 +126089,7 @@ public sealed class PcWorldStateService
 
 ---
 
-## 234. `NIRAAgent\Perception\AttentionManager.cs`
+## 243. `NIRAAgent\Perception\AttentionManager.cs`
 
 **File:** `NIRAAgent\Perception\AttentionManager.cs`
 
@@ -123957,7 +126834,7 @@ public sealed class AttentionManager
 
 ---
 
-## 235. `NIRAAgent\Perception\CompanionTimerService.cs`
+## 244. `NIRAAgent\Perception\CompanionTimerService.cs`
 
 **File:** `NIRAAgent\Perception\CompanionTimerService.cs`
 
@@ -124130,7 +127007,7 @@ public sealed class CompanionTimerService
 
 ---
 
-## 236. `NIRAAgent\Perception\PcMonitorService.cs`
+## 245. `NIRAAgent\Perception\PcMonitorService.cs`
 
 **File:** `NIRAAgent\Perception\PcMonitorService.cs`
 
@@ -124328,7 +127205,7 @@ public sealed class PcMonitorService
 
 ---
 
-## 237. `NIRAAgent\Perception\PerceptionAnalyzer.cs`
+## 246. `NIRAAgent\Perception\PerceptionAnalyzer.cs`
 
 **File:** `NIRAAgent\Perception\PerceptionAnalyzer.cs`
 
@@ -124722,7 +127599,7 @@ public sealed class PerceptionAnalyzer
 
 ---
 
-## 238. `NIRAAgent\Perception\PerceptionEvent.cs`
+## 247. `NIRAAgent\Perception\PerceptionEvent.cs`
 
 **File:** `NIRAAgent\Perception\PerceptionEvent.cs`
 
@@ -124797,7 +127674,7 @@ public sealed class PerceptionEvent
 
 ---
 
-## 239. `NIRAAgent\Piper\Models\en_US-hfc_female-medium.onnx.json`
+## 248. `NIRAAgent\Piper\Models\en_US-hfc_female-medium.onnx.json`
 
 **File:** `NIRAAgent\Piper\Models\en_US-hfc_female-medium.onnx.json`
 
@@ -125314,7 +128191,7 @@ public sealed class PerceptionEvent
 
 ---
 
-## 240. `NIRAAgent\Presentation\NIRADualChannelResponse.cs`
+## 249. `NIRAAgent\Presentation\NIRADualChannelResponse.cs`
 
 **File:** `NIRAAgent\Presentation\NIRADualChannelResponse.cs`
 
@@ -125555,7 +128432,120 @@ public static class NIRAPresentationPolicy
 
 ---
 
-## 241. `NIRAAgent\Presentation\NIRARichBlockJsonReader.cs`
+## 250. `NIRAAgent\Presentation\NIRAResourceLinkPresentation.cs`
+
+**File:** `NIRAAgent\Presentation\NIRAResourceLinkPresentation.cs`
+
+```csharp
+using System.Text.RegularExpressions;
+
+namespace NIRAAgent.Presentation;
+
+// Pure presentation parsing: this is NOT an assertion that a model-supplied URL
+// was researched or verified. Navigation happens only after a real user click.
+public sealed record NIRAResourceLinkPresentation(string Label, string Address, string Host, string Kind);
+
+public static class NIRAResourceLinkPolicy
+{
+    private static readonly Regex Standalone = new(
+        @"^\s*(?:(?:[-*+]|\d{1,3}[.)])\s+)?(?:(?<kind>Source|Sources|Reference|References|Read more|Further reading)\s*:\s*)?\[(?<label>[^\]\r\n]{1,120})\]\((?<url>https?://[^\s<>]{1,1900})\)\s*$",
+        RegexOptions.CultureInvariant | RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    public static bool TryParse(string? line, out NIRAResourceLinkPresentation? result)
+    {
+        result = null;
+        if (string.IsNullOrWhiteSpace(line) || line.Length > 2200) return false;
+        Match match = Standalone.Match(line);
+        if (!match.Success) return false;
+        string label = match.Groups["label"].Value.Trim();
+        string address = match.Groups["url"].Value;
+        if (!Uri.TryCreate(address, UriKind.Absolute, out Uri? uri) ||
+            (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp) ||
+            uri.Host.Length == 0 || uri.UserInfo.Length > 0)
+            return false;
+        string kind = match.Groups["kind"].Value.Trim();
+        result = new(label, uri.AbsoluteUri, uri.Host,
+            kind.Length == 0 ? "REFERENCE" : kind.StartsWith("Source", StringComparison.OrdinalIgnoreCase)
+                ? "SOURCE" : "REFERENCE");
+        return true;
+    }
+}
+
+// Sourced image credits are taken only from the already-grounded artifact
+// caption/source generated by the trusted retrieval capability, never from
+// independently inferred EXIF, captions, or web URLs.
+public sealed record NIRAReferenceImageCredit(
+    string Provider, string Creator, string License, string LinkLabel, bool IsStructured)
+{
+    public bool HasCreator => Creator.Length > 0;
+    public bool HasLicense => License.Length > 0;
+}
+
+public static class NIRAReferenceImageCreditPolicy
+{
+    public static NIRAReferenceImageCredit Read(string? caption, string? sourceUri)
+    {
+        string linkLabel = "View original source  ↗";
+        if (Uri.TryCreate(sourceUri, UriKind.Absolute, out Uri? source) &&
+            source.Scheme == Uri.UriSchemeHttps)
+        {
+            linkLabel = source.Host.ToLowerInvariant() switch
+            {
+                "www.flickr.com" or "flickr.com" => "View on Flickr  ↗",
+                "commons.wikimedia.org" => "View on Wikimedia Commons  ↗",
+                _ => linkLabel
+            };
+        }
+        string[] fields = (caption ?? "").Split('•', StringSplitOptions.TrimEntries);
+        if (fields.Length < 3 ||
+            fields[0] is not ("Openverse" or "Wikimedia Commons" or "Wikipedia"))
+            return new("", "", "", linkLabel, false);
+
+        string creator = fields[1];
+        if (creator.Equals("Author listed at source", StringComparison.OrdinalIgnoreCase) ||
+            creator.Equals("See source", StringComparison.OrdinalIgnoreCase)) creator = "";
+        string license = fields[2];
+        if (license.StartsWith("License:", StringComparison.OrdinalIgnoreCase) ||
+            license.Equals("license: see source", StringComparison.OrdinalIgnoreCase)) license = "";
+        else if (license.StartsWith("BY ", StringComparison.OrdinalIgnoreCase) ||
+                 license.StartsWith("BY-", StringComparison.OrdinalIgnoreCase)) license = "CC " + license;
+        return new(fields[0], creator, license, linkLabel, true);
+    }
+}
+
+// R33: a successfully retrieved image already has a trusted visual credit panel.
+// An LLM-authored standalone credit-only panel is not independent evidence.
+// Suppression is permitted ONLY when the actual image has source-backed credits;
+// explanatory cards, unrelated source cards and unsourced screenshots remain.
+public static class NIRAImageCreditLayoutPolicy
+{
+    private static readonly HashSet<string> CreditTitles = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Image Details", "Image Credits", "Image Attribution", "Image Source",
+        "Photo Details", "Photo Credits", "Photo Attribution", "Photo Source",
+        "Photograph Details", "Photograph Credits"
+    };
+
+    public static bool IsDuplicatePhotoCredit(NIRARichBlock? block, bool hasRetrievedCreditedImage)
+    {
+        if (!hasRetrievedCreditedImage || block is null ||
+            block.Type is not ("card" or "details" or "source" or "list")) return false;
+        if (!CreditTitles.Contains(block.Title.Trim())) return false;
+        // Additional substantive interpretation must not disappear with metadata.
+        string body = string.Join("\n", new[] { block.Text }
+            .Concat(block.Items).Concat(block.Columns)
+            .Concat(block.Rows.SelectMany(row => row)));
+        if (body.Length > 1000) return false;
+        return !Regex.IsMatch(body,
+            @"\b(?:architecture|construction|history|explanation|comparison|analysis|engineering|restoration|geography|interpretation)\b",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    }
+}
+```
+
+---
+
+## 251. `NIRAAgent\Presentation\NIRARichBlockJsonReader.cs`
 
 **File:** `NIRAAgent\Presentation\NIRARichBlockJsonReader.cs`
 
@@ -125829,15 +128819,31 @@ public static class NIRARichBlockJsonReader
         if (type is not ("heading" or "text" or "hero" or "insight" or "source" or "card" or "metric" or "table" or "chart" or "code" or "details" or "list" or "quote" or "timeline" or "checklist" or "progress" or "tabs" or "followups"))
             type = defaultType;
 
-        List<string> items = Strings(element, "items");
-        if (items.Count == 0) items = Strings(element, "bullets");
-        if (items.Count == 0 && type == "timeline") items = Strings(element, "events");
-        if (items.Count == 0 && type == "checklist") items = Strings(element, "tasks");
-        if (items.Count == 0 && type == "tabs") items = Strings(element, "labels");
-        if (items.Count == 0 && type == "followups") items = Strings(element, "options");
-        if (items.Count == 0 && type == "followups") items = Strings(element, "suggestions");
-        var panels = Strings(element, "panels");
-        if (panels.Count == 0 && type == "tabs") panels = Strings(element, "contents");
+        // A model may use objects instead of the contracted string arrays.
+        // Extract their human-readable fields; never print JSON property names
+        // such as "text:", "title:" or "checked: false" on screen.
+        List<string> items = PresentationItems(element, "items", type);
+        if (items.Count == 0) items = PresentationItems(element, "bullets", type);
+        if (items.Count == 0 && type == "timeline") items = PresentationItems(element, "events", type);
+        if (items.Count == 0 && type == "checklist") items = PresentationItems(element, "tasks", type);
+        if (items.Count == 0 && type == "tabs") items = PresentationItems(element, "labels", type);
+        if (items.Count == 0 && type == "followups") items = PresentationItems(element, "options", type);
+        if (items.Count == 0 && type == "followups") items = PresentationItems(element, "suggestions", type);
+        var panels = type == "tabs" ? TabPanelStrings(element, "panels") : Strings(element, "panels");
+        if (panels.Count == 0 && type == "tabs") panels = TabPanelStrings(element, "contents");
+        // Also accept tabs authored as items:[{label,content}, ...].
+        if (type == "tabs" && panels.Count == 0 &&
+            Property(element, "items", out var tabItems) && tabItems.ValueKind == JsonValueKind.Array)
+        {
+            var objects = tabItems.EnumerateArray().ToArray();
+            if (objects.Length >= 2 && objects.All(e => e.ValueKind == JsonValueKind.Object))
+            {
+                var labelsFromItems = objects.Select(e => First(e, "", "label", "title", "name")).ToList();
+                var contentFromItems = objects.Select(PanelContent).ToList();
+                if (labelsFromItems.All(x => x.Length > 0) && contentFromItems.All(x => x.Length > 0))
+                { items = labelsFromItems; panels = contentFromItems; }
+            }
+        }
         List<string> cols = Strings(element, "columns");
         if (cols.Count == 0) cols = Strings(element, "headers");
         var rows = new List<IReadOnlyList<string>>();
@@ -125917,6 +128923,80 @@ public static class NIRARichBlockJsonReader
         };
     }
 
+    // Presentation-only shape compatibility. These routines preserve supplied
+    // words and dates; they do not infer task completion or invent milestones.
+    private static List<string> PresentationItems(JsonElement obj, string key, string type)
+    {
+        if (!Property(obj, key, out var values) || values.ValueKind != JsonValueKind.Array)
+            return new List<string>();
+        var items = new List<string>();
+        foreach (var value in values.EnumerateArray())
+        {
+            string text;
+            if (value.ValueKind != JsonValueKind.Object)
+                text = AsText(value);
+            else if (type == "timeline")
+            {
+                string when = First(value, "", "date", "year", "period", "when", "day", "stage", "time");
+                string title = First(value, "", "title", "event", "milestone", "label", "name");
+                string description = First(value, "", "text", "description", "body", "content", "summary");
+                if (title.Length == 0) title = description;
+                else if (description.Length > 0 && !string.Equals(title, description, StringComparison.Ordinal))
+                    title += "\n" + description;
+                text = when.Length > 0 && title.Length > 0 ? when + " — " + title : title;
+            }
+            else if (type == "checklist")
+            {
+                text = First(value, "", "text", "task", "label", "title", "description", "name");
+                string detail = First(value, "", "details", "note");
+                if (text.Length > 0 && detail.Length > 0) text += "\n" + detail;
+                // A model's checked/done flag is NEVER proof that work was done.
+            }
+            else
+                text = First(value, "", "label", "title", "name", "text", "description");
+            if (!string.IsNullOrWhiteSpace(text)) items.Add(text.Trim());
+        }
+        return items;
+    }
+
+    private static List<string> TabPanelStrings(JsonElement obj, string key)
+    {
+        if (!Property(obj, key, out var values) || values.ValueKind != JsonValueKind.Array)
+            return new List<string>();
+        return values.EnumerateArray().Select(PanelContent).ToList();
+    }
+
+    // Return meaningful Markdown, not an object's property dump. Markdown is
+    // interpreted only by NIRA's safe local WPF renderer, never as executable UI.
+    private static string PanelContent(JsonElement value)
+    {
+        if (value.ValueKind == JsonValueKind.String) return value.GetString() ?? "";
+        if (value.ValueKind == JsonValueKind.Array)
+            return string.Join("\n", value.EnumerateArray().Select(PanelContent)
+                .Where(x => !string.IsNullOrWhiteSpace(x)));
+        if (value.ValueKind != JsonValueKind.Object) return AsText(value);
+        var parts = new List<string>();
+        string title = First(value, "", "heading", "title");
+        if (title.Length > 0) parts.Add("### " + title);
+        string body = First(value, "", "text", "body", "content", "description", "summary", "overview");
+        if (body.Length > 0) parts.Add(body);
+        if (Property(value, "sections", out var sections) && sections.ValueKind == JsonValueKind.Array)
+            foreach (var section in sections.EnumerateArray().Take(12))
+            {
+                string sectionText = PanelContent(section);
+                if (sectionText.Length > 0) parts.Add(sectionText);
+            }
+        foreach (var key in new[] { "bullets", "steps", "points" })
+            if (Property(value, key, out var bullets) && bullets.ValueKind == JsonValueKind.Array)
+            {
+                var lines = bullets.EnumerateArray().Take(24).Select(e =>
+                    e.ValueKind == JsonValueKind.Object
+                        ? First(e, "", "text", "label", "title", "description") : AsText(e));
+                parts.Add(string.Join("\n", lines.Where(x => x.Length > 0).Select(x => "- " + x)));
+            }
+        return string.Join("\n\n", parts.Where(x => !string.IsNullOrWhiteSpace(x)));
+    }
+
     private static List<string> Strings(JsonElement obj, string key) =>
         Property(obj, key, out var arr) && arr.ValueKind == JsonValueKind.Array
             ? arr.EnumerateArray().Select(AsText).ToList()
@@ -125979,7 +129059,7 @@ public static class NIRARichBlockJsonReader
 
 ---
 
-## 242. `NIRAAgent\Presentation\NIRAVerifiedFilePresentation.cs`
+## 252. `NIRAAgent\Presentation\NIRAVerifiedFilePresentation.cs`
 
 **File:** `NIRAAgent\Presentation\NIRAVerifiedFilePresentation.cs`
 
@@ -126103,7 +129183,7 @@ public static class NIRAVerifiedFilePresentation
 
 ---
 
-## 243. `NIRAAgent\Prompt\cognition.yaml`
+## 253. `NIRAAgent\Prompt\cognition.yaml`
 
 **File:** `NIRAAgent\Prompt\cognition.yaml`
 
@@ -126317,12 +129397,13 @@ delivery:
       Layout is not a claim of research or a reason to invent missing evidence.
     rules:
       - A short greeting, joke, acknowledgement, opinion or interpersonal exchange normally stays unadorned, without headings, cards, image searches or empty panels.
-      - Choose the best response form for THIS request, not a habitual layout. Most questions, even long factual explanations, can be answered beautifully as a coherent, transparent full-width conversation with well-spaced paragraphs and occasional meaningful headings. An EMPTY displayBlocks array is often the correct choice. Do not assume a substantial answer needs cards, a featured block, or a takeaway panel.
-      - Use typed displayBlocks only when a specific visual representation makes the answer noticeably clearer than prose: real comparable rows belong in a table, actual numeric observations in compact metrics, distinct alternatives in a few cards, sequential real milestones in a timeline, programming examples in code, an important verified source in a link panel. One suitable component is often sufficient. Multiple different blocks are fine only if each carries distinct information rather than duplicating the same narrative.
-      - Think of prose and supporting components as ONE continuous reply, not a detached introduction followed by a second miniature dashboard. The model should choose the composition freely. NIRA's natural voice and useful explanation must survive even when no blocks are present. Avoid repetitive canned sequences, automatic 3-card grids, mandatory hero/insight endings, decorative labels, and giving every topic an artificial numbered framework.
-      - Visual components are optional, never fake: no invented illustrations, image thumbnails, sources, dates, metrics, or completed-action status. No empty image placeholders. Existing verified visual artifacts are handled separately; future web-image retrieval is NOT part of this styling stage.
-      - Prefer the least ornate presentation that communicates the idea well. If the answer reads better as prose, use prose. If a typed table, chart, list, checklist or other component is substantially better, emit just the useful block(s) without an extra decoration requirement. Never repeat the same facts in reply and displayBlocks merely to fill space.
-      - For an intrinsically visual subject (the appearance, architecture or visual differences of actual objects/places), seriously consider images as part of answering, not an optional decorative afterthought. Plan for image retrieval and include only actual authorized, locally verified images as visualPresentations, with trustworthy attribution where known. A prose description cannot impersonate a displayed image. If image retrieval is blocked, provide a helpful text answer and an appropriate verified source link without implying the image was displayed.
+      - Choose the best response form for THIS request, not a habitual layout. For substantial explanations, comparisons, tutorials, histories, plans, and decisions, actively compose a purposeful professional screen with appropriate typed displayBlocks whenever the content has a natural visual structure. Plain paragraphs alone are not the default for those tasks. Keep transparent prose for connective explanation and nuanced discussion; brief interpersonal exchanges normally remain plain. Do not add fake data or ornamental blocks.
+      - Use typed displayBlocks as the primary presentation for naturally structured material: comparisons with concrete attributes -> table; several distinct options -> adjacent cards; historical or sequential changes -> timeline; actionable user-checkable steps -> checklist; two to five alternative views -> tabs with real panels; real numerical observations -> metric/chart/progress; grounded program source -> code; optional depth -> expandable details. Multiple complementary blocks are welcome if their information differs. Each block must include its actual schema/data in displayBlocks, not a description of the block in reply. Never invent missing values, dates, sources, or task completion.
+      - The available blocks are creative affordances, not a checklist, style guide, or quota. NIRA owns the composition independently for every answer. Experiment with layouts suited to the actual substance, not random styling. The UI applies one cohesive existing HALO/ECLIPSE design system to everything; NIRA chooses content and structure, not new theme settings, arbitrary CSS or unsupported executable UI. Prior replies are evidence about conversation meaning, never a style template to copy. There is no required opening, middle, or closing block. A conclusion can be ordinary transparent prose; a component, if chosen, should add genuinely distinct information.
+      - Keep the screen response and blocks as ONE coherent exchange in NIRA's voice. When emitting blocks, use a concise but substantive lead-in and let the actual cards/tables/tabs/timeline/checklist carry their own detail; avoid a long plain-text answer followed by redundant blocks. Give content-specific headings and varied arrangements when appropriate. Do not use repetitive template layouts or a fixed number of cards. Plain prose remains right for personal discussion, open-ended opinion or content without a genuine structure.
+      - Visual components are optional, never fake: no invented illustrations, image thumbnails, sources, dates, metrics, or completed-action status. No empty image placeholders. Verified image presentation is handled by the trusted image.search / image.retrieve pipeline, never by model-invented displayBlocks.
+      - Compose freely from the available presentation capabilities when they clarify the topic; NIRA may choose a unique combination and reading flow, not a preset template. Express a useful comparison as a table if it fits, a plan as steps or a checklist if it fits, options as cards if it fits, and ordinary thought as transparent prose if it fits. Never add a component only to satisfy a visual quota. Never repeat the same facts in reply and displayBlocks merely to fill space.
+      - For an intrinsically visual subject (the appearance, architecture or visual differences of actual objects/places), seriously consider images as part of answering, not an optional decorative afterthought. Use image.search followed by image.retrieve for openly licensed reference images when appropriate: that primitive automatically presents the grounded image with attribution. For other sources use authorized locally verified visualPresentations. A prose description cannot impersonate a displayed image. If image retrieval is blocked, provide a helpful text answer and an appropriate verified source link without implying the image was displayed.
       - For multiple visual subjects, use multiple distinct verified images when they improve the comparison and are actually retrievable. Keep the subject association clear in titles/captions. The UI will arrange the images in a compact gallery; do not fabricate image counts, thumbnail claims or placeholders.
       - A factual external reading reference should be a clickable complete URL, preferably a trustworthy directly relevant page instead of a generic homepage. Never label an unverified guess as visited or verified.
       - On a long reply with several content blocks, the text, typed blocks and images should form a coherent reading order. Refer to images close to the relevant discussion when possible; the UI may append its verified image gallery at the end if no semantic placement is available. Do not promise an impossible exact inline position.
@@ -126331,9 +129412,9 @@ delivery:
   dual_channel_screen_policy:
     - "reply is transparent, full-width natural screen text; displayBlocks contain the actual visually distinct information; speech is natural voice. All channels must agree on the same facts. Build all of them in the current cognition call without a presentation-only LLM call."
     - "First distinguish conceptual explanations from requests for live device measurements. Conceptual comparisons need knowledge and clear presentation, not system inspection, shell commands, or authorization; only perform observations when the user's objective actually requires current machine data."
-    - "Choose typed displayBlocks only when the user needs structured interaction or a visualization genuinely improves comprehension. Even a data-rich or long response may use no blocks when clear prose is better. Do not manufacture a chart, table, card group or footer merely because the question is detailed."
+    - "For substantial structured information, favor well-matched real displayBlocks over an entire wall of prose: option cards, comparison tables, chronological timelines, actionable checklists, informative tabs, or data-backed charts. Choose by content and create actual typed objects. Do not manufacture metrics, dates, images, status or ornamental panels."
     - "If an observation fails, do not fabricate a metric card from memory or from an unrelated capability. Use successful evidence for the supported subtask and clearly qualify whatever remains unverified."
-    - "The transparent reply is the coherent primary narrative. Optional blocks should support it, never make the reply feel like an unrelated preface to a dashboard. Avoid duplicating table rows or card text in reply or voice."
+    - "The reply is a readable introduction and connective narrative; typed blocks can carry most of the detailed visual explanation. Never duplicate their rows, list items or card descriptions in prose. Spoken speech gives a self-contained informative takeaway without reciting UI labels."
     - "Use Markdown headings, bold text, bullets or inline code only when helpful; the screen renderer styles them, and voice must never read Markdown syntax."
     - "Never overformat a short personal reply. Never invent chart figures, extra columns or status flags merely for a beautiful UI."
     - "When evidence contains SizeBytes treat it as bytes, never assume KB. Process memory WorkingSetMiB/PrivateMemoryMiB are already in MiB; do not recalculate by guessing units."
@@ -126576,10 +129657,23 @@ visual_communication:
       - Use localPath only when there is no EvidenceId source and current authoritative capability/tool evidence established that exact local image file.
       - sourceUri is provenance only; presentation never fetches a URL. Use normal browser/HTTP capabilities first when an internet image still needs to be obtained.
       - When the user wants a sourced web IMAGE in the chat, distinguish the image-file URL from the article/search RESULT URL. Do not stop at a text card merely because the image URL was found. If authorized to save a non-destructive image into an existing permitted directory, use http.download with that verified direct image-file URL and the chosen absolute output path; then include its successful grounded path in visualPresentations. If authorization/path/download is unavailable, supply a clickable source link and accurately say the actual image could not be embedded. Never claim it is displayed unless actual visual artifact emission is possible.
-      - When a response uses multiple images, keep every independently evidenced visualPresentations request. The chat gallery will make a compact strip with a +N overflow viewer; do not arbitrarily truncate the factual evidence or refer to visuals that were not obtained.
-      - For long results, narrate the topic in a short introductory reply and use ordered displayBlocks for detailed sections, tables and cards. Images remain source-verified visualPresentations, not invented image tags or naked URLs. The chat renderer places verified images after the ordered structured content until a grounded inline ordering contract is provided.
+      - When a response uses multiple images, keep every independently evidenced visualPresentations request. The chat gallery shows up to three actual thumbnails, with an overflow viewer only when there are more than three; do not arbitrarily truncate the factual evidence or refer to visuals that were not obtained.
+      - For long results, decide whether a continuous narrative, a small number of purposeful displayBlocks, or a mixed composition communicates the information best. A short introduction plus several cards is not a required shape. Images remain source-verified visualPresentations, not invented image tags or naked URLs. The chat renderer places verified images after the ordered structured content until a grounded inline ordering contract is provided.
       - Give legitimate HTTP/HTTPS references as normal Markdown links [descriptive title](https://source.example/path) or bare absolute HTTP/HTTPS URLs. The chat makes these clickable on user action. Do not output a fake image if only a result-page link was retrieved.
-      - For a user request to FIND and SEE a picture on the internet: obtain an actual image URL through ordinary authorized browsing/retrieval, then use the existing authorized HTTP download primitive to save the real image to a permitted absolute path. When download evidence confirms that exact image path, supply that localPath and its sourceUri in visualPresentations. A result-page URL or text-only search hit is NOT an image. Never place a remote URL in localPath and never invent a preview.
+      - For natural explanations involving the real appearance of places, historical sites, artifacts, animals or technology, selectively use image.search (open-license Openverse and Wikimedia reference image candidates) when pictures materially improve the answer. This is a native read-only search capability and needs no browser or API key. It is not mandatory in casual chat, text-only tasks, code or invisible concepts.
+      - Search with specific subjects rather than generic visual queries. Read the returned title, description, author/license, and sourceUri. Choose relevant distinct candidates; normally retrieve 1–3, not a large wallpaper dump. Search results are candidates, not verified image pixels.
+      - For a candidate selected from image.search, pass its EXACT candidateId to image.retrieve. That capability validates and downloads the real image to NIRA-owned cache and automatically queues its sourced image card for inline chat. NEVER synthesize a candidateId, sourceUri, localPath or license. NEVER assume an image exists or was displayed merely because a search succeeded.
+      - image.retrieve already queues a trusted visual presentation. Do not redundantly request the same localPath in visualPresentations; describe the images only after verified retrieve success. The image card retains a source-page link and a caption with provider, author and license information. Do not add a separate Image Details / Photo Credits displayBlock repeating that information. If the provider fails or evidence is insufficient, provide a normal explanation and truthful source links rather than fake images. If at least one image was verified, a later failed candidateId does not mean the whole provider failed or that no pictures were shown. For multiple subjects, clearly distinguish which subjects actual downloaded images cover.
+      - >-
+        A retrieved image's native visual card already owns its trusted source,
+        creator and license. Do not echo a redundant "Source: Flickr" line or
+        repeat its raw license URL in prose. Introduce the actual subject and
+        let the visual card carry attribution. For ADDITIONAL useful external
+        references, give a descriptive standalone Markdown link such as
+        "Source: [Museum collection](https://museum.example.org/collection)";
+        avoid bare provider-only names or unlinked source claims. Ordinary
+        model-authored links are never upgraded to verified-image provenance.
+      - For a user request to FIND and SEE an image outside the supported Openverse/Wikimedia providers: use existing grounded browser/HTTP tools when appropriate and authorized, verify a direct image file and download before visualPresentations. Never put a remote URL in localPath or invent a preview.
       - If an image is already available as a verified capture, verified local file, or verified image artifact, reuse that evidence instead of downloading again or making an extra vision-model call merely for presentation.
       - For multiple relevant sourced images, emit a bounded set of independently evidenced visualPresentations. The UI groups them into a horizontal gallery; this never authorizes an additional file read or browser action on its own.
 
@@ -127019,7 +130113,7 @@ first_call_grounding_and_continuity:
 
 ---
 
-## 244. `NIRAAgent\Prompt\cognition_contract.yaml`
+## 254. `NIRAAgent\Prompt\cognition_contract.yaml`
 
 **File:** `NIRAAgent\Prompt\cognition_contract.yaml`
 
@@ -127459,12 +130553,20 @@ dual_channel_presentation: |
   reply: short visible intro or the whole answer when there are no blocks.
   speech: what NIRA naturally says aloud; omit/empty to speak reply.
   displayBlocks: optional array (maximum 8) of typed screen blocks.
-  Zero blocks is normal and often preferable, even for complex explanatory
-  replies. Examples below document supported shapes, NOT a requirement to use
-  them, and never a template to repeat. Model judgment decides whether any
-  block improves comprehension. Avoid formulaic hero + cards + insight answers,
-  redundant panels, and decorative dashboards. Prose and optional blocks must
-  feel like parts of the SAME answer, with a consistent reading rhythm.
+  For substantial answers with natural structure, prefer purposeful typed
+  screen components rather than a wall of prose. The types are a palette,
+  not a rigid template: use tables for real comparisons, cards for distinct
+  options, timelines for genuine chronological progression, checklists for
+  actions the user can manually check, tabs for 2-5 substantial distinct
+  views, details for optional depth, and charts/metrics only for real numbers.
+  Several complementary types may share one answer; never duplicate content.
+  Plain text remains preferable for short chat and free-form personal reflection.
+  NIRA independently chooses the response for each turn. Previous chat layouts are
+  not examples to imitate. No component is a required final step;
+  a natural final sentence is equally valid.
+  One meaningful component is preferable to several redundant components,
+  but a genuinely multifaceted answer should freely combine useful formats.
+  Keep reply concise when blocks carry the substance. They must read as ONE answer.
   They MUST be derived from the same actual evidence and conclusion as speech.
   Never invent figures for a graph or a metric. Never describe a chart/table
   as shown unless you supply its block. No HTML, XAML, script, formulas or UI
@@ -127492,6 +130594,14 @@ dual_channel_presentation: |
   When an Example/Code tab contains source, put fenced code WITHIN that panel
   (including a language tag). Keep natural-language explanation in the other
   panels. Tab panels contain text, not nested displayBlocks objects.
+  Strict JSON shape: tabs.panels must be an array of STRINGS, and every
+  timeline.items/checklist.items entry must be a STRING. Do not write objects
+  such as {"text":"...","checked":false} or {"date":"...","title":"..."}
+  inside these arrays. Write "1980s — Expert systems: ..." as ONE timeline
+  string and "Check driver versions" as ONE checklist string. For rich tabs,
+  include Markdown headings (###), bullet lines (-), and blank lines INSIDE
+  each panel string; no literal "text:" or "title:" prefixes. The renderer
+  safely formats this Markdown and allows long items to wrap naturally.
   {"type":"followups","title":"Continue with","items":["Explain further","Show an example"]}
   Tabs require 2–5 labels and the SAME number of corresponding substantial
   panels. Followups require 1–6 short, context-specific options. They are
@@ -127509,9 +130619,12 @@ dual_channel_presentation: |
       it is uncertain, and never imply verification from memory alone.
     - Questions centrally about how a physical place, object or scene looks are
       candidates for a genuine sourced picture without requiring explicit image
-      UI instructions. Use authorized source retrieval followed by a verified
-      image-file download; only then request visualPresentations. No invented
-      image paths, no fake galleries, and no claim of delivery without media.
+      UI instructions. Prefer image.search for real open-license image candidate
+      metadata, then image.retrieve with the EXACT returned candidateId. On
+      success, image.retrieve automatically queues an inline image with source
+      page and license attribution; do not duplicate it via visualPresentations.
+      For other providers, use authorized grounded retrieval and download before
+      emitting visualPresentations. Never invent image IDs, paths, or galleries.
     - One complete first-pass answer is ideal when facts and a usable link are
       already known. Request tool evidence when needed rather than pretending
       text alone fulfills a request to view a sourced image.
@@ -127625,7 +130738,7 @@ one_call_tool_routing:
 
 ---
 
-## 245. `NIRAAgent\Prompt\elvara_tradeai.yaml`
+## 255. `NIRAAgent\Prompt\elvara_tradeai.yaml`
 
 **File:** `NIRAAgent\Prompt\elvara_tradeai.yaml`
 
@@ -127680,7 +130793,7 @@ instructions: |
 
 ---
 
-## 246. `NIRAAgent\Prompt\memory_formation.yaml`
+## 256. `NIRAAgent\Prompt\memory_formation.yaml`
 
 **File:** `NIRAAgent\Prompt\memory_formation.yaml`
 
@@ -128024,7 +131137,7 @@ learned_procedural_skills:
 
 ---
 
-## 247. `NIRAAgent\Prompt\memory_recall.yaml`
+## 257. `NIRAAgent\Prompt\memory_recall.yaml`
 
 **File:** `NIRAAgent\Prompt\memory_recall.yaml`
 
@@ -128087,7 +131200,7 @@ full_mode_search_bound:
 
 ---
 
-## 248. `NIRAAgent\Prompt\nira_personality.yaml`
+## 258. `NIRAAgent\Prompt\nira_personality.yaml`
 
 **File:** `NIRAAgent\Prompt\nira_personality.yaml`
 
@@ -128515,7 +131628,7 @@ truth:
 
 ---
 
-## 249. `NIRAAgent\Prompt\response_realization.yaml`
+## 259. `NIRAAgent\Prompt\response_realization.yaml`
 
 **File:** `NIRAAgent\Prompt\response_realization.yaml`
 
@@ -128652,15 +131765,16 @@ output:
 # R21 expressive integrity: When a character-expression pass is legitimately
 # required by existing policy, retain any working typed blocks and their facts,
 # source URLs and numbers without adding or demanding new visual components.
-# A transparent full-width prose response is a completely valid finished answer,
-# including for substantial questions. Do not flatten useful structure or
-# transform a coherent reply into formulaic numbered prose. NEVER call the LLM
+# Plain prose remains valid when no meaningful structured data is present.
+# When typed blocks already exist, preserve their division of labor with the
+# concise reply. Do not flatten useful structure or convert it to boilerplate.
+# NEVER call the LLM
 # solely to change styling; UI controls components, not character expression.
 ```
 
 ---
 
-## 250. `NIRAAgent\Properties\NIRARegressionAssemblyAccess.cs`
+## 260. `NIRAAgent\Properties\NIRARegressionAssemblyAccess.cs`
 
 **File:** `NIRAAgent\Properties\NIRARegressionAssemblyAccess.cs`
 
@@ -128675,7 +131789,7 @@ using System.Runtime.CompilerServices;
 
 ---
 
-## 251. `NIRAAgent\Self\Model\NIRARuntimeSelfKnowledgeProvider.cs`
+## 261. `NIRAAgent\Self\Model\NIRARuntimeSelfKnowledgeProvider.cs`
 
 **File:** `NIRAAgent\Self\Model\NIRARuntimeSelfKnowledgeProvider.cs`
 
@@ -128975,7 +132089,7 @@ public sealed class NIRARuntimeSelfKnowledgeProvider
 
 ---
 
-## 252. `NIRAAgent\Self\Model\NIRASelfModelContracts.cs`
+## 262. `NIRAAgent\Self\Model\NIRASelfModelContracts.cs`
 
 **File:** `NIRAAgent\Self\Model\NIRASelfModelContracts.cs`
 
@@ -129669,7 +132783,7 @@ public sealed record NIRACommitmentApplyResult
 
 ---
 
-## 253. `NIRAAgent\Self\Model\NIRASelfModelService.cs`
+## 263. `NIRAAgent\Self\Model\NIRASelfModelService.cs`
 
 **File:** `NIRAAgent\Self\Model\NIRASelfModelService.cs`
 
@@ -131646,7 +134760,7 @@ public sealed class NIRASelfModelService
 
 ---
 
-## 254. `NIRAAgent\Self\Model\NIRASelfModelStore.cs`
+## 264. `NIRAAgent\Self\Model\NIRASelfModelStore.cs`
 
 **File:** `NIRAAgent\Self\Model\NIRASelfModelStore.cs`
 
@@ -133417,7 +136531,7 @@ public sealed class NIRASelfModelStore
 
 ---
 
-## 255. `NIRAAgent\Self\Preferences\NIRASelfPreferenceMemorySyncService.cs`
+## 265. `NIRAAgent\Self\Preferences\NIRASelfPreferenceMemorySyncService.cs`
 
 **File:** `NIRAAgent\Self\Preferences\NIRASelfPreferenceMemorySyncService.cs`
 
@@ -133997,7 +137111,7 @@ public enum NIRASelfPreferenceMemorySyncAction
 
 ---
 
-## 256. `NIRAAgent\Self\Preferences\NIRASelfPreferenceService.cs`
+## 266. `NIRAAgent\Self\Preferences\NIRASelfPreferenceService.cs`
 
 **File:** `NIRAAgent\Self\Preferences\NIRASelfPreferenceService.cs`
 
@@ -135180,7 +138294,7 @@ public sealed class NIRASelfPreferenceService
 
 ---
 
-## 257. `NIRAAgent\Self\Preferences\NIRASelfPreferenceState.cs`
+## 267. `NIRAAgent\Self\Preferences\NIRASelfPreferenceState.cs`
 
 **File:** `NIRAAgent\Self\Preferences\NIRASelfPreferenceState.cs`
 
@@ -135581,7 +138695,7 @@ public sealed record NIRASelfPreferenceApplyResult
 
 ---
 
-## 258. `NIRAAgent\Self\Preferences\NIRASelfPreferenceStore.cs`
+## 268. `NIRAAgent\Self\Preferences\NIRASelfPreferenceStore.cs`
 
 **File:** `NIRAAgent\Self\Preferences\NIRASelfPreferenceStore.cs`
 
@@ -136802,7 +139916,7 @@ public sealed class NIRASelfPreferenceStore
 
 ---
 
-## 259. `NIRAAgent\Self\Preferences\NIRATemporaryOpinionState.cs`
+## 269. `NIRAAgent\Self\Preferences\NIRATemporaryOpinionState.cs`
 
 **File:** `NIRAAgent\Self\Preferences\NIRATemporaryOpinionState.cs`
 
@@ -137076,7 +140190,7 @@ public readonly record struct NIRATemporaryOpinionSnapshot(
 
 ---
 
-## 260. `NIRAAgent\Semantic\INIRASemanticEncoder.cs`
+## 270. `NIRAAgent\Semantic\INIRASemanticEncoder.cs`
 
 **File:** `NIRAAgent\Semantic\INIRASemanticEncoder.cs`
 
@@ -137096,7 +140210,7 @@ public interface INIRASemanticEncoder
 
 ---
 
-## 261. `NIRAAgent\Semantic\MiniLmSemanticEncoder.cs`
+## 271. `NIRAAgent\Semantic\MiniLmSemanticEncoder.cs`
 
 **File:** `NIRAAgent\Semantic\MiniLmSemanticEncoder.cs`
 
@@ -137835,7 +140949,7 @@ public sealed class MiniLmSemanticEncoder
 
 ---
 
-## 262. `NIRAAgent\Semantic\Models\all-MiniLM-L6-v2\vocab.txt`
+## 272. `NIRAAgent\Semantic\Models\all-MiniLM-L6-v2\vocab.txt`
 
 **File:** `NIRAAgent\Semantic\Models\all-MiniLM-L6-v2\vocab.txt`
 
@@ -168366,7 +171480,7 @@ necessitated
 
 ---
 
-## 263. `NIRAAgent\Semantic\NIRASemanticMemoryService.cs`
+## 273. `NIRAAgent\Semantic\NIRASemanticMemoryService.cs`
 
 **File:** `NIRAAgent\Semantic\NIRASemanticMemoryService.cs`
 
@@ -168700,7 +171814,7 @@ public sealed class NIRASemanticMemoryService
 
 ---
 
-## 264. `NIRAAgent\Semantic\NIRASemanticObservation.cs`
+## 274. `NIRAAgent\Semantic\NIRASemanticObservation.cs`
 
 **File:** `NIRAAgent\Semantic\NIRASemanticObservation.cs`
 
@@ -168828,7 +171942,7 @@ public sealed record NIRASemanticObservation
 
 ---
 
-## 265. `NIRAAgent\Semantic\NIRASemanticSimilarity.cs`
+## 275. `NIRAAgent\Semantic\NIRASemanticSimilarity.cs`
 
 **File:** `NIRAAgent\Semantic\NIRASemanticSimilarity.cs`
 
@@ -168937,7 +172051,7 @@ public static class NIRASemanticSimilarity
 
 ---
 
-## 266. `NIRAAgent\Semantic\NIRAWordPieceTokenizer.cs`
+## 276. `NIRAAgent\Semantic\NIRAWordPieceTokenizer.cs`
 
 **File:** `NIRAAgent\Semantic\NIRAWordPieceTokenizer.cs`
 
@@ -169440,7 +172554,7 @@ internal readonly record struct NIRATokenizedInput(
 
 ---
 
-## 267. `NIRAAgent\Semantic\SemanticEmbedding.cs`
+## 277. `NIRAAgent\Semantic\SemanticEmbedding.cs`
 
 **File:** `NIRAAgent\Semantic\SemanticEmbedding.cs`
 
@@ -169491,7 +172605,7 @@ public sealed class SemanticEmbedding
 
 ---
 
-## 268. `NIRAAgent\Settings\NIRARuntimeSettingsService.cs`
+## 278. `NIRAAgent\Settings\NIRARuntimeSettingsService.cs`
 
 **File:** `NIRAAgent\Settings\NIRARuntimeSettingsService.cs`
 
@@ -169751,7 +172865,7 @@ public sealed class NIRARuntimeSettingsService
 
 ---
 
-## 269. `NIRAAgent\Skills\NIRALearnedSkillContracts.cs`
+## 279. `NIRAAgent\Skills\NIRALearnedSkillContracts.cs`
 
 **File:** `NIRAAgent\Skills\NIRALearnedSkillContracts.cs`
 
@@ -170082,7 +173196,7 @@ public sealed record NIRALearnedSkillMutationResult
 
 ---
 
-## 270. `NIRAAgent\Skills\NIRALearnedSkillService.cs`
+## 280. `NIRAAgent\Skills\NIRALearnedSkillService.cs`
 
 **File:** `NIRAAgent\Skills\NIRALearnedSkillService.cs`
 
@@ -171650,7 +174764,7 @@ public sealed class NIRALearnedSkillService
 
 ---
 
-## 271. `NIRAAgent\Skills\NIRALearnedSkillStore.cs`
+## 281. `NIRAAgent\Skills\NIRALearnedSkillStore.cs`
 
 **File:** `NIRAAgent\Skills\NIRALearnedSkillStore.cs`
 
@@ -172251,7 +175365,7 @@ public sealed class NIRALearnedSkillStore
 
 ---
 
-## 272. `NIRAAgent\Temporal\NIRATemporalCommitmentReasoner.cs`
+## 282. `NIRAAgent\Temporal\NIRATemporalCommitmentReasoner.cs`
 
 **File:** `NIRAAgent\Temporal\NIRATemporalCommitmentReasoner.cs`
 
@@ -172477,7 +175591,7 @@ public sealed class NIRATemporalCommitmentReasoner
 
 ---
 
-## 273. `NIRAAgent\Temporal\NIRATemporalCommitmentReconciliationService.cs`
+## 283. `NIRAAgent\Temporal\NIRATemporalCommitmentReconciliationService.cs`
 
 **File:** `NIRAAgent\Temporal\NIRATemporalCommitmentReconciliationService.cs`
 
@@ -172658,7 +175772,7 @@ public sealed class NIRATemporalCommitmentReconciliationService
 
 ---
 
-## 274. `NIRAAgent\Temporal\NIRATemporalCommitmentSchedulerService.cs`
+## 284. `NIRAAgent\Temporal\NIRATemporalCommitmentSchedulerService.cs`
 
 **File:** `NIRAAgent\Temporal\NIRATemporalCommitmentSchedulerService.cs`
 
@@ -172853,7 +175967,7 @@ public sealed class NIRATemporalCommitmentSchedulerService
 
 ---
 
-## 275. `NIRAAgent\Temporal\NIRATemporalContracts.cs`
+## 285. `NIRAAgent\Temporal\NIRATemporalContracts.cs`
 
 **File:** `NIRAAgent\Temporal\NIRATemporalContracts.cs`
 
@@ -174160,7 +177274,7 @@ public sealed class NIRATemporalContextService
 
 ---
 
-## 276. `NIRAAgent\Tools\NIRADynamicToolContracts.cs`
+## 286. `NIRAAgent\Tools\NIRADynamicToolContracts.cs`
 
 **File:** `NIRAAgent\Tools\NIRADynamicToolContracts.cs`
 
@@ -174646,7 +177760,7 @@ public sealed record NIRADynamicToolExecutionResult
 
 ---
 
-## 277. `NIRAAgent\Tools\NIRADynamicToolExecutor.cs`
+## 287. `NIRAAgent\Tools\NIRADynamicToolExecutor.cs`
 
 **File:** `NIRAAgent\Tools\NIRADynamicToolExecutor.cs`
 
@@ -175528,7 +178642,7 @@ public sealed class NIRADynamicToolExecutor
 
 ---
 
-## 278. `NIRAAgent\Tools\NIRADynamicToolService.cs`
+## 288. `NIRAAgent\Tools\NIRADynamicToolService.cs`
 
 **File:** `NIRAAgent\Tools\NIRADynamicToolService.cs`
 
@@ -176181,7 +179295,7 @@ public sealed class NIRADynamicToolService
 
 ---
 
-## 279. `NIRAAgent\Tools\NIRADynamicToolStore.cs`
+## 289. `NIRAAgent\Tools\NIRADynamicToolStore.cs`
 
 **File:** `NIRAAgent\Tools\NIRADynamicToolStore.cs`
 
@@ -177471,7 +180585,7 @@ public sealed class NIRADynamicToolStore
 
 ---
 
-## 280. `NIRAAgent\Tools\NIRADynamicToolValidator.cs`
+## 290. `NIRAAgent\Tools\NIRADynamicToolValidator.cs`
 
 **File:** `NIRAAgent\Tools\NIRADynamicToolValidator.cs`
 
@@ -177865,7 +180979,7 @@ public sealed class NIRADynamicToolValidator
 
 ---
 
-## 281. `NIRAAgent\Vision\NIRADesktopAccessibilityContracts.cs`
+## 291. `NIRAAgent\Vision\NIRADesktopAccessibilityContracts.cs`
 
 **File:** `NIRAAgent\Vision\NIRADesktopAccessibilityContracts.cs`
 
@@ -177895,7 +181009,7 @@ public interface INIRADesktopAccessibilityBackend
 
 ---
 
-## 282. `NIRAAgent\Vision\NIRADesktopCloseCompletionPolicy.cs`
+## 292. `NIRAAgent\Vision\NIRADesktopCloseCompletionPolicy.cs`
 
 **File:** `NIRAAgent\Vision\NIRADesktopCloseCompletionPolicy.cs`
 
@@ -177948,7 +181062,7 @@ public static class NIRADesktopCloseCompletionPolicy
 
 ---
 
-## 283. `NIRAAgent\Vision\NIRADesktopCloseTargetPolicy.cs`
+## 293. `NIRAAgent\Vision\NIRADesktopCloseTargetPolicy.cs`
 
 **File:** `NIRAAgent\Vision\NIRADesktopCloseTargetPolicy.cs`
 
@@ -177993,7 +181107,7 @@ public static class NIRADesktopCloseTargetPolicy
 
 ---
 
-## 284. `NIRAAgent\Vision\NIRADesktopDocumentTransitionPolicy.cs`
+## 294. `NIRAAgent\Vision\NIRADesktopDocumentTransitionPolicy.cs`
 
 **File:** `NIRAAgent\Vision\NIRADesktopDocumentTransitionPolicy.cs`
 
@@ -178079,7 +181193,7 @@ public static class NIRADesktopDocumentTransitionPolicy
 
 ---
 
-## 285. `NIRAAgent\Vision\NIRADesktopExecutionStrategy.cs`
+## 295. `NIRAAgent\Vision\NIRADesktopExecutionStrategy.cs`
 
 **File:** `NIRAAgent\Vision\NIRADesktopExecutionStrategy.cs`
 
@@ -178142,7 +181256,7 @@ public sealed class NIRAForegroundLeaseState
 
 ---
 
-## 286. `NIRAAgent\Vision\NIRADesktopInteractionContracts.cs`
+## 296. `NIRAAgent\Vision\NIRADesktopInteractionContracts.cs`
 
 **File:** `NIRAAgent\Vision\NIRADesktopInteractionContracts.cs`
 
@@ -178358,7 +181472,7 @@ public static class NIRADesktopExecutionEvidencePolicy
 
 ---
 
-## 287. `NIRAAgent\Vision\NIRAVisualEvidenceContracts.cs`
+## 297. `NIRAAgent\Vision\NIRAVisualEvidenceContracts.cs`
 
 **File:** `NIRAAgent\Vision\NIRAVisualEvidenceContracts.cs`
 
@@ -178899,7 +182013,7 @@ public interface INIRAScreenCaptureBackend
 
 ---
 
-## 288. `NIRAAgent\Vision\NIRAVisualEvidenceService.cs`
+## 298. `NIRAAgent\Vision\NIRAVisualEvidenceService.cs`
 
 **File:** `NIRAAgent\Vision\NIRAVisualEvidenceService.cs`
 
@@ -180649,7 +183763,7 @@ public sealed class NIRAVisualEvidenceService
 
 ---
 
-## 289. `NIRAAgent\Vision\NIRAVisualObservationContracts.cs`
+## 299. `NIRAAgent\Vision\NIRAVisualObservationContracts.cs`
 
 **File:** `NIRAAgent\Vision\NIRAVisualObservationContracts.cs`
 
@@ -180736,7 +183850,7 @@ public sealed record NIRAVisualObservation
 
 ---
 
-## 290. `NIRAAgent\Vision\NIRAVisualUnderstandingService.cs`
+## 300. `NIRAAgent\Vision\NIRAVisualUnderstandingService.cs`
 
 **File:** `NIRAAgent\Vision\NIRAVisualUnderstandingService.cs`
 
@@ -181455,7 +184569,7 @@ public sealed class NIRAVisualUnderstandingService
 
 ---
 
-## 291. `NIRAAgent\Voice\AdaptiveVoiceService.cs`
+## 301. `NIRAAgent\Voice\AdaptiveVoiceService.cs`
 
 **File:** `NIRAAgent\Voice\AdaptiveVoiceService.cs`
 
@@ -181570,7 +184684,7 @@ public sealed class AdaptiveVoiceService
 
 ---
 
-## 292. `NIRAAgent\Voice\Groq\GroqOrpheusVoiceService.cs`
+## 302. `NIRAAgent\Voice\Groq\GroqOrpheusVoiceService.cs`
 
 **File:** `NIRAAgent\Voice\Groq\GroqOrpheusVoiceService.cs`
 
@@ -182619,7 +185733,7 @@ public sealed class GroqOrpheusVoiceService
 
 ---
 
-## 293. `NIRAAgent\Voice\Groq\GroqVocalDirectionMapper.cs`
+## 303. `NIRAAgent\Voice\Groq\GroqVocalDirectionMapper.cs`
 
 **File:** `NIRAAgent\Voice\Groq\GroqVocalDirectionMapper.cs`
 
@@ -182895,7 +186009,7 @@ public static class GroqVocalDirectionMapper
 
 ---
 
-## 294. `NIRAAgent\Voice\IVoiceService.cs`
+## 304. `NIRAAgent\Voice\IVoiceService.cs`
 
 **File:** `NIRAAgent\Voice\IVoiceService.cs`
 
@@ -182929,7 +186043,7 @@ public interface IVoiceService
 
 ---
 
-## 295. `NIRAAgent\Voice\NIRAVocalIntent.cs`
+## 305. `NIRAAgent\Voice\NIRAVocalIntent.cs`
 
 **File:** `NIRAAgent\Voice\NIRAVocalIntent.cs`
 
@@ -183016,7 +186130,7 @@ public readonly record struct NIRAVocalIntent(
 
 ---
 
-## 296. `NIRAAgent\Voice\NIRAVoiceExpression.cs`
+## 306. `NIRAAgent\Voice\NIRAVoiceExpression.cs`
 
 **File:** `NIRAAgent\Voice\NIRAVoiceExpression.cs`
 
@@ -183129,7 +186243,7 @@ public readonly record struct NIRAVoiceExpression(
 
 ---
 
-## 297. `NIRAAgent\Voice\NIRAVoiceExpressionService.cs`
+## 307. `NIRAAgent\Voice\NIRAVoiceExpressionService.cs`
 
 **File:** `NIRAAgent\Voice\NIRAVoiceExpressionService.cs`
 
@@ -183437,7 +186551,7 @@ public sealed class NIRAVoiceExpressionService
 
 ---
 
-## 298. `NIRAAgent\Voice\PiperVoiceService.cs`
+## 308. `NIRAAgent\Voice\PiperVoiceService.cs`
 
 **File:** `NIRAAgent\Voice\PiperVoiceService.cs`
 
@@ -183974,7 +187088,7 @@ public sealed class PiperVoiceService
 
 ---
 
-## 299. `NIRAAgent\Voice\PreparedVoiceAudio.cs`
+## 309. `NIRAAgent\Voice\PreparedVoiceAudio.cs`
 
 **File:** `NIRAAgent\Voice\PreparedVoiceAudio.cs`
 
@@ -184141,7 +187255,7 @@ public sealed class PreparedVoiceAudio
 
 ---
 
-## 300. `NIRAAgent\Voice\SpeechChunker.cs`
+## 310. `NIRAAgent\Voice\SpeechChunker.cs`
 
 **File:** `NIRAAgent\Voice\SpeechChunker.cs`
 
@@ -184954,7 +188068,7 @@ public sealed class SpeechChunker
 
 ---
 
-## 301. `NIRAAgent\Voice\SpeechTextSanitizer.cs`
+## 311. `NIRAAgent\Voice\SpeechTextSanitizer.cs`
 
 **File:** `NIRAAgent\Voice\SpeechTextSanitizer.cs`
 
@@ -185210,7 +188324,7 @@ public static partial class SpeechTextSanitizer
 
 ---
 
-## 302. `NIRAAgent\Voice\VoiceAudioPlayer.cs`
+## 312. `NIRAAgent\Voice\VoiceAudioPlayer.cs`
 
 **File:** `NIRAAgent\Voice\VoiceAudioPlayer.cs`
 
@@ -185324,7 +188438,7 @@ public sealed class VoiceAudioPlayer
 
 ---
 
-## 303. `NIRAAgent\Voice\VoiceQueue.cs`
+## 313. `NIRAAgent\Voice\VoiceQueue.cs`
 
 **File:** `NIRAAgent\Voice\VoiceQueue.cs`
 
@@ -186424,7 +189538,7 @@ public sealed class VoiceQueue
 
 ---
 
-## 304. `NIRAAgent\Voice\VoiceUtterance.cs`
+## 314. `NIRAAgent\Voice\VoiceUtterance.cs`
 
 **File:** `NIRAAgent\Voice\VoiceUtterance.cs`
 

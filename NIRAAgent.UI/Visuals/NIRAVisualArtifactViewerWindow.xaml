@@ -66,20 +66,56 @@
         <StackPanel Grid.Row="2" Margin="24,18,24,15">
             <TextBlock Text="{Binding Title}" FontSize="18" FontWeight="SemiBold"
                        TextTrimming="CharacterEllipsis"/>
-            <TextBlock Text="{Binding Caption}" Margin="0,6,0,0"
+            <TextBlock Text="{Binding ReferenceCaption}" Margin="0,6,0,0"
                        FontSize="12" MaxHeight="66" TextWrapping="Wrap"
                        Foreground="{DynamicResource NIRASecondaryBrush}">
                 <TextBlock.Style>
                     <Style TargetType="TextBlock">
                         <Setter Property="Visibility" Value="Visible"/>
                         <Style.Triggers>
-                            <DataTrigger Binding="{Binding HasCaption}" Value="False">
+                            <DataTrigger Binding="{Binding HasReferenceCaption}" Value="False">
                                 <Setter Property="Visibility" Value="Collapsed"/>
                             </DataTrigger>
                         </Style.Triggers>
                     </Style>
                 </TextBlock.Style>
             </TextBlock>
+            <WrapPanel Margin="0,8,0,0">
+                <WrapPanel.Style>
+                    <Style TargetType="WrapPanel">
+                        <Setter Property="Visibility" Value="Visible"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasStructuredCredit}" Value="False">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </WrapPanel.Style>
+                <TextBlock Text="{Binding CreditProvider}" FontSize="11"
+                           FontWeight="SemiBold" Margin="0,0,14,0"
+                           Foreground="{DynamicResource NIRACyanBrush}"/>
+                <TextBlock Text="{Binding CreditCreator}" FontSize="11"
+                           Margin="0,0,14,0"
+                           Foreground="{DynamicResource NIRATextBrush}"/>
+                <TextBlock Text="{Binding CreditLicense}" FontSize="11"
+                           Foreground="{DynamicResource NIRASecondaryBrush}"/>
+            </WrapPanel>
+            <Button Content="{Binding SourceActionLabel}" Tag="{Binding SourceUri}"
+                    Click="Viewer_OpenSource_Click" HorizontalAlignment="Left"
+                    Margin="0,12,0,0" Padding="11,7" FontSize="11"
+                    ToolTip="Open the original image source page"
+                    Foreground="{DynamicResource NIRABlueBrush}" Cursor="Hand">
+                <Button.Style>
+                    <Style TargetType="Button" BasedOn="{StaticResource NIRASecondaryButtonStyle}">
+                        <Setter Property="Visibility" Value="Visible"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasSourceUri}" Value="False">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
         </StackPanel>
         <Border Grid.Row="3" Margin="18,0,18,18" Padding="11"
                 Background="{DynamicResource NIRAPanelStrongBrush}"
