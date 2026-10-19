@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 using NIRAAgent.Images;
 
 namespace NIRAAgent.Capabilities;
@@ -41,11 +43,35 @@ public sealed class NIRAImageGenerateCapabilityHandler : INIRACapabilityHandler
             Output = $"VerifiedImageGenerated=True\nModel={result.Model}\nWidth={result.Width}\nHeight={result.Height}\nLocalPath={result.LocalPath}\nSHA256={result.Sha256}\nBytes={result.Bytes}\nOneGeneration=True",
             VisualArtifacts = new[] { new NIRACapabilityVisualArtifact
             {
-                LocalPath = result.LocalPath, Title = "NIRA Generated Image",
+                LocalPath = result.LocalPath,
+                Title = BuildDisplayTitle(prompt),
                 Caption = NIRACloudflareImageGenerationService.GeneratedCaptionPrefix,
-                PresentToUser = true, Surface = "InlineOnly"
+                PresentToUser = true,
+                Surface = "InlineOnly"
             } },
             ChangedSystemState = false // Only NIRA's own managed cache, no user-owned filesystem mutation.
         };
+    }
+
+
+    private static string BuildDisplayTitle(string prompt)
+    {
+        string normalized = Regex.Replace(prompt ?? string.Empty, @"\s+", " ").Trim();
+        if (normalized.Length == 0)
+            return "NIRA generated image";
+
+        string candidate = Regex.Split(normalized,
+            @"(?<=[.!?])\s+|\s+(?:with|featuring|showing|including|surrounded by)\s+",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)
+            .FirstOrDefault(part => !string.IsNullOrWhiteSpace(part))?
+            .Trim(' ', ',', ';', '.', ':') ?? normalized;
+
+        candidate = Regex.Replace(candidate, @"^(?:create|generate|make|render)\s+", string.Empty,
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant).Trim();
+        if (candidate.Length > 72)
+            candidate = candidate[..72].TrimEnd() + "…";
+        if (candidate.Length == 0)
+            return "NIRA generated image";
+        return char.ToUpperInvariant(candidate[0]) + candidate[1..];
     }
 }

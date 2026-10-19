@@ -967,6 +967,19 @@ Check("R32 photo credits are separate from source, license URL and generic visua
 });
 
 // R37: text-to-image generation invariants: all offline, ZERO external API/LLM calls.
+Check("R37.1 Cloudflare API input normalization never requires a generation call", () =>
+{
+    string account = new string('a', 32);
+    string raw = "  Bearer TESTrawTOKEN1234567890-abc_def   ";
+    string normalized = NIRACloudflareImageGenerationService.NormalizePastedToken(raw);
+    if (normalized != "TESTrawTOKEN1234567890-abc_def" ||
+        !NIRACloudflareImageGenerationService.IsCredentialInputValid(account, normalized) ||
+        NIRACloudflareImageGenerationService.IsCredentialInputValid(account, "") ||
+        NIRACloudflareImageGenerationService.IsCredentialInputValid(account, "NIRA, create a picture") ||
+        NIRACloudflareImageGenerationService.IsCredentialInputValid("bad-account", normalized))
+        throw new Exception("Masked/pasted Cloudflare tokens must normalize safely and malformed inputs must be rejected");
+});
+
 Check("R37 image creation uses only FLUX.2 Klein 4B and an auditable execute capability", () =>
 {
     if (NIRACloudflareImageGenerationService.ModelId != "@cf/black-forest-labs/flux-2-klein-4b" ||

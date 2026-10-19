@@ -13,6 +13,7 @@ namespace NIRAAgent.Images;
 public sealed record NIRAImageGenerationRequest(string Prompt, int Width = 1024, int Height = 768);
 public sealed record NIRAImageGenerationReceipt(string LocalPath, string Model, int Width, int Height,
     string Prompt, long Bytes, string Sha256);
+public sealed record NIRACloudflareAuthCheck(bool Success, string Message);
 
 public sealed class NIRACloudflareImageGenerationService : IDisposable
 {
@@ -50,14 +51,110 @@ public sealed class NIRACloudflareImageGenerationService : IDisposable
         }
     }
 
+    // Pure input checks for the setup UI. Never accepts a copied Bearer header or a
+    // quoted PowerShell string as if it were the raw API token.
+    public static string NormalizePastedToken(string raw)
+    {
+        string token = (raw ?? "").Trim();
+        if (token.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            token = token[7..].Trim();
+        if (token.Length >= 2 &&
+            ((token[0] == '\"' && token[^1] == '\"') || (token[0] == '\'' && token[^1] == '\'')))
+            token = token[1..^1].Trim();
+        return token;
+    }
+
+    public static bool IsCredentialInputValid(string account, string token) =>
+        Regex.IsMatch(account ?? "", "^[A-Fa-f0-9]{32}$", RegexOptions.CultureInvariant) &&
+        Regex.IsMatch(token ?? "", "^[\\x21-\\x7E]{20,512}$", RegexOptions.CultureInvariant) &&
+        token is not null && !token.Contains(' ');
+
     public static void SaveCredentials(string account, string token)
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("NIRA credential storage requires Windows.");
-        if (!Regex.IsMatch(account ?? "", "^[A-Fa-f0-9]{32}$", RegexOptions.CultureInvariant) ||
-            string.IsNullOrWhiteSpace(token) || token.Length < 12)
-            throw new ArgumentException("Expected Cloudflare account ID (32 hex characters) and a valid API token.");
+        if (!IsCredentialInputValid(account, token))
+            throw new ArgumentException("Expected a 32-character Cloudflare Account ID and an unquoted API token (20–512 ASCII characters, no spaces).");
         new NIRACredentialStore().Save(CredentialOrigin, CredentialLabel, account, token);
+    }
+
+    // Read-only Cloudflare verification: no Ollama calls and no image generation.
+    // A successful account-scoped Workers AI model search is stronger evidence
+    // than a user-scoped token verify (which can reject account-owned tokens).
+    public static async Task<NIRACloudflareAuthCheck> CheckCredentialsAsync(
+        string account, string token, CancellationToken cancellationToken = default)
+    {
+        if (!IsCredentialInputValid(account, token))
+            return new(false, "Invalid Account ID or malformed API token input. Copy the token value, not its token ID or a Bearer command.");
+
+        using var handler = new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false, UseCookies = false, UseProxy = true
+        };
+        using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) };
+
+        async Task<(HttpStatusCode Code, bool Success, bool Active)> ProbeAsync(string endpoint, bool verify)
+        {
+            using var message = new HttpRequestMessage(HttpMethod.Get, endpoint);
+            message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            message.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            using var response = await http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                return (response.StatusCode, false, false);
+            // Limit API diagnostics to 256 KB; never log or return the body.
+            byte[] body = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+            if (body.Length > 256 * 1024) return (response.StatusCode, false, false);
+            using var doc = JsonDocument.Parse(body);
+            bool success = doc.RootElement.TryGetProperty("success", out var ok) && ok.ValueKind == JsonValueKind.True;
+            bool active = !verify;
+            if (verify)
+                active = doc.RootElement.TryGetProperty("result", out var result) &&
+                         result.ValueKind == JsonValueKind.Object &&
+                         result.TryGetProperty("status", out var status) &&
+                         string.Equals(status.GetString(), "active", StringComparison.OrdinalIgnoreCase);
+            return (response.StatusCode, success, active);
+        }
+
+        try
+        {
+            var accountProbe = await ProbeAsync(
+                $"https://api.cloudflare.com/client/v4/accounts/{account}/ai/models/search?per_page=1", false);
+            if (accountProbe.Success)
+                return new(true, "Cloudflare account and Workers AI permissions verified. No image generated.");
+
+            if (accountProbe.Code == HttpStatusCode.Unauthorized || accountProbe.Code == HttpStatusCode.Forbidden)
+            {
+                var userVerify = await ProbeAsync("https://api.cloudflare.com/client/v4/user/tokens/verify", true);
+                if (userVerify.Success && userVerify.Active)
+                    return new(false, "Token is active, but is not authorized for Workers AI on this Account ID. Create a Workers AI token scoped to the correct account.");
+                var accountVerify = await ProbeAsync(
+                    $"https://api.cloudflare.com/client/v4/accounts/{account}/tokens/verify", true);
+                if (accountVerify.Success && accountVerify.Active)
+                    return new(false, "Account token is active, but lacks Workers AI permission for this Account ID.");
+                return new(false, "Cloudflare rejected access (HTTP " + (int)accountProbe.Code +
+                    "). Check that you pasted the actual API Token, not its token ID, and that it belongs to the selected account.");
+            }
+            return new(false, $"Workers AI authorization check failed (HTTP {(int)accountProbe.Code}). No image generated.");
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return new(false, "Cloudflare verification timed out. No image generated.");
+        }
+        catch (HttpRequestException)
+        {
+            return new(false, "Cloudflare verification network error. No image generated.");
+        }
+        catch (JsonException)
+        {
+            return new(false, "Cloudflare returned an unexpected verification response. No image generated.");
+        }
+    }
+
+    public static async Task<NIRACloudflareAuthCheck> CheckStoredCredentialsAsync(CancellationToken cancellationToken = default)
+    {
+        if (!IsConfigured) return new(false, "Cloudflare is not configured. Run --setup.");
+        var (account, token) = LoadCredentials();
+        return await CheckCredentialsAsync(account, token, cancellationToken);
     }
 
     private static (string Account, string Token) LoadCredentials()
@@ -70,8 +167,7 @@ public sealed class NIRACloudflareImageGenerationService : IDisposable
         if (metadata is null)
             throw new InvalidOperationException("Cloudflare is not configured. Use NIRAAgent.ImageGenerationLab --setup first.");
         var secret = store.Read(metadata.Id);
-        if (!Regex.IsMatch(secret.Username, "^[A-Fa-f0-9]{32}$", RegexOptions.CultureInvariant) ||
-            secret.Secret.Length < 12)
+        if (!IsCredentialInputValid(secret.Username, secret.Secret))
             throw new InvalidOperationException("Cloudflare credentials are invalid. Re-run ImageGenerationLab --setup.");
         return (secret.Username, secret.Secret);
     }

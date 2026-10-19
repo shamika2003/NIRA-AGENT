@@ -5459,6 +5459,32 @@ public sealed class NIRAExecutive
                     $"Reason={(decision.SelfContainedAnswer ? "StandaloneKnowledge" : "VerifiedInterpersonalDecision")} | ExtraModelCalls=0");
             }
 
+            if (userTerminalDraft && !completionReviewConfirmedComplete)
+            {
+                NIRACapabilityResult[] observedResults = capabilityResultsBySignature.Values.ToArray();
+                bool hasSingleSuccessfulImageGeneration = observedResults.Length == 1 &&
+                    string.Equals(observedResults[0].CapabilityId, NIRACapabilityIds.ImageGenerate, StringComparison.Ordinal) &&
+                    observedResults[0].Succeeded &&
+                    observedResults[0].VisualArtifacts.Count == 1;
+                bool hasNoOutstandingWork =
+                    decision.State == NIRACognitionState.Complete &&
+                    decision.CapabilityIds.Count == 0 &&
+                    decision.CapabilityRequests.Count == 0 &&
+                    decision.ContextRequests.Count == 0 &&
+                    decision.MemorySearches.Count == 0 &&
+                    decision.ConversationSearches.Count == 0 &&
+                    decision.BranchWorkProposals.Count == 0 &&
+                    decision.DynamicToolProposals.Count == 0 &&
+                    decision.DynamicToolInvocations.Count == 0 &&
+                    !decision.ReviewCommitment;
+
+                if (hasSingleSuccessfulImageGeneration && hasNoOutstandingWork)
+                {
+                    completionReviewConfirmedComplete = true;
+                    Debug.WriteLine($"[ImageGenerationFastPath] REVIEW_SKIPPED | Run={runId:D} | Cycle={cycle} | ExtraModelCalls=0");
+                }
+            }
+
             if (userTerminalDraft &&
                 !completionReviewConfirmedComplete)
             {

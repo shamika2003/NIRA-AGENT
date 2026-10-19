@@ -539,6 +539,9 @@ public sealed class NIRAUserImageGalleryTileViewModel
     public string SourceActionLabel => Artifact.SourceActionLabel;
     public string ReferenceCaption => Artifact.ReferenceCaption;
     public bool HasReferenceCaption => Artifact.HasReferenceCaption;
+    public bool IsGeneratedImage => Artifact.IsGeneratedImage;
+    public string CardBadgeText => Artifact.CardBadgeText;
+    public string GeneratedMetaText => Artifact.GeneratedMetaText;
     public IReadOnlyList<VisualArtifactViewModel> GetGalleryImages() =>
         IsAssistantTile ? Owner.GetAssistantImageArtifacts() : Owner.GetUserImageArtifacts();
     public ImageSource? PreviewImage => Artifact.PreviewImage;

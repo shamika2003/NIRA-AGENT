@@ -4,11 +4,11 @@
 
 **Project:** `NIRA-AGENT`
 
-**Source/code files:** 316
+**Source/code files:** 321
 
-**Resource files shown in tree:** 16
+**Resource files shown in tree:** 17
 
-**Total clean project files:** 332
+**Total clean project files:** 338
 
 ---
 
@@ -19,12 +19,18 @@ Generated build folders such as `bin/` and `obj/` are intentionally excluded.
 ```text
 NIRA-AGENT/
 ├── .gitignore
+├── Images
+│   └── AiGenerated
+│       └── 6e1f3b936a5a43d38448867bc5723cad.jpg
 ├── NIRA_CHARACTER_DELIVERY_INVARIANT.md
 ├── NIRA_IMAGE_API_DIAG_R30_1.ps1
 ├── NIRA_IMAGE_HTTPS_CHECK.ps1
 ├── NIRAAgent.CharacterLab
 │   ├── LabProgression.cs
 │   ├── NIRAAgent.CharacterLab.csproj
+│   └── Program.cs
+├── NIRAAgent.ImageGenerationLab
+│   ├── NIRAAgent.ImageGenerationLab.csproj
 │   └── Program.cs
 ├── NIRAAgent.ImageLab
 │   ├── NIRAAgent.ImageLab.csproj
@@ -99,6 +105,7 @@ NIRA-AGENT/
 │   │   ├── NIRAThemeGlyph.cs
 │   │   └── NIRAThemeManager.cs
 │   ├── Typing
+│   │   ├── NIRAImageCreationIndicator.cs
 │   │   ├── NIRATypingIndicator.cs
 │   │   └── TypingStyle.cs
 │   ├── ViewModels
@@ -182,6 +189,7 @@ NIRA-AGENT/
     │   ├── FilesystemCapabilityHandlers.cs
     │   ├── HttpCapabilityHandlers.cs
     │   ├── ImageDiscoveryCapabilityHandlers.cs
+    │   ├── ImageGenerationCapabilityHandler.cs
     │   ├── NIRACapabilityArguments.cs
     │   ├── NIRACapabilityContracts.cs
     │   ├── NIRACapabilityProcessRunner.cs
@@ -257,6 +265,7 @@ NIRA-AGENT/
     │   ├── NIRAGoalService.cs
     │   └── NIRAGoalStore.cs
     ├── Images
+    │   ├── NIRACloudflareImageGenerationService.cs
     │   └── NIRACommonsImageDiscoveryService.cs
     ├── Integrations
     │   └── Elvara
@@ -1946,7 +1955,193 @@ internal static class OfflineChecks
 
 ---
 
-## 8. `NIRAAgent.ImageLab\NIRAAgent.ImageLab.csproj`
+## 8. `NIRAAgent.ImageGenerationLab\NIRAAgent.ImageGenerationLab.csproj`
+
+**File:** `NIRAAgent.ImageGenerationLab\NIRAAgent.ImageGenerationLab.csproj`
+
+```xml
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\NIRAAgent\NIRAAgent.csproj" />
+  </ItemGroup>
+</Project>
+```
+
+---
+
+## 9. `NIRAAgent.ImageGenerationLab\Program.cs`
+
+**File:** `NIRAAgent.ImageGenerationLab\Program.cs`
+
+```csharp
+using System.Text;
+using System.Runtime.InteropServices;
+using NIRAAgent.Images;
+
+Console.WriteLine("NIRA R37 IMAGE GENERATION LAB — ZERO Ollama / LLM CALLS");
+Console.WriteLine("Model: " + NIRACloudflareImageGenerationService.ModelId);
+Console.WriteLine("Cloudflare configured: " + (NIRACloudflareImageGenerationService.IsConfigured ? "YES" : "NO"));
+var png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/BGAAAAAASUVORK5CYII=");
+var wrapped = Encoding.UTF8.GetBytes("{\"success\":true,\"result\":{\"image\":\"" + Convert.ToBase64String(png) + "\"}}");
+bool validated = NIRACloudflareImageGenerationService.ReadVerifiedImage("application/json", wrapped).SequenceEqual(png);
+Console.WriteLine("OFFLINE IMAGE DECODER: " + (validated ? "PASS" : "FAIL"));
+if (!validated) return 2;
+if (args.Contains("--setup", StringComparer.OrdinalIgnoreCase))
+{
+    Console.Write("Cloudflare Account ID (32 hex characters): ");
+    string accountId = (Console.ReadLine() ?? "").Trim();
+    Console.WriteLine("Paste the raw Workers AI API TOKEN (not its token ID). Ctrl+V, Shift+Insert, or right-click works.");
+    Console.WriteLine("Each character appears as *; token text itself stays hidden. Press Enter to finish, Esc to cancel.");
+    try
+    {
+        string token = NIRACloudflareImageGenerationService.NormalizePastedToken(MaskedTokenInput.Read());
+        Console.WriteLine($"Token received: {token.Length} characters. Checking with Cloudflare (NO image generation)...");
+        NIRACloudflareAuthCheck check = await NIRACloudflareImageGenerationService.CheckCredentialsAsync(accountId, token);
+        Console.WriteLine("AUTH: " + (check.Success ? "PASS" : "FAILED") + " — " + check.Message);
+        if (!check.Success) { Console.WriteLine("Stored credentials were NOT changed."); return 2; }
+        NIRACloudflareImageGenerationService.SaveCredentials(accountId, token);
+        Console.WriteLine("SETUP: PASS — Verified token saved in Windows Credential Manager. Zero images generated.");
+        return 0;
+    }
+    catch (OperationCanceledException) { Console.WriteLine("SETUP: Cancelled. Credentials unchanged."); return 0; }
+    catch (Exception ex) { Console.WriteLine("SETUP: FAILED — " + ex.Message); return 2; }
+}
+if (args.Contains("--check-auth", StringComparer.OrdinalIgnoreCase))
+{
+    try
+    {
+        Console.WriteLine("Checking saved token and Workers AI account access (read-only request, NO generation)...");
+        var check = await NIRACloudflareImageGenerationService.CheckStoredCredentialsAsync();
+        Console.WriteLine("AUTH: " + (check.Success ? "PASS" : "FAILED") + " — " + check.Message);
+        return check.Success ? 0 : 2;
+    }
+    catch (Exception ex) { Console.WriteLine("AUTH: FAILED — " + ex.GetType().Name + ". Re-run --setup."); return 2; }
+}
+if (!args.Contains("--live", StringComparer.OrdinalIgnoreCase))
+{
+    Console.WriteLine("NO LIVE REQUEST MADE. To spend quota on ONE real image, run:");
+    Console.WriteLine("dotnet run --project .\\NIRAAgent.ImageGenerationLab -- --live");
+    return 0;
+}
+if (!NIRACloudflareImageGenerationService.IsConfigured)
+{
+    Console.WriteLine("Run: dotnet run --project .\\NIRAAgent.ImageGenerationLab -- --setup first.");
+    return 3;
+}
+// Do not offer a quota-consuming operation unless the stored credential has
+// already succeeded against the account's read-only Workers AI API.
+try
+{
+    var auth = await NIRACloudflareImageGenerationService.CheckStoredCredentialsAsync();
+    Console.WriteLine("AUTH: " + (auth.Success ? "PASS" : "FAILED") + " — " + auth.Message);
+    if (!auth.Success) { Console.WriteLine("ZERO image generation calls. Re-run --setup."); return 2; }
+}
+catch (Exception ex) { Console.WriteLine("AUTH: FAILED — " + ex.GetType().Name + ". No image generated."); return 2; }
+Console.Write("One Cloudflare generation will consume quota. Type GENERATE to continue: ");
+if (Console.ReadLine() != "GENERATE") { Console.WriteLine("Cancelled. Zero API requests."); return 0; }
+try
+{
+    using var service = new NIRACloudflareImageGenerationService();
+    var result = await service.GenerateAsync(new NIRAImageGenerationRequest(
+        "A cinematic ancient Egyptian temple at sunrise, warm sandstone, monumental columns, intricate hieroglyphics, realistic architectural photography, natural atmospheric lighting, no words or watermarks", 768, 768));
+    Console.WriteLine($"GENERATE: PASS | {result.Bytes} bytes | {result.Width}x{result.Height}");
+    Console.WriteLine("File: " + result.LocalPath);
+    Console.WriteLine("SHA256: " + result.Sha256);
+    return 0;
+}
+catch (Exception ex)
+{
+    Console.WriteLine("GENERATE: FAILED | " + ex.GetType().Name + " | " + ex.Message);
+    Console.WriteLine("No automatic retries or further LLM calls.");
+    return 1;
+}
+
+// Windows console paste support with a visible mask, without echoing the secret.
+// Console.ReadKey(intercept: true) alone does NOT reliably handle Ctrl+V.
+internal static class MaskedTokenInput
+{
+    private const uint CfUnicodeText = 13;
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool OpenClipboard(IntPtr owner);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool CloseClipboard();
+    [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr GetClipboardData(uint format);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr GlobalLock(IntPtr handle);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GlobalUnlock(IntPtr handle);
+
+    private static string? PasteClipboard()
+    {
+        if (!OperatingSystem.IsWindows()) return null;
+        for (int attempt = 0; attempt < 5; attempt++)
+        {
+            if (!OpenClipboard(IntPtr.Zero)) { Thread.Sleep(30); continue; }
+            try
+            {
+                IntPtr handle = GetClipboardData(CfUnicodeText);
+                if (handle == IntPtr.Zero) return null;
+                IntPtr ptr = GlobalLock(handle);
+                if (ptr == IntPtr.Zero) return null;
+                try { return Marshal.PtrToStringUni(ptr); }
+                finally { GlobalUnlock(handle); }
+            }
+            finally { CloseClipboard(); }
+        }
+        return null;
+    }
+
+    public static string Read()
+    {
+        if (Console.IsInputRedirected)
+            throw new InvalidOperationException("Use an interactive PowerShell window. Never pass tokens as command arguments.");
+        Console.Write("API token [hidden]: ");
+        var chars = new List<char>(128);
+        void Append(string text)
+        {
+            string clean = text.Trim();
+            foreach (char c in clean)
+            {
+                if (chars.Count >= 512) break;
+                if (c >= 32 && c <= 126) { chars.Add(c); Console.Write('*'); }
+            }
+        }
+        while (true)
+        {
+            var key = Console.ReadKey(intercept: true);
+            if (key.Key == ConsoleKey.Enter) break;
+            if (key.Key == ConsoleKey.Escape) { Console.WriteLine(); throw new OperationCanceledException(); }
+            if (key.Key == ConsoleKey.Backspace)
+            {
+                if (chars.Count != 0) { chars.RemoveAt(chars.Count - 1); Console.Write("\b \b"); }
+                continue;
+            }
+            if ((key.Key == ConsoleKey.V && key.Modifiers.HasFlag(ConsoleModifiers.Control)) ||
+                (key.Key == ConsoleKey.Insert && key.Modifiers.HasFlag(ConsoleModifiers.Shift)))
+            {
+                string? copied = PasteClipboard();
+                if (copied is null) Console.Write(" [Clipboard unavailable; try right-click paste] ");
+                else Append(copied);
+                continue;
+            }
+            if (key.Key == ConsoleKey.U && key.Modifiers.HasFlag(ConsoleModifiers.Control))
+            {
+                while (chars.Count > 0) { chars.RemoveAt(chars.Count - 1); Console.Write("\b \b"); }
+                continue;
+            }
+            if (!char.IsControl(key.KeyChar)) Append(key.KeyChar.ToString());
+        }
+        Console.WriteLine();
+        return new string(chars.ToArray());
+    }
+}
+```
+
+---
+
+## 10. `NIRAAgent.ImageLab\NIRAAgent.ImageLab.csproj`
 
 **File:** `NIRAAgent.ImageLab\NIRAAgent.ImageLab.csproj`
 
@@ -1966,7 +2161,7 @@ internal static class OfflineChecks
 
 ---
 
-## 9. `NIRAAgent.ImageLab\Program.cs`
+## 11. `NIRAAgent.ImageLab\Program.cs`
 
 **File:** `NIRAAgent.ImageLab\Program.cs`
 
@@ -2026,7 +2221,7 @@ catch (Exception exception)
 
 ---
 
-## 10. `NIRAAgent.RegressionChecks\NIRAAgent.RegressionChecks.csproj`
+## 12. `NIRAAgent.RegressionChecks\NIRAAgent.RegressionChecks.csproj`
 
 **File:** `NIRAAgent.RegressionChecks\NIRAAgent.RegressionChecks.csproj`
 
@@ -2046,7 +2241,7 @@ catch (Exception exception)
 
 ---
 
-## 11. `NIRAAgent.RegressionChecks\Program.cs`
+## 13. `NIRAAgent.RegressionChecks\Program.cs`
 
 **File:** `NIRAAgent.RegressionChecks\Program.cs`
 
@@ -3017,6 +3212,75 @@ Check("R32 photo credits are separate from source, license URL and generic visua
         "Screenshot of user's desktop", "");
     if (screenshot.IsStructured || screenshot.Creator.Length != 0)
         throw new Exception("Unsourced screenshots cannot invent photo credits");
+});
+
+// R37: text-to-image generation invariants: all offline, ZERO external API/LLM calls.
+Check("R37.1 Cloudflare API input normalization never requires a generation call", () =>
+{
+    string account = new string('a', 32);
+    string raw = "  Bearer TESTrawTOKEN1234567890-abc_def   ";
+    string normalized = NIRACloudflareImageGenerationService.NormalizePastedToken(raw);
+    if (normalized != "TESTrawTOKEN1234567890-abc_def" ||
+        !NIRACloudflareImageGenerationService.IsCredentialInputValid(account, normalized) ||
+        NIRACloudflareImageGenerationService.IsCredentialInputValid(account, "") ||
+        NIRACloudflareImageGenerationService.IsCredentialInputValid(account, "NIRA, create a picture") ||
+        NIRACloudflareImageGenerationService.IsCredentialInputValid("bad-account", normalized))
+        throw new Exception("Masked/pasted Cloudflare tokens must normalize safely and malformed inputs must be rejected");
+});
+
+Check("R37 image creation uses only FLUX.2 Klein 4B and an auditable execute capability", () =>
+{
+    if (NIRACloudflareImageGenerationService.ModelId != "@cf/black-forest-labs/flux-2-klein-4b" ||
+        NIRACapabilityIds.ImageGenerate != "image.generate")
+        throw new Exception("Wrong image-generation model or capability ID");
+    using var generator = new NIRACloudflareImageGenerationService();
+    var handler = new NIRAImageGenerateCapabilityHandler(generator);
+    if (handler.Descriptor.DefaultRisk != NIRACapabilityRisk.Execute ||
+        handler.ResolveRisk(Request(NIRACapabilityIds.ImageGenerate, "{}")) != NIRACapabilityRisk.Execute ||
+        handler.Descriptor.Parameters.Any(p => p.Name is "url" or "path" or "destination" or "model") ||
+        handler.Descriptor.Parameters.Count != 3)
+        throw new Exception("Image generation bypassed authorization or accepts unsafe override arguments");
+});
+
+Check("R37 image prompt and dimensions are bounded without invoking a model", () =>
+{
+    var good = NIRACloudflareImageGenerationService.Validate(
+        new NIRAImageGenerationRequest("  An Egyptian city at sunset  ", 1280, 720));
+    if (good.Prompt != "An Egyptian city at sunset" || good.Width != 1280 || good.Height != 720)
+        throw new Exception("Prompt validation changed the visual intent or dimensions");
+    Throws<ArgumentException>(() => NIRACloudflareImageGenerationService.Validate(
+        new NIRAImageGenerationRequest("hey", 1024, 768)));
+    Throws<ArgumentException>(() => NIRACloudflareImageGenerationService.Validate(
+        new NIRAImageGenerationRequest("Ancient Egypt", 1920, 1920)));
+    Throws<ArgumentException>(() => NIRACloudflareImageGenerationService.Validate(
+        new NIRAImageGenerationRequest("Ancient Egypt", 1001, 768)));
+});
+
+Check("R37 image bytes require genuine PNG/JPEG signatures and grounded Base64", () =>
+{
+    byte[] png = Convert.FromBase64String(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/BGAAAAAASUVORK5CYII=");
+    string response = "{\"success\":true,\"result\":{\"image\":\"" + Convert.ToBase64String(png) + "\"}}";
+    byte[] decoded = NIRACloudflareImageGenerationService.ReadVerifiedImage(
+        "application/json", System.Text.Encoding.UTF8.GetBytes(response));
+    if (!decoded.SequenceEqual(png) || NIRACloudflareImageGenerationService.ImageExtension(decoded) != ".png")
+        throw new Exception("Real base64 image was not recovered");
+    Throws<InvalidDataException>(() => NIRACloudflareImageGenerationService.ReadVerifiedImage(
+        "application/json", System.Text.Encoding.UTF8.GetBytes("{\"success\":false,\"result\":{\"image\":\"fake\"}}")));
+    Throws<InvalidDataException>(() => NIRACloudflareImageGenerationService.ReadVerifiedImage(
+        "image/png", new byte[128]));
+});
+
+Check("R37 generated visual receipts are distinct from web sources and stored in AI Gallery", () =>
+{
+    var result = new NIRACapabilityVisualArtifact {
+        LocalPath = @"C:\Users\test\generated-image-cache\art.png",
+        Caption = NIRACloudflareImageGenerationService.GeneratedCaptionPrefix,
+        PresentToUser = true, Surface = "InlineOnly"
+    }.Normalize();
+    if (!result.Caption.StartsWith("Generated by NIRA", StringComparison.Ordinal) ||
+        result.SourceUri.Length != 0 || !result.PresentToUser)
+        throw new Exception("Generated images were misclassified as remotely sourced photographs");
 });
 
 // R34 gallery tests: file system only, ZERO LLM/network requests.
@@ -5819,7 +6083,7 @@ static string? LocatePromptFolder()
 
 ---
 
-## 12. `NIRAAgent.UI\App.xaml`
+## 14. `NIRAAgent.UI\App.xaml`
 
 **File:** `NIRAAgent.UI\App.xaml`
 
@@ -5839,7 +6103,7 @@ static string? LocatePromptFolder()
 
 ---
 
-## 13. `NIRAAgent.UI\App.xaml.cs`
+## 15. `NIRAAgent.UI\App.xaml.cs`
 
 **File:** `NIRAAgent.UI\App.xaml.cs`
 
@@ -6378,6 +6642,9 @@ public partial class App : WpfApplication
             builder.Services.AddSingleton<NIRACommonsImageDiscoveryService>();
             builder.Services.AddSingleton<INIRACapabilityHandler, NIRAImageSearchCapabilityHandler>();
             builder.Services.AddSingleton<INIRACapabilityHandler, NIRAImageRetrieveCapabilityHandler>();
+            // R37: native image generation, single Cloudflare 4B model, separate from Ollama.
+            builder.Services.AddSingleton<NIRACloudflareImageGenerationService>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRAImageGenerateCapabilityHandler>();
 
 
             builder.Services.AddSingleton<
@@ -7092,7 +7359,7 @@ public partial class App : WpfApplication
 
 ---
 
-## 14. `NIRAAgent.UI\AssemblyInfo.cs`
+## 16. `NIRAAgent.UI\AssemblyInfo.cs`
 
 **File:** `NIRAAgent.UI\AssemblyInfo.cs`
 
@@ -7116,7 +7383,7 @@ using System.Windows;
 
 ---
 
-## 15. `NIRAAgent.UI\Companion\CompanionWindow.xaml`
+## 17. `NIRAAgent.UI\Companion\CompanionWindow.xaml`
 
 **File:** `NIRAAgent.UI\Companion\CompanionWindow.xaml`
 
@@ -7156,7 +7423,7 @@ using System.Windows;
 
 ---
 
-## 16. `NIRAAgent.UI\Companion\CompanionWindow.xaml.cs`
+## 18. `NIRAAgent.UI\Companion\CompanionWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\Companion\CompanionWindow.xaml.cs`
 
@@ -9528,7 +9795,7 @@ public partial class CompanionWindow
 
 ---
 
-## 17. `NIRAAgent.UI\Companion\NIRABlobShowcaseWindow.xaml`
+## 19. `NIRAAgent.UI\Companion\NIRABlobShowcaseWindow.xaml`
 
 **File:** `NIRAAgent.UI\Companion\NIRABlobShowcaseWindow.xaml`
 
@@ -9665,7 +9932,7 @@ public partial class CompanionWindow
 
 ---
 
-## 18. `NIRAAgent.UI\Companion\NIRABlobShowcaseWindow.xaml.cs`
+## 20. `NIRAAgent.UI\Companion\NIRABlobShowcaseWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\Companion\NIRABlobShowcaseWindow.xaml.cs`
 
@@ -9818,7 +10085,7 @@ public partial class NIRABlobShowcaseWindow : Window
 
 ---
 
-## 19. `NIRAAgent.UI\Companion\NIRABlobStyleShowcaseWindow.xaml`
+## 21. `NIRAAgent.UI\Companion\NIRABlobStyleShowcaseWindow.xaml`
 
 **File:** `NIRAAgent.UI\Companion\NIRABlobStyleShowcaseWindow.xaml`
 
@@ -9954,7 +10221,7 @@ public partial class NIRABlobShowcaseWindow : Window
 
 ---
 
-## 20. `NIRAAgent.UI\Companion\NIRABlobStyleShowcaseWindow.xaml.cs`
+## 22. `NIRAAgent.UI\Companion\NIRABlobStyleShowcaseWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\Companion\NIRABlobStyleShowcaseWindow.xaml.cs`
 
@@ -10164,7 +10431,7 @@ public partial class NIRABlobStyleShowcaseWindow
 
 ---
 
-## 21. `NIRAAgent.UI\Companion\Particles\IParticleFormProvider.cs`
+## 23. `NIRAAgent.UI\Companion\Particles\IParticleFormProvider.cs`
 
 **File:** `NIRAAgent.UI\Companion\Particles\IParticleFormProvider.cs`
 
@@ -10194,7 +10461,7 @@ public interface IParticleFormProvider
 
 ---
 
-## 22. `NIRAAgent.UI\Companion\Particles\OrbParticleFormProvider.cs`
+## 24. `NIRAAgent.UI\Companion\Particles\OrbParticleFormProvider.cs`
 
 **File:** `NIRAAgent.UI\Companion\Particles\OrbParticleFormProvider.cs`
 
@@ -11670,7 +11937,7 @@ public sealed class OrbParticleFormProvider
 
 ---
 
-## 23. `NIRAAgent.UI\Companion\Particles\ParticleDensityProfile.cs`
+## 25. `NIRAAgent.UI\Companion\Particles\ParticleDensityProfile.cs`
 
 **File:** `NIRAAgent.UI\Companion\Particles\ParticleDensityProfile.cs`
 
@@ -11743,7 +12010,7 @@ public sealed record ParticleDensityProfile(
 
 ---
 
-## 24. `NIRAAgent.UI\Companion\Particles\ParticleEntityControl.cs`
+## 26. `NIRAAgent.UI\Companion\Particles\ParticleEntityControl.cs`
 
 **File:** `NIRAAgent.UI\Companion\Particles\ParticleEntityControl.cs`
 
@@ -12794,7 +13061,7 @@ public sealed class ParticleEntityControl
 
 ---
 
-## 25. `NIRAAgent.UI\Companion\Particles\ParticleFormRegistry.cs`
+## 27. `NIRAAgent.UI\Companion\Particles\ParticleFormRegistry.cs`
 
 **File:** `NIRAAgent.UI\Companion\Particles\ParticleFormRegistry.cs`
 
@@ -12903,7 +13170,7 @@ public sealed class ParticleFormRegistry
 
 ---
 
-## 26. `NIRAAgent.UI\Companion\Particles\ParticleMorphEngine.cs`
+## 28. `NIRAAgent.UI\Companion\Particles\ParticleMorphEngine.cs`
 
 **File:** `NIRAAgent.UI\Companion\Particles\ParticleMorphEngine.cs`
 
@@ -14172,7 +14439,7 @@ public readonly record struct ParticleRenderState(
 
 ---
 
-## 27. `NIRAAgent.UI\Companion\Particles\ParticleSizeBand.cs`
+## 29. `NIRAAgent.UI\Companion\Particles\ParticleSizeBand.cs`
 
 **File:** `NIRAAgent.UI\Companion\Particles\ParticleSizeBand.cs`
 
@@ -14207,7 +14474,7 @@ public enum ParticleSizeBand
 
 ---
 
-## 28. `NIRAAgent.UI\Companion\Particles\ParticleTarget.cs`
+## 30. `NIRAAgent.UI\Companion\Particles\ParticleTarget.cs`
 
 **File:** `NIRAAgent.UI\Companion\Particles\ParticleTarget.cs`
 
@@ -14272,7 +14539,7 @@ public readonly record struct ParticleTarget(
 
 ---
 
-## 29. `NIRAAgent.UI\CredentialPromptWindow.xaml`
+## 31. `NIRAAgent.UI\CredentialPromptWindow.xaml`
 
 **File:** `NIRAAgent.UI\CredentialPromptWindow.xaml`
 
@@ -14397,7 +14664,7 @@ public readonly record struct ParticleTarget(
 
 ---
 
-## 30. `NIRAAgent.UI\CredentialPromptWindow.xaml.cs`
+## 32. `NIRAAgent.UI\CredentialPromptWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\CredentialPromptWindow.xaml.cs`
 
@@ -14579,7 +14846,7 @@ public partial class CredentialPromptWindow : Window
 
 ---
 
-## 31. `NIRAAgent.UI\Gallery\NIRAGalleryPage.xaml`
+## 33. `NIRAAgent.UI\Gallery\NIRAGalleryPage.xaml`
 
 **File:** `NIRAAgent.UI\Gallery\NIRAGalleryPage.xaml`
 
@@ -14803,7 +15070,7 @@ public partial class CredentialPromptWindow : Window
 
 ---
 
-## 32. `NIRAAgent.UI\Gallery\NIRAGalleryPage.xaml.cs`
+## 34. `NIRAAgent.UI\Gallery\NIRAGalleryPage.xaml.cs`
 
 **File:** `NIRAAgent.UI\Gallery\NIRAGalleryPage.xaml.cs`
 
@@ -14980,7 +15247,7 @@ public sealed record NIRAGalleryTile(NIRAGalleryItem Record, string FullPath, in
 
 ---
 
-## 33. `NIRAAgent.UI\Gallery\NIRAMasonryPanel.cs`
+## 35. `NIRAAgent.UI\Gallery\NIRAMasonryPanel.cs`
 
 **File:** `NIRAAgent.UI\Gallery\NIRAMasonryPanel.cs`
 
@@ -15102,7 +15369,7 @@ public sealed class NIRAMasonryPanel : Panel
 
 ---
 
-## 34. `NIRAAgent.UI\MainWindow.xaml`
+## 36. `NIRAAgent.UI\MainWindow.xaml`
 
 **File:** `NIRAAgent.UI\MainWindow.xaml`
 
@@ -15926,11 +16193,15 @@ public sealed class NIRAMasonryPanel : Panel
                                     <TranslateTransform x:Name="JourneyIndicatorTranslate"/>
                                 </Grid.RenderTransform>
                                 <StackPanel>
-                                    <typing:NIRATypingIndicator Width="42" Height="18"
-                                        HorizontalAlignment="Left"
-                                        IndicatorStyle="FinalDepthDrift"
-                                        SpeedMultiplier="0.85"
-                                        IsHitTestVisible="False"/>
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                                        <typing:NIRATypingIndicator Width="42" Height="18"
+                                            IndicatorStyle="FinalDepthDrift"
+                                            SpeedMultiplier="0.85"
+                                            IsHitTestVisible="False"/>
+                                        <typing:NIRAImageCreationIndicator x:Name="ImageCreationMotion"
+                                            Width="33" Height="18" Margin="5,0,0,0"
+                                            Visibility="Collapsed" IsHitTestVisible="False"/>
+                                    </StackPanel>
                                     <TextBlock x:Name="JourneyProgressText"
                                                Text="{Binding ProgressText}"
                                                Margin="1,5,0,0"
@@ -15973,6 +16244,9 @@ public sealed class NIRAMasonryPanel : Panel
 
                 <DataTrigger Binding="{Binding HasProgress}" Value="True">
                     <Setter TargetName="JourneyProgressText" Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsImageGenerationActive}" Value="True">
+                    <Setter TargetName="ImageCreationMotion" Property="Visibility" Value="Visible"/>
                 </DataTrigger>
 
                 <DataTrigger Binding="{Binding IsJourneyFading}" Value="True">
@@ -17817,7 +18091,7 @@ public sealed class NIRAMasonryPanel : Panel
 
 ---
 
-## 35. `NIRAAgent.UI\MainWindow.xaml.cs`
+## 37. `NIRAAgent.UI\MainWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\MainWindow.xaml.cs`
 
@@ -17841,6 +18115,7 @@ using NIRAAgent.Agent.State;
 using NIRAAgent.Conversation;
 using NIRAAgent.Artifacts;
 using NIRAAgent.Gallery;
+using NIRAAgent.Images;
 using NIRAAgent.UI.Gallery;
 using NIRAAgent.Authorization;
 using NIRAAgent.Branches;
@@ -18478,8 +18753,13 @@ public partial class MainWindow : Window
                     QueueGalleryImport(image.Artifact, NIRAGalleryCategory.Uploaded);
             else
                 foreach (var image in msg.GetAssistantImageArtifacts())
-                    if (!string.IsNullOrWhiteSpace(image.SourceUri))
+                {
+                    if (image.Artifact.Caption.StartsWith(NIRACloudflareImageGenerationService.GeneratedCaptionPrefix,
+                            StringComparison.Ordinal))
+                        QueueGalleryImport(image.Artifact, NIRAGalleryCategory.AiGenerated);
+                    else if (!string.IsNullOrWhiteSpace(image.SourceUri))
                         QueueGalleryImport(image.Artifact, NIRAGalleryCategory.WebFound);
+                }
         }
     }
 
@@ -20424,7 +20704,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!string.IsNullOrWhiteSpace(artifact.SourceUri))
+        if (artifact.Caption.StartsWith(NIRACloudflareImageGenerationService.GeneratedCaptionPrefix,
+                StringComparison.Ordinal))
+            QueueGalleryImport(artifact, NIRAGalleryCategory.AiGenerated);
+        else if (!string.IsNullOrWhiteSpace(artifact.SourceUri))
             QueueGalleryImport(artifact, NIRAGalleryCategory.WebFound);
 
         bool chatActive =
@@ -21394,7 +21677,7 @@ public partial class MainWindow : Window
 
 ---
 
-## 36. `NIRAAgent.UI\Models\ChatMessage.cs`
+## 38. `NIRAAgent.UI\Models\ChatMessage.cs`
 
 **File:** `NIRAAgent.UI\Models\ChatMessage.cs`
 
@@ -21443,7 +21726,7 @@ public sealed class ChatMessage
 
 ---
 
-## 37. `NIRAAgent.UI\NIRAAgent.UI.csproj`
+## 39. `NIRAAgent.UI\NIRAAgent.UI.csproj`
 
 **File:** `NIRAAgent.UI\NIRAAgent.UI.csproj`
 
@@ -21626,7 +21909,7 @@ public sealed class ChatMessage
 
 ---
 
-## 38. `NIRAAgent.UI\NIRABackdropBorder.cs`
+## 40. `NIRAAgent.UI\NIRABackdropBorder.cs`
 
 **File:** `NIRAAgent.UI\NIRABackdropBorder.cs`
 
@@ -21910,7 +22193,7 @@ public sealed class NIRABackdropBorder : Border
 
 ---
 
-## 39. `NIRAAgent.UI\NIRAUiParticleTransition.cs`
+## 41. `NIRAAgent.UI\NIRAUiParticleTransition.cs`
 
 **File:** `NIRAAgent.UI\NIRAUiParticleTransition.cs`
 
@@ -22229,7 +22512,7 @@ internal static class NIRAUiParticleTransition
 
 ---
 
-## 40. `NIRAAgent.UI\NIRAUtilityBackdropBorder.cs`
+## 42. `NIRAAgent.UI\NIRAUtilityBackdropBorder.cs`
 
 **File:** `NIRAAgent.UI\NIRAUtilityBackdropBorder.cs`
 
@@ -22489,7 +22772,7 @@ public sealed class NIRAUtilityBackdropBorder : Border
 
 ---
 
-## 41. `NIRAAgent.UI\NIRAWorkAreaWindowGuard.cs`
+## 43. `NIRAAgent.UI\NIRAWorkAreaWindowGuard.cs`
 
 **File:** `NIRAAgent.UI\NIRAWorkAreaWindowGuard.cs`
 
@@ -22688,7 +22971,7 @@ internal sealed class NIRAWorkAreaWindowGuard : IDisposable
 
 ---
 
-## 42. `NIRAAgent.UI\OllamaApiKeyWindow.xaml`
+## 44. `NIRAAgent.UI\OllamaApiKeyWindow.xaml`
 
 **File:** `NIRAAgent.UI\OllamaApiKeyWindow.xaml`
 
@@ -22871,7 +23154,7 @@ internal sealed class NIRAWorkAreaWindowGuard : IDisposable
 
 ---
 
-## 43. `NIRAAgent.UI\OllamaApiKeyWindow.xaml.cs`
+## 45. `NIRAAgent.UI\OllamaApiKeyWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\OllamaApiKeyWindow.xaml.cs`
 
@@ -23027,7 +23310,7 @@ public partial class OllamaApiKeyWindow : Window
 
 ---
 
-## 44. `NIRAAgent.UI\PastChatWindow.cs`
+## 46. `NIRAAgent.UI\PastChatWindow.cs`
 
 **File:** `NIRAAgent.UI\PastChatWindow.cs`
 
@@ -23648,7 +23931,7 @@ public sealed class PastChatWindow : Window
 
 ---
 
-## 45. `NIRAAgent.UI\PermissionsWindow.xaml`
+## 47. `NIRAAgent.UI\PermissionsWindow.xaml`
 
 **File:** `NIRAAgent.UI\PermissionsWindow.xaml`
 
@@ -24173,7 +24456,7 @@ public sealed class PastChatWindow : Window
 
 ---
 
-## 46. `NIRAAgent.UI\PermissionsWindow.xaml.cs`
+## 48. `NIRAAgent.UI\PermissionsWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\PermissionsWindow.xaml.cs`
 
@@ -24766,7 +25049,7 @@ public partial class PermissionsWindow : Window
 
 ---
 
-## 47. `NIRAAgent.UI\PermissionToastWindow.xaml`
+## 49. `NIRAAgent.UI\PermissionToastWindow.xaml`
 
 **File:** `NIRAAgent.UI\PermissionToastWindow.xaml`
 
@@ -25034,7 +25317,7 @@ public partial class PermissionsWindow : Window
 
 ---
 
-## 48. `NIRAAgent.UI\PermissionToastWindow.xaml.cs`
+## 50. `NIRAAgent.UI\PermissionToastWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\PermissionToastWindow.xaml.cs`
 
@@ -25993,7 +26276,7 @@ public partial class PermissionToastWindow : Window
 
 ---
 
-## 49. `NIRAAgent.UI\Presentation\NIRAChatDocument.cs`
+## 51. `NIRAAgent.UI\Presentation\NIRAChatDocument.cs`
 
 **File:** `NIRAAgent.UI\Presentation\NIRAChatDocument.cs`
 
@@ -26260,7 +26543,7 @@ public static class NIRAChatDocument
 
 ---
 
-## 50. `NIRAAgent.UI\Presentation\NIRARichBlockRenderer.cs`
+## 52. `NIRAAgent.UI\Presentation\NIRARichBlockRenderer.cs`
 
 **File:** `NIRAAgent.UI\Presentation\NIRARichBlockRenderer.cs`
 
@@ -27403,7 +27686,7 @@ public static class NIRARichBlockRenderer
 
 ---
 
-## 51. `NIRAAgent.UI\Presentation\NIRAStyledChatText.cs`
+## 53. `NIRAAgent.UI\Presentation\NIRAStyledChatText.cs`
 
 **File:** `NIRAAgent.UI\Presentation\NIRAStyledChatText.cs`
 
@@ -27584,7 +27867,7 @@ public static class NIRAStyledChatText
 
 ---
 
-## 52. `NIRAAgent.UI\SettingsWindow.xaml`
+## 54. `NIRAAgent.UI\SettingsWindow.xaml`
 
 **File:** `NIRAAgent.UI\SettingsWindow.xaml`
 
@@ -28077,7 +28360,7 @@ public static class NIRAStyledChatText
 
 ---
 
-## 53. `NIRAAgent.UI\SettingsWindow.xaml.cs`
+## 55. `NIRAAgent.UI\SettingsWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\SettingsWindow.xaml.cs`
 
@@ -28430,7 +28713,7 @@ public partial class SettingsWindow : Window
 
 ---
 
-## 54. `NIRAAgent.UI\Themes\NIRATheme.xaml`
+## 56. `NIRAAgent.UI\Themes\NIRATheme.xaml`
 
 **File:** `NIRAAgent.UI\Themes\NIRATheme.xaml`
 
@@ -28882,7 +29165,7 @@ public partial class SettingsWindow : Window
 
 ---
 
-## 55. `NIRAAgent.UI\Theming\NIRAMotion.cs`
+## 57. `NIRAAgent.UI\Theming\NIRAMotion.cs`
 
 **File:** `NIRAAgent.UI\Theming\NIRAMotion.cs`
 
@@ -29002,7 +29285,7 @@ public static class NIRAMotion
 
 ---
 
-## 56. `NIRAAgent.UI\Theming\NIRAThemeGlyph.cs`
+## 58. `NIRAAgent.UI\Theming\NIRAThemeGlyph.cs`
 
 **File:** `NIRAAgent.UI\Theming\NIRAThemeGlyph.cs`
 
@@ -29096,7 +29379,7 @@ internal static class NIRAThemeGlyph
 
 ---
 
-## 57. `NIRAAgent.UI\Theming\NIRAThemeManager.cs`
+## 59. `NIRAAgent.UI\Theming\NIRAThemeManager.cs`
 
 **File:** `NIRAAgent.UI\Theming\NIRAThemeManager.cs`
 
@@ -29370,7 +29653,94 @@ public static class NIRAThemeManager
 
 ---
 
-## 58. `NIRAAgent.UI\Typing\NIRATypingIndicator.cs`
+## 60. `NIRAAgent.UI\Typing\NIRAImageCreationIndicator.cs`
+
+**File:** `NIRAAgent.UI\Typing\NIRAImageCreationIndicator.cs`
+
+```csharp
+using System.Diagnostics;
+using System.Windows;
+using System.Windows.Media;
+
+namespace NIRAAgent.UI.Typing;
+
+// Tiny animated image-frame + orbiting blue sparkles alongside NIRA's three-dot journey.
+// It is ONLY visible when trusted runtime dispatches image.generate, never a toolbar button.
+public sealed class NIRAImageCreationIndicator : FrameworkElement
+{
+    private readonly Stopwatch _clock = new();
+    private bool _rendering;
+    public NIRAImageCreationIndicator()
+    {
+        IsHitTestVisible = false;
+        Loaded += (_, _) => UpdateSubscription();
+        Unloaded += (_, _) => Stop();
+        IsVisibleChanged += (_, _) => UpdateSubscription();
+    }
+    private void UpdateSubscription()
+    {
+        if (!IsLoaded || !IsVisible) { Stop(); return; }
+        if (_rendering) return;
+        _rendering = true;
+        _clock.Restart();
+        CompositionTarget.Rendering += Frame;
+    }
+    private void Frame(object? sender, EventArgs e) { if (IsVisible) InvalidateVisual(); else Stop(); }
+    private void Stop()
+    {
+        if (!_rendering) return;
+        CompositionTarget.Rendering -= Frame;
+        _rendering = false;
+        _clock.Stop();
+    }
+    protected override void OnRender(DrawingContext dc)
+    {
+        base.OnRender(dc);
+        double t = _clock.Elapsed.TotalSeconds;
+        double x = ActualWidth / 2, y = ActualHeight / 2;
+        if (x < 4 || y < 4) return;
+        var border = new Pen(new SolidColorBrush(Color.FromArgb(200, 67, 177, 255)), 1.2);
+        border.Freeze();
+        var shade = new SolidColorBrush(Color.FromArgb(34, 78, 170, 255)); shade.Freeze();
+        var image = new StreamGeometry();
+        using (var ctx = image.Open())
+        {
+            ctx.BeginFigure(new Point(x - 6.2, y - 4.8), true, true);
+            ctx.LineTo(new Point(x + 6.2, y - 4.8), true, false);
+            ctx.LineTo(new Point(x + 6.2, y + 4.8), true, false);
+            ctx.LineTo(new Point(x - 6.2, y + 4.8), true, false);
+        }
+        image.Freeze();
+        dc.DrawGeometry(shade, border, image);
+        var peak = new StreamGeometry();
+        using (var ctx = peak.Open())
+        {
+            ctx.BeginFigure(new Point(x - 4.5, y + 2.5), false, false);
+            ctx.LineTo(new Point(x - 1, y - 0.5), true, false);
+            ctx.LineTo(new Point(x + 1, y + 1.1), true, false);
+            ctx.LineTo(new Point(x + 3.7, y - 2.0), true, false);
+            ctx.LineTo(new Point(x + 4.9, y + 2.5), true, false);
+        }
+        peak.Freeze();
+        dc.DrawGeometry(null, new Pen(Brushes.LightSkyBlue, 1.0), peak);
+        for (int i = 0; i < 3; i++)
+        {
+            double theta = t * 2.8 + i * (Math.PI * 2 / 3);
+            double sparkleX = x + Math.Cos(theta) * 10.0;
+            double sparkleY = y + Math.Sin(theta) * 7.2;
+            byte alpha = (byte)(155 + 80 * (1 + Math.Sin(t * 4 + i * 2)) / 2);
+            var brush = new SolidColorBrush(Color.FromArgb(alpha, i == 1 ? (byte)190 : (byte)105,
+                i == 1 ? (byte)125 : (byte)219, 255));
+            brush.Freeze();
+            dc.DrawEllipse(brush, null, new Point(sparkleX, sparkleY), i == 0 ? 1.7 : 1.25, i == 0 ? 1.7 : 1.25);
+        }
+    }
+}
+```
+
+---
+
+## 61. `NIRAAgent.UI\Typing\NIRATypingIndicator.cs`
 
 **File:** `NIRAAgent.UI\Typing\NIRATypingIndicator.cs`
 
@@ -29730,7 +30100,7 @@ public sealed class NIRATypingIndicator : FrameworkElement
 
 ---
 
-## 59. `NIRAAgent.UI\Typing\TypingStyle.cs`
+## 62. `NIRAAgent.UI\Typing\TypingStyle.cs`
 
 **File:** `NIRAAgent.UI\Typing\TypingStyle.cs`
 
@@ -29745,7 +30115,7 @@ public enum TypingStyle
 
 ---
 
-## 60. `NIRAAgent.UI\ViewModels\AsyncRelayCommand.cs`
+## 63. `NIRAAgent.UI\ViewModels\AsyncRelayCommand.cs`
 
 **File:** `NIRAAgent.UI\ViewModels\AsyncRelayCommand.cs`
 
@@ -29805,7 +30175,7 @@ public sealed class AsyncRelayCommand : ICommand
 
 ---
 
-## 61. `NIRAAgent.UI\ViewModels\ChatMessageTemplateSelector.cs`
+## 64. `NIRAAgent.UI\ViewModels\ChatMessageTemplateSelector.cs`
 
 **File:** `NIRAAgent.UI\ViewModels\ChatMessageTemplateSelector.cs`
 
@@ -29846,7 +30216,7 @@ public sealed class ChatMessageTemplateSelector : DataTemplateSelector
 
 ---
 
-## 62. `NIRAAgent.UI\ViewModels\ChatMessageViewModel.cs`
+## 65. `NIRAAgent.UI\ViewModels\ChatMessageViewModel.cs`
 
 **File:** `NIRAAgent.UI\ViewModels\ChatMessageViewModel.cs`
 
@@ -29876,6 +30246,12 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         _content;
 
     private string _progressText = string.Empty;
+    private bool _isImageGenerationActive;
+    public bool IsImageGenerationActive
+    {
+        get => _isImageGenerationActive;
+        set { if (_isImageGenerationActive == value) return; _isImageGenerationActive = value; OnPropertyChanged(); }
+    }
     private bool _isJourneyActive;
     private bool _isJourneyFading;
     private int _journeyVersion;
@@ -29934,6 +30310,7 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
     // Start with ONLY the living three dots. No fake/default status text.
     public void BeginJourney()
     {
+        IsImageGenerationActive = false;
         _journeyVersion++;
         _progressText = string.Empty;
         IsJourneyFading = false;
@@ -29951,6 +30328,7 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         if (!IsJourneyActive || IsJourneyFading)
             return;
 
+        IsImageGenerationActive = false;
         int version = ++_journeyVersion;
         IsJourneyFading = true;
         _ = CompleteJourneyFadeOutAsync(version);
@@ -29958,6 +30336,7 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
 
     public void ClearJourneyImmediately()
     {
+        IsImageGenerationActive = false;
         _journeyVersion++;
         _progressText = string.Empty;
         IsJourneyFading = false;
@@ -30393,7 +30772,7 @@ public sealed class NIRAUserImageGalleryTileViewModel
 
 ---
 
-## 63. `NIRAAgent.UI\ViewModels\MainWindowViewModel.cs`
+## 66. `NIRAAgent.UI\ViewModels\MainWindowViewModel.cs`
 
 **File:** `NIRAAgent.UI\ViewModels\MainWindowViewModel.cs`
 
@@ -30788,6 +31167,8 @@ public sealed class MainWindowViewModel
             {
                 if (chunk.Type == NIRAOutputChunkType.Progress)
                 {
+                    if (chunk.IsImageGenerationProgress)
+                        assistantMessage.IsImageGenerationActive = true;
                     // Progress is not a chat message, a capability result, or
                     // archival material; show only while the reply is pending.
                     if (!assistantMessage.HasContent &&
@@ -30924,6 +31305,8 @@ public sealed class MainWindowViewModel
         {
             if (string.IsNullOrWhiteSpace(chunk.Content)) return;
             BackgroundResponseState progress = GetOrCreateBackgroundResponse(chunk.RunId, chunk.OriginPrompt);
+            if (chunk.IsImageGenerationProgress)
+                progress.Message.IsImageGenerationActive = true;
             if (!progress.Message.HasContent &&
                 !progress.Message.HasRichElements &&
                 !progress.Message.HasVisualArtifacts)
@@ -31451,7 +31834,7 @@ public sealed record NIRAComposerGalleryTile(NIRAComposerAttachment Attachment, 
 
 ---
 
-## 64. `NIRAAgent.UI\ViewModels\NIRAVisualAnnotationRenderer.cs`
+## 67. `NIRAAgent.UI\ViewModels\NIRAVisualAnnotationRenderer.cs`
 
 **File:** `NIRAAgent.UI\ViewModels\NIRAVisualAnnotationRenderer.cs`
 
@@ -31518,7 +31901,7 @@ public static class NIRAVisualAnnotationRenderer
 
 ---
 
-## 65. `NIRAAgent.UI\ViewModels\VisualArtifactViewModel.cs`
+## 68. `NIRAAgent.UI\ViewModels\VisualArtifactViewModel.cs`
 
 **File:** `NIRAAgent.UI\ViewModels\VisualArtifactViewModel.cs`
 
@@ -31727,7 +32110,7 @@ public sealed class VisualArtifactViewModel : INotifyPropertyChanged
 
 ---
 
-## 66. `NIRAAgent.UI\Vision\NIRAForegroundWorkCoordinator.cs`
+## 69. `NIRAAgent.UI\Vision\NIRAForegroundWorkCoordinator.cs`
 
 **File:** `NIRAAgent.UI\Vision\NIRAForegroundWorkCoordinator.cs`
 
@@ -31909,7 +32292,7 @@ internal static class NIRAForegroundWorkNotice
 
 ---
 
-## 67. `NIRAAgent.UI\Vision\WindowsAccessibilityBackend.cs`
+## 70. `NIRAAgent.UI\Vision\WindowsAccessibilityBackend.cs`
 
 **File:** `NIRAAgent.UI\Vision\WindowsAccessibilityBackend.cs`
 
@@ -32032,7 +32415,7 @@ public sealed class WindowsAccessibilityBackend : INIRADesktopAccessibilityBacke
 
 ---
 
-## 68. `NIRAAgent.UI\Vision\WindowsDesktopInteractionBackend.cs`
+## 71. `NIRAAgent.UI\Vision\WindowsDesktopInteractionBackend.cs`
 
 **File:** `NIRAAgent.UI\Vision\WindowsDesktopInteractionBackend.cs`
 
@@ -32827,7 +33210,7 @@ public sealed class WindowsDesktopInteractionBackend : INIRADesktopInteractionBa
 
 ---
 
-## 69. `NIRAAgent.UI\Vision\WindowsScreenCaptureBackend.cs`
+## 72. `NIRAAgent.UI\Vision\WindowsScreenCaptureBackend.cs`
 
 **File:** `NIRAAgent.UI\Vision\WindowsScreenCaptureBackend.cs`
 
@@ -34150,7 +34533,7 @@ public sealed class WindowsScreenCaptureBackend
 
 ---
 
-## 70. `NIRAAgent.UI\Visuals\NIRAUserAttachmentGalleryWindow.xaml`
+## 73. `NIRAAgent.UI\Visuals\NIRAUserAttachmentGalleryWindow.xaml`
 
 **File:** `NIRAAgent.UI\Visuals\NIRAUserAttachmentGalleryWindow.xaml`
 
@@ -34356,7 +34739,7 @@ public sealed class WindowsScreenCaptureBackend
 
 ---
 
-## 71. `NIRAAgent.UI\Visuals\NIRAUserAttachmentGalleryWindow.xaml.cs`
+## 74. `NIRAAgent.UI\Visuals\NIRAUserAttachmentGalleryWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\Visuals\NIRAUserAttachmentGalleryWindow.xaml.cs`
 
@@ -34605,7 +34988,7 @@ public partial class NIRAUserAttachmentGalleryWindow : Window, INotifyPropertyCh
 
 ---
 
-## 72. `NIRAAgent.UI\Visuals\NIRAVisualArtifactToastWindow.xaml`
+## 75. `NIRAAgent.UI\Visuals\NIRAVisualArtifactToastWindow.xaml`
 
 **File:** `NIRAAgent.UI\Visuals\NIRAVisualArtifactToastWindow.xaml`
 
@@ -34819,7 +35202,7 @@ public partial class NIRAUserAttachmentGalleryWindow : Window, INotifyPropertyCh
 
 ---
 
-## 73. `NIRAAgent.UI\Visuals\NIRAVisualArtifactToastWindow.xaml.cs`
+## 76. `NIRAAgent.UI\Visuals\NIRAVisualArtifactToastWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\Visuals\NIRAVisualArtifactToastWindow.xaml.cs`
 
@@ -35263,7 +35646,7 @@ public partial class NIRAVisualArtifactToastWindow : Window
 
 ---
 
-## 74. `NIRAAgent.UI\Visuals\NIRAVisualArtifactViewerWindow.xaml`
+## 77. `NIRAAgent.UI\Visuals\NIRAVisualArtifactViewerWindow.xaml`
 
 **File:** `NIRAAgent.UI\Visuals\NIRAVisualArtifactViewerWindow.xaml`
 
@@ -35405,7 +35788,7 @@ public partial class NIRAVisualArtifactToastWindow : Window
 
 ---
 
-## 75. `NIRAAgent.UI\Visuals\NIRAVisualArtifactViewerWindow.xaml.cs`
+## 78. `NIRAAgent.UI\Visuals\NIRAVisualArtifactViewerWindow.xaml.cs`
 
 **File:** `NIRAAgent.UI\Visuals\NIRAVisualArtifactViewerWindow.xaml.cs`
 
@@ -35548,7 +35931,7 @@ public partial class NIRAVisualArtifactViewerWindow : Window
 
 ---
 
-## 76. `NIRAAgent.UI\Visuals\NIRAVisualToastPlacementService.cs`
+## 79. `NIRAAgent.UI\Visuals\NIRAVisualToastPlacementService.cs`
 
 **File:** `NIRAAgent.UI\Visuals\NIRAVisualToastPlacementService.cs`
 
@@ -35965,7 +36348,7 @@ public sealed class NIRAVisualToastPlacementService
 
 ---
 
-## 77. `NIRAAgent\Agent\State\NIRAStateService.cs`
+## 80. `NIRAAgent\Agent\State\NIRAStateService.cs`
 
 **File:** `NIRAAgent\Agent\State\NIRAStateService.cs`
 
@@ -36292,7 +36675,7 @@ public sealed class NIRAStateService
 
 ---
 
-## 78. `NIRAAgent\AI\Cognition\NIRACharacterDeliveryPolicy.cs`
+## 81. `NIRAAgent\AI\Cognition\NIRACharacterDeliveryPolicy.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRACharacterDeliveryPolicy.cs`
 
@@ -36653,7 +37036,7 @@ internal readonly record struct NIRACharacterDeliveryAssessment(
 
 ---
 
-## 79. `NIRAAgent\AI\Cognition\NIRACognitionContext.cs`
+## 82. `NIRAAgent\AI\Cognition\NIRACognitionContext.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRACognitionContext.cs`
 
@@ -36897,7 +37280,7 @@ public sealed record NIRACognitionContext
 
 ---
 
-## 80. `NIRAAgent\AI\Cognition\NIRACognitionContextBuilder.cs`
+## 83. `NIRAAgent\AI\Cognition\NIRACognitionContextBuilder.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRACognitionContextBuilder.cs`
 
@@ -37943,7 +38326,7 @@ public sealed class NIRACognitionContextBuilder
 
 ---
 
-## 81. `NIRAAgent\AI\Cognition\NIRACognitionContracts.cs`
+## 84. `NIRAAgent\AI\Cognition\NIRACognitionContracts.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRACognitionContracts.cs`
 
@@ -38334,7 +38717,7 @@ public sealed record NIRACognitionAppraisalProposal
 
 ---
 
-## 82. `NIRAAgent\AI\Cognition\NIRACognitionPromptCompiler.cs`
+## 85. `NIRAAgent\AI\Cognition\NIRACognitionPromptCompiler.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRACognitionPromptCompiler.cs`
 
@@ -38391,6 +38774,22 @@ internal static class NIRACognitionPromptCompiler
           alone is not proof that an image has been displayed. This fallback
           still obeys ordinary network and filesystem permissions; it does not
           grant browsing or download authority.
+        - IMAGE CREATION (not retrieval): When the user explicitly asks you to CREATE,
+          DRAW, GENERATE, or RENDER a NEW image, use native image.generate with
+          Cloudflare FLUX.2 Klein 4B (ONLY enabled generation model). During the
+          SAME normal cognition pass, turn the user's brief concept into one
+          specific high-quality visual prompt in the tool's prompt argument:
+          subject, composition, setting, light, materials, style, and user
+          constraints, without changing the intended subject or inventing an
+          unrelated one. Select suitable width/height (1024x768 default,
+          1024x1024 square, 1280x720 landscape, 720x1280 portrait), at most
+          one megapixel in trial mode. Do NOT call a second LLM just for
+          rewriting the prompt. image.generate costs Cloudflare image quota:
+          only invoke on explicit creation intent; never generate silently
+          during explanation, casual chat or reference image search.
+          ONE attempt per user turn, no automatic retry or upgrade to 9B.
+          The tool saves real verified output for chat and the AI Generated
+          Gallery. Never claim an image exists before successful execution.
         - For real historical places, artifacts, wildlife and similar visually
           meaningful topics, image.search can return actual Openverse/Wikimedia
           image candidates without Playwright or an API key. A candidate is not
@@ -40497,7 +40896,7 @@ internal static class NIRACognitionPromptCompiler
 
 ---
 
-## 83. `NIRAAgent\AI\Cognition\NIRACognitionService.cs`
+## 86. `NIRAAgent\AI\Cognition\NIRACognitionService.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRACognitionService.cs`
 
@@ -44090,7 +44489,7 @@ internal sealed class NIRABranchEvidenceSourceJsonConverter
 
 ---
 
-## 84. `NIRAAgent\AI\Cognition\NIRAConversationFastPath.cs`
+## 87. `NIRAAgent\AI\Cognition\NIRAConversationFastPath.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRAConversationFastPath.cs`
 
@@ -44138,7 +44537,7 @@ public static class NIRAConversationFastPath
 
 ---
 
-## 85. `NIRAAgent\AI\Cognition\NIRAImageInput.cs`
+## 88. `NIRAAgent\AI\Cognition\NIRAImageInput.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRAImageInput.cs`
 
@@ -44261,7 +44660,7 @@ public sealed record NIRAImageBatch(int FirstImageNumber, IReadOnlyList<string> 
 
 ---
 
-## 86. `NIRAAgent\AI\Cognition\NIRAProductionContinuityPolicy.cs`
+## 89. `NIRAAgent\AI\Cognition\NIRAProductionContinuityPolicy.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRAProductionContinuityPolicy.cs`
 
@@ -44376,7 +44775,7 @@ public static class NIRAProductionContinuityPolicy
 
 ---
 
-## 87. `NIRAAgent\AI\Cognition\NIRAPublicCharacterDelivery.cs`
+## 90. `NIRAAgent\AI\Cognition\NIRAPublicCharacterDelivery.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRAPublicCharacterDelivery.cs`
 
@@ -44506,7 +44905,7 @@ public static class NIRAPublicCharacterDelivery
 
 ---
 
-## 88. `NIRAAgent\AI\Cognition\NIRAResponseRealizationService.cs`
+## 91. `NIRAAgent\AI\Cognition\NIRAResponseRealizationService.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRAResponseRealizationService.cs`
 
@@ -45824,7 +46223,7 @@ public sealed record NIRAResponseRealizationRequest
 
 ---
 
-## 89. `NIRAAgent\AI\Cognition\NIRAScopedApplicationPromptCatalog.cs`
+## 92. `NIRAAgent\AI\Cognition\NIRAScopedApplicationPromptCatalog.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRAScopedApplicationPromptCatalog.cs`
 
@@ -45997,7 +46396,7 @@ internal readonly record struct NIRAScopedPromptSelection(
 
 ---
 
-## 90. `NIRAAgent\AI\Cognition\NIRATaskCompletionReviewService.cs`
+## 93. `NIRAAgent\AI\Cognition\NIRATaskCompletionReviewService.cs`
 
 **File:** `NIRAAgent\AI\Cognition\NIRATaskCompletionReviewService.cs`
 
@@ -46531,7 +46930,7 @@ public sealed record NIRATaskCompletionReview(
 
 ---
 
-## 91. `NIRAAgent\AI\Ollama\NIRAModelSelection.cs`
+## 94. `NIRAAgent\AI\Ollama\NIRAModelSelection.cs`
 
 **File:** `NIRAAgent\AI\Ollama\NIRAModelSelection.cs`
 
@@ -46808,7 +47207,7 @@ public static class NIRAModelSelection
 
 ---
 
-## 92. `NIRAAgent\AI\Ollama\NIRAOllamaApiKeyService.cs`
+## 95. `NIRAAgent\AI\Ollama\NIRAOllamaApiKeyService.cs`
 
 **File:** `NIRAAgent\AI\Ollama\NIRAOllamaApiKeyService.cs`
 
@@ -47667,7 +48066,7 @@ public sealed class NIRAOllamaApiKeyService : IDisposable
 
 ---
 
-## 93. `NIRAAgent\AI\Ollama\ollamaClient.cs`
+## 96. `NIRAAgent\AI\Ollama\ollamaClient.cs`
 
 **File:** `NIRAAgent\AI\Ollama\ollamaClient.cs`
 
@@ -48225,7 +48624,7 @@ public sealed class OllamaClient : IDisposable
 
 ---
 
-## 94. `NIRAAgent\Artifacts\NIRAVisualArtifactContracts.cs`
+## 97. `NIRAAgent\Artifacts\NIRAVisualArtifactContracts.cs`
 
 **File:** `NIRAAgent\Artifacts\NIRAVisualArtifactContracts.cs`
 
@@ -48527,7 +48926,7 @@ public sealed record NIRAVisualArtifact
 
 ---
 
-## 95. `NIRAAgent\Artifacts\NIRAVisualArtifactService.cs`
+## 98. `NIRAAgent\Artifacts\NIRAVisualArtifactService.cs`
 
 **File:** `NIRAAgent\Artifacts\NIRAVisualArtifactService.cs`
 
@@ -49127,7 +49526,7 @@ public sealed class NIRAVisualArtifactService
 
 ---
 
-## 96. `NIRAAgent\Authorization\NIRAAuthorityContracts.cs`
+## 99. `NIRAAgent\Authorization\NIRAAuthorityContracts.cs`
 
 **File:** `NIRAAgent\Authorization\NIRAAuthorityContracts.cs`
 
@@ -49266,7 +49665,7 @@ public sealed record NIRAAuthorityAuditRow
 
 ---
 
-## 97. `NIRAAgent\Authorization\NIRAAuthorityExecutionContext.cs`
+## 100. `NIRAAgent\Authorization\NIRAAuthorityExecutionContext.cs`
 
 **File:** `NIRAAgent\Authorization\NIRAAuthorityExecutionContext.cs`
 
@@ -49340,7 +49739,7 @@ public sealed class NIRAAuthorityExecutionContextAccessor
 
 ---
 
-## 98. `NIRAAgent\Authorization\NIRAAuthorityExecutionProfiles.cs`
+## 101. `NIRAAgent\Authorization\NIRAAuthorityExecutionProfiles.cs`
 
 **File:** `NIRAAgent\Authorization\NIRAAuthorityExecutionProfiles.cs`
 
@@ -49819,7 +50218,7 @@ public static class NIRAAuthorityExecutionProfiles
 
 ---
 
-## 99. `NIRAAgent\Authorization\NIRAAuthorityStore.cs`
+## 102. `NIRAAgent\Authorization\NIRAAuthorityStore.cs`
 
 **File:** `NIRAAgent\Authorization\NIRAAuthorityStore.cs`
 
@@ -50117,7 +50516,7 @@ public sealed class NIRAAuthorityStore
 
 ---
 
-## 100. `NIRAAgent\Authorization\NIRACapabilityApprovalBroker.cs`
+## 103. `NIRAAgent\Authorization\NIRACapabilityApprovalBroker.cs`
 
 **File:** `NIRAAgent\Authorization\NIRACapabilityApprovalBroker.cs`
 
@@ -50187,7 +50586,7 @@ public sealed class NIRACapabilityApprovalBroker
 
 ---
 
-## 101. `NIRAAgent\Authorization\NIRACapabilityRequestPolicy.cs`
+## 104. `NIRAAgent\Authorization\NIRACapabilityRequestPolicy.cs`
 
 **File:** `NIRAAgent\Authorization\NIRACapabilityRequestPolicy.cs`
 
@@ -50949,7 +51348,7 @@ public sealed class NIRACapabilityRequestPolicy
 
 ---
 
-## 102. `NIRAAgent\Authorization\NIRACredentialBroker.cs`
+## 105. `NIRAAgent\Authorization\NIRACredentialBroker.cs`
 
 **File:** `NIRAAgent\Authorization\NIRACredentialBroker.cs`
 
@@ -51245,7 +51644,7 @@ public sealed class NIRACredentialBroker
 
 ---
 
-## 103. `NIRAAgent\Authorization\NIRACredentialContracts.cs`
+## 106. `NIRAAgent\Authorization\NIRACredentialContracts.cs`
 
 **File:** `NIRAAgent\Authorization\NIRACredentialContracts.cs`
 
@@ -51306,7 +51705,7 @@ public sealed record NIRACredentialPromptResponse
 
 ---
 
-## 104. `NIRAAgent\Authorization\NIRACredentialStore.cs`
+## 107. `NIRAAgent\Authorization\NIRACredentialStore.cs`
 
 **File:** `NIRAAgent\Authorization\NIRACredentialStore.cs`
 
@@ -51905,7 +52304,7 @@ public sealed class NIRACredentialStore
 
 ---
 
-## 105. `NIRAAgent\Authorization\NIRARiskAdaptiveAuthority.cs`
+## 108. `NIRAAgent\Authorization\NIRARiskAdaptiveAuthority.cs`
 
 **File:** `NIRAAgent\Authorization\NIRARiskAdaptiveAuthority.cs`
 
@@ -52210,7 +52609,7 @@ public static class NIRARiskAdaptiveAuthority
 
 ---
 
-## 106. `NIRAAgent\Authorization\NIRAScopedCapabilityAuthorizer.cs`
+## 109. `NIRAAgent\Authorization\NIRAScopedCapabilityAuthorizer.cs`
 
 **File:** `NIRAAgent\Authorization\NIRAScopedCapabilityAuthorizer.cs`
 
@@ -53146,7 +53545,7 @@ public sealed class NIRAScopedCapabilityAuthorizer : INIRACapabilityAuthorizer
 
 ---
 
-## 107. `NIRAAgent\Branches\NIRABranchContracts.cs`
+## 110. `NIRAAgent\Branches\NIRABranchContracts.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchContracts.cs`
 
@@ -53662,7 +54061,7 @@ public sealed record NIRABranchResultEvent
 
 ---
 
-## 108. `NIRAAgent\Branches\NIRABranchRunnerService.cs`
+## 111. `NIRAAgent\Branches\NIRABranchRunnerService.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchRunnerService.cs`
 
@@ -54907,7 +55306,7 @@ public sealed class NIRABranchRunnerService
 
 ---
 
-## 109. `NIRAAgent\Branches\NIRABranchService.cs`
+## 112. `NIRAAgent\Branches\NIRABranchService.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchService.cs`
 
@@ -57036,7 +57435,7 @@ public sealed class NIRABranchService
 
 ---
 
-## 110. `NIRAAgent\Branches\NIRABranchStore.cs`
+## 113. `NIRAAgent\Branches\NIRABranchStore.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchStore.cs`
 
@@ -58016,7 +58415,7 @@ public sealed class NIRABranchStore
 
 ---
 
-## 111. `NIRAAgent\Branches\NIRABranchWorkContracts.cs`
+## 114. `NIRAAgent\Branches\NIRABranchWorkContracts.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchWorkContracts.cs`
 
@@ -58451,7 +58850,7 @@ public sealed record NIRABranchWorkResultEvent
 
 ---
 
-## 112. `NIRAAgent\Branches\NIRABranchWorkLoopGuard.cs`
+## 115. `NIRAAgent\Branches\NIRABranchWorkLoopGuard.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchWorkLoopGuard.cs`
 
@@ -58684,7 +59083,7 @@ internal static class NIRABranchWorkLoopGuard
 
 ---
 
-## 113. `NIRAAgent\Branches\NIRABranchWorkReconsiderationService.cs`
+## 116. `NIRAAgent\Branches\NIRABranchWorkReconsiderationService.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchWorkReconsiderationService.cs`
 
@@ -59088,7 +59487,7 @@ public sealed class NIRABranchWorkReconsiderationService
 
 ---
 
-## 114. `NIRAAgent\Branches\NIRABranchWorkService.cs`
+## 117. `NIRAAgent\Branches\NIRABranchWorkService.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchWorkService.cs`
 
@@ -60434,7 +60833,7 @@ public sealed class NIRABranchWorkService
 
 ---
 
-## 115. `NIRAAgent\Branches\NIRABranchWorkStore.cs`
+## 118. `NIRAAgent\Branches\NIRABranchWorkStore.cs`
 
 **File:** `NIRAAgent\Branches\NIRABranchWorkStore.cs`
 
@@ -60987,7 +61386,7 @@ public sealed class NIRABranchWorkStore
 
 ---
 
-## 116. `NIRAAgent\Browser\NIRABrowserActionJournal.cs`
+## 119. `NIRAAgent\Browser\NIRABrowserActionJournal.cs`
 
 **File:** `NIRAAgent\Browser\NIRABrowserActionJournal.cs`
 
@@ -61105,7 +61504,7 @@ internal sealed class NIRABrowserActionJournal
 
 ---
 
-## 117. `NIRAAgent\Browser\NIRABrowserContracts.cs`
+## 120. `NIRAAgent\Browser\NIRABrowserContracts.cs`
 
 **File:** `NIRAAgent\Browser\NIRABrowserContracts.cs`
 
@@ -61376,7 +61775,7 @@ public sealed record NIRABrowserDownloadResult
 
 ---
 
-## 118. `NIRAAgent\Browser\NIRABrowserService.cs`
+## 121. `NIRAAgent\Browser\NIRABrowserService.cs`
 
 **File:** `NIRAAgent\Browser\NIRABrowserService.cs`
 
@@ -66161,7 +66560,7 @@ public sealed class NIRABrowserService : IAsyncDisposable
 
 ---
 
-## 119. `NIRAAgent\Browser\NIRABrowserSiteKnowledgeStore.cs`
+## 122. `NIRAAgent\Browser\NIRABrowserSiteKnowledgeStore.cs`
 
 **File:** `NIRAAgent\Browser\NIRABrowserSiteKnowledgeStore.cs`
 
@@ -66605,7 +67004,7 @@ internal sealed class NIRABrowserSiteKnowledgeStore
 
 ---
 
-## 120. `NIRAAgent\Capabilities\ApplicationCapabilityHandlers.cs`
+## 123. `NIRAAgent\Capabilities\ApplicationCapabilityHandlers.cs`
 
 **File:** `NIRAAgent\Capabilities\ApplicationCapabilityHandlers.cs`
 
@@ -69037,7 +69436,7 @@ public sealed class NIRAApplicationResolveCapabilityHandler
 
 ---
 
-## 121. `NIRAAgent\Capabilities\BrowserCapabilityHandlers.cs`
+## 124. `NIRAAgent\Capabilities\BrowserCapabilityHandlers.cs`
 
 **File:** `NIRAAgent\Capabilities\BrowserCapabilityHandlers.cs`
 
@@ -72555,7 +72954,7 @@ public sealed class NIRABrowserUploadCapabilityHandler : INIRACapabilityHandler
 
 ---
 
-## 122. `NIRAAgent\Capabilities\DesktopCloseCapabilityHandler.cs`
+## 125. `NIRAAgent\Capabilities\DesktopCloseCapabilityHandler.cs`
 
 **File:** `NIRAAgent\Capabilities\DesktopCloseCapabilityHandler.cs`
 
@@ -72687,7 +73086,7 @@ public sealed class NIRADesktopCloseCapabilityHandler : INIRACapabilityHandler
 
 ---
 
-## 123. `NIRAAgent\Capabilities\DesktopInteractionCapabilityHandlers.cs`
+## 126. `NIRAAgent\Capabilities\DesktopInteractionCapabilityHandlers.cs`
 
 **File:** `NIRAAgent\Capabilities\DesktopInteractionCapabilityHandlers.cs`
 
@@ -72843,7 +73242,7 @@ internal static class DesktopWindowResolver
 
 ---
 
-## 124. `NIRAAgent\Capabilities\FilesystemCapabilityHandlers.cs`
+## 127. `NIRAAgent\Capabilities\FilesystemCapabilityHandlers.cs`
 
 **File:** `NIRAAgent\Capabilities\FilesystemCapabilityHandlers.cs`
 
@@ -74371,7 +74770,7 @@ internal static class NIRADirectoryRecoveryPolicy
 
 ---
 
-## 125. `NIRAAgent\Capabilities\HttpCapabilityHandlers.cs`
+## 128. `NIRAAgent\Capabilities\HttpCapabilityHandlers.cs`
 
 **File:** `NIRAAgent\Capabilities\HttpCapabilityHandlers.cs`
 
@@ -75149,7 +75548,7 @@ public sealed class NIRAHttpDownloadCapabilityHandler
 
 ---
 
-## 126. `NIRAAgent\Capabilities\ImageDiscoveryCapabilityHandlers.cs`
+## 129. `NIRAAgent\Capabilities\ImageDiscoveryCapabilityHandlers.cs`
 
 **File:** `NIRAAgent\Capabilities\ImageDiscoveryCapabilityHandlers.cs`
 
@@ -75243,7 +75642,67 @@ public sealed class NIRAImageRetrieveCapabilityHandler : INIRACapabilityHandler
 
 ---
 
-## 127. `NIRAAgent\Capabilities\NIRACapabilityArguments.cs`
+## 130. `NIRAAgent\Capabilities\ImageGenerationCapabilityHandler.cs`
+
+**File:** `NIRAAgent\Capabilities\ImageGenerationCapabilityHandler.cs`
+
+```csharp
+using NIRAAgent.Images;
+
+namespace NIRAAgent.Capabilities;
+
+// One pre-authorized generation (Cloudflare may consume daily quota). Never retries or calls another LLM.
+public sealed class NIRAImageGenerateCapabilityHandler : INIRACapabilityHandler
+{
+    private readonly NIRACloudflareImageGenerationService _generator;
+    public NIRAImageGenerateCapabilityHandler(NIRACloudflareImageGenerationService generator) => _generator = generator;
+    public NIRACapabilityDescriptor Descriptor { get; } = new()
+    {
+        Id = NIRACapabilityIds.ImageGenerate,
+        Description = "Generate exactly ONE NEW original image using Cloudflare Workers AI FLUX.2 Klein 4B. " +
+            "This consumes image-generation quota. Use only when the user explicitly requests creation; NEVER for reference-image searches. " +
+            "In your SAME cognition pass, enhance the user's prompt into a vivid, faithful 1-2400 character description, " +
+            "preserve their subjects and constraints, choose dimensions, and invoke image.generate ONCE. " +
+            "The result is verified and automatically displayed in chat and saved under Gallery > AI Generated. " +
+            "Do not retry on failure and do not call another reasoning model for prompt enhancement.",
+        DefaultRisk = NIRACapabilityRisk.Execute,
+        Parameters = new[]
+        {
+            new NIRACapabilityParameterDescriptor { Name="prompt", Type="string", Required=true,
+                Description="An enhanced but faithful visual prompt (4-2400 chars) from the same cognition call." },
+            new NIRACapabilityParameterDescriptor { Name="width", Type="integer", Required=false,
+                Description="Width in pixels, multiple of 8. Default 1024; 1024 square, 1280x720 landscape, 720x1280 portrait." },
+            new NIRACapabilityParameterDescriptor { Name="height", Type="integer", Required=false,
+                Description="Height in pixels, multiple of 8. Default 768; max one megapixel for test generation." }
+        }
+    };
+    public NIRACapabilityRisk ResolveRisk(NIRACapabilityRequest _) => NIRACapabilityRisk.Execute;
+    public async Task<NIRACapabilityHandlerResult> ExecuteAsync(NIRACapabilityRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        string prompt = NIRACapabilityArguments.RequireString(request, "prompt", 2400);
+        int width = NIRACapabilityArguments.GetInteger(request, "width", 1024, 256, 1920);
+        int height = NIRACapabilityArguments.GetInteger(request, "height", 768, 256, 1920);
+        var result = await _generator.GenerateAsync(new NIRAImageGenerationRequest(prompt, width, height), cancellationToken);
+        return new NIRACapabilityHandlerResult
+        {
+            Summary = $"Generated one verified image with FLUX.2 Klein 4B ({result.Width}x{result.Height}); shown in chat and added to AI Generated Gallery.",
+            Output = $"VerifiedImageGenerated=True\nModel={result.Model}\nWidth={result.Width}\nHeight={result.Height}\nLocalPath={result.LocalPath}\nSHA256={result.Sha256}\nBytes={result.Bytes}\nOneGeneration=True",
+            VisualArtifacts = new[] { new NIRACapabilityVisualArtifact
+            {
+                LocalPath = result.LocalPath, Title = "NIRA Generated Image",
+                Caption = NIRACloudflareImageGenerationService.GeneratedCaptionPrefix,
+                PresentToUser = true, Surface = "InlineOnly"
+            } },
+            ChangedSystemState = false // Only NIRA's own managed cache, no user-owned filesystem mutation.
+        };
+    }
+}
+```
+
+---
+
+## 131. `NIRAAgent\Capabilities\NIRACapabilityArguments.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRACapabilityArguments.cs`
 
@@ -75706,7 +76165,7 @@ internal static class NIRACapabilityArguments
 
 ---
 
-## 128. `NIRAAgent\Capabilities\NIRACapabilityContracts.cs`
+## 132. `NIRAAgent\Capabilities\NIRACapabilityContracts.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRACapabilityContracts.cs`
 
@@ -75829,6 +76288,7 @@ public static class NIRACapabilityIds
 
     public const string ImageSearch = "image.search";
     public const string ImageRetrieve = "image.retrieve";
+    public const string ImageGenerate = "image.generate";
 
 
     public const string BrowserSessionOpen =
@@ -76597,7 +77057,7 @@ public interface INIRACapabilityAuthorizer
 
 ---
 
-## 129. `NIRAAgent\Capabilities\NIRACapabilityProcessRunner.cs`
+## 133. `NIRAAgent\Capabilities\NIRACapabilityProcessRunner.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRACapabilityProcessRunner.cs`
 
@@ -76678,7 +77138,7 @@ internal static class NIRACapabilityProcessRunner
 
 ---
 
-## 130. `NIRAAgent\Capabilities\NIRACapabilityRegistry.cs`
+## 134. `NIRAAgent\Capabilities\NIRACapabilityRegistry.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRACapabilityRegistry.cs`
 
@@ -76772,7 +77232,7 @@ public sealed class NIRACapabilityRegistry
 
 ---
 
-## 131. `NIRAAgent\Capabilities\NIRACapabilityService.cs`
+## 135. `NIRAAgent\Capabilities\NIRACapabilityService.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRACapabilityService.cs`
 
@@ -77626,7 +78086,7 @@ public sealed class NIRACapabilityService
 
 ---
 
-## 132. `NIRAAgent\Capabilities\NIRADelimitedNumericAudit.cs`
+## 136. `NIRAAgent\Capabilities\NIRADelimitedNumericAudit.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRADelimitedNumericAudit.cs`
 
@@ -77737,7 +78197,7 @@ internal static class NIRADelimitedNumericAudit
 
 ---
 
-## 133. `NIRAAgent\Capabilities\NIRADirectoryUsageCapabilityHandler.cs`
+## 137. `NIRAAgent\Capabilities\NIRADirectoryUsageCapabilityHandler.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRADirectoryUsageCapabilityHandler.cs`
 
@@ -77907,7 +78367,7 @@ public sealed class NIRADirectoryUsageCapabilityHandler : INIRACapabilityHandler
 
 ---
 
-## 134. `NIRAAgent\Capabilities\NIRAFileLocationCapabilityHandler.cs`
+## 138. `NIRAAgent\Capabilities\NIRAFileLocationCapabilityHandler.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRAFileLocationCapabilityHandler.cs`
 
@@ -78360,7 +78820,7 @@ public sealed class NIRAFileLocationCapabilityHandler : INIRACapabilityHandler
 
 ---
 
-## 135. `NIRAAgent\Capabilities\NIRAStage9CapabilityAuthorizer.cs`
+## 139. `NIRAAgent\Capabilities\NIRAStage9CapabilityAuthorizer.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRAStage9CapabilityAuthorizer.cs`
 
@@ -78401,7 +78861,7 @@ public sealed class NIRAStage9CapabilityAuthorizer
 
 ---
 
-## 136. `NIRAAgent\Capabilities\NIRATemporalRelationCapabilityHandler.cs`
+## 140. `NIRAAgent\Capabilities\NIRATemporalRelationCapabilityHandler.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRATemporalRelationCapabilityHandler.cs`
 
@@ -78496,7 +78956,7 @@ public sealed class NIRATemporalRelationCapabilityHandler : INIRACapabilityHandl
 
 ---
 
-## 137. `NIRAAgent\Capabilities\NIRAWindowsKnownFolderPath.cs`
+## 141. `NIRAAgent\Capabilities\NIRAWindowsKnownFolderPath.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRAWindowsKnownFolderPath.cs`
 
@@ -78586,7 +79046,7 @@ internal static class NIRAWindowsKnownFolderPath
 
 ---
 
-## 138. `NIRAAgent\Capabilities\NIRAWindowsProtectedFolderAccessService.cs`
+## 142. `NIRAAgent\Capabilities\NIRAWindowsProtectedFolderAccessService.cs`
 
 **File:** `NIRAAgent\Capabilities\NIRAWindowsProtectedFolderAccessService.cs`
 
@@ -78762,7 +79222,7 @@ public sealed class NIRAWindowsProtectedFolderAccessService
 
 ---
 
-## 139. `NIRAAgent\Capabilities\ProcessCapabilityHandlers.cs`
+## 143. `NIRAAgent\Capabilities\ProcessCapabilityHandlers.cs`
 
 **File:** `NIRAAgent\Capabilities\ProcessCapabilityHandlers.cs`
 
@@ -79266,7 +79726,7 @@ public sealed class NIRAProcessStopCapabilityHandler
 
 ---
 
-## 140. `NIRAAgent\Capabilities\ShellCapabilityHandler.cs`
+## 144. `NIRAAgent\Capabilities\ShellCapabilityHandler.cs`
 
 **File:** `NIRAAgent\Capabilities\ShellCapabilityHandler.cs`
 
@@ -79444,7 +79904,7 @@ public sealed class NIRAShellExecuteCapabilityHandler
 
 ---
 
-## 141. `NIRAAgent\Capabilities\SystemStorageCapabilityHandler.cs`
+## 145. `NIRAAgent\Capabilities\SystemStorageCapabilityHandler.cs`
 
 **File:** `NIRAAgent\Capabilities\SystemStorageCapabilityHandler.cs`
 
@@ -79667,7 +80127,7 @@ public sealed class NIRASystemStorageListCapabilityHandler
 
 ---
 
-## 142. `NIRAAgent\Capabilities\VisionCapabilityHandlers.cs`
+## 146. `NIRAAgent\Capabilities\VisionCapabilityHandlers.cs`
 
 **File:** `NIRAAgent\Capabilities\VisionCapabilityHandlers.cs`
 
@@ -80596,7 +81056,7 @@ public sealed class NIRAWindowAccessibilityCapabilityHandler : INIRACapabilityHa
 
 ---
 
-## 143. `NIRAAgent\Character\Appraisal\NIRACharacterExperienceAppraisal.cs`
+## 147. `NIRAAgent\Character\Appraisal\NIRACharacterExperienceAppraisal.cs`
 
 **File:** `NIRAAgent\Character\Appraisal\NIRACharacterExperienceAppraisal.cs`
 
@@ -80693,7 +81153,7 @@ public sealed record NIRACharacterExperienceAppraisal
 
 ---
 
-## 144. `NIRAAgent\Character\Appraisal\NIRAInteractionAppraisal.cs`
+## 148. `NIRAAgent\Character\Appraisal\NIRAInteractionAppraisal.cs`
 
 **File:** `NIRAAgent\Character\Appraisal\NIRAInteractionAppraisal.cs`
 
@@ -80853,7 +81313,7 @@ public sealed record NIRAInteractionAppraisal
 
 ---
 
-## 145. `NIRAAgent\Character\Appraisal\NIRASocialMeaning.cs`
+## 149. `NIRAAgent\Character\Appraisal\NIRASocialMeaning.cs`
 
 **File:** `NIRAAgent\Character\Appraisal\NIRASocialMeaning.cs`
 
@@ -81031,7 +81491,7 @@ public readonly record struct NIRASocialMeaning(
 
 ---
 
-## 146. `NIRAAgent\Character\Dynamics\NIRACharacterDynamicsService.cs`
+## 150. `NIRAAgent\Character\Dynamics\NIRACharacterDynamicsService.cs`
 
 **File:** `NIRAAgent\Character\Dynamics\NIRACharacterDynamicsService.cs`
 
@@ -82659,7 +83119,7 @@ public sealed class NIRACharacterDynamicsService
 
 ---
 
-## 147. `NIRAAgent\Character\History\NIRASocialEvent.cs`
+## 151. `NIRAAgent\Character\History\NIRASocialEvent.cs`
 
 **File:** `NIRAAgent\Character\History\NIRASocialEvent.cs`
 
@@ -82867,7 +83327,7 @@ public sealed record NIRASocialEvent
 
 ---
 
-## 148. `NIRAAgent\Character\History\NIRASocialHistoryService.cs`
+## 152. `NIRAAgent\Character\History\NIRASocialHistoryService.cs`
 
 **File:** `NIRAAgent\Character\History\NIRASocialHistoryService.cs`
 
@@ -83520,7 +83980,7 @@ public sealed class NIRASocialHistoryService
 
 ---
 
-## 149. `NIRAAgent\Character\History\NIRASocialHistorySnapshot.cs`
+## 153. `NIRAAgent\Character\History\NIRASocialHistorySnapshot.cs`
 
 **File:** `NIRAAgent\Character\History\NIRASocialHistorySnapshot.cs`
 
@@ -83565,7 +84025,7 @@ public sealed record NIRASocialHistorySnapshot
 
 ---
 
-## 150. `NIRAAgent\Character\History\NIRASocialTopicKeys.cs`
+## 154. `NIRAAgent\Character\History\NIRASocialTopicKeys.cs`
 
 **File:** `NIRAAgent\Character\History\NIRASocialTopicKeys.cs`
 
@@ -83742,7 +84202,7 @@ public static class NIRASocialTopicKeys
 
 ---
 
-## 151. `NIRAAgent\Character\Interaction\NIRAInteractionContext.cs`
+## 155. `NIRAAgent\Character\Interaction\NIRAInteractionContext.cs`
 
 **File:** `NIRAAgent\Character\Interaction\NIRAInteractionContext.cs`
 
@@ -83839,7 +84299,7 @@ public sealed record NIRAInteractionContext
 
 ---
 
-## 152. `NIRAAgent\Character\Interaction\NIRAInteractionContextBuilder.cs`
+## 156. `NIRAAgent\Character\Interaction\NIRAInteractionContextBuilder.cs`
 
 **File:** `NIRAAgent\Character\Interaction\NIRAInteractionContextBuilder.cs`
 
@@ -84072,7 +84532,7 @@ public sealed class NIRAInteractionContextBuilder
 
 ---
 
-## 153. `NIRAAgent\Character\Interaction\NIRAInteractionObservationService.cs`
+## 157. `NIRAAgent\Character\Interaction\NIRAInteractionObservationService.cs`
 
 **File:** `NIRAAgent\Character\Interaction\NIRAInteractionObservationService.cs`
 
@@ -84328,7 +84788,7 @@ public sealed class NIRAInteractionObservationService
 
 ---
 
-## 154. `NIRAAgent\Character\NIRACharacterContextFormatter.cs`
+## 158. `NIRAAgent\Character\NIRACharacterContextFormatter.cs`
 
 **File:** `NIRAAgent\Character\NIRACharacterContextFormatter.cs`
 
@@ -84716,7 +85176,7 @@ public static class NIRACharacterContextFormatter
 
 ---
 
-## 155. `NIRAAgent\Character\State\NIRAAttitudeService.cs`
+## 159. `NIRAAgent\Character\State\NIRAAttitudeService.cs`
 
 **File:** `NIRAAgent\Character\State\NIRAAttitudeService.cs`
 
@@ -84966,7 +85426,7 @@ public sealed class NIRAAttitudeService
 
 ---
 
-## 156. `NIRAAgent\Character\State\NIRAAttitudeState.cs`
+## 160. `NIRAAgent\Character\State\NIRAAttitudeState.cs`
 
 **File:** `NIRAAgent\Character\State\NIRAAttitudeState.cs`
 
@@ -85037,7 +85497,7 @@ public readonly record struct NIRAAttitudeState(
 
 ---
 
-## 157. `NIRAAgent\Character\State\NIRACharacterPersistenceService.cs`
+## 161. `NIRAAgent\Character\State\NIRACharacterPersistenceService.cs`
 
 **File:** `NIRAAgent\Character\State\NIRACharacterPersistenceService.cs`
 
@@ -85222,7 +85682,7 @@ public sealed class NIRACharacterPersistenceService
 
 ---
 
-## 158. `NIRAAgent\Character\State\NIRACharacterSnapshot.cs`
+## 162. `NIRAAgent\Character\State\NIRACharacterSnapshot.cs`
 
 **File:** `NIRAAgent\Character\State\NIRACharacterSnapshot.cs`
 
@@ -85280,7 +85740,7 @@ public readonly record struct NIRACharacterSnapshot(
 
 ---
 
-## 159. `NIRAAgent\Character\State\NIRACharacterStateService.cs`
+## 163. `NIRAAgent\Character\State\NIRACharacterStateService.cs`
 
 **File:** `NIRAAgent\Character\State\NIRACharacterStateService.cs`
 
@@ -85550,7 +86010,7 @@ public sealed class NIRACharacterStateService
 
 ---
 
-## 160. `NIRAAgent\Character\State\NIRACharacterStateStore.cs`
+## 164. `NIRAAgent\Character\State\NIRACharacterStateStore.cs`
 
 **File:** `NIRAAgent\Character\State\NIRACharacterStateStore.cs`
 
@@ -86106,7 +86566,7 @@ public sealed class NIRACharacterStateStore
 
 ---
 
-## 161. `NIRAAgent\Character\State\NIRAMoodState.cs`
+## 165. `NIRAAgent\Character\State\NIRAMoodState.cs`
 
 **File:** `NIRAAgent\Character\State\NIRAMoodState.cs`
 
@@ -86199,7 +86659,7 @@ public readonly record struct NIRAMoodState(
 
 ---
 
-## 162. `NIRAAgent\Character\State\NIRARelationshipState.cs`
+## 166. `NIRAAgent\Character\State\NIRARelationshipState.cs`
 
 **File:** `NIRAAgent\Character\State\NIRARelationshipState.cs`
 
@@ -86304,7 +86764,7 @@ public readonly record struct NIRARelationshipState(
 
 ---
 
-## 163. `NIRAAgent\Character\State\NIRASituationState.cs`
+## 167. `NIRAAgent\Character\State\NIRASituationState.cs`
 
 **File:** `NIRAAgent\Character\State\NIRASituationState.cs`
 
@@ -86362,7 +86822,7 @@ public readonly record struct NIRASituationState(
 
 ---
 
-## 164. `NIRAAgent\Conversation\ConversationManager.cs`
+## 168. `NIRAAgent\Conversation\ConversationManager.cs`
 
 **File:** `NIRAAgent\Conversation\ConversationManager.cs`
 
@@ -87433,7 +87893,7 @@ public sealed record ConversationContextSnapshot
 
 ---
 
-## 165. `NIRAAgent\Conversation\ConversationPendingTask.cs`
+## 169. `NIRAAgent\Conversation\ConversationPendingTask.cs`
 
 **File:** `NIRAAgent\Conversation\ConversationPendingTask.cs`
 
@@ -87449,7 +87909,7 @@ public sealed record ConversationPendingTask(
 
 ---
 
-## 166. `NIRAAgent\Conversation\NIRAConversationArchiveStore.cs`
+## 170. `NIRAAgent\Conversation\NIRAConversationArchiveStore.cs`
 
 **File:** `NIRAAgent\Conversation\NIRAConversationArchiveStore.cs`
 
@@ -88743,7 +89203,7 @@ public sealed record NIRAArchivedChatTurn(Guid MessageId, string Role, string Co
 
 ---
 
-## 167. `NIRAAgent\Conversation\NIRAConversationSearchRequest.cs`
+## 171. `NIRAAgent\Conversation\NIRAConversationSearchRequest.cs`
 
 **File:** `NIRAAgent\Conversation\NIRAConversationSearchRequest.cs`
 
@@ -88790,7 +89250,7 @@ public sealed record NIRAArchivedConversationHit(
 
 ---
 
-## 168. `NIRAAgent\Diagnostics\NIRADiagnosticTrace.cs`
+## 172. `NIRAAgent\Diagnostics\NIRADiagnosticTrace.cs`
 
 **File:** `NIRAAgent\Diagnostics\NIRADiagnosticTrace.cs`
 
@@ -88965,7 +89425,7 @@ public static class NIRADiagnosticTrace
 
 ---
 
-## 169. `NIRAAgent\Embodiment\Body\NIRABodyCommand.cs`
+## 173. `NIRAAgent\Embodiment\Body\NIRABodyCommand.cs`
 
 **File:** `NIRAAgent\Embodiment\Body\NIRABodyCommand.cs`
 
@@ -89153,7 +89613,7 @@ public sealed record NIRABodyCommand
 
 ---
 
-## 170. `NIRAAgent\Embodiment\Body\NIRABodyCommandService.cs`
+## 174. `NIRAAgent\Embodiment\Body\NIRABodyCommandService.cs`
 
 **File:** `NIRAAgent\Embodiment\Body\NIRABodyCommandService.cs`
 
@@ -89301,7 +89761,7 @@ public sealed class NIRABodyCommandService
 
 ---
 
-## 171. `NIRAAgent\Embodiment\Body\NIRABodyControllerService.cs`
+## 175. `NIRAAgent\Embodiment\Body\NIRABodyControllerService.cs`
 
 **File:** `NIRAAgent\Embodiment\Body\NIRABodyControllerService.cs`
 
@@ -89533,7 +89993,7 @@ public sealed class NIRABodyControllerService
 
 ---
 
-## 172. `NIRAAgent\Embodiment\Body\NIRABodyPlacementService.cs`
+## 176. `NIRAAgent\Embodiment\Body\NIRABodyPlacementService.cs`
 
 **File:** `NIRAAgent\Embodiment\Body\NIRABodyPlacementService.cs`
 
@@ -89812,7 +90272,7 @@ public sealed class NIRABodyPlacementService
 
 ---
 
-## 173. `NIRAAgent\Embodiment\Body\NIRABodyPlacementStore.cs`
+## 177. `NIRAAgent\Embodiment\Body\NIRABodyPlacementStore.cs`
 
 **File:** `NIRAAgent\Embodiment\Body\NIRABodyPlacementStore.cs`
 
@@ -90079,7 +90539,7 @@ public sealed class NIRABodyPlacementStore
 
 ---
 
-## 174. `NIRAAgent\Embodiment\Body\NIRACompanionVisibilityPolicy.cs`
+## 178. `NIRAAgent\Embodiment\Body\NIRACompanionVisibilityPolicy.cs`
 
 **File:** `NIRAAgent\Embodiment\Body\NIRACompanionVisibilityPolicy.cs`
 
@@ -90106,7 +90566,7 @@ public static class NIRACompanionVisibilityPolicy
 
 ---
 
-## 175. `NIRAAgent\Embodiment\NIRABlobPresetId.cs`
+## 179. `NIRAAgent\Embodiment\NIRABlobPresetId.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRABlobPresetId.cs`
 
@@ -90132,7 +90592,7 @@ public enum NIRABlobPresetId
 
 ---
 
-## 176. `NIRAAgent\Embodiment\NIRABlobPresetLibrary.cs`
+## 180. `NIRAAgent\Embodiment\NIRABlobPresetLibrary.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRABlobPresetLibrary.cs`
 
@@ -90326,7 +90786,7 @@ public static class NIRABlobPresetLibrary
 
 ---
 
-## 177. `NIRAAgent\Embodiment\NIRABlobStyleCatalog.cs`
+## 181. `NIRAAgent\Embodiment\NIRABlobStyleCatalog.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRABlobStyleCatalog.cs`
 
@@ -90406,7 +90866,7 @@ public static class NIRABlobStyleCatalog
 
 ---
 
-## 178. `NIRAAgent\Embodiment\NIRABlobStyleId.cs`
+## 182. `NIRAAgent\Embodiment\NIRABlobStyleId.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRABlobStyleId.cs`
 
@@ -90430,7 +90890,7 @@ public enum NIRABlobStyleId
 
 ---
 
-## 179. `NIRAAgent\Embodiment\NIRABlobStyleOption.cs`
+## 183. `NIRAAgent\Embodiment\NIRABlobStyleOption.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRABlobStyleOption.cs`
 
@@ -90451,7 +90911,7 @@ public sealed record NIRABlobStyleOption(
 
 ---
 
-## 180. `NIRAAgent\Embodiment\NIRAVisualExpressionIds.cs`
+## 184. `NIRAAgent\Embodiment\NIRAVisualExpressionIds.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRAVisualExpressionIds.cs`
 
@@ -90486,7 +90946,7 @@ public static class NIRAVisualExpressionIds
 
 ---
 
-## 181. `NIRAAgent\Embodiment\NIRAVisualFormIds.cs`
+## 185. `NIRAAgent\Embodiment\NIRAVisualFormIds.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRAVisualFormIds.cs`
 
@@ -90528,7 +90988,7 @@ public static class NIRAVisualFormIds
 
 ---
 
-## 182. `NIRAAgent\Embodiment\NIRAVisualIntent.cs`
+## 186. `NIRAAgent\Embodiment\NIRAVisualIntent.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRAVisualIntent.cs`
 
@@ -90887,7 +91347,7 @@ public sealed record NIRAVisualIntent
 
 ---
 
-## 183. `NIRAAgent\Embodiment\NIRAVisualIntentService.cs`
+## 187. `NIRAAgent\Embodiment\NIRAVisualIntentService.cs`
 
 **File:** `NIRAAgent\Embodiment\NIRAVisualIntentService.cs`
 
@@ -92406,7 +92866,7 @@ public sealed class NIRAVisualIntentService
 
 ---
 
-## 184. `NIRAAgent\Gallery\NIRAGalleryLibraryService.cs`
+## 188. `NIRAAgent\Gallery\NIRAGalleryLibraryService.cs`
 
 **File:** `NIRAAgent\Gallery\NIRAGalleryLibraryService.cs`
 
@@ -92651,7 +93111,7 @@ public sealed class NIRAGalleryLibraryService
 
 ---
 
-## 185. `NIRAAgent\Goals\NIRAGoalContracts.cs`
+## 189. `NIRAAgent\Goals\NIRAGoalContracts.cs`
 
 **File:** `NIRAAgent\Goals\NIRAGoalContracts.cs`
 
@@ -93014,7 +93474,7 @@ public sealed record NIRAGoalApplyResult
 
 ---
 
-## 186. `NIRAAgent\Goals\NIRAGoalSchedulerService.cs`
+## 190. `NIRAAgent\Goals\NIRAGoalSchedulerService.cs`
 
 **File:** `NIRAAgent\Goals\NIRAGoalSchedulerService.cs`
 
@@ -93108,7 +93568,7 @@ public sealed class NIRAGoalSchedulerService : BackgroundService
 
 ---
 
-## 187. `NIRAAgent\Goals\NIRAGoalService.cs`
+## 191. `NIRAAgent\Goals\NIRAGoalService.cs`
 
 **File:** `NIRAAgent\Goals\NIRAGoalService.cs`
 
@@ -94428,7 +94888,7 @@ public sealed class NIRAGoalService : IHostedService
 
 ---
 
-## 188. `NIRAAgent\Goals\NIRAGoalStore.cs`
+## 192. `NIRAAgent\Goals\NIRAGoalStore.cs`
 
 **File:** `NIRAAgent\Goals\NIRAGoalStore.cs`
 
@@ -94958,7 +95418,301 @@ public sealed class NIRAGoalStore
 
 ---
 
-## 189. `NIRAAgent\Images\NIRACommonsImageDiscoveryService.cs`
+## 193. `NIRAAgent\Images\NIRACloudflareImageGenerationService.cs`
+
+**File:** `NIRAAgent\Images\NIRACloudflareImageGenerationService.cs`
+
+```csharp
+using System.Net;
+using System.Net.Http.Headers;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using NIRAAgent.Authorization;
+
+namespace NIRAAgent.Images;
+
+// R37: deliberately ONE model, ONE external generation per user action, ZERO Ollama calls.
+// The ordinary NIRA cognition pass chooses/enhances the prompt; this service NEVER calls an LLM.
+public sealed record NIRAImageGenerationRequest(string Prompt, int Width = 1024, int Height = 768);
+public sealed record NIRAImageGenerationReceipt(string LocalPath, string Model, int Width, int Height,
+    string Prompt, long Bytes, string Sha256);
+public sealed record NIRACloudflareAuthCheck(bool Success, string Message);
+
+public sealed class NIRACloudflareImageGenerationService : IDisposable
+{
+    public const string ModelId = "@cf/black-forest-labs/flux-2-klein-4b";
+    public const string GeneratedCaptionPrefix = "Generated by NIRA · FLUX.2 Klein 4B";
+    private const int MaximumResponseBytes = 28 * 1024 * 1024;
+    private const int MaximumImageBytes = 16 * 1024 * 1024;
+    private readonly HttpClient _client;
+    private readonly SemaphoreSlim _oneAtATime = new(1, 1);
+
+    public NIRACloudflareImageGenerationService()
+    {
+        var handler = new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false, UseProxy = true,
+            PooledConnectionLifetime = TimeSpan.FromMinutes(3) };
+        _client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(110) };
+    }
+
+    private const string CredentialOrigin = "https://api.cloudflare.com";
+    private const string CredentialLabel = "NIRA Image Generation";
+
+    // API token is stored encrypted by Windows Credential Manager through
+    // NIRA's existing credential store, never in plaintext environment variables.
+    public static bool IsConfigured
+    {
+        get
+        {
+            if (!OperatingSystem.IsWindows()) return false;
+            try
+            {
+                var store = new NIRACredentialStore();
+                return store.ReadForOrigin(CredentialOrigin).Any(m =>
+                    string.Equals(m.AccountLabel, CredentialLabel, StringComparison.OrdinalIgnoreCase));
+            }
+            catch { return false; }
+        }
+    }
+
+    // Pure input checks for the setup UI. Never accepts a copied Bearer header or a
+    // quoted PowerShell string as if it were the raw API token.
+    public static string NormalizePastedToken(string raw)
+    {
+        string token = (raw ?? "").Trim();
+        if (token.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            token = token[7..].Trim();
+        if (token.Length >= 2 &&
+            ((token[0] == '\"' && token[^1] == '\"') || (token[0] == '\'' && token[^1] == '\'')))
+            token = token[1..^1].Trim();
+        return token;
+    }
+
+    public static bool IsCredentialInputValid(string account, string token) =>
+        Regex.IsMatch(account ?? "", "^[A-Fa-f0-9]{32}$", RegexOptions.CultureInvariant) &&
+        Regex.IsMatch(token ?? "", "^[\\x21-\\x7E]{20,512}$", RegexOptions.CultureInvariant) &&
+        token is not null && !token.Contains(' ');
+
+    public static void SaveCredentials(string account, string token)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("NIRA credential storage requires Windows.");
+        if (!IsCredentialInputValid(account, token))
+            throw new ArgumentException("Expected a 32-character Cloudflare Account ID and an unquoted API token (20–512 ASCII characters, no spaces).");
+        new NIRACredentialStore().Save(CredentialOrigin, CredentialLabel, account, token);
+    }
+
+    // Read-only Cloudflare verification: no Ollama calls and no image generation.
+    // A successful account-scoped Workers AI model search is stronger evidence
+    // than a user-scoped token verify (which can reject account-owned tokens).
+    public static async Task<NIRACloudflareAuthCheck> CheckCredentialsAsync(
+        string account, string token, CancellationToken cancellationToken = default)
+    {
+        if (!IsCredentialInputValid(account, token))
+            return new(false, "Invalid Account ID or malformed API token input. Copy the token value, not its token ID or a Bearer command.");
+
+        using var handler = new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false, UseCookies = false, UseProxy = true
+        };
+        using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) };
+
+        async Task<(HttpStatusCode Code, bool Success, bool Active)> ProbeAsync(string endpoint, bool verify)
+        {
+            using var message = new HttpRequestMessage(HttpMethod.Get, endpoint);
+            message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            message.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            using var response = await http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                return (response.StatusCode, false, false);
+            // Limit API diagnostics to 256 KB; never log or return the body.
+            byte[] body = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+            if (body.Length > 256 * 1024) return (response.StatusCode, false, false);
+            using var doc = JsonDocument.Parse(body);
+            bool success = doc.RootElement.TryGetProperty("success", out var ok) && ok.ValueKind == JsonValueKind.True;
+            bool active = !verify;
+            if (verify)
+                active = doc.RootElement.TryGetProperty("result", out var result) &&
+                         result.ValueKind == JsonValueKind.Object &&
+                         result.TryGetProperty("status", out var status) &&
+                         string.Equals(status.GetString(), "active", StringComparison.OrdinalIgnoreCase);
+            return (response.StatusCode, success, active);
+        }
+
+        try
+        {
+            var accountProbe = await ProbeAsync(
+                $"https://api.cloudflare.com/client/v4/accounts/{account}/ai/models/search?per_page=1", false);
+            if (accountProbe.Success)
+                return new(true, "Cloudflare account and Workers AI permissions verified. No image generated.");
+
+            if (accountProbe.Code == HttpStatusCode.Unauthorized || accountProbe.Code == HttpStatusCode.Forbidden)
+            {
+                var userVerify = await ProbeAsync("https://api.cloudflare.com/client/v4/user/tokens/verify", true);
+                if (userVerify.Success && userVerify.Active)
+                    return new(false, "Token is active, but is not authorized for Workers AI on this Account ID. Create a Workers AI token scoped to the correct account.");
+                var accountVerify = await ProbeAsync(
+                    $"https://api.cloudflare.com/client/v4/accounts/{account}/tokens/verify", true);
+                if (accountVerify.Success && accountVerify.Active)
+                    return new(false, "Account token is active, but lacks Workers AI permission for this Account ID.");
+                return new(false, "Cloudflare rejected access (HTTP " + (int)accountProbe.Code +
+                    "). Check that you pasted the actual API Token, not its token ID, and that it belongs to the selected account.");
+            }
+            return new(false, $"Workers AI authorization check failed (HTTP {(int)accountProbe.Code}). No image generated.");
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return new(false, "Cloudflare verification timed out. No image generated.");
+        }
+        catch (HttpRequestException)
+        {
+            return new(false, "Cloudflare verification network error. No image generated.");
+        }
+        catch (JsonException)
+        {
+            return new(false, "Cloudflare returned an unexpected verification response. No image generated.");
+        }
+    }
+
+    public static async Task<NIRACloudflareAuthCheck> CheckStoredCredentialsAsync(CancellationToken cancellationToken = default)
+    {
+        if (!IsConfigured) return new(false, "Cloudflare is not configured. Run --setup.");
+        var (account, token) = LoadCredentials();
+        return await CheckCredentialsAsync(account, token, cancellationToken);
+    }
+
+    private static (string Account, string Token) LoadCredentials()
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("NIRA image generation requires Windows credential storage.");
+        var store = new NIRACredentialStore();
+        var metadata = store.ReadForOrigin(CredentialOrigin).FirstOrDefault(m =>
+            string.Equals(m.AccountLabel, CredentialLabel, StringComparison.OrdinalIgnoreCase));
+        if (metadata is null)
+            throw new InvalidOperationException("Cloudflare is not configured. Use NIRAAgent.ImageGenerationLab --setup first.");
+        var secret = store.Read(metadata.Id);
+        if (!IsCredentialInputValid(secret.Username, secret.Secret))
+            throw new InvalidOperationException("Cloudflare credentials are invalid. Re-run ImageGenerationLab --setup.");
+        return (secret.Username, secret.Secret);
+    }
+
+    public static NIRAImageGenerationRequest Validate(NIRAImageGenerationRequest raw)
+    {
+        string prompt = (raw.Prompt ?? "").Trim();
+        if (prompt.Length is < 4 or > 2400 || char.IsControl(prompt[0]))
+            throw new ArgumentException("Image prompt must be between 4 and 2400 characters.");
+        if (prompt.Any(c => char.IsControl(c) && c is not ('\n' or '\r' or '\t')))
+            throw new ArgumentException("Image prompt contains an invalid control character.");
+        if (raw.Width is < 256 or > 1920 || raw.Height is < 256 or > 1920 ||
+            raw.Width % 8 != 0 || raw.Height % 8 != 0 ||
+            (long)raw.Width * raw.Height > 1024L * 1024L)
+            throw new ArgumentException("Image size must be a multiple of 8, within 256..1920, up to one megapixel for the trial.");
+        return new NIRAImageGenerationRequest(prompt, raw.Width, raw.Height);
+    }
+
+    public static byte[] ReadVerifiedImage(string contentType, byte[] httpBytes)
+    {
+        if (httpBytes.Length is < 32 or > MaximumResponseBytes)
+            throw new InvalidDataException("Image response is empty or too large.");
+        byte[] image = httpBytes;
+        if (contentType.Contains("json", StringComparison.OrdinalIgnoreCase) || httpBytes[0] == (byte)'{')
+        {
+            using JsonDocument doc = JsonDocument.Parse(httpBytes);
+            JsonElement root = doc.RootElement;
+            if (root.TryGetProperty("success", out var success) && success.ValueKind == JsonValueKind.False)
+                throw new InvalidDataException("Cloudflare returned an unsuccessful generation response.");
+            if (!root.TryGetProperty("result", out var result) ||
+                result.ValueKind != JsonValueKind.Object ||
+                !result.TryGetProperty("image", out var encoded) || encoded.ValueKind != JsonValueKind.String)
+                throw new InvalidDataException("Cloudflare returned no Base64 image in result.image.");
+            string base64 = encoded.GetString() ?? "";
+            int comma = base64.IndexOf(',');
+            if (base64.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase) && comma > 0)
+                base64 = base64[(comma + 1)..];
+            if (base64.Length > MaximumImageBytes * 4 / 3 + 4096)
+                throw new InvalidDataException("Base64 image exceeds the image-size limit.");
+            try { image = Convert.FromBase64String(base64); }
+            catch (FormatException e) { throw new InvalidDataException("Cloudflare result.image is not valid Base64.", e); }
+        }
+        if (image.Length > MaximumImageBytes || ImageExtension(image) is null)
+            throw new InvalidDataException("Generation did not return a supported PNG or JPEG image.");
+        return image;
+    }
+
+    public static string? ImageExtension(ReadOnlySpan<byte> b) =>
+        b.Length >= 8 && b[0] == 137 && b[1] == 80 && b[2] == 78 && b[3] == 71 &&
+        b[4] == 13 && b[5] == 10 && b[6] == 26 && b[7] == 10 ? ".png" :
+        b.Length >= 3 && b[0] == 255 && b[1] == 216 && b[2] == 255 ? ".jpg" : null;
+
+    public async Task<NIRAImageGenerationReceipt> GenerateAsync(NIRAImageGenerationRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        NIRAImageGenerationRequest safe = Validate(request);
+        (string account, string token) = LoadCredentials();
+
+        await _oneAtATime.WaitAsync(cancellationToken);
+        try
+        {
+            // Cloudflare FLUX.2 Klein REST endpoint REQUIRES multipart/form-data even for text-only.
+            using var content = new MultipartFormDataContent();
+            content.Add(new StringContent(safe.Prompt, Encoding.UTF8), "prompt");
+            content.Add(new StringContent(safe.Width.ToString(System.Globalization.CultureInfo.InvariantCulture)), "width");
+            content.Add(new StringContent(safe.Height.ToString(System.Globalization.CultureInfo.InvariantCulture)), "height");
+            using var message = new HttpRequestMessage(HttpMethod.Post,
+                $"https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{ModelId}");
+            message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            message.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            message.Content = content;
+            using HttpResponseMessage response = await _client.SendAsync(message,
+                HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                string status = response.StatusCode switch
+                {
+                    HttpStatusCode.Unauthorized => "invalid API token",
+                    HttpStatusCode.Forbidden => "insufficient API permission or model unavailable",
+                    HttpStatusCode.TooManyRequests => "rate limit or free quota reached",
+                    HttpStatusCode.PaymentRequired => "paid billing or quota required",
+                    _ => $"HTTP {(int)response.StatusCode}"
+                };
+                // DO NOT print or persist the provider's error body: it could expose secrets.
+                throw new HttpRequestException($"Cloudflare image generation failed: {status}.", null, response.StatusCode);
+            }
+            await using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var buffer = new MemoryStream();
+            byte[] chunk = new byte[64 * 1024];
+            while (true)
+            {
+                int count = await stream.ReadAsync(chunk, cancellationToken);
+                if (count == 0) break;
+                if (buffer.Length + count > MaximumResponseBytes)
+                    throw new InvalidDataException("Image API response exceeded the maximum size.");
+                buffer.Write(chunk, 0, count);
+            }
+            byte[] image = ReadVerifiedImage(response.Content.Headers.ContentType?.MediaType ?? "", buffer.ToArray());
+            string ext = ImageExtension(image)!;
+            string home = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "NIRAAgent", "generated-image-cache");
+            Directory.CreateDirectory(home);
+            string path = Path.Combine(home, Guid.NewGuid().ToString("N") + ext);
+            await using (var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                64 * 1024, FileOptions.Asynchronous))
+                await file.WriteAsync(image, cancellationToken);
+            string hash = Convert.ToHexString(SHA256.HashData(image));
+            return new NIRAImageGenerationReceipt(path, ModelId, safe.Width, safe.Height,
+                safe.Prompt, image.Length, hash);
+        }
+        finally { _oneAtATime.Release(); }
+    }
+
+    public void Dispose() { _client.Dispose(); _oneAtATime.Dispose(); }
+}
+```
+
+---
+
+## 194. `NIRAAgent\Images\NIRACommonsImageDiscoveryService.cs`
 
 **File:** `NIRAAgent\Images\NIRACommonsImageDiscoveryService.cs`
 
@@ -95740,7 +96494,7 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
 
 ---
 
-## 190. `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIClient.cs`
+## 195. `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIClient.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIClient.cs`
 
@@ -96210,7 +96964,7 @@ public sealed record TradeAIReadResult
 
 ---
 
-## 191. `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIReadCapabilityHandler.cs`
+## 196. `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIReadCapabilityHandler.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\Apps\TradeAI\TradeAIReadCapabilityHandler.cs`
 
@@ -96749,7 +97503,7 @@ public sealed class TradeAIReadCapabilityHandler
 
 ---
 
-## 192. `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeContracts.cs`
+## 197. `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeContracts.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeContracts.cs`
 
@@ -96997,7 +97751,7 @@ public sealed record NIRABridgeErrorResponse
 
 ---
 
-## 193. `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeCredentialStore.cs`
+## 198. `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeCredentialStore.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeCredentialStore.cs`
 
@@ -97396,7 +98150,7 @@ public sealed class NIRABridgeCredentialStore
 
 ---
 
-## 194. `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeOptions.cs`
+## 199. `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeOptions.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\Bridge\NIRABridgeOptions.cs`
 
@@ -97440,7 +98194,7 @@ public static class NIRABridgeOptions
 
 ---
 
-## 195. `NIRAAgent\Integrations\Elvara\Bridge\NIRALocalBridgeService.cs`
+## 200. `NIRAAgent\Integrations\Elvara\Bridge\NIRALocalBridgeService.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\Bridge\NIRALocalBridgeService.cs`
 
@@ -98512,7 +99266,7 @@ public sealed class NIRALocalBridgeService
 
 ---
 
-## 196. `NIRAAgent\Integrations\Elvara\ElvaraAppDescriptor.cs`
+## 201. `NIRAAgent\Integrations\Elvara\ElvaraAppDescriptor.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\ElvaraAppDescriptor.cs`
 
@@ -98588,7 +99342,7 @@ public sealed record ElvaraAppDescriptor
 
 ---
 
-## 197. `NIRAAgent\Integrations\Elvara\ElvaraAppRegistry.cs`
+## 202. `NIRAAgent\Integrations\Elvara\ElvaraAppRegistry.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\ElvaraAppRegistry.cs`
 
@@ -98776,7 +99530,7 @@ public sealed class ElvaraAppRegistry
 
 ---
 
-## 198. `NIRAAgent\Integrations\Elvara\NIRAExternalAppContext.cs`
+## 203. `NIRAAgent\Integrations\Elvara\NIRAExternalAppContext.cs`
 
 **File:** `NIRAAgent\Integrations\Elvara\NIRAExternalAppContext.cs`
 
@@ -98842,7 +99596,7 @@ public sealed record NIRAExternalAppContext
 
 ---
 
-## 199. `NIRAAgent\Memory\LongTerm\NIRACognitionMemoryFormatter.cs`
+## 204. `NIRAAgent\Memory\LongTerm\NIRACognitionMemoryFormatter.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRACognitionMemoryFormatter.cs`
 
@@ -99560,7 +100314,7 @@ public static class NIRACognitionMemoryFormatter
 
 ---
 
-## 200. `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryService.cs`
+## 205. `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryService.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryService.cs`
 
@@ -101002,7 +101756,7 @@ public sealed class NIRALongTermMemoryService
 
 ---
 
-## 201. `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryStore.cs`
+## 206. `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryStore.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRALongTermMemoryStore.cs`
 
@@ -103771,7 +104525,7 @@ internal sealed record NIRAStoredMemory(
 
 ---
 
-## 202. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociation.cs`
+## 207. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociation.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociation.cs`
 
@@ -103845,7 +104599,7 @@ internal sealed record NIRAStoredMemoryAssociationProfile(
 
 ---
 
-## 203. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationProfile.cs`
+## 208. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationProfile.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationProfile.cs`
 
@@ -104260,7 +105014,7 @@ public sealed record NIRAMemoryAssociationProfile
 
 ---
 
-## 204. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationService.cs`
+## 209. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationService.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociationService.cs`
 
@@ -105032,7 +105786,7 @@ public sealed class NIRAMemoryAssociationService
 
 ---
 
-## 205. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociativeIndexStore.cs`
+## 210. `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociativeIndexStore.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryAssociativeIndexStore.cs`
 
@@ -106699,7 +107453,7 @@ public sealed class NIRAMemoryAssociativeIndexStore
 
 ---
 
-## 206. `NIRAAgent\Memory\LongTerm\NIRAMemoryCandidate.cs`
+## 211. `NIRAAgent\Memory\LongTerm\NIRAMemoryCandidate.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryCandidate.cs`
 
@@ -106879,7 +107633,7 @@ public sealed record NIRAMemoryCandidate
 
 ---
 
-## 207. `NIRAAgent\Memory\LongTerm\NIRAMemoryConfidencePolicy.cs`
+## 212. `NIRAAgent\Memory\LongTerm\NIRAMemoryConfidencePolicy.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryConfidencePolicy.cs`
 
@@ -107091,7 +107845,7 @@ public static class NIRAMemoryConfidencePolicy
 
 ---
 
-## 208. `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidation.cs`
+## 213. `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidation.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidation.cs`
 
@@ -107174,7 +107928,7 @@ public sealed record NIRAMemoryConsolidationResult
 
 ---
 
-## 209. `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidator.cs`
+## 214. `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidator.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryConsolidator.cs`
 
@@ -108432,7 +109186,7 @@ public sealed class NIRAMemoryConsolidator
 
 ---
 
-## 210. `NIRAAgent\Memory\LongTerm\NIRAMemoryContextService.cs`
+## 215. `NIRAAgent\Memory\LongTerm\NIRAMemoryContextService.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryContextService.cs`
 
@@ -108645,7 +109399,7 @@ public sealed class NIRAMemoryContextService
 
 ---
 
-## 211. `NIRAAgent\Memory\LongTerm\NIRAMemoryContextSnapshot.cs`
+## 216. `NIRAAgent\Memory\LongTerm\NIRAMemoryContextSnapshot.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryContextSnapshot.cs`
 
@@ -108720,7 +109474,7 @@ public sealed record NIRAMemoryContextSnapshot
 
 ---
 
-## 212. `NIRAAgent\Memory\LongTerm\NIRAMemoryEvidence.cs`
+## 217. `NIRAAgent\Memory\LongTerm\NIRAMemoryEvidence.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryEvidence.cs`
 
@@ -108803,7 +109557,7 @@ public sealed record NIRAMemoryEvidence
 
 ---
 
-## 213. `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationContext.cs`
+## 218. `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationContext.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationContext.cs`
 
@@ -109273,7 +110027,7 @@ public sealed record NIRAMemoryFormationResult
 
 ---
 
-## 214. `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationService.cs`
+## 219. `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationService.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryFormationService.cs`
 
@@ -110249,7 +111003,7 @@ public sealed class NIRAMemoryFormationService
 
 ---
 
-## 215. `NIRAAgent\Memory\LongTerm\NIRAMemoryKind.cs`
+## 220. `NIRAAgent\Memory\LongTerm\NIRAMemoryKind.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryKind.cs`
 
@@ -110329,7 +111083,7 @@ public enum NIRAMemorySourceType
 
 ---
 
-## 216. `NIRAAgent\Memory\LongTerm\NIRAMemoryKnowledgeEntry.cs`
+## 221. `NIRAAgent\Memory\LongTerm\NIRAMemoryKnowledgeEntry.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryKnowledgeEntry.cs`
 
@@ -110361,7 +111115,7 @@ public sealed record NIRAMemoryKnowledgeEntry
 
 ---
 
-## 217. `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceReport.cs`
+## 222. `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceReport.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceReport.cs`
 
@@ -110506,7 +111260,7 @@ public sealed record NIRAMemoryMaintenanceReport
 
 ---
 
-## 218. `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceService.cs`
+## 223. `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceService.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryMaintenanceService.cs`
 
@@ -111115,7 +111869,7 @@ public sealed class NIRAMemoryMaintenanceService
 
 ---
 
-## 219. `NIRAAgent\Memory\LongTerm\NIRAMemoryRecord.cs`
+## 224. `NIRAAgent\Memory\LongTerm\NIRAMemoryRecord.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemoryRecord.cs`
 
@@ -111431,7 +112185,7 @@ public sealed record NIRAMemoryRecord
 
 ---
 
-## 220. `NIRAAgent\Memory\LongTerm\NIRAMemorySearchRequest.cs`
+## 225. `NIRAAgent\Memory\LongTerm\NIRAMemorySearchRequest.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemorySearchRequest.cs`
 
@@ -111656,7 +112410,7 @@ public sealed record NIRAMemorySearchRequest
 
 ---
 
-## 221. `NIRAAgent\Memory\LongTerm\NIRAMemorySearchResult.cs`
+## 226. `NIRAAgent\Memory\LongTerm\NIRAMemorySearchResult.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRAMemorySearchResult.cs`
 
@@ -111762,7 +112516,7 @@ public sealed record NIRAMemorySearchResult
 
 ---
 
-## 222. `NIRAAgent\Memory\LongTerm\NIRASensitiveMemoryPolicy.cs`
+## 227. `NIRAAgent\Memory\LongTerm\NIRASensitiveMemoryPolicy.cs`
 
 **File:** `NIRAAgent\Memory\LongTerm\NIRASensitiveMemoryPolicy.cs`
 
@@ -111932,7 +112686,7 @@ public static class NIRASensitiveMemoryPolicy
 
 ---
 
-## 223. `NIRAAgent\Mind\NIRAActiveTurnLedger.cs`
+## 228. `NIRAAgent\Mind\NIRAActiveTurnLedger.cs`
 
 **File:** `NIRAAgent\Mind\NIRAActiveTurnLedger.cs`
 
@@ -112088,7 +112842,7 @@ public sealed record NIRAActiveWorkObservation(string Context, string ObservedId
 
 ---
 
-## 224. `NIRAAgent\Mind\NIRABackgroundProcessor.cs`
+## 229. `NIRAAgent\Mind\NIRABackgroundProcessor.cs`
 
 **File:** `NIRAAgent\Mind\NIRABackgroundProcessor.cs`
 
@@ -112208,7 +112962,7 @@ public sealed class NIRABackgroundProcessor
 
 ---
 
-## 225. `NIRAAgent\Mind\NIRAContextRetrievalPolicy.cs`
+## 230. `NIRAAgent\Mind\NIRAContextRetrievalPolicy.cs`
 
 **File:** `NIRAAgent\Mind\NIRAContextRetrievalPolicy.cs`
 
@@ -112237,7 +112991,7 @@ internal static class NIRAContextRetrievalPolicy
 
 ---
 
-## 226. `NIRAAgent\Mind\NIRADesktopManualHandoffPolicy.cs`
+## 231. `NIRAAgent\Mind\NIRADesktopManualHandoffPolicy.cs`
 
 **File:** `NIRAAgent\Mind\NIRADesktopManualHandoffPolicy.cs`
 
@@ -112306,7 +113060,7 @@ internal static class NIRADesktopManualHandoffPolicy
 
 ---
 
-## 227. `NIRAAgent\Mind\NIRADesktopWriteContinuityGuard.cs`
+## 232. `NIRAAgent\Mind\NIRADesktopWriteContinuityGuard.cs`
 
 **File:** `NIRAAgent\Mind\NIRADesktopWriteContinuityGuard.cs`
 
@@ -112460,7 +113214,7 @@ internal sealed class NIRADesktopWriteContinuityGuard
 
 ---
 
-## 228. `NIRAAgent\Mind\NIRAExecutive.cs`
+## 233. `NIRAAgent\Mind\NIRAExecutive.cs`
 
 **File:** `NIRAAgent\Mind\NIRAExecutive.cs`
 
@@ -113436,6 +114190,7 @@ public sealed class NIRAExecutive
         string? pendingBlankDocumentText = null;
         bool desktopTextMismatchObserved = false;
 
+        bool imageGenerationAttempted = false;
         HashSet<string> executedCapabilityRequests =
             new(
                 StringComparer.OrdinalIgnoreCase);
@@ -116390,6 +117145,16 @@ public sealed class NIRAExecutive
                     continue;
                 }
 
+                if (request.CapabilityId == NIRACapabilityIds.ImageGenerate)
+                {
+                    if (imageGenerationAttempted)
+                    {
+                        capabilityEvidence.AppendLine("IMAGE GENERATION: Already attempted once in this turn. Do not request another generation or retry. Finish from the verified result or state the failure.");
+                        continue;
+                    }
+                    imageGenerationAttempted = true;
+                }
+
                 if (executedCapabilityRequests.Add(
                         signature))
                 {
@@ -116427,6 +117192,20 @@ public sealed class NIRAExecutive
             NIRACapabilityRequest[] newCapabilityRequests =
                 dispatchCapabilities.ToArray();
 
+
+            if (newCapabilityRequests.Any(request => request.CapabilityId == NIRACapabilityIds.ImageGenerate))
+            {
+                // Trusted progress marker: no additional LLM call. Drives the
+                // small image orbit next to NIRA's existing three dots.
+                yield return new NIRAOutputChunk
+                {
+                    RunId = runId, Source = mindEvent.Source,
+                    Type = NIRAOutputChunkType.Progress,
+                    Content = "Creating your image with FLUX.2 Klein 4B…",
+                    SpeechContent = string.Empty,
+                    IsImageGenerationProgress = true
+                };
+            }
 
             IReadOnlyList<NIRACapabilityResult> capabilityResults =
                 await _capabilities.ExecuteAsync(
@@ -121725,7 +122504,7 @@ public sealed class NIRAExecutive
 
 ---
 
-## 229. `NIRAAgent\Mind\NIRAFilesystemPrerequisitePolicy.cs`
+## 234. `NIRAAgent\Mind\NIRAFilesystemPrerequisitePolicy.cs`
 
 **File:** `NIRAAgent\Mind\NIRAFilesystemPrerequisitePolicy.cs`
 
@@ -121802,7 +122581,7 @@ internal static class NIRAFilesystemPrerequisitePolicy
 
 ---
 
-## 230. `NIRAAgent\Mind\NIRAInternalWorkGate.cs`
+## 235. `NIRAAgent\Mind\NIRAInternalWorkGate.cs`
 
 **File:** `NIRAAgent\Mind\NIRAInternalWorkGate.cs`
 
@@ -121937,7 +122716,7 @@ public sealed class NIRAInternalWorkGate
 
 ---
 
-## 231. `NIRAAgent\Mind\NIRAMindActivityTracker.cs`
+## 236. `NIRAAgent\Mind\NIRAMindActivityTracker.cs`
 
 **File:** `NIRAAgent\Mind\NIRAMindActivityTracker.cs`
 
@@ -122085,7 +122864,7 @@ public sealed class NIRAMindActivityTracker
 
 ---
 
-## 232. `NIRAAgent\Mind\NIRAMindEvent.cs`
+## 237. `NIRAAgent\Mind\NIRAMindEvent.cs`
 
 **File:** `NIRAAgent\Mind\NIRAMindEvent.cs`
 
@@ -122809,7 +123588,7 @@ public sealed record NIRAMindEvent
 
 ---
 
-## 233. `NIRAAgent\Mind\NIRAMindRuntime.cs`
+## 238. `NIRAAgent\Mind\NIRAMindRuntime.cs`
 
 **File:** `NIRAAgent\Mind\NIRAMindRuntime.cs`
 
@@ -123362,7 +124141,7 @@ public sealed class NIRAMindRuntime
 
 ---
 
-## 234. `NIRAAgent\Mind\NIRAOutputChunk.cs`
+## 239. `NIRAAgent\Mind\NIRAOutputChunk.cs`
 
 **File:** `NIRAAgent\Mind\NIRAOutputChunk.cs`
 
@@ -123426,6 +124205,8 @@ public sealed record NIRAOutputChunk
     public string SpeechContent { get; init; } = string.Empty;
     // Spoken status is deliberately distinct from a final response.
     public bool IsProgressCorrection { get; init; }
+    // Trusted runtime signal, never inferred from arbitrary model text.
+    public bool IsImageGenerationProgress { get; init; }
     public IReadOnlyList<NIRARichBlock> DisplayBlocks { get; init; } = Array.Empty<NIRARichBlock>();
 
     public NIRAVisualArtifact? VisualArtifact
@@ -123446,7 +124227,7 @@ public sealed record NIRAOutputChunk
 
 ---
 
-## 235. `NIRAAgent\Mind\NIRAOutputDispatcher.cs`
+## 240. `NIRAAgent\Mind\NIRAOutputDispatcher.cs`
 
 **File:** `NIRAAgent\Mind\NIRAOutputDispatcher.cs`
 
@@ -123553,7 +124334,7 @@ public sealed class NIRAOutputDispatcher
 
 ---
 
-## 236. `NIRAAgent\Mind\NIRAProcessStartContinuityGuard.cs`
+## 241. `NIRAAgent\Mind\NIRAProcessStartContinuityGuard.cs`
 
 **File:** `NIRAAgent\Mind\NIRAProcessStartContinuityGuard.cs`
 
@@ -123636,7 +124417,7 @@ internal sealed class NIRAProcessStartContinuityGuard
 
 ---
 
-## 237. `NIRAAgent\Mind\NIRAProcessStopContinuityGuard.cs`
+## 242. `NIRAAgent\Mind\NIRAProcessStopContinuityGuard.cs`
 
 **File:** `NIRAAgent\Mind\NIRAProcessStopContinuityGuard.cs`
 
@@ -123718,7 +124499,7 @@ internal sealed class NIRAProcessStopContinuityGuard
 
 ---
 
-## 238. `NIRAAgent\Mind\NIRAWindowObservationContinuityPolicy.cs`
+## 243. `NIRAAgent\Mind\NIRAWindowObservationContinuityPolicy.cs`
 
 **File:** `NIRAAgent\Mind\NIRAWindowObservationContinuityPolicy.cs`
 
@@ -123782,7 +124563,7 @@ internal static class NIRAWindowObservationContinuityPolicy
 
 ---
 
-## 239. `NIRAAgent\NIRAAgent.csproj`
+## 244. `NIRAAgent\NIRAAgent.csproj`
 
 **File:** `NIRAAgent\NIRAAgent.csproj`
 
@@ -123905,7 +124686,7 @@ internal static class NIRAWindowObservationContinuityPolicy
 
 ---
 
-## 240. `NIRAAgent\PC\Awareness\NIRAPresenceService.cs`
+## 245. `NIRAAgent\PC\Awareness\NIRAPresenceService.cs`
 
 **File:** `NIRAAgent\PC\Awareness\NIRAPresenceService.cs`
 
@@ -124317,7 +125098,7 @@ public sealed class NIRAPresenceService
 
 ---
 
-## 241. `NIRAAgent\PC\Awareness\PcAwarenessService.cs`
+## 246. `NIRAAgent\PC\Awareness\PcAwarenessService.cs`
 
 **File:** `NIRAAgent\PC\Awareness\PcAwarenessService.cs`
 
@@ -125119,7 +125900,7 @@ public sealed class PcAwarenessService
 
 ---
 
-## 242. `NIRAAgent\PC\Awareness\PcContextFormatter.cs`
+## 247. `NIRAAgent\PC\Awareness\PcContextFormatter.cs`
 
 **File:** `NIRAAgent\PC\Awareness\PcContextFormatter.cs`
 
@@ -125321,7 +126102,7 @@ public static class PcContextFormatter
 
 ---
 
-## 243. `NIRAAgent\PC\Awareness\PcWorldState.cs`
+## 248. `NIRAAgent\PC\Awareness\PcWorldState.cs`
 
 **File:** `NIRAAgent\PC\Awareness\PcWorldState.cs`
 
@@ -125898,7 +126679,7 @@ public readonly record struct PcRectangle(
 
 ---
 
-## 244. `NIRAAgent\PC\Awareness\PcWorldStateService.cs`
+## 249. `NIRAAgent\PC\Awareness\PcWorldStateService.cs`
 
 **File:** `NIRAAgent\PC\Awareness\PcWorldStateService.cs`
 
@@ -126338,7 +127119,7 @@ public sealed class PcWorldStateService
 
 ---
 
-## 245. `NIRAAgent\Perception\AttentionManager.cs`
+## 250. `NIRAAgent\Perception\AttentionManager.cs`
 
 **File:** `NIRAAgent\Perception\AttentionManager.cs`
 
@@ -127083,7 +127864,7 @@ public sealed class AttentionManager
 
 ---
 
-## 246. `NIRAAgent\Perception\CompanionTimerService.cs`
+## 251. `NIRAAgent\Perception\CompanionTimerService.cs`
 
 **File:** `NIRAAgent\Perception\CompanionTimerService.cs`
 
@@ -127256,7 +128037,7 @@ public sealed class CompanionTimerService
 
 ---
 
-## 247. `NIRAAgent\Perception\PcMonitorService.cs`
+## 252. `NIRAAgent\Perception\PcMonitorService.cs`
 
 **File:** `NIRAAgent\Perception\PcMonitorService.cs`
 
@@ -127454,7 +128235,7 @@ public sealed class PcMonitorService
 
 ---
 
-## 248. `NIRAAgent\Perception\PerceptionAnalyzer.cs`
+## 253. `NIRAAgent\Perception\PerceptionAnalyzer.cs`
 
 **File:** `NIRAAgent\Perception\PerceptionAnalyzer.cs`
 
@@ -127848,7 +128629,7 @@ public sealed class PerceptionAnalyzer
 
 ---
 
-## 249. `NIRAAgent\Perception\PerceptionEvent.cs`
+## 254. `NIRAAgent\Perception\PerceptionEvent.cs`
 
 **File:** `NIRAAgent\Perception\PerceptionEvent.cs`
 
@@ -127923,7 +128704,7 @@ public sealed class PerceptionEvent
 
 ---
 
-## 250. `NIRAAgent\Piper\Models\en_US-hfc_female-medium.onnx.json`
+## 255. `NIRAAgent\Piper\Models\en_US-hfc_female-medium.onnx.json`
 
 **File:** `NIRAAgent\Piper\Models\en_US-hfc_female-medium.onnx.json`
 
@@ -128440,7 +129221,7 @@ public sealed class PerceptionEvent
 
 ---
 
-## 251. `NIRAAgent\Presentation\NIRADualChannelResponse.cs`
+## 256. `NIRAAgent\Presentation\NIRADualChannelResponse.cs`
 
 **File:** `NIRAAgent\Presentation\NIRADualChannelResponse.cs`
 
@@ -128681,7 +129462,7 @@ public static class NIRAPresentationPolicy
 
 ---
 
-## 252. `NIRAAgent\Presentation\NIRAResourceLinkPresentation.cs`
+## 257. `NIRAAgent\Presentation\NIRAResourceLinkPresentation.cs`
 
 **File:** `NIRAAgent\Presentation\NIRAResourceLinkPresentation.cs`
 
@@ -128794,7 +129575,7 @@ public static class NIRAImageCreditLayoutPolicy
 
 ---
 
-## 253. `NIRAAgent\Presentation\NIRARichBlockJsonReader.cs`
+## 258. `NIRAAgent\Presentation\NIRARichBlockJsonReader.cs`
 
 **File:** `NIRAAgent\Presentation\NIRARichBlockJsonReader.cs`
 
@@ -129308,7 +130089,7 @@ public static class NIRARichBlockJsonReader
 
 ---
 
-## 254. `NIRAAgent\Presentation\NIRAVerifiedFilePresentation.cs`
+## 259. `NIRAAgent\Presentation\NIRAVerifiedFilePresentation.cs`
 
 **File:** `NIRAAgent\Presentation\NIRAVerifiedFilePresentation.cs`
 
@@ -129432,7 +130213,7 @@ public static class NIRAVerifiedFilePresentation
 
 ---
 
-## 255. `NIRAAgent\Prompt\cognition.yaml`
+## 260. `NIRAAgent\Prompt\cognition.yaml`
 
 **File:** `NIRAAgent\Prompt\cognition.yaml`
 
@@ -129650,6 +130431,7 @@ delivery:
       - Use typed displayBlocks as the primary presentation for naturally structured material: comparisons with concrete attributes -> table; several distinct options -> adjacent cards; historical or sequential changes -> timeline; actionable user-checkable steps -> checklist; two to five alternative views -> tabs with real panels; real numerical observations -> metric/chart/progress; grounded program source -> code; optional depth -> expandable details. Multiple complementary blocks are welcome if their information differs. Each block must include its actual schema/data in displayBlocks, not a description of the block in reply. Never invent missing values, dates, sources, or task completion.
       - The available blocks are creative affordances, not a checklist, style guide, or quota. NIRA owns the composition independently for every answer. Experiment with layouts suited to the actual substance, not random styling. The UI applies one cohesive existing HALO/ECLIPSE design system to everything; NIRA chooses content and structure, not new theme settings, arbitrary CSS or unsupported executable UI. Prior replies are evidence about conversation meaning, never a style template to copy. There is no required opening, middle, or closing block. A conclusion can be ordinary transparent prose; a component, if chosen, should add genuinely distinct information.
       - Keep the screen response and blocks as ONE coherent exchange in NIRA's voice. When emitting blocks, use a concise but substantive lead-in and let the actual cards/tables/tabs/timeline/checklist carry their own detail; avoid a long plain-text answer followed by redundant blocks. Give content-specific headings and varied arrangements when appropriate. Do not use repetitive template layouts or a fixed number of cards. Plain prose remains right for personal discussion, open-ended opinion or content without a genuine structure.
+      - For explicit image CREATION requests, choose image.generate (Cloudflare FLUX.2 Klein 4B) rather than image.search. In the existing cognition pass, expand a brief user idea into a faithful, composition-rich image-generation prompt and pass it directly as the tool's prompt argument. Do NOT spend a separate LLM call refining it. Do not quietly generate pictures for unrelated chat or research. Only one creation attempt per turn; if it fails, explain the real reason and do not retry automatically. A successful generate already presents the image and saves it under Gallery > AI Generated.
       - Visual components are optional, never fake: no invented illustrations, image thumbnails, sources, dates, metrics, or completed-action status. No empty image placeholders. Verified image presentation is handled by the trusted image.search / image.retrieve pipeline, never by model-invented displayBlocks.
       - Compose freely from the available presentation capabilities when they clarify the topic; NIRA may choose a unique combination and reading flow, not a preset template. Express a useful comparison as a table if it fits, a plan as steps or a checklist if it fits, options as cards if it fits, and ordinary thought as transparent prose if it fits. Never add a component only to satisfy a visual quota. Never repeat the same facts in reply and displayBlocks merely to fill space.
       - For an intrinsically visual subject (the appearance, architecture or visual differences of actual objects/places), seriously consider images as part of answering, not an optional decorative afterthought. Use image.search followed by image.retrieve for openly licensed reference images when appropriate: that primitive automatically presents the grounded image with attribution. For other sources use authorized locally verified visualPresentations. A prose description cannot impersonate a displayed image. If image retrieval is blocked, provide a helpful text answer and an appropriate verified source link without implying the image was displayed.
@@ -130362,7 +131144,7 @@ first_call_grounding_and_continuity:
 
 ---
 
-## 256. `NIRAAgent\Prompt\cognition_contract.yaml`
+## 261. `NIRAAgent\Prompt\cognition_contract.yaml`
 
 **File:** `NIRAAgent\Prompt\cognition_contract.yaml`
 
@@ -130866,6 +131648,12 @@ dual_channel_presentation: |
       URL in reply. A named program/article question asks for the specific source,
       not a generic homepage. Verify the exact location with read-only tools when
       it is uncertain, and never imply verification from memory alone.
+    - For explicit generation of NEW images ("create/draw/generate a picture"),
+      use the authorized image.generate capability, currently Cloudflare FLUX.2
+      Klein 4B ONLY. Upgrade the short concept into a high-quality faithful
+      composition in your SAME cognition pass, no extra prompt-LLM call. One
+      image request, no automated retry; quota-bearing. Display and Gallery
+      saving happen from trusted successful bytes, never an invented image.
     - Questions centrally about how a physical place, object or scene looks are
       candidates for a genuine sourced picture without requiring explicit image
       UI instructions. Prefer image.search for real open-license image candidate
@@ -130987,7 +131775,7 @@ one_call_tool_routing:
 
 ---
 
-## 257. `NIRAAgent\Prompt\elvara_tradeai.yaml`
+## 262. `NIRAAgent\Prompt\elvara_tradeai.yaml`
 
 **File:** `NIRAAgent\Prompt\elvara_tradeai.yaml`
 
@@ -131042,7 +131830,7 @@ instructions: |
 
 ---
 
-## 258. `NIRAAgent\Prompt\memory_formation.yaml`
+## 263. `NIRAAgent\Prompt\memory_formation.yaml`
 
 **File:** `NIRAAgent\Prompt\memory_formation.yaml`
 
@@ -131386,7 +132174,7 @@ learned_procedural_skills:
 
 ---
 
-## 259. `NIRAAgent\Prompt\memory_recall.yaml`
+## 264. `NIRAAgent\Prompt\memory_recall.yaml`
 
 **File:** `NIRAAgent\Prompt\memory_recall.yaml`
 
@@ -131449,7 +132237,7 @@ full_mode_search_bound:
 
 ---
 
-## 260. `NIRAAgent\Prompt\nira_personality.yaml`
+## 265. `NIRAAgent\Prompt\nira_personality.yaml`
 
 **File:** `NIRAAgent\Prompt\nira_personality.yaml`
 
@@ -131877,7 +132665,7 @@ truth:
 
 ---
 
-## 261. `NIRAAgent\Prompt\response_realization.yaml`
+## 266. `NIRAAgent\Prompt\response_realization.yaml`
 
 **File:** `NIRAAgent\Prompt\response_realization.yaml`
 
@@ -132023,7 +132811,7 @@ output:
 
 ---
 
-## 262. `NIRAAgent\Properties\NIRARegressionAssemblyAccess.cs`
+## 267. `NIRAAgent\Properties\NIRARegressionAssemblyAccess.cs`
 
 **File:** `NIRAAgent\Properties\NIRARegressionAssemblyAccess.cs`
 
@@ -132038,7 +132826,7 @@ using System.Runtime.CompilerServices;
 
 ---
 
-## 263. `NIRAAgent\Self\Model\NIRARuntimeSelfKnowledgeProvider.cs`
+## 268. `NIRAAgent\Self\Model\NIRARuntimeSelfKnowledgeProvider.cs`
 
 **File:** `NIRAAgent\Self\Model\NIRARuntimeSelfKnowledgeProvider.cs`
 
@@ -132338,7 +133126,7 @@ public sealed class NIRARuntimeSelfKnowledgeProvider
 
 ---
 
-## 264. `NIRAAgent\Self\Model\NIRASelfModelContracts.cs`
+## 269. `NIRAAgent\Self\Model\NIRASelfModelContracts.cs`
 
 **File:** `NIRAAgent\Self\Model\NIRASelfModelContracts.cs`
 
@@ -133032,7 +133820,7 @@ public sealed record NIRACommitmentApplyResult
 
 ---
 
-## 265. `NIRAAgent\Self\Model\NIRASelfModelService.cs`
+## 270. `NIRAAgent\Self\Model\NIRASelfModelService.cs`
 
 **File:** `NIRAAgent\Self\Model\NIRASelfModelService.cs`
 
@@ -135009,7 +135797,7 @@ public sealed class NIRASelfModelService
 
 ---
 
-## 266. `NIRAAgent\Self\Model\NIRASelfModelStore.cs`
+## 271. `NIRAAgent\Self\Model\NIRASelfModelStore.cs`
 
 **File:** `NIRAAgent\Self\Model\NIRASelfModelStore.cs`
 
@@ -136780,7 +137568,7 @@ public sealed class NIRASelfModelStore
 
 ---
 
-## 267. `NIRAAgent\Self\Preferences\NIRASelfPreferenceMemorySyncService.cs`
+## 272. `NIRAAgent\Self\Preferences\NIRASelfPreferenceMemorySyncService.cs`
 
 **File:** `NIRAAgent\Self\Preferences\NIRASelfPreferenceMemorySyncService.cs`
 
@@ -137360,7 +138148,7 @@ public enum NIRASelfPreferenceMemorySyncAction
 
 ---
 
-## 268. `NIRAAgent\Self\Preferences\NIRASelfPreferenceService.cs`
+## 273. `NIRAAgent\Self\Preferences\NIRASelfPreferenceService.cs`
 
 **File:** `NIRAAgent\Self\Preferences\NIRASelfPreferenceService.cs`
 
@@ -138543,7 +139331,7 @@ public sealed class NIRASelfPreferenceService
 
 ---
 
-## 269. `NIRAAgent\Self\Preferences\NIRASelfPreferenceState.cs`
+## 274. `NIRAAgent\Self\Preferences\NIRASelfPreferenceState.cs`
 
 **File:** `NIRAAgent\Self\Preferences\NIRASelfPreferenceState.cs`
 
@@ -138944,7 +139732,7 @@ public sealed record NIRASelfPreferenceApplyResult
 
 ---
 
-## 270. `NIRAAgent\Self\Preferences\NIRASelfPreferenceStore.cs`
+## 275. `NIRAAgent\Self\Preferences\NIRASelfPreferenceStore.cs`
 
 **File:** `NIRAAgent\Self\Preferences\NIRASelfPreferenceStore.cs`
 
@@ -140165,7 +140953,7 @@ public sealed class NIRASelfPreferenceStore
 
 ---
 
-## 271. `NIRAAgent\Self\Preferences\NIRATemporaryOpinionState.cs`
+## 276. `NIRAAgent\Self\Preferences\NIRATemporaryOpinionState.cs`
 
 **File:** `NIRAAgent\Self\Preferences\NIRATemporaryOpinionState.cs`
 
@@ -140439,7 +141227,7 @@ public readonly record struct NIRATemporaryOpinionSnapshot(
 
 ---
 
-## 272. `NIRAAgent\Semantic\INIRASemanticEncoder.cs`
+## 277. `NIRAAgent\Semantic\INIRASemanticEncoder.cs`
 
 **File:** `NIRAAgent\Semantic\INIRASemanticEncoder.cs`
 
@@ -140459,7 +141247,7 @@ public interface INIRASemanticEncoder
 
 ---
 
-## 273. `NIRAAgent\Semantic\MiniLmSemanticEncoder.cs`
+## 278. `NIRAAgent\Semantic\MiniLmSemanticEncoder.cs`
 
 **File:** `NIRAAgent\Semantic\MiniLmSemanticEncoder.cs`
 
@@ -141198,7 +141986,7 @@ public sealed class MiniLmSemanticEncoder
 
 ---
 
-## 274. `NIRAAgent\Semantic\Models\all-MiniLM-L6-v2\vocab.txt`
+## 279. `NIRAAgent\Semantic\Models\all-MiniLM-L6-v2\vocab.txt`
 
 **File:** `NIRAAgent\Semantic\Models\all-MiniLM-L6-v2\vocab.txt`
 
@@ -171729,7 +172517,7 @@ necessitated
 
 ---
 
-## 275. `NIRAAgent\Semantic\NIRASemanticMemoryService.cs`
+## 280. `NIRAAgent\Semantic\NIRASemanticMemoryService.cs`
 
 **File:** `NIRAAgent\Semantic\NIRASemanticMemoryService.cs`
 
@@ -172063,7 +172851,7 @@ public sealed class NIRASemanticMemoryService
 
 ---
 
-## 276. `NIRAAgent\Semantic\NIRASemanticObservation.cs`
+## 281. `NIRAAgent\Semantic\NIRASemanticObservation.cs`
 
 **File:** `NIRAAgent\Semantic\NIRASemanticObservation.cs`
 
@@ -172191,7 +172979,7 @@ public sealed record NIRASemanticObservation
 
 ---
 
-## 277. `NIRAAgent\Semantic\NIRASemanticSimilarity.cs`
+## 282. `NIRAAgent\Semantic\NIRASemanticSimilarity.cs`
 
 **File:** `NIRAAgent\Semantic\NIRASemanticSimilarity.cs`
 
@@ -172300,7 +173088,7 @@ public static class NIRASemanticSimilarity
 
 ---
 
-## 278. `NIRAAgent\Semantic\NIRAWordPieceTokenizer.cs`
+## 283. `NIRAAgent\Semantic\NIRAWordPieceTokenizer.cs`
 
 **File:** `NIRAAgent\Semantic\NIRAWordPieceTokenizer.cs`
 
@@ -172803,7 +173591,7 @@ internal readonly record struct NIRATokenizedInput(
 
 ---
 
-## 279. `NIRAAgent\Semantic\SemanticEmbedding.cs`
+## 284. `NIRAAgent\Semantic\SemanticEmbedding.cs`
 
 **File:** `NIRAAgent\Semantic\SemanticEmbedding.cs`
 
@@ -172854,7 +173642,7 @@ public sealed class SemanticEmbedding
 
 ---
 
-## 280. `NIRAAgent\Settings\NIRARuntimeSettingsService.cs`
+## 285. `NIRAAgent\Settings\NIRARuntimeSettingsService.cs`
 
 **File:** `NIRAAgent\Settings\NIRARuntimeSettingsService.cs`
 
@@ -173115,7 +173903,7 @@ public sealed class NIRARuntimeSettingsService
 
 ---
 
-## 281. `NIRAAgent\Skills\NIRALearnedSkillContracts.cs`
+## 286. `NIRAAgent\Skills\NIRALearnedSkillContracts.cs`
 
 **File:** `NIRAAgent\Skills\NIRALearnedSkillContracts.cs`
 
@@ -173446,7 +174234,7 @@ public sealed record NIRALearnedSkillMutationResult
 
 ---
 
-## 282. `NIRAAgent\Skills\NIRALearnedSkillService.cs`
+## 287. `NIRAAgent\Skills\NIRALearnedSkillService.cs`
 
 **File:** `NIRAAgent\Skills\NIRALearnedSkillService.cs`
 
@@ -175014,7 +175802,7 @@ public sealed class NIRALearnedSkillService
 
 ---
 
-## 283. `NIRAAgent\Skills\NIRALearnedSkillStore.cs`
+## 288. `NIRAAgent\Skills\NIRALearnedSkillStore.cs`
 
 **File:** `NIRAAgent\Skills\NIRALearnedSkillStore.cs`
 
@@ -175615,7 +176403,7 @@ public sealed class NIRALearnedSkillStore
 
 ---
 
-## 284. `NIRAAgent\Temporal\NIRATemporalCommitmentReasoner.cs`
+## 289. `NIRAAgent\Temporal\NIRATemporalCommitmentReasoner.cs`
 
 **File:** `NIRAAgent\Temporal\NIRATemporalCommitmentReasoner.cs`
 
@@ -175841,7 +176629,7 @@ public sealed class NIRATemporalCommitmentReasoner
 
 ---
 
-## 285. `NIRAAgent\Temporal\NIRATemporalCommitmentReconciliationService.cs`
+## 290. `NIRAAgent\Temporal\NIRATemporalCommitmentReconciliationService.cs`
 
 **File:** `NIRAAgent\Temporal\NIRATemporalCommitmentReconciliationService.cs`
 
@@ -176022,7 +176810,7 @@ public sealed class NIRATemporalCommitmentReconciliationService
 
 ---
 
-## 286. `NIRAAgent\Temporal\NIRATemporalCommitmentSchedulerService.cs`
+## 291. `NIRAAgent\Temporal\NIRATemporalCommitmentSchedulerService.cs`
 
 **File:** `NIRAAgent\Temporal\NIRATemporalCommitmentSchedulerService.cs`
 
@@ -176217,7 +177005,7 @@ public sealed class NIRATemporalCommitmentSchedulerService
 
 ---
 
-## 287. `NIRAAgent\Temporal\NIRATemporalContracts.cs`
+## 292. `NIRAAgent\Temporal\NIRATemporalContracts.cs`
 
 **File:** `NIRAAgent\Temporal\NIRATemporalContracts.cs`
 
@@ -177524,7 +178312,7 @@ public sealed class NIRATemporalContextService
 
 ---
 
-## 288. `NIRAAgent\Tools\NIRADynamicToolContracts.cs`
+## 293. `NIRAAgent\Tools\NIRADynamicToolContracts.cs`
 
 **File:** `NIRAAgent\Tools\NIRADynamicToolContracts.cs`
 
@@ -178010,7 +178798,7 @@ public sealed record NIRADynamicToolExecutionResult
 
 ---
 
-## 289. `NIRAAgent\Tools\NIRADynamicToolExecutor.cs`
+## 294. `NIRAAgent\Tools\NIRADynamicToolExecutor.cs`
 
 **File:** `NIRAAgent\Tools\NIRADynamicToolExecutor.cs`
 
@@ -178892,7 +179680,7 @@ public sealed class NIRADynamicToolExecutor
 
 ---
 
-## 290. `NIRAAgent\Tools\NIRADynamicToolService.cs`
+## 295. `NIRAAgent\Tools\NIRADynamicToolService.cs`
 
 **File:** `NIRAAgent\Tools\NIRADynamicToolService.cs`
 
@@ -179545,7 +180333,7 @@ public sealed class NIRADynamicToolService
 
 ---
 
-## 291. `NIRAAgent\Tools\NIRADynamicToolStore.cs`
+## 296. `NIRAAgent\Tools\NIRADynamicToolStore.cs`
 
 **File:** `NIRAAgent\Tools\NIRADynamicToolStore.cs`
 
@@ -180835,7 +181623,7 @@ public sealed class NIRADynamicToolStore
 
 ---
 
-## 292. `NIRAAgent\Tools\NIRADynamicToolValidator.cs`
+## 297. `NIRAAgent\Tools\NIRADynamicToolValidator.cs`
 
 **File:** `NIRAAgent\Tools\NIRADynamicToolValidator.cs`
 
@@ -181229,7 +182017,7 @@ public sealed class NIRADynamicToolValidator
 
 ---
 
-## 293. `NIRAAgent\Vision\NIRADesktopAccessibilityContracts.cs`
+## 298. `NIRAAgent\Vision\NIRADesktopAccessibilityContracts.cs`
 
 **File:** `NIRAAgent\Vision\NIRADesktopAccessibilityContracts.cs`
 
@@ -181259,7 +182047,7 @@ public interface INIRADesktopAccessibilityBackend
 
 ---
 
-## 294. `NIRAAgent\Vision\NIRADesktopCloseCompletionPolicy.cs`
+## 299. `NIRAAgent\Vision\NIRADesktopCloseCompletionPolicy.cs`
 
 **File:** `NIRAAgent\Vision\NIRADesktopCloseCompletionPolicy.cs`
 
@@ -181312,7 +182100,7 @@ public static class NIRADesktopCloseCompletionPolicy
 
 ---
 
-## 295. `NIRAAgent\Vision\NIRADesktopCloseTargetPolicy.cs`
+## 300. `NIRAAgent\Vision\NIRADesktopCloseTargetPolicy.cs`
 
 **File:** `NIRAAgent\Vision\NIRADesktopCloseTargetPolicy.cs`
 
@@ -181357,7 +182145,7 @@ public static class NIRADesktopCloseTargetPolicy
 
 ---
 
-## 296. `NIRAAgent\Vision\NIRADesktopDocumentTransitionPolicy.cs`
+## 301. `NIRAAgent\Vision\NIRADesktopDocumentTransitionPolicy.cs`
 
 **File:** `NIRAAgent\Vision\NIRADesktopDocumentTransitionPolicy.cs`
 
@@ -181443,7 +182231,7 @@ public static class NIRADesktopDocumentTransitionPolicy
 
 ---
 
-## 297. `NIRAAgent\Vision\NIRADesktopExecutionStrategy.cs`
+## 302. `NIRAAgent\Vision\NIRADesktopExecutionStrategy.cs`
 
 **File:** `NIRAAgent\Vision\NIRADesktopExecutionStrategy.cs`
 
@@ -181506,7 +182294,7 @@ public sealed class NIRAForegroundLeaseState
 
 ---
 
-## 298. `NIRAAgent\Vision\NIRADesktopInteractionContracts.cs`
+## 303. `NIRAAgent\Vision\NIRADesktopInteractionContracts.cs`
 
 **File:** `NIRAAgent\Vision\NIRADesktopInteractionContracts.cs`
 
@@ -181722,7 +182510,7 @@ public static class NIRADesktopExecutionEvidencePolicy
 
 ---
 
-## 299. `NIRAAgent\Vision\NIRAVisualEvidenceContracts.cs`
+## 304. `NIRAAgent\Vision\NIRAVisualEvidenceContracts.cs`
 
 **File:** `NIRAAgent\Vision\NIRAVisualEvidenceContracts.cs`
 
@@ -182263,7 +183051,7 @@ public interface INIRAScreenCaptureBackend
 
 ---
 
-## 300. `NIRAAgent\Vision\NIRAVisualEvidenceService.cs`
+## 305. `NIRAAgent\Vision\NIRAVisualEvidenceService.cs`
 
 **File:** `NIRAAgent\Vision\NIRAVisualEvidenceService.cs`
 
@@ -184013,7 +184801,7 @@ public sealed class NIRAVisualEvidenceService
 
 ---
 
-## 301. `NIRAAgent\Vision\NIRAVisualObservationContracts.cs`
+## 306. `NIRAAgent\Vision\NIRAVisualObservationContracts.cs`
 
 **File:** `NIRAAgent\Vision\NIRAVisualObservationContracts.cs`
 
@@ -184100,7 +184888,7 @@ public sealed record NIRAVisualObservation
 
 ---
 
-## 302. `NIRAAgent\Vision\NIRAVisualUnderstandingService.cs`
+## 307. `NIRAAgent\Vision\NIRAVisualUnderstandingService.cs`
 
 **File:** `NIRAAgent\Vision\NIRAVisualUnderstandingService.cs`
 
@@ -184819,7 +185607,7 @@ public sealed class NIRAVisualUnderstandingService
 
 ---
 
-## 303. `NIRAAgent\Voice\AdaptiveVoiceService.cs`
+## 308. `NIRAAgent\Voice\AdaptiveVoiceService.cs`
 
 **File:** `NIRAAgent\Voice\AdaptiveVoiceService.cs`
 
@@ -184934,7 +185722,7 @@ public sealed class AdaptiveVoiceService
 
 ---
 
-## 304. `NIRAAgent\Voice\Groq\GroqOrpheusVoiceService.cs`
+## 309. `NIRAAgent\Voice\Groq\GroqOrpheusVoiceService.cs`
 
 **File:** `NIRAAgent\Voice\Groq\GroqOrpheusVoiceService.cs`
 
@@ -185983,7 +186771,7 @@ public sealed class GroqOrpheusVoiceService
 
 ---
 
-## 305. `NIRAAgent\Voice\Groq\GroqVocalDirectionMapper.cs`
+## 310. `NIRAAgent\Voice\Groq\GroqVocalDirectionMapper.cs`
 
 **File:** `NIRAAgent\Voice\Groq\GroqVocalDirectionMapper.cs`
 
@@ -186259,7 +187047,7 @@ public static class GroqVocalDirectionMapper
 
 ---
 
-## 306. `NIRAAgent\Voice\IVoiceService.cs`
+## 311. `NIRAAgent\Voice\IVoiceService.cs`
 
 **File:** `NIRAAgent\Voice\IVoiceService.cs`
 
@@ -186293,7 +187081,7 @@ public interface IVoiceService
 
 ---
 
-## 307. `NIRAAgent\Voice\NIRAVocalIntent.cs`
+## 312. `NIRAAgent\Voice\NIRAVocalIntent.cs`
 
 **File:** `NIRAAgent\Voice\NIRAVocalIntent.cs`
 
@@ -186380,7 +187168,7 @@ public readonly record struct NIRAVocalIntent(
 
 ---
 
-## 308. `NIRAAgent\Voice\NIRAVoiceExpression.cs`
+## 313. `NIRAAgent\Voice\NIRAVoiceExpression.cs`
 
 **File:** `NIRAAgent\Voice\NIRAVoiceExpression.cs`
 
@@ -186493,7 +187281,7 @@ public readonly record struct NIRAVoiceExpression(
 
 ---
 
-## 309. `NIRAAgent\Voice\NIRAVoiceExpressionService.cs`
+## 314. `NIRAAgent\Voice\NIRAVoiceExpressionService.cs`
 
 **File:** `NIRAAgent\Voice\NIRAVoiceExpressionService.cs`
 
@@ -186801,7 +187589,7 @@ public sealed class NIRAVoiceExpressionService
 
 ---
 
-## 310. `NIRAAgent\Voice\PiperVoiceService.cs`
+## 315. `NIRAAgent\Voice\PiperVoiceService.cs`
 
 **File:** `NIRAAgent\Voice\PiperVoiceService.cs`
 
@@ -187338,7 +188126,7 @@ public sealed class PiperVoiceService
 
 ---
 
-## 311. `NIRAAgent\Voice\PreparedVoiceAudio.cs`
+## 316. `NIRAAgent\Voice\PreparedVoiceAudio.cs`
 
 **File:** `NIRAAgent\Voice\PreparedVoiceAudio.cs`
 
@@ -187505,7 +188293,7 @@ public sealed class PreparedVoiceAudio
 
 ---
 
-## 312. `NIRAAgent\Voice\SpeechChunker.cs`
+## 317. `NIRAAgent\Voice\SpeechChunker.cs`
 
 **File:** `NIRAAgent\Voice\SpeechChunker.cs`
 
@@ -188318,7 +189106,7 @@ public sealed class SpeechChunker
 
 ---
 
-## 313. `NIRAAgent\Voice\SpeechTextSanitizer.cs`
+## 318. `NIRAAgent\Voice\SpeechTextSanitizer.cs`
 
 **File:** `NIRAAgent\Voice\SpeechTextSanitizer.cs`
 
@@ -188574,7 +189362,7 @@ public static partial class SpeechTextSanitizer
 
 ---
 
-## 314. `NIRAAgent\Voice\VoiceAudioPlayer.cs`
+## 319. `NIRAAgent\Voice\VoiceAudioPlayer.cs`
 
 **File:** `NIRAAgent\Voice\VoiceAudioPlayer.cs`
 
@@ -188688,7 +189476,7 @@ public sealed class VoiceAudioPlayer
 
 ---
 
-## 315. `NIRAAgent\Voice\VoiceQueue.cs`
+## 320. `NIRAAgent\Voice\VoiceQueue.cs`
 
 **File:** `NIRAAgent\Voice\VoiceQueue.cs`
 
@@ -189788,7 +190576,7 @@ public sealed class VoiceQueue
 
 ---
 
-## 316. `NIRAAgent\Voice\VoiceUtterance.cs`
+## 321. `NIRAAgent\Voice\VoiceUtterance.cs`
 
 **File:** `NIRAAgent\Voice\VoiceUtterance.cs`
 
@@ -189877,6 +190665,7 @@ public sealed record VoiceUtterance
 
 These files are part of the project and are shown in the tree, but their binary data is intentionally not written into this Markdown file.
 
+- `Images\AiGenerated\6e1f3b936a5a43d38448867bc5723cad.jpg` — 622.86 KB
 - `NIRAAgent.UI\Assets\close.png` — 10.58 KB
 - `NIRAAgent.UI\Assets\ELVARA-NIRA-DARK.png` — 1.46 MB
 - `NIRAAgent.UI\Assets\ELVARA-NIRA-LIGHT.png` — 1.59 MB
