@@ -23,6 +23,12 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         _content;
 
     private string _progressText = string.Empty;
+    private bool _isImageGenerationActive;
+    public bool IsImageGenerationActive
+    {
+        get => _isImageGenerationActive;
+        set { if (_isImageGenerationActive == value) return; _isImageGenerationActive = value; OnPropertyChanged(); }
+    }
     private bool _isJourneyActive;
     private bool _isJourneyFading;
     private int _journeyVersion;
@@ -81,6 +87,7 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
     // Start with ONLY the living three dots. No fake/default status text.
     public void BeginJourney()
     {
+        IsImageGenerationActive = false;
         _journeyVersion++;
         _progressText = string.Empty;
         IsJourneyFading = false;
@@ -98,6 +105,7 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         if (!IsJourneyActive || IsJourneyFading)
             return;
 
+        IsImageGenerationActive = false;
         int version = ++_journeyVersion;
         IsJourneyFading = true;
         _ = CompleteJourneyFadeOutAsync(version);
@@ -105,6 +113,7 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
 
     public void ClearJourneyImmediately()
     {
+        IsImageGenerationActive = false;
         _journeyVersion++;
         _progressText = string.Empty;
         IsJourneyFading = false;

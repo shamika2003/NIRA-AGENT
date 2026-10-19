@@ -17,6 +17,7 @@ using NIRAAgent.Agent.State;
 using NIRAAgent.Conversation;
 using NIRAAgent.Artifacts;
 using NIRAAgent.Gallery;
+using NIRAAgent.Images;
 using NIRAAgent.UI.Gallery;
 using NIRAAgent.Authorization;
 using NIRAAgent.Branches;
@@ -107,6 +108,13 @@ public partial class MainWindow : Window
 
     public bool IsPresenceSidebarExpanded =>
         !_leftSidebarCollapsed;
+
+    // The living companion may dock only in Chat. Never overlay Gallery
+    // or another full-page workspace, even when the main window is active.
+    public bool CanHostCompanionBody =>
+        IsPresenceSidebarExpanded &&
+        MainWorkspace.Visibility == Visibility.Visible &&
+        GalleryPage.Visibility != Visibility.Visible;
 
     public event EventHandler? SidebarLayoutChanged;
 
@@ -623,6 +631,8 @@ public partial class MainWindow : Window
         GalleryPage.Visibility = Visibility.Visible;
         ChatNavButton.Tag = null;
         GalleryNavButton.Tag = "ACTIVE";
+        // Invalidate the dock as soon as Gallery replaces Chat.
+        SidebarLayoutChanged?.Invoke(this, EventArgs.Empty);
         ImportVisibleChatImages();
         GalleryPage.RefreshGallery();
     }
@@ -633,6 +643,7 @@ public partial class MainWindow : Window
         MainWorkspace.Visibility = Visibility.Visible;
         GalleryNavButton.Tag = null;
         ChatNavButton.Tag = "ACTIVE";
+        SidebarLayoutChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private void ImportVisibleChatImages()
@@ -644,8 +655,13 @@ public partial class MainWindow : Window
                     QueueGalleryImport(image.Artifact, NIRAGalleryCategory.Uploaded);
             else
                 foreach (var image in msg.GetAssistantImageArtifacts())
-                    if (!string.IsNullOrWhiteSpace(image.SourceUri))
+                {
+                    if (image.Artifact.Caption.StartsWith(NIRACloudflareImageGenerationService.GeneratedCaptionPrefix,
+                            StringComparison.Ordinal))
+                        QueueGalleryImport(image.Artifact, NIRAGalleryCategory.AiGenerated);
+                    else if (!string.IsNullOrWhiteSpace(image.SourceUri))
                         QueueGalleryImport(image.Artifact, NIRAGalleryCategory.WebFound);
+                }
         }
     }
 
@@ -2107,7 +2123,7 @@ public partial class MainWindow : Window
             WindowState ==
                 WindowState.Minimized
             ||
-            !IsPresenceSidebarExpanded
+            !CanHostCompanionBody
             ||
             NIRADockHost.ActualWidth <=
                 0.0
@@ -2590,7 +2606,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!string.IsNullOrWhiteSpace(artifact.SourceUri))
+        if (artifact.Caption.StartsWith(NIRACloudflareImageGenerationService.GeneratedCaptionPrefix,
+                StringComparison.Ordinal))
+            QueueGalleryImport(artifact, NIRAGalleryCategory.AiGenerated);
+        else if (!string.IsNullOrWhiteSpace(artifact.SourceUri))
             QueueGalleryImport(artifact, NIRAGalleryCategory.WebFound);
 
         bool chatActive =

@@ -532,6 +532,9 @@ public partial class App : WpfApplication
             builder.Services.AddSingleton<NIRACommonsImageDiscoveryService>();
             builder.Services.AddSingleton<INIRACapabilityHandler, NIRAImageSearchCapabilityHandler>();
             builder.Services.AddSingleton<INIRACapabilityHandler, NIRAImageRetrieveCapabilityHandler>();
+            // R37: native image generation, single Cloudflare 4B model, separate from Ollama.
+            builder.Services.AddSingleton<NIRACloudflareImageGenerationService>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRAImageGenerateCapabilityHandler>();
 
 
             builder.Services.AddSingleton<
@@ -1066,8 +1069,10 @@ public partial class App : WpfApplication
                     runtimeSettings);
 
 
-            companion.Show();
-
+            // Respect the saved global presence preference before the first
+            // WPF render: no one-frame blob flash on a disabled startup.
+            if (runtimeSettings.Current.DesktopPresenceEnabled)
+                companion.Show();
 
             companion.AttachToMainWindow(
                 window);

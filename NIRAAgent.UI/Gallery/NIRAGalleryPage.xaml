@@ -1,6 +1,7 @@
 <UserControl x:Class="NIRAAgent.UI.Gallery.NIRAGalleryPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:gallery="clr-namespace:NIRAAgent.UI.Gallery"
              Background="Transparent" Foreground="{DynamicResource NIRATextBrush}"
              FontFamily="Segoe UI Variable Text, Segoe UI">
     <UserControl.Resources>
@@ -46,6 +47,44 @@
                     </Border>
                 </ControlTemplate>
             </Setter.Value></Setter>
+        </Style>
+        <!-- The global NIRA button style has Height=40. Gallery photos must opt
+             out of it completely so their natural aspect ratio defines height. -->
+        <Style x:Key="GalleryPhotoButtonStyle" TargetType="Button">
+            <Setter Property="Height" Value="Auto"/>
+            <Setter Property="MinHeight" Value="0"/>
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="VerticalContentAlignment" Value="Stretch"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Margin" Value="0"/>
+            <Setter Property="Foreground" Value="{DynamicResource NIRATextBrush}"/>
+            <Setter Property="Background" Value="{DynamicResource NIRAChipBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource NIRAGlassBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="PhotoFrame" CornerRadius="14" ClipToBounds="True"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter Content="{TemplateBinding Content}"
+                                              HorizontalAlignment="Stretch"
+                                              VerticalAlignment="Stretch"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="PhotoFrame" Property="BorderBrush" Value="{DynamicResource NIRABlueBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="PhotoFrame" Property="BorderBrush" Value="{DynamicResource NIRACyanBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
     </UserControl.Resources>
     <Grid>
@@ -121,28 +160,43 @@
                                Foreground="{DynamicResource NIRACyanBrush}"/>
                 </Grid>
                 <Grid Grid.Row="2">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                        <ItemsControl x:Name="ImageTiles" ItemsSource="{Binding Tiles}">
-                            <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemTemplate><DataTemplate>
-                                <Button Tag="{Binding}" Click="Image_Click" Cursor="Hand" Background="Transparent" BorderThickness="0"
-                                        Margin="0,0,13,15" Padding="0" ToolTip="Open photo">
-                                    <Border Width="220" CornerRadius="14" ClipToBounds="True" BorderThickness="1"
-                                            BorderBrush="{DynamicResource NIRAGlassBorderBrush}" Background="{DynamicResource NIRAChipBrush}">
+                    <ScrollViewer x:Name="GalleryScrollViewer" VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled" CanContentScroll="False">
+                        <ItemsControl x:Name="ImageTiles" ItemsSource="{Binding Tiles}"
+                                      HorizontalAlignment="Stretch">
+                            <!-- Responsive masonry: each column scales to available space;
+                                 every photo determines its OWN height from its aspect ratio. -->
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <gallery:NIRAMasonryPanel PreferredColumnWidth="235"
+                                                             ColumnSpacing="14" RowSpacing="15"/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemContainerStyle>
+                                <Style TargetType="ContentPresenter">
+                                    <Setter Property="HorizontalAlignment" Value="Stretch"/>
+                                </Style>
+                            </ItemsControl.ItemContainerStyle>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Button Tag="{Binding}" Click="Image_Click" ToolTip="Open full image"
+                                            Style="{StaticResource GalleryPhotoButtonStyle}">
                                         <StackPanel>
-                                            <Border Height="150" Background="{DynamicResource NIRAChipBrush}">
-                                                <Image Source="{Binding Preview}" Stretch="Uniform"/>
-                                            </Border>
-                                            <StackPanel Margin="12,11,12,12">
+                                            <!-- No fixed width, no fixed image height and no cropping. -->
+                                            <Image Source="{Binding Preview}" Stretch="Uniform"
+                                                   HorizontalAlignment="Stretch"
+                                                   RenderOptions.BitmapScalingMode="HighQuality"/>
+                                            <StackPanel Margin="12,10,12,12">
                                                 <TextBlock Text="{Binding Title}" FontSize="12" FontWeight="SemiBold"
-                                                           TextTrimming="CharacterEllipsis"/>
+                                                           TextWrapping="Wrap"/>
                                                 <TextBlock Text="{Binding Credit}" FontSize="10.5" Margin="0,5,0,0"
-                                                           Foreground="{DynamicResource NIRASecondaryBrush}" TextTrimming="CharacterEllipsis"/>
+                                                           TextWrapping="Wrap"
+                                                           Foreground="{DynamicResource NIRASecondaryBrush}"/>
                                             </StackPanel>
                                         </StackPanel>
-                                    </Border>
-                                </Button>
-                            </DataTemplate></ItemsControl.ItemTemplate>
+                                    </Button>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
                         </ItemsControl>
                     </ScrollViewer>
                     <StackPanel x:Name="EmptyState" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center"

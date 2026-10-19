@@ -17,7 +17,8 @@ public sealed record NIRARuntimeSettings
     public NIRAVoiceEngineMode VoiceEngine { get; init; } = NIRAVoiceEngineMode.Auto;
     public double VoiceVolume { get; init; } = 1.0;
 
-    // Presence / idle
+    // Presence / idle. Legacy persisted name, now the global floating blob
+    // preference (desktop AND main Chat), not a desktop-only override.
     public bool DesktopPresenceEnabled { get; init; } = true;
     public bool IdleBehaviorEnabled { get; init; } = true;
     public bool UserIdleAwarenessEnabled { get; init; } = true;
@@ -249,4 +250,3 @@ public sealed class NIRARuntimeSettingsService
         }
     }
 }
-

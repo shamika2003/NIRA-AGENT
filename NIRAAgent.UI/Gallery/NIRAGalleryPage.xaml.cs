@@ -35,10 +35,11 @@ public partial class NIRAGalleryPage : UserControl
         StoragePathText.Text = _library.RootFolder;
         Tiles.Clear();
         var all = _library.Items.Where(x => x.Category == _category).ToArray();
+        int previewPixels = all.Length > 72 ? 520 : all.Length > 12 ? 720 : 1200;
         foreach (var item in all.Take(240))
         {
             string path = _library.ResolvePath(item);
-            if (File.Exists(path)) Tiles.Add(new NIRAGalleryTile(item, path));
+            if (File.Exists(path)) Tiles.Add(new NIRAGalleryTile(item, path, previewPixels));
         }
         CountText.Text = $"{all.Length} photo{(all.Length == 1 ? "" : "s")}";
         StatusText.Text = all.Length > 240 ? "Showing 240 newest images. Older files remain safely stored." : "Local library • Images kept on your PC";
@@ -72,6 +73,7 @@ public partial class NIRAGalleryPage : UserControl
             _ => "Images NIRA creates in the future"
         };
         RefreshGallery();
+        GalleryScrollViewer.ScrollToTop();
     }
     private void Uploaded_Click(object sender, RoutedEventArgs e) => SetCategory(NIRAGalleryCategory.Uploaded);
     private void Web_Click(object sender, RoutedEventArgs e) => SetCategory(NIRAGalleryCategory.WebFound);
@@ -153,7 +155,7 @@ public partial class NIRAGalleryPage : UserControl
     }
 }
 
-public sealed record NIRAGalleryTile(NIRAGalleryItem Record, string FullPath)
+public sealed record NIRAGalleryTile(NIRAGalleryItem Record, string FullPath, int PreviewPixelWidth)
 {
     public string Title => Record.Title;
     public string Credit => Record.Credit.Length > 0 ? Record.Credit : Record.Category switch
@@ -162,5 +164,5 @@ public sealed record NIRAGalleryTile(NIRAGalleryItem Record, string FullPath)
         NIRAGalleryCategory.WebFound => "Web reference photo",
         _ => "Generated image"
     };
-    public ImageSource? Preview { get; } = VisualArtifactViewModel.TryLoadPreview(FullPath, 350);
+    public ImageSource? Preview { get; } = VisualArtifactViewModel.TryLoadPreview(FullPath, PreviewPixelWidth);
 }

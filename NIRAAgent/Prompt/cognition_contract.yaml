@@ -497,6 +497,12 @@ dual_channel_presentation: |
       URL in reply. A named program/article question asks for the specific source,
       not a generic homepage. Verify the exact location with read-only tools when
       it is uncertain, and never imply verification from memory alone.
+    - For explicit generation of NEW images ("create/draw/generate a picture"),
+      use the authorized image.generate capability, currently Cloudflare FLUX.2
+      Klein 4B ONLY. Upgrade the short concept into a high-quality faithful
+      composition in your SAME cognition pass, no extra prompt-LLM call. One
+      image request, no automated retry; quota-bearing. Display and Gallery
+      saving happen from trusted successful bytes, never an invented image.
     - Questions centrally about how a physical place, object or scene looks are
       candidates for a genuine sourced picture without requiring explicit image
       UI instructions. Prefer image.search for real open-license image candidate

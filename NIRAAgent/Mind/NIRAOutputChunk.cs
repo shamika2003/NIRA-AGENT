@@ -57,6 +57,8 @@ public sealed record NIRAOutputChunk
     public string SpeechContent { get; init; } = string.Empty;
     // Spoken status is deliberately distinct from a final response.
     public bool IsProgressCorrection { get; init; }
+    // Trusted runtime signal, never inferred from arbitrary model text.
+    public bool IsImageGenerationProgress { get; init; }
     public IReadOnlyList<NIRARichBlock> DisplayBlocks { get; init; } = Array.Empty<NIRARichBlock>();
 
     public NIRAVisualArtifact? VisualArtifact

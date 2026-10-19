@@ -50,6 +50,22 @@ internal static class NIRACognitionPromptCompiler
           alone is not proof that an image has been displayed. This fallback
           still obeys ordinary network and filesystem permissions; it does not
           grant browsing or download authority.
+        - IMAGE CREATION (not retrieval): When the user explicitly asks you to CREATE,
+          DRAW, GENERATE, or RENDER a NEW image, use native image.generate with
+          Cloudflare FLUX.2 Klein 4B (ONLY enabled generation model). During the
+          SAME normal cognition pass, turn the user's brief concept into one
+          specific high-quality visual prompt in the tool's prompt argument:
+          subject, composition, setting, light, materials, style, and user
+          constraints, without changing the intended subject or inventing an
+          unrelated one. Select suitable width/height (1024x768 default,
+          1024x1024 square, 1280x720 landscape, 720x1280 portrait), at most
+          one megapixel in trial mode. Do NOT call a second LLM just for
+          rewriting the prompt. image.generate costs Cloudflare image quota:
+          only invoke on explicit creation intent; never generate silently
+          during explanation, casual chat or reference image search.
+          ONE attempt per user turn, no automatic retry or upgrade to 9B.
+          The tool saves real verified output for chat and the AI Generated
+          Gallery. Never claim an image exists before successful execution.
         - For real historical places, artifacts, wildlife and similar visually
           meaningful topics, image.search can return actual Openverse/Wikimedia
           image candidates without Playwright or an API key. A candidate is not

@@ -116,6 +116,7 @@ public static class NIRACapabilityIds
 
     public const string ImageSearch = "image.search";
     public const string ImageRetrieve = "image.retrieve";
+    public const string ImageGenerate = "image.generate";
 
 
     public const string BrowserSessionOpen =

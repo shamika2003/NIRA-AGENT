@@ -817,11 +817,15 @@
                                     <TranslateTransform x:Name="JourneyIndicatorTranslate"/>
                                 </Grid.RenderTransform>
                                 <StackPanel>
-                                    <typing:NIRATypingIndicator Width="42" Height="18"
-                                        HorizontalAlignment="Left"
-                                        IndicatorStyle="FinalDepthDrift"
-                                        SpeedMultiplier="0.85"
-                                        IsHitTestVisible="False"/>
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                                        <typing:NIRATypingIndicator Width="42" Height="18"
+                                            IndicatorStyle="FinalDepthDrift"
+                                            SpeedMultiplier="0.85"
+                                            IsHitTestVisible="False"/>
+                                        <typing:NIRAImageCreationIndicator x:Name="ImageCreationMotion"
+                                            Width="33" Height="18" Margin="5,0,0,0"
+                                            Visibility="Collapsed" IsHitTestVisible="False"/>
+                                    </StackPanel>
                                     <TextBlock x:Name="JourneyProgressText"
                                                Text="{Binding ProgressText}"
                                                Margin="1,5,0,0"
@@ -864,6 +868,9 @@
 
                 <DataTrigger Binding="{Binding HasProgress}" Value="True">
                     <Setter TargetName="JourneyProgressText" Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsImageGenerationActive}" Value="True">
+                    <Setter TargetName="ImageCreationMotion" Property="Visibility" Value="Visible"/>
                 </DataTrigger>
 
                 <DataTrigger Binding="{Binding IsJourneyFading}" Value="True">

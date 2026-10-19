@@ -969,6 +969,7 @@ public sealed class NIRAExecutive
         string? pendingBlankDocumentText = null;
         bool desktopTextMismatchObserved = false;
 
+        bool imageGenerationAttempted = false;
         HashSet<string> executedCapabilityRequests =
             new(
                 StringComparer.OrdinalIgnoreCase);
@@ -3923,6 +3924,16 @@ public sealed class NIRAExecutive
                     continue;
                 }
 
+                if (request.CapabilityId == NIRACapabilityIds.ImageGenerate)
+                {
+                    if (imageGenerationAttempted)
+                    {
+                        capabilityEvidence.AppendLine("IMAGE GENERATION: Already attempted once in this turn. Do not request another generation or retry. Finish from the verified result or state the failure.");
+                        continue;
+                    }
+                    imageGenerationAttempted = true;
+                }
+
                 if (executedCapabilityRequests.Add(
                         signature))
                 {
@@ -3960,6 +3971,20 @@ public sealed class NIRAExecutive
             NIRACapabilityRequest[] newCapabilityRequests =
                 dispatchCapabilities.ToArray();
 
+
+            if (newCapabilityRequests.Any(request => request.CapabilityId == NIRACapabilityIds.ImageGenerate))
+            {
+                // Trusted progress marker: no additional LLM call. Drives the
+                // small image orbit next to NIRA's existing three dots.
+                yield return new NIRAOutputChunk
+                {
+                    RunId = runId, Source = mindEvent.Source,
+                    Type = NIRAOutputChunkType.Progress,
+                    Content = "Creating your image with FLUX.2 Klein 4B…",
+                    SpeechContent = string.Empty,
+                    IsImageGenerationProgress = true
+                };
+            }
 
             IReadOnlyList<NIRACapabilityResult> capabilityResults =
                 await _capabilities.ExecuteAsync(

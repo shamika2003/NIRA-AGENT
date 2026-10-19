@@ -412,8 +412,8 @@
                         <TextBlock Text="Control NIRA's desktop body and idle behavior." Style="{StaticResource SettingsDescription}"/>
                         <ContentControl Style="{StaticResource UtilityGlassCard}" Margin="0,10,0,20">
                             <StackPanel Margin="17,15">
-                                <CheckBox x:Name="DesktopPresenceCheck" Content="Show NIRA on the desktop when chat is not active" Checked="DesktopPresence_Changed" Unchecked="DesktopPresence_Changed"/>
-                                <TextBlock Text="Disabling this hides the free desktop body; the main interface presence remains available." Margin="28,0,0,9" FontSize="10" TextWrapping="Wrap" Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                                <CheckBox x:Name="DesktopPresenceCheck" Content="Show NIRA's living blob (desktop and Chat)" Checked="DesktopPresence_Changed" Unchecked="DesktopPresence_Changed"/>
+                                <TextBlock Text="Turn this off to hide the blob everywhere, including Chat and Gallery. NIRA's chat and other features keep working." Margin="28,0,0,9" FontSize="10" TextWrapping="Wrap" Foreground="{DynamicResource NIRASecondaryBrush}"/>
                                 <CheckBox x:Name="IdleBehaviorCheck" Content="Enable idle behavior" Checked="IdleBehavior_Changed" Unchecked="IdleBehavior_Changed"/>
                                 <CheckBox x:Name="IdleAwarenessCheck" Content="Notice when I have been inactive" Margin="28,3,0,0" Checked="IdleAwareness_Changed" Unchecked="IdleAwareness_Changed"/>
                                 <CheckBox x:Name="IdleFadeCheck" Content="Fade NIRA's desktop presence when idle" Margin="28,3,0,0" Checked="IdleFade_Changed" Unchecked="IdleFade_Changed"/>

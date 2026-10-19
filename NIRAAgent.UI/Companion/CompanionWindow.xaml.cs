@@ -405,7 +405,10 @@ public partial class CompanionWindow
         object? sender,
         EventArgs e)
     {
-        ReturnFromMainWindow();
+        if (_isDockedToMainWindow)
+            ReturnFromMainWindow();
+        else
+            ApplyDesktopPresenceSetting(_settings.Current.DesktopPresenceEnabled);
     }
 
 
@@ -502,7 +505,11 @@ public partial class CompanionWindow
             return;
         }
 
-        if (!_mainWindow.IsPresenceSidebarExpanded)
+        if (!NIRACompanionVisibilityPolicy.CanDock(
+                _settings.Current.DesktopPresenceEnabled,
+                _mainWindow.IsActive,
+                _mainWindow.CanHostCompanionBody,
+                _mainWindow.IsPresenceSidebarExpanded))
         {
             CancelProgrammaticMovement();
 
@@ -551,7 +558,11 @@ public partial class CompanionWindow
             return;
         }
 
-        if (!_mainWindow.IsPresenceSidebarExpanded)
+        if (!NIRACompanionVisibilityPolicy.CanDock(
+                _settings.Current.DesktopPresenceEnabled,
+                _mainWindow.IsActive,
+                _mainWindow.CanHostCompanionBody,
+                _mainWindow.IsPresenceSidebarExpanded))
         {
             CancelProgrammaticMovement();
 
@@ -582,7 +593,8 @@ public partial class CompanionWindow
             NIRAPresenceSnapshot presence =
                 _presence.Current;
 
-            if (presence.IsAvailable)
+            if (presence.IsAvailable &&
+                (_desktopReturnBounds is null || _desktopReturnBounds.Value.IsEmpty))
             {
                 _desktopReturnBounds =
                     presence.WindowBounds;
@@ -621,7 +633,11 @@ public partial class CompanionWindow
     private void SnapToMainWindowDock()
     {
         if (
+            !_settings.Current.DesktopPresenceEnabled
+            ||
             !_isDockedToMainWindow
+            ||
+            _mainWindow?.CanHostCompanionBody != true
             ||
             !TryResolveMainWindowDockTarget(
                 out int targetLeft,
@@ -849,6 +865,20 @@ public partial class CompanionWindow
 
     private void ForceVisibleForMainDock()
     {
+        // Every path that can Show() goes through the same owner preference
+        // and active-workspace gate. Gallery never gets a floating overlay.
+        if (!NIRACompanionVisibilityPolicy.CanShow(
+                _settings.Current.DesktopPresenceEnabled,
+                _mainWindow?.IsActive == true,
+                _mainWindow?.CanHostCompanionBody == true,
+                _mainWindow?.IsPresenceSidebarExpanded == true))
+        {
+            CancelProgrammaticMovement();
+            if (IsVisible) Hide();
+            _presence.SetVisualState(false, false);
+            return;
+        }
+
         BeginAnimation(
             OpacityProperty,
             null);
@@ -972,6 +1002,9 @@ public partial class CompanionWindow
         {
             _idleFadeTimer.Start();
         }
+
+        if (_settings.Current.DesktopPresenceEnabled && _mainWindow?.IsActive == true)
+            Dispatcher.BeginInvoke(new Action(DockToMainWindow));
     }
 
 
@@ -1376,9 +1409,7 @@ public partial class CompanionWindow
             case NIRABodyCommandType.Show:
             {
                 if (
-                    !_settings.Current.DesktopPresenceEnabled
-                    &&
-                    !_isDockedToMainWindow)
+                    !_settings.Current.DesktopPresenceEnabled)
                 {
                     break;
                 }
@@ -1704,8 +1735,10 @@ public partial class CompanionWindow
         if (before.DesktopPresenceEnabled !=
             after.DesktopPresenceEnabled)
         {
+            // An asynchronously delivered older event cannot re-enable
+            // the blob after a newer Off action.
             ApplyDesktopPresenceSetting(
-                after.DesktopPresenceEnabled);
+                _settings.Current.DesktopPresenceEnabled);
         }
 
         if (
@@ -1724,85 +1757,62 @@ public partial class CompanionWindow
     private void ApplyDesktopPresenceSetting(
         bool enabled)
     {
-        if (_isDockedToMainWindow)
+        // "Off" is global, not "desktop-only". Cancel any in-flight
+        // docking movement before it can materialize the overlay again.
+        if (!enabled || !_settings.Current.DesktopPresenceEnabled)
         {
-            ForceVisibleForMainDock();
+            if (IsVisible && !_isDockedToMainWindow)
+            {
+                ReportPresence();
+                NIRAPresenceSnapshot presence = _presence.Current;
+                if (presence.IsAvailable)
+                    _desktopReturnBounds = presence.WindowBounds;
+            }
+
+            _isDockedToMainWindow = false;
+            CancelProgrammaticMovement();
+            BeginAnimation(OpacityProperty, null);
+            Opacity = NormalOpacity;
+            _isFaded = false;
+            if (IsVisible) Hide();
+            _presence.SetVisualState(false, false);
             return;
         }
 
-        if (!enabled)
+        // The main app may be showing Gallery or a collapsed Chat sidebar.
+        // Neither may host an overlay. Re-enable in Chat, or on the desktop
+        // only when the main app is not active.
+        if (_mainWindow is { IsActive: true, IsVisible: true } main &&
+            main.WindowState != WindowState.Minimized)
         {
-            if (IsVisible)
+            if (main.CanHostCompanionBody)
             {
-                ReportPresence();
-
-                NIRAPresenceSnapshot presence =
-                    _presence.Current;
-
-                if (presence.IsAvailable)
-                {
-                    _desktopReturnBounds =
-                        presence.WindowBounds;
-                }
+                ForceVisibleForMainDock();
+                Dispatcher.BeginInvoke(new Action(DockToMainWindow));
             }
-
-            CancelProgrammaticMovement();
-
-            BeginAnimation(
-                OpacityProperty,
-                null);
-
-            Opacity =
-                NormalOpacity;
-
-            _isFaded =
-                false;
-
-            if (IsVisible)
+            else
             {
-                Hide();
+                CancelProgrammaticMovement();
+                if (IsVisible) Hide();
+                _presence.SetVisualState(false, false);
             }
-
-            _presence.SetVisualState(
-                false,
-                false);
-
             return;
         }
 
         ForceVisibleForMainDock();
 
-        if (
-            _desktopReturnBounds is PcRectangle returnBounds
-            &&
+        if (_desktopReturnBounds is PcRectangle returnBounds &&
             !returnBounds.IsEmpty)
         {
-            PcRectangle safe =
-                _placement
-                    .ClampToAvailableDisplay(
-                        returnBounds);
-
-            IntPtr handle =
-                new WindowInteropHelper(
-                    this)
-                    .Handle;
-
-            if (handle !=
-                IntPtr.Zero)
-            {
-                SetWindowPosition(
-                    handle,
-                    safe.Left,
-                    safe.Top);
-            }
-
-            _desktopReturnBounds =
-                null;
+            PcRectangle safe = _placement.ClampToAvailableDisplay(returnBounds);
+            IntPtr handle = new WindowInteropHelper(this).Handle;
+            if (handle != IntPtr.Zero)
+                SetWindowPosition(handle, safe.Left, safe.Top);
+            _desktopReturnBounds = null;
         }
 
         ReportPresence();
     }
-
 
     // =========================================================
     // IDLE FADE

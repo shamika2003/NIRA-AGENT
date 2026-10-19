@@ -388,6 +388,8 @@ public sealed class MainWindowViewModel
             {
                 if (chunk.Type == NIRAOutputChunkType.Progress)
                 {
+                    if (chunk.IsImageGenerationProgress)
+                        assistantMessage.IsImageGenerationActive = true;
                     // Progress is not a chat message, a capability result, or
                     // archival material; show only while the reply is pending.
                     if (!assistantMessage.HasContent &&
@@ -524,6 +526,8 @@ public sealed class MainWindowViewModel
         {
             if (string.IsNullOrWhiteSpace(chunk.Content)) return;
             BackgroundResponseState progress = GetOrCreateBackgroundResponse(chunk.RunId, chunk.OriginPrompt);
+            if (chunk.IsImageGenerationProgress)
+                progress.Message.IsImageGenerationActive = true;
             if (!progress.Message.HasContent &&
                 !progress.Message.HasRichElements &&
                 !progress.Message.HasVisualArtifacts)
