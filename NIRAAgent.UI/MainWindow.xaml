@@ -892,74 +892,10 @@
                                                Opacity="0.82"
                                                Visibility="Collapsed"/>
 
-                                    <Border x:Name="ImageCreationPlaceholder"
-                                            Visibility="Collapsed"
-                                            Margin="0,4,0,0"
-                                            Padding="14"
-                                            MaxWidth="520"
-                                            CornerRadius="18"
-                                            Background="{DynamicResource NIRAGlassStrongTintBrush}"
-                                            BorderBrush="{DynamicResource NIRAComposerEdgeBrush}"
-                                            BorderThickness="1">
-                                        <StackPanel>
-                                            <Border Height="214"
-                                                    Padding="12"
-                                                    CornerRadius="15"
-                                                    Background="#12091832"
-                                                    BorderBrush="#24000000"
-                                                    BorderThickness="1">
-                                                <Grid>
-                                                    <typing:NIRAImageCreationIndicator Width="248"
-                                                                                       Height="160"
-                                                                                       HorizontalAlignment="Center"
-                                                                                       VerticalAlignment="Center"
-                                                                                       IsHitTestVisible="False"/>
-                                                    <Border HorizontalAlignment="Left"
-                                                            VerticalAlignment="Top"
-                                                            Padding="10,6"
-                                                            Background="#B1081730"
-                                                            CornerRadius="9"
-                                                            IsHitTestVisible="False">
-                                                        <TextBlock Text="AI IMAGE GENERATION"
-                                                                   FontSize="10"
-                                                                   FontWeight="SemiBold"
-                                                                   Foreground="White"/>
-                                                    </Border>
-                                                    <Border HorizontalAlignment="Right"
-                                                            VerticalAlignment="Bottom"
-                                                            Padding="10,6"
-                                                            Background="#B1081730"
-                                                            CornerRadius="9"
-                                                            IsHitTestVisible="False">
-                                                        <TextBlock Text="FLUX.2 KLEIN 4B"
-                                                                   FontSize="10"
-                                                                   FontWeight="SemiBold"
-                                                                   Foreground="#FFDDF4FF"/>
-                                                    </Border>
-                                                </Grid>
-                                            </Border>
-                                            <TextBlock Text="Creating image"
-                                                       Margin="2,12,2,0"
-                                                       FontSize="14.5"
-                                                       FontWeight="SemiBold"
-                                                       Foreground="{DynamicResource NIRATextBrush}"/>
-                                            <TextBlock Text="NIRA is sketching, lighting, and composing your scene."
-                                                       Margin="2,5,2,0"
-                                                       FontSize="11.2"
-                                                       TextWrapping="Wrap"
-                                                       Foreground="{DynamicResource NIRASecondaryBrush}"/>
-                                            <TextBlock x:Name="ImageJourneyProgressText"
-                                                       Text="{Binding ProgressText}"
-                                                       Margin="2,9,2,0"
-                                                       MaxWidth="470"
-                                                       FontSize="10.8"
-                                                       LineHeight="16"
-                                                       TextWrapping="Wrap"
-                                                       Foreground="{DynamicResource NIRASecondaryBrush}"
-                                                       Opacity="0.82"
-                                                       Visibility="Collapsed"/>
-                                        </StackPanel>
-                                    </Border>
+                                    <!-- Shared production/offline preview of the selected D4 animation. -->
+                                    <typing:NIRAImageCreationPlaceholder x:Name="ImageCreationPlaceholder"
+                                                                          Visibility="Collapsed"
+                                                                          Margin="0,6,0,0"/>
                                 </StackPanel>
                             </Grid>
                         </Grid>
@@ -992,7 +928,6 @@
 
                 <DataTrigger Binding="{Binding HasProgress}" Value="True">
                     <Setter TargetName="JourneyProgressText" Property="Visibility" Value="Visible"/>
-                    <Setter TargetName="ImageJourneyProgressText" Property="Visibility" Value="Visible"/>
                 </DataTrigger>
                 <DataTrigger Binding="{Binding IsImageGenerationActive}" Value="True">
                     <Setter TargetName="JourneyTypingRow" Property="Visibility" Value="Collapsed"/>

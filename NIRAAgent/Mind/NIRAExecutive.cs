@@ -5485,6 +5485,43 @@ public sealed class NIRAExecutive
                 }
             }
 
+            // A local, calculator-backed numeric certificate can avoid a third
+            // cloud call for a single grounded metric. This does NOT accept a
+            // model flag alone: the original registered request, successful
+            // read-only capability receipt and exact displayed numeric value
+            // must agree. Multi-result/action/uncertain turns keep model review.
+            if (userTerminalDraft && !completionReviewConfirmedComplete &&
+                capabilityResultsBySignature.Values.Any(result =>
+                    result.CapabilityId == NIRACapabilityIds.MathCalculate))
+            {
+                // Executive narrative is always populated, even by harmless
+                // run bookkeeping. It is not an independent action/receipt.
+                // Reject when there is ANY noncalculator capability, dynamic
+                // tool, commitment, or owned work instead of rejecting merely
+                // because the trusted bookkeeping string is nonempty.
+                bool otherWork = preReviewCommitmentSucceeded ||
+                    !string.IsNullOrWhiteSpace(dynamicToolEvidence.ToString()) ||
+                    capabilityResultsBySignature.Values.Any(result =>
+                        result.CapabilityId != NIRACapabilityIds.MathCalculate);
+                var numericReview = NIRAVerifiedNumericCompletionPolicy.Evaluate(
+                    decision, capabilityRequestsBySignature, capabilityResultsBySignature,
+                    hasPendingOwnedTask: GetPendingTaskForEvent(mindEvent) != null,
+                    hasOtherWorkOrEvidence: otherWork,
+                    priorReviewObjection: taskCompletionReviewCount > 0);
+                if (numericReview.Eligible)
+                {
+                    completionReviewConfirmedComplete = true;
+                    NIRADiagnosticTrace.Event("NUMERIC-RECEIPT-FASTPATH",
+                        $"Run={runId:D} Cycle={cycle} Verified=OneExactReadOnlyMetric " +
+                        "ReviewerCallsSaved=1 Scope=CalculatorExpressionOnly");
+                }
+                else
+                {
+                    NIRADiagnosticTrace.Event("NUMERIC-REVIEW-FALLBACK",
+                        $"Run={runId:D} Cycle={cycle} Reason={numericReview.Reason}");
+                }
+            }
+
             if (userTerminalDraft &&
                 !completionReviewConfirmedComplete)
             {
@@ -5540,6 +5577,13 @@ public sealed class NIRAExecutive
                                 latestContext?.SocialCarryoverContext ?? string.Empty),
                             decision.State.ToString()),
                         cancellationToken);
+
+                // Audit the review outcome without writing private prompt,
+                // user text or model-authored objection into the log.
+                NIRADiagnosticTrace.Event("OBJECTIVE-REVIEW-RESULT",
+                    $"Run={runId:D} Cycle={cycle} " +
+                    $"Verdict={taskReview?.Verdict ?? "Unavailable"} " +
+                    $"Reconsideration={taskReview?.NeedsReconsideration == true}");
 
                 if (NIRAProductionContinuityPolicy.AcceptsObjectiveReview(
                         decision, taskReview))
@@ -5941,12 +5985,21 @@ public sealed class NIRAExecutive
                 // The realization service consumes the already grounded draft
                 // and authoritative post-interaction state; on failure it returns
                 // the draft untouched. PreserveExact never goes through a rewrite.
+                // Even a stable, model-marked CharacterReady draft can copy an
+                // immediately previous opening. This grounded lexical cadence
+                // check is NOT a hardcoded speech-pattern/personality classifier.
+                // It merely routes the existing Natural reply through the same
+                // bounded expression service to vary the wording, never the facts.
+                bool repeatsRecentOpening = terminalNaturalReply &&
+                    NIRAConversationCadencePolicy.RepeatsOpening(
+                        reply, latestContext?.ConversationContext);
+
                 bool shouldRealize =
                     NIRACharacterDeliveryPolicy.RequiresOptimizedFidelityPass(
                         decision, reply, hasOutstandingCognitionWork,
                         authoritativeCharacterShift: characterDelivery.RequiresRealization,
                         independentlyReviewed: completionReviewConfirmedComplete ||
-                            directTemporalWakeVerified);
+                            directTemporalWakeVerified) || repeatsRecentOpening;
 
                 bool directCharacterDelivery =
                     terminalNaturalReply && !shouldRealize;
@@ -5954,6 +6007,7 @@ public sealed class NIRAExecutive
                 Debug.WriteLine(
                     $"[ResponseRoute] Run={runId} | Realize={shouldRealize} | " +
                     $"DirectCharacter={directCharacterDelivery} | " +
+                    $"CadenceRepeat={repeatsRecentOpening} | " +
                     $"AlwaysOnCharacterPass={shouldRealize} | " +
                     $"PostCommitCharacterRealization={postCommitCharacterRealization} | " +
                     $"PreResponseModelCalls={preResponseModelCalls} | " +

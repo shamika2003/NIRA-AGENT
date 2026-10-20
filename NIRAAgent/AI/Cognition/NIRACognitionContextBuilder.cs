@@ -492,6 +492,7 @@ public sealed class NIRACognitionContextBuilder
                 new[]
                 {
                     externalAppScopeContext,
+                    NIRAConversationCadencePolicy.DescribeRecentOpenings(conversation.Content),
                     conversationPulse.Content
                 }.Where(
                     value =>

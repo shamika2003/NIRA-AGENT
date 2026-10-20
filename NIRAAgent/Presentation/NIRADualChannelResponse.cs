@@ -7,7 +7,7 @@ namespace NIRAAgent.Presentation;
 // declarative screen blocks. The WPF app, not the model, owns the rendering.
 public sealed record NIRARichBlock
 {
-    public string Type { get; init; } = string.Empty; // heading, text, hero, insight, source, card, metric, table, chart, code, details, list, quote, timeline, checklist, progress
+    public string Type { get; init; } = string.Empty; // heading, text, hero, insight, source, card, metric, equation, table, chart, code, details, list, quote, timeline, checklist, progress
     public string Title { get; init; } = string.Empty;
     public string Text { get; init; } = string.Empty;
     public string Unit { get; init; } = string.Empty;
@@ -50,7 +50,7 @@ public static class NIRAPresentationPolicy
         {
             if (input is null) continue;
             string type = (input.Type ?? string.Empty).Trim().ToLowerInvariant();
-            if (type is not ("heading" or "text" or "hero" or "insight" or "source" or "card" or "metric" or "table" or "chart" or "code" or "details" or "list" or "quote" or "timeline" or "checklist" or "progress" or "tabs" or "followups" or "file")) continue;
+            if (type is not ("heading" or "text" or "hero" or "insight" or "source" or "card" or "metric" or "equation" or "table" or "chart" or "code" or "details" or "list" or "quote" or "timeline" or "checklist" or "progress" or "tabs" or "followups" or "file")) continue;
             var items = (input.Items ?? Array.Empty<string>()).Take(24).Select(x => Clip(x, type == "file" ? 32760 : 450)).Where(x => x.Length > 0).ToArray();
             var panels = (input.Panels ?? Array.Empty<string>()).Take(5).Select(x => Clip(x, 3000)).ToArray();
             var cols = (input.Columns ?? Array.Empty<string>()).Take(8).Select(c => Clip(c, 75)).ToArray();
@@ -66,7 +66,7 @@ public static class NIRAPresentationPolicy
             if (type == "progress" && (input.ProgressValue is not double progress ||
                 input.ProgressMaximum is not double maximum || !double.IsFinite(progress) ||
                 !double.IsFinite(maximum) || maximum <= 0 || progress < 0 || progress > maximum)) continue;
-            if ((type is "details" or "quote") && string.IsNullOrWhiteSpace(input.Text)) continue;
+            if ((type is "details" or "quote" or "equation") && string.IsNullOrWhiteSpace(input.Text)) continue;
             if (type == "table" && (cols.Length == 0 || rows.Length == 0)) continue;
             if (type == "chart" && (labels.Length < 2 || labels.Length != values.Length || values.Any(v => !double.IsFinite(v)))) continue;
             string title = Clip(input.Title, 160), text = Clip(input.Text, type == "code" ? 7000 : type == "details" ? 4000 : type == "file" ? 32760 : 1600);

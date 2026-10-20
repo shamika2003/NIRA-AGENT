@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Media;
+using NIRAAgent.Presentation;
 
 namespace NIRAAgent.UI.Presentation;
 
@@ -28,7 +29,8 @@ public static class NIRAStyledChatText
     {
         if (sender is not TextBlock block) return;
         block.Inlines.Clear();
-        string text = (e.NewValue as string ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n');
+        string text = NIRAMathMarkup.ToReadableText(
+            (e.NewValue as string ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n'));
         if (text.Length == 0) return;
 
         // Preserve ordinary natural conversation. Interpret only explicit Markdown.
@@ -79,7 +81,7 @@ public static class NIRAStyledChatText
     // Restrict scheme-less links to common web TLDs so a filename such as
     // photo.png or NIRAAgent.dll does not become a misleading website link.
     private static readonly Regex InlineTokens = new(
-        @"\[(?<label>[^\]\r\n]{1,180})\]\((?<link>https?://[^\s)<>]{1,1900})\)|(?<url>https?://[^\s<>]+)|(?<![a-z0-9_@./:-])(?<domain>(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|org|net|gov|edu|mil|int|io|ai|dev|info|app|lk|uk|me|co|tv)(?:/[^\s<>]*)?)|\*\*(?<bold>[^*\r\n]+)\*\*|(?<!\*)\*(?<italic>[^*\r\n]+)\*(?!\*)|`(?<code>[^`\r\n]+)`",
+        @"\[(?<label>[^\]\r\n]{1,180})\]\((?<link>https?://[^\s)<>]{1,1900})\)|(?<url>https?://[^\s<>]+)|(?<![a-z0-9_@./:-])(?<domain>(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|org|net|gov|edu|mil|int|io|ai|dev|info|app|lk|uk|me|co|tv)(?:/[^\s<>]*)?)|\*\*(?<bold>[^*\r\n]+)\*\*|(?<![\p{L}\p{N}_*])\*(?<italic>(?:[^\s*\r\n]|[^\s*\r\n][^*\r\n]*[^\s*\r\n]))\*(?![\p{L}\p{N}_*])|`(?<code>[^`\r\n]+)`",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
 

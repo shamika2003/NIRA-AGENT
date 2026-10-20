@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Reflection;
 using NIRAAgent.Capabilities;
 using NIRAAgent.Browser;
@@ -23,6 +24,499 @@ int failed = 0;
 Console.WriteLine($"[DeepRouting] REGRESSION | Revision={NIRAModelSelection.RoutingRevision} | " +
     $"Assembly={typeof(NIRAModelSelection).Assembly.Location}");
 Console.WriteLine("[ConcurrentMind] REGRESSION | Revision=NIRA-CONCURRENT-20261014-S4-ADAPTIVE");
+
+// General arithmetic capability checks. These target the real parser and
+// handler, not any memorized conversational test question or canned answer.
+Check("CALC arithmetic precedence, right-associative powers and exact decimals", () =>
+{
+    decimal Evaluate(string expression) => NIRADecimalExpressionEvaluator.Calculate(expression);
+    Equal(512m, Evaluate("2^3^2"));
+    Equal(-4m, Evaluate("-2^2"));
+    Equal(4m, Evaluate("(-2)^2"));
+    Equal(0.125m, Evaluate("2^-3"));
+    Equal(0.3m, Evaluate("0.1+0.2"));
+    Equal(4.125m, Evaluate("4+12.5%"));
+    Equal(9m, Evaluate("sqrt(81)"));
+    Equal(3m, Evaluate("abs(-3)"));
+    Equal(6m, Evaluate("max(2,6,4)"));
+    Equal(2m, Evaluate("min(2,6,4)"));
+    Equal(2.35m, Evaluate("round(2.345,2)"));
+    Equal(250m, Evaluate("2.5e2"));
+});
+
+// Numeric fast-path is based on runtime calculator evidence, NEVER a
+// canned user question or a model's declared confidence alone.
+Check("CALC receipt-backed completion saves review only for one exact safe metric", () =>
+{
+    var request = Request(NIRACapabilityIds.MathCalculate,
+        """{"expression":"12500*(1-18%)*(1+7.5%)","displayDecimals":3}""");
+    var handler = new NIRAMathCalculationCapabilityHandler();
+    var performed = handler.ExecuteAsync(request).GetAwaiter().GetResult();
+    if (!performed.Succeeded) throw new Exception("Calculator fixture failed");
+    string signature = request.BuildSignature();
+    var reqs = new Dictionary<string, NIRACapabilityRequest> { [signature] = request };
+    var results = new Dictionary<string, NIRACapabilityResult> {
+        [signature] = new NIRACapabilityResult {
+            CapabilityId = NIRACapabilityIds.MathCalculate,
+            Status = NIRACapabilityResultStatus.Succeeded,
+            Risk = NIRACapabilityRisk.Observe,
+            Output = performed.Output
+        }
+    };
+    using JsonDocument proof = JsonDocument.Parse(performed.Output);
+    string exact = proof.RootElement.GetProperty("final").GetProperty("value").GetString()!;
+    var draft = new NIRACognitionDecision {
+        State = NIRACognitionState.Complete, EmitReply = true,
+        Reply = "Here is the calculation and result.",
+        ReplyReady = true, CharacterReady = true,
+        DisplayBlocks = new[] { new NIRARichBlock {
+            Type = "metric", Title = "Calculated amount", Text = exact + " LKR"
+        }}
+    };
+    bool Eligible(NIRACognitionDecision d,
+        Dictionary<string, NIRACapabilityResult>? observed = null,
+        bool pending = false, bool extra = false, bool rejected = false) =>
+        NIRAVerifiedNumericCompletionPolicy.HasVerifiedTerminalResult(d, reqs,
+            observed ?? results, pending, extra, rejected);
+    if (!Eligible(draft)) throw new Exception("Verified metric was not eligible");
+    if (Eligible(draft with { DisplayBlocks = new[] { new NIRARichBlock {
+            Type = "metric", Text = "99999 LKR" } } }))
+        throw new Exception("Incorrect number bypassed review");
+    if (Eligible(draft with { DisplayBlocks = new[] {
+            new NIRARichBlock { Type = "metric", Text = exact },
+            new NIRARichBlock { Type = "metric", Text = "2" }
+        } }))
+        throw new Exception("Multiple outputs bypassed review");
+    if (Eligible(draft with { DisplayBlocks = Array.Empty<NIRARichBlock>() }) ||
+        Eligible(draft with { ReplyReady = false }) ||
+        Eligible(draft with { ReviewCommitment = true }) ||
+        Eligible(draft with { State = NIRACognitionState.NeedUser }) ||
+        Eligible(draft with { CapabilityRequests = new[] { request } }) ||
+        Eligible(draft, pending: true) || Eligible(draft, extra: true) ||
+        Eligible(draft, rejected: true))
+        throw new Exception("Open or nonnumeric work bypassed reviewer");
+    var rejectedResult = new Dictionary<string, NIRACapabilityResult> {
+        [signature] = results[signature] with { OutcomeUncertain = true }
+    };
+    if (Eligible(draft, observed: rejectedResult))
+        throw new Exception("Uncertain calculator was certified");
+    // Mutate the DECODED receipt, not its serialized JSON bytes. The default
+    // System.Text.Json encoder can escape '+' as "\\u002B", which made a raw
+    // string Replace a no-op and incorrectly failed this regression check.
+    JsonNode alteredDocument = JsonNode.Parse(performed.Output) ??
+        throw new Exception("Calculator receipt could not be parsed");
+    string originalExpression = alteredDocument["final"]?["expression"]?.GetValue<string>() ??
+        throw new Exception("Calculator receipt has no final expression");
+    alteredDocument["final"]!["expression"] = originalExpression + "+1";
+    string alteredJson = alteredDocument.ToJsonString();
+    if (alteredJson == performed.Output ||
+        JsonNode.Parse(alteredJson)?["final"]?["expression"]?.GetValue<string>() == originalExpression)
+        throw new Exception("Tampered-expression fixture did not alter the receipt");
+    var alteredResult = new Dictionary<string, NIRACapabilityResult> {
+        [signature] = results[signature] with { Output = alteredJson }
+    };
+    // A certificate for the original request must never accept a result
+    // whose expression has changed, even if its numerical value was left alone.
+    using (JsonDocument tampered = JsonDocument.Parse(alteredJson))
+    {
+        string changed = tampered.RootElement.GetProperty("final").GetProperty("expression").GetString()!;
+        string submittedExpression = request.Arguments.GetProperty("expression").GetString()!;
+        if (changed == submittedExpression)
+            throw new Exception("Mismatched-expression fixture did not differ from the request");
+    }
+    var alterationVerdict = NIRAVerifiedNumericCompletionPolicy.Evaluate(draft, reqs,
+        alteredResult, false, false, false);
+    if (alterationVerdict.Eligible)
+        throw new Exception("Mismatched expression was certified. Receipt was changed but replay still passed.");
+
+    // A forged receipt whose new number AND displayed number agree with one
+    // another must also be rejected if it was not produced by math.calculate.
+    JsonNode forgedDocument = JsonNode.Parse(performed.Output)!;
+    forgedDocument["final"]!["value"] = "9999";
+    forgedDocument["final"]!["displayValue"] = "9999.000";
+    var forgedResult = new Dictionary<string, NIRACapabilityResult> {
+        [signature] = results[signature] with { Output = forgedDocument.ToJsonString() }
+    };
+    var forgedDraft = draft with { DisplayBlocks = new[] {
+        new NIRARichBlock { Type = "metric", Title = "Calculated amount", Text = "9999 LKR" }
+    } };
+    if (Eligible(forgedDraft, observed: forgedResult))
+        throw new Exception("Forged internally consistent numerical receipt was certified");
+
+    // A different request cannot borrow a successful earlier receipt just by
+    // carrying the same dictionary key. This verifies request-to-proof binding.
+    var changedRequest = Request(NIRACapabilityIds.MathCalculate,
+        """{"expression":"12500*(1-17%)*(1+7.5%)","displayDecimals":3}""");
+    var changedRequests = new Dictionary<string, NIRACapabilityRequest> { [signature] = changedRequest };
+    if (NIRAVerifiedNumericCompletionPolicy.HasVerifiedTerminalResult(draft,
+            changedRequests, results, false, false, false))
+        throw new Exception("Calculator certificate was detached from registered request identity");
+});
+
+Check("Verified numeric completion with unrounded named steps remains generic", () =>
+{
+    var calc = new NIRAMathCalculationCapabilityHandler();
+    var req = Request(NIRACapabilityIds.MathCalculate,
+        """{"expression":"net*(1+tax)","steps":[{"name":"net","expression":"219.75*(1-0.13)"}],"variables":{"tax":0.0925},"displayDecimals":4}""");
+    var performed = calc.ExecuteAsync(req).GetAwaiter().GetResult();
+    if (!performed.Succeeded) throw new Exception("Calculator step fixture failed");
+    string sig = req.BuildSignature();
+    var requests = new Dictionary<string, NIRACapabilityRequest> { [sig] = req };
+    var receipts = new Dictionary<string, NIRACapabilityResult> {
+        [sig] = new NIRACapabilityResult {
+            CapabilityId = NIRACapabilityIds.MathCalculate,
+            Status = NIRACapabilityResultStatus.Succeeded,
+            Risk = NIRACapabilityRisk.Observe,
+            Output = performed.Output
+        }
+    };
+    using JsonDocument doc = JsonDocument.Parse(performed.Output);
+    string exact = doc.RootElement.GetProperty("final").GetProperty("value").GetString()!;
+    var answer = new NIRACognitionDecision {
+        State = NIRACognitionState.Complete, EmitReply = true,
+        Reply = "The verified total is shown below.",
+        ReplyReady = true, CharacterReady = true,
+        DisplayBlocks = new[] { new NIRARichBlock {
+            Type = "metric", Title = "Total", Text = exact + " units" },
+            new NIRARichBlock { Type = "equation", Text = @"x=219.75(1-0.13)" }
+        }
+    };
+    var verdict = NIRAVerifiedNumericCompletionPolicy.Evaluate(answer, requests,
+        receipts, false, false, false);
+    if (!verdict.Eligible || verdict.Reason != "VerifiedSingleMetric")
+        throw new Exception("A named-step calculation with one correct metric was rejected");
+    if (NIRAVerifiedNumericCompletionPolicy.Evaluate(answer, requests,
+        receipts, true, false, false).Eligible)
+        throw new Exception("Owned pending task bypassed numeric review");
+    if (NIRAVerifiedNumericCompletionPolicy.Evaluate(answer, requests,
+        receipts, false, true, false).Eligible)
+        throw new Exception("Additional execution evidence bypassed review");
+    if (NIRAVerifiedNumericCompletionPolicy.Evaluate(answer, requests,
+        receipts, false, false, true).Eligible)
+        throw new Exception("Prior reviewer objection bypassed review");
+    if (NIRAVerifiedNumericCompletionPolicy.Evaluate(answer with {
+        DisplayBlocks = new[] { new NIRARichBlock { Type = "metric",
+            Title = "Total", Text = "-5" } }
+        }, requests, receipts, false, false, false).Eligible)
+        throw new Exception("Wrong metric certified as correct");
+    if (NIRAVerifiedNumericCompletionPolicy.Evaluate(answer with {
+        DisplayBlocks = new[] { new NIRARichBlock { Type = "metric",
+            Title = "Total", Text = exact },
+            new NIRARichBlock { Type = "metric", Title = "Second", Text = "99" } }
+        }, requests, receipts, false, false, false).Eligible)
+        throw new Exception("Several independent outputs bypassed review");
+    var wrongReceipts = new Dictionary<string, NIRACapabilityResult> {
+        [sig] = receipts[sig] with { OutcomeUncertain = true }
+    };
+    if (NIRAVerifiedNumericCompletionPolicy.Evaluate(answer, requests,
+        wrongReceipts, false, false, false).Eligible)
+        throw new Exception("Uncertain receipt bypassed review");
+});
+
+Check("Math markup handles generic binomial notation without raw TeX", () =>
+{
+    Equal("C(7, 2)", NIRAMathMarkup.ToReadableText(@"\(\binom{7}{2}\)"));
+    Equal("C(n, k)", NIRAMathMarkup.ToReadableText(@"\(\binom{n}{k}\)"));
+});
+
+Check("Calculator synthesis has compact authoritative decision contract", () =>
+{
+    Type? compiler = typeof(NIRACognitionService).Assembly.GetType(
+        "NIRAAgent.AI.Cognition.NIRACognitionPromptCompiler");
+    MethodInfo? method = compiler?.GetMethod("CalculatorSynthesisSystem",
+        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+    string? prompt = method?.Invoke(null, new object[] { "" }) as string;
+    if (string.IsNullOrWhiteSpace(prompt) ||
+        !prompt.Contains("replyReady", StringComparison.Ordinal) ||
+        !prompt.Contains("contextRequests", StringComparison.Ordinal) ||
+        !prompt.Contains("NIRA CHARACTER KERNEL", StringComparison.Ordinal) ||
+        prompt.Length > 18000)
+        throw new Exception("Calculator continuation contract is missing or oversized");
+});
+
+Check("Calculator-only synthesis is receipt-derived, never based on question words", () =>
+{
+    static NIRACognitionContext Scope(string evidence) => new() {
+        Cycle = 2,
+        Event = NIRAMindEvent.UserMessage("An arbitrary follow-up", Guid.NewGuid(), "regression:math"),
+        CapabilityEvidence = evidence
+    };
+    const string positive = "AUTHORITATIVE CAPABILITY RESULT\n" +
+        "CapabilityId: math.calculate\nRisk: Observe\nStatus: Succeeded\n" +
+        "ChangedSystemState: False\nOutcomeUncertain: False\n";
+    Type compiler = typeof(NIRACognitionService).Assembly.GetType(
+        "NIRAAgent.AI.Cognition.NIRACognitionPromptCompiler", true)!;
+    MethodInfo eligible = compiler.GetMethod("IsSingleSuccessfulCalculatorReceipt",
+        BindingFlags.NonPublic | BindingFlags.Static)!;
+    bool CheckScope(string text) => (bool)eligible.Invoke(null, new object[] { Scope(text) })!;
+    if (!CheckScope(positive) || CheckScope(positive.Replace("Succeeded", "Failed")) ||
+        CheckScope(positive + "CapabilityId: filesystem.write\n") ||
+        CheckScope(positive.Replace("OutcomeUncertain: False", "OutcomeUncertain: True")))
+        throw new Exception("Synthesis evidence was incorrectly scoped");
+});
+
+Check("CALC registered read-only handler computes reusable named steps without display rounding", () =>
+{
+    var handler = new NIRAMathCalculationCapabilityHandler();
+    if (handler.Descriptor.Id != NIRACapabilityIds.MathCalculate ||
+        handler.Descriptor.DefaultRisk != NIRACapabilityRisk.Observe ||
+        handler.ResolveRisk(Request(NIRACapabilityIds.MathCalculate, "{}")) != NIRACapabilityRisk.Observe ||
+        handler.Descriptor.Parameters.Single(p => p.Name == "steps").Type != "array")
+        throw new Exception("Math capability is not a read-only registered primitive with typed step contract.");
+
+    var request = Request(NIRACapabilityIds.MathCalculate, """
+        {
+          "expression": "withAddition * (1+rate)^3",
+          "variables": { "principal": 12500, "rate": 0.0125 },
+          "steps": [
+             {"name":"afterGrowth", "expression":"principal*(1+rate)^4"},
+             {"name":"withAddition", "expression":"afterGrowth + 2500"}
+          ],
+          "displayDecimals": 2
+        }
+        """);
+    NIRACapabilityHandlerResult receipt = handler.ExecuteAsync(request).GetAwaiter().GetResult();
+    if (!receipt.Succeeded || receipt.ChangedSystemState)
+        throw new Exception("Read-only deterministic calculation did not complete safely.");
+    using JsonDocument doc = JsonDocument.Parse(receipt.Output);
+    decimal first = decimal.Parse(doc.RootElement.GetProperty("steps")[0].GetProperty("value").GetString()!,
+        System.Globalization.CultureInfo.InvariantCulture);
+    decimal second = decimal.Parse(doc.RootElement.GetProperty("steps")[1].GetProperty("value").GetString()!,
+        System.Globalization.CultureInfo.InvariantCulture);
+    decimal answer = decimal.Parse(doc.RootElement.GetProperty("final").GetProperty("value").GetString()!,
+        System.Globalization.CultureInfo.InvariantCulture);
+    decimal expectedFirst = 12500m;
+    for (int i = 0; i < 4; i++) expectedFirst *= 1.0125m;
+    decimal expectedLast = expectedFirst + 2500m;
+    for (int i = 0; i < 3; i++) expectedLast *= 1.0125m;
+    Equal(expectedFirst, first);
+    Equal(expectedFirst + 2500m, second);
+    if (Math.Abs(expectedLast - answer) > 0.000000000000000001m)
+        throw new Exception("General compound steps diverged beyond decimal arithmetic tolerance.");
+    if (doc.RootElement.GetProperty("final").GetProperty("displayValue").GetString() !=
+        decimal.Round(expectedLast, 2, MidpointRounding.AwayFromZero)
+            .ToString("F2", System.Globalization.CultureInfo.InvariantCulture))
+        throw new Exception("Unexpected example-dependent data or incorrect display-only rounding.");
+});
+
+Check("CALC can re-use exact step values when visible values have fewer digits", () =>
+{
+    var handler = new NIRAMathCalculationCapabilityHandler();
+    var request = Request(NIRACapabilityIds.MathCalculate, """
+        {"expression":"part*3", "displayDecimals":2,
+         "steps":[{"name":"part", "expression":"1.2345678"}]}
+        """);
+    using JsonDocument result = JsonDocument.Parse(
+        handler.ExecuteAsync(request).GetAwaiter().GetResult().Output);
+    Equal("1.23", result.RootElement.GetProperty("steps")[0].GetProperty("displayValue").GetString());
+    Equal("3.7037034", result.RootElement.GetProperty("final").GetProperty("value").GetString());
+    Equal("3.70", result.RootElement.GetProperty("final").GetProperty("displayValue").GetString());
+});
+
+Check("CALC rejects invalid syntax, code execution, out-of-range powers and nonfinite operations", () =>
+{
+    foreach (string expression in new[]
+    {
+        "System.IO.File.Delete(1)", "1/0", "sqrt(-2)", "4^0.5",
+        "9^100", "unexpectedVariable+2", "(2+5", "2+", "1e9999", "1e-70", "0.1^64", "1e-28/100",
+        new string('(', 90) + "1" + new string(')', 90)
+    })
+        Throws<InvalidOperationException>(() => NIRADecimalExpressionEvaluator.Calculate(expression));
+    var handler = new NIRAMathCalculationCapabilityHandler();
+    Throws<InvalidOperationException>(() => handler.ExecuteAsync(
+        Request(NIRACapabilityIds.MathCalculate,
+            """{"expression":"a","steps":[{"name":"a","expression":"1"},{"name":"a","expression":"2"}]}"""))
+        .GetAwaiter().GetResult());
+    using CancellationTokenSource cancelled = new();
+    cancelled.Cancel();
+    Throws<OperationCanceledException>(() => NIRADecimalExpressionEvaluator.Calculate(
+        "3+4", cancellationToken: cancelled.Token));
+});
+
+Check("Calculation presentation accepts metrics and general equation blocks", () =>
+{
+    using var report = JsonDocument.Parse("""
+        {"displayBlocks":[
+          {"type":"metric","title":"Verified result","value":"1,234.56","unit":"units"},
+          {"type":"equation","latex":"\\[x=\\frac{a}{b}\\]"},
+          {"type":"math","formula":"\\[z^n = x + y\\]"}
+        ]}
+        """);
+    IReadOnlyList<NIRARichBlock> blocks = NIRARichBlockJsonReader.Read(report.RootElement);
+    if (blocks.Count != 3 || blocks[0].Type != "metric" ||
+        blocks[0].Text != "1,234.56" || blocks[0].Unit != "units" ||
+        blocks[1].Type != "equation" || blocks[2].Type != "equation" ||
+        !blocks[1].Text.Contains(@"\frac", StringComparison.Ordinal) ||
+        !blocks[2].Text.Contains("z^n", StringComparison.Ordinal))
+        throw new Exception("Generic metric/equation block was rejected or distorted");
+    using var invalid = JsonDocument.Parse("""
+        {"displayBlocks":[{"type":"equation","text":""}]}
+        """);
+    if (NIRARichBlockJsonReader.Read(invalid.RootElement).Count != 0)
+        throw new Exception("Empty equation passed the presentation validator");
+});
+
+Check("R-final math markup displays equations without raw TeX delimiters", () =>
+{
+    string example = NIRAMathMarkup.ToReadableText(
+        @"Formula: $F = b(1 + k)^{n}$ and $z = 41(1.08)^{5}$.");
+    if (example.Contains('$') || example.Contains('{') ||
+        !example.Contains("F = b(1 + k)^(n)", StringComparison.Ordinal) ||
+        !example.Contains("z = 41(1.08)^5", StringComparison.Ordinal))
+        throw new Exception("Math expression displayed as raw TeX");
+    string fraction = NIRAMathMarkup.ToReadableText(@"\(v=\frac{1200}{35}\times 20\)");
+    if (!fraction.Contains("(1200) / (35)× 20", StringComparison.Ordinal))
+        throw new Exception("Fraction or multiply notation was not normalized");
+    string money = NIRAMathMarkup.ToReadableText("Keep $14.50 and $7.30 untouched.");
+    if (money != "Keep $14.50 and $7.30 untouched.")
+        throw new Exception("Monetary text should not be treated as math delimiters");
+});
+
+// Conversation cadence is tested on independent synthetic exchanges. These
+// are test inputs to the general extractor/route, NOT production phrase rules.
+Check("Character cadence reads actual assistant turns and ignores user turns", () =>
+{
+    string context = "user: This is a question.\n" +
+        "assistant: You keep returning to the same opening today.\n" +
+        "user: My new problem is different.\n" +
+        "assistant: I can see what changed in the numbers.\n" +
+        "user: Please calculate the next value.";
+    var opening = NIRAConversationCadencePolicy.RecentAssistantOpenings(context);
+    if (opening.Count != 2 || !opening[0].StartsWith("You keep returning", StringComparison.Ordinal) ||
+        !opening[1].StartsWith("I can see", StringComparison.Ordinal))
+        throw new Exception("Conversation cadence lost or fabricated historical NIRA openings");
+    if (!NIRAConversationCadencePolicy.RepeatsOpening(
+            "You keep returning to another test again.", context) ||
+        NIRAConversationCadencePolicy.RepeatsOpening(
+            "The margin after expenses is LKR 1,076.", context))
+        throw new Exception("Lexical repetition check did not distinguish repeated from fresh openings");
+    if (NIRAConversationCadencePolicy.DescribeRecentOpenings(context)
+            .Contains("My new problem is different", StringComparison.Ordinal))
+        throw new Exception("User messages leaked into the assistant-only cadence summary");
+});
+
+Check("Character cadence compares wording rather than memorized questions", () =>
+{
+    string context = "assistant: A quiet morning makes a good time to review the plan.\n" +
+        "user: Can you revise it?\n" +
+        "assistant: The design needs a cleaner boundary between data and view.\n" +
+        "user: Please revise the layout.";
+    if (!NIRAConversationCadencePolicy.RepeatsOpening(
+            "A quiet morning makes a good moment to finish this.", context) ||
+        NIRAConversationCadencePolicy.RepeatsOpening(
+            "Move the controls into a smaller panel.", context))
+        throw new Exception("Cadence must be generic across dialogue and task types");
+});
+
+// Numerical reasoning is model-dependent. Do not treat a fixed physical
+// word problem as a production regression of the LLM reasoning pipeline.
+// These offline checks test only deterministic formatting, not model accuracy.
+Check("R-final math rendering preserves varied equations", () =>
+{
+    foreach (string expr in new[]
+    {
+        @"\(x=\frac{1}{7}\times 3\)",
+        @"\[q=\sqrt{81}+\frac{5}{12}\]",
+        @"$P=P_0(1+r)^{n}$"
+    })
+    {
+        string rendered = NIRAMathMarkup.ToReadableText(expr);
+        if (rendered.Contains(@"\frac", StringComparison.Ordinal) ||
+            rendered.Contains(@"\sqrt", StringComparison.Ordinal) ||
+            rendered == expr)
+            throw new Exception("Math expression was not normalized");
+    }
+});
+
+Check("Equation normalization repairs JSON escape damage without inventing mathematics", () =>
+{
+    // A single backslash in a model's otherwise valid JSON string causes
+    // System.Text.Json to consume \t, \f, \n, \r, or \b. Test the REAL reader.
+    using var malformed = JsonDocument.Parse("""
+        {"displayBlocks":[
+          {"type":"equation","text":"\text{Energy} = 50 \times 2 + \frac{3}{4}"},
+          {"type":"equation","formula":"\beta \neq \theta"},
+          {"type":"text","text":"Ordinary prose is not an equation."}
+        ]}
+        """);
+    var blocks = NIRARichBlockJsonReader.Read(malformed.RootElement);
+    if (blocks.Count != 3 || blocks[0].Type != "equation" ||
+        blocks[0].Text != @"\text{Energy} = 50 \times 2 + \frac{3}{4}" ||
+        blocks[1].Text != @"\beta \neq \theta" ||
+        blocks[2].Text != "Ordinary prose is not an equation.")
+        throw new Exception("JSON escapes corrupted declarative equations");
+
+    using var correctlyEscaped = JsonDocument.Parse("""
+        {"displayBlocks":[{"type":"equation","latex":"\\frac{a}{b} + \\text{total}"}]}
+        """);
+    var sound = NIRARichBlockJsonReader.Read(correctlyEscaped.RootElement);
+    if (sound.Count != 1 || sound[0].Text != @"\frac{a}{b} + \text{total}")
+        throw new Exception("Correctly escaped math was distorted");
+
+    string ordinary = "\tinput: next line\nnormal writing";
+    Equal(ordinary, NIRAMathMarkup.NormalizeEquationInput(ordinary));
+    Equal(@"\text{Rate}", NIRAMathMarkup.NormalizeEquationInput(@"\text{Rate}"));
+    Equal(@"\text{Rate}", NIRAMathMarkup.NormalizeEquationInput(@"\\text{Rate}"));
+    Equal("42.875", NIRAMathMarkup.NormalizeEquationInput("42.875"));
+    Equal("\ttextraneous", NIRAMathMarkup.NormalizeEquationInput("\ttextraneous"));
+});
+
+Check("Typed math blocks split independent display equations without leaking TeX markers", () =>
+{
+    // Regression for several separate formulas arriving in ONE typed block.
+    // The fixture tests presentation syntax; none of these are canned math answers.
+    string multi = @"\[f(x)=\frac{x}{3}\]" + "\n" +
+                   @"\[g(x)=x^{2}\]" + "\n" +
+                   @"\[h(x)=\sqrt{x}\]";
+    void Parts(string[] expected, IReadOnlyList<string> actual)
+    {
+        if (!expected.SequenceEqual(actual))
+            throw new Exception("Unexpected split: " + string.Join(" | ", actual));
+    }
+    Parts(new[] { @"f(x)=\frac{x}{3}", @"g(x)=x^{2}", @"h(x)=\sqrt{x}" },
+        NIRAMathMarkup.SplitDisplayEquations(multi).ToArray());
+    Parts(new[] { "m=8", "n=13" },
+        NIRAMathMarkup.SplitDisplayEquations(@"\[m=8\]\[n=13\]").ToArray());
+    Parts(new[] { "p=4", "q=7" },
+        NIRAMathMarkup.SplitDisplayEquations(@"\\[p=4\\]\\[q=7\\]").ToArray());
+    Parts(new[] { "x=3", "y=9" },
+        NIRAMathMarkup.SplitDisplayEquations(@"\(x=3\)\(y=9\)").ToArray());
+    Parts(new[] { "a=1", "b=2" },
+        NIRAMathMarkup.SplitDisplayEquations("$$a=1$$\n$$b=2$$").ToArray());
+    Parts(new[] { "u=1", "v=2" },
+        NIRAMathMarkup.SplitDisplayEquations(@"u=1\\v=2").ToArray());
+    Parts(new[] { "x=1", "y=2" },
+        NIRAMathMarkup.SplitDisplayEquations(@"\begin{aligned}x&=1\\y&=2\end{aligned}").ToArray());
+    Parts(new[] { "x=5", "y=12" },
+        NIRAMathMarkup.SplitDisplayEquations("x=5\ny=12").ToArray());
+});
+
+Check("Equation segmentation preserves numerical and non-mathematical content", () =>
+{
+    void Parts(string[] expected, IReadOnlyList<string> actual)
+    {
+        if (!expected.SequenceEqual(actual))
+            throw new Exception("Unexpected split: " + string.Join(" | ", actual));
+    }
+    Parts(new[] { @"Cost = \text{LKR } 1,234.56", "Total = $12 + $20" },
+        NIRAMathMarkup.SplitDisplayEquations(@"\[Cost = \text{LKR } 1,234.56\]" + "\n" + "Total = $12 + $20").ToArray());
+    Parts(new[] { @"z=\frac{a}{b}" },
+        NIRAMathMarkup.SplitDisplayEquations(@"\[z=\frac{a}{b}\]").ToArray());
+    Parts(new[] { @"x=\frac{1}{2}" },
+        NIRAMathMarkup.SplitDisplayEquations(@"$x=\frac{1}{2}$").ToArray());
+    Parts(new[] { @"a=\frac{5}{7}" },
+        NIRAMathMarkup.SplitDisplayEquations(@"a=\frac{5}{7}").ToArray());
+    if (NIRAMathMarkup.SplitDisplayEquations("   ").Count != 0)
+        throw new Exception("Blank formula unexpectedly generated a UI row");
+    using var json = JsonDocument.Parse("""
+        {"displayBlocks":[{"type":"equation","text":"\\[u=7\\]\\[v=11\\]"}]}
+        """);
+    var blocks = NIRARichBlockJsonReader.Read(json.RootElement);
+    if (blocks.Count != 1 || blocks[0].Type != "equation")
+        throw new Exception("Typed equations were dropped by production JSON reader");
+    Parts(new[] { "u=7", "v=11" },
+        NIRAMathMarkup.SplitDisplayEquations(blocks[0].Text).ToArray());
+});
 
 Check("Multimodal image input is bounded and carries real path references", () =>
 {

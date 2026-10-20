@@ -17,8 +17,8 @@ namespace NIRAAgent.UI.Typing;
 public sealed class NIRATypingIndicator : FrameworkElement
 {
     // Match NIRA's original chat dots: 5px diameter, compact spacing.
-    private const double DotSpacing = 13.0;
-    private const double BaseRadius = 2.5;
+    private const double DotSpacing = 13.5;
+    private const double BaseRadius = 2.55;
     private const double FrameSeconds = 1.0 / 60.0;
 
     private static readonly DotMaterial[] Palette =
@@ -298,9 +298,28 @@ public sealed class NIRATypingIndicator : FrameworkElement
     {
         Point point = new(state.X, state.Y);
 
+        // Unique NIRA energy ribbon so the typing state feels branded,
+        // not like a stock three-dot loader.
+        double ribbonWidth = state.Radius * 3.9;
+        double ribbonHeight = state.Radius * 1.12;
+        byte ribbonAlpha = (byte)(18 + state.Opacity * 26 + Math.Max(0.0, state.Depth) * 18);
+        var ribbon = new LinearGradientBrush();
+        ribbon.StartPoint = new Point(0, 0.5);
+        ribbon.EndPoint = new Point(1, 0.5);
+        ribbon.GradientStops.Add(new GradientStop(Color.FromArgb(0, 105, 205, 255), 0.0));
+        ribbon.GradientStops.Add(new GradientStop(Color.FromArgb(ribbonAlpha, 107, 219, 255), 0.42));
+        ribbon.GradientStops.Add(new GradientStop(Color.FromArgb(ribbonAlpha, 187, 126, 255), 0.68));
+        ribbon.GradientStops.Add(new GradientStop(Color.FromArgb(0, 255, 255, 255), 1.0));
+        dc.DrawRoundedRectangle(
+            ribbon,
+            null,
+            new Rect(point.X - ribbonWidth / 2, point.Y - ribbonHeight / 2, ribbonWidth, ribbonHeight),
+            ribbonHeight / 2,
+            ribbonHeight / 2);
+
         double haloOpacity = (0.34 + state.HaloBoost) * state.Opacity;
         dc.PushOpacity(Math.Clamp(haloOpacity, 0.14, 0.92));
-        dc.DrawEllipse(material.Halo, null, point, state.Radius * 2.45, state.Radius * 2.45);
+        dc.DrawEllipse(material.Halo, null, point, state.Radius * 2.55, state.Radius * 2.55);
         dc.Pop();
 
         dc.PushOpacity(Math.Clamp(state.Opacity, 0.46, 1.0));
@@ -312,6 +331,18 @@ public sealed class NIRATypingIndicator : FrameworkElement
             state.Radius * (0.18 + state.HighlightBoost),
             state.Radius * (0.18 + state.HighlightBoost));
         dc.Pop();
+
+        // Tiny satellite sparkle for a more distinctive NIRA feel.
+        double satelliteRadius = Math.Max(0.65, state.Radius * 0.26);
+        Point satellite = new(
+            point.X + state.Radius * (1.15 + Math.Max(0.0, state.Depth) * 0.22),
+            point.Y - state.Radius * 0.9);
+        dc.DrawEllipse(
+            new SolidColorBrush(Color.FromArgb((byte)(70 + state.Opacity * 80), 231, 246, 255)),
+            null,
+            satellite,
+            satelliteRadius,
+            satelliteRadius);
     }
 
     private static DotMaterial CreateMaterial(Color color)

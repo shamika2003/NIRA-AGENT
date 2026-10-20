@@ -837,6 +837,7 @@ public sealed class NIRACapabilityService
                 "boolean" => value.ValueKind is JsonValueKind.True or JsonValueKind.False,
                 "integer" => value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out _),
                 "object" => value.ValueKind == JsonValueKind.Object,
+                "array" => value.ValueKind == JsonValueKind.Array,
                 _ => false
             };
             if (!valid) throw new InvalidOperationException($"Argument '{parameter.Name}' must be {parameter.Type}.");

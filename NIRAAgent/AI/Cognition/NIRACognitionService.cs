@@ -329,11 +329,32 @@ public sealed class NIRACognitionService
                     "goals" or "branches" or "work" or "pc" or "artifacts" or
                     "evidence")) &&
             (expandedCapabilityIds == null || expandedCapabilityIds.Count == 0);
+        // Already-observed, successful read-only arithmetic needs a final
+        // interpretation and faithful response, not the full mutable-tool
+        // planning schema repeated from scratch. Other tools, repairs, deep
+        // delegation and ambiguous evidence retain the general contract.
+        bool calculatorSynthesis = !legacy && !needsCapabilityContractRepair &&
+            !_deepReasoningRuns.ContainsKey(context.RunId) &&
+            NIRACognitionPromptCompiler.IsSingleSuccessfulCalculatorReceipt(context) &&
+            (expandedSections == null || !expandedSections.Contains("capabilities")) &&
+            (expandedCapabilityIds == null || expandedCapabilityIds.Count == 0);
         string systemPrompt = legacy
             ? BuildSystemPrompt()
-            : informationOnly || evidenceSynthesisOnly
-                ? NIRACognitionPromptCompiler.BootstrapSystem(_personality)
-                : NIRACognitionPromptCompiler.System(_compactContract, _personality);
+            : calculatorSynthesis
+                ? NIRACognitionPromptCompiler.CalculatorSynthesisSystem(_personality)
+                : informationOnly || evidenceSynthesisOnly
+                    ? NIRACognitionPromptCompiler.BootstrapSystem(_personality)
+                    : NIRACognitionPromptCompiler.System(_compactContract, _personality);
+        if (calculatorSynthesis)
+            systemPrompt += "\n\nVERIFIED CALCULATOR SYNTHESIS: The received math.calculate " +
+                "receipt proves only the value of the submitted expression. " +
+                "Before finishing, compare that expression, all requested " +
+                "subparts, assumptions, units and full-precision rounding " +
+                "against the ORIGINAL user question and immediate conversation. " +
+                "Do not invent the result of another capability. If further " +
+                "evidence or a different operation is required, request it " +
+                "using the normal Continue/contextRequests contract instead " +
+                "of presenting the calculator output as a complete answer.";
         if (!legacy && evidenceSynthesisOnly)
         {
             systemPrompt += "\n\nEVIDENCE SYNTHESIS ONLY: Previous memory searches " +
@@ -423,7 +444,7 @@ public sealed class NIRACognitionService
         }
 
         Debug.WriteLine($"[CognitionPrompt] Run={context.RunId:D} | Cycle={context.Cycle} | " +
-            $"Mode={(legacy ? "Legacy" : evidenceSynthesisOnly ? "EvidenceSynthesis" : bootstrap ? "Bootstrap" : informationOnly ? "Information" : "Focused")} | " +
+            $"Mode={(legacy ? "Legacy" : evidenceSynthesisOnly ? "EvidenceSynthesis" : calculatorSynthesis ? "CalculatorSynthesis" : bootstrap ? "Bootstrap" : informationOnly ? "Information" : "Focused")} | " +
             $"ReasoningModel={selectedModel} | SystemChars={systemPrompt.Length} | " +
             $"UserChars={userPrompt.Length} | TotalChars={systemPrompt.Length + userPrompt.Length}");
         NIRADiagnosticTrace.Event("COGNITION-ROUND", $"Run={context.RunId:D} " +

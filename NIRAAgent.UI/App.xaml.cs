@@ -438,6 +438,9 @@ public partial class App : WpfApplication
                 INIRACapabilityHandler,
                 NIRATemporalRelationCapabilityHandler>();
 
+            builder.Services.AddSingleton<INIRACapabilityHandler,
+                NIRAMathCalculationCapabilityHandler>();
+
             builder.Services.AddSingleton<
                 INIRACapabilityHandler,
                 NIRAFileReadCapabilityHandler>();

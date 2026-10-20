@@ -196,6 +196,8 @@ public static class NIRACapabilityIds
 
     public const string TemporalRelate = "temporal.relate";
 
+    public const string MathCalculate = "math.calculate";
+
     public const string VisionCapture =
         "vision.capture";
 

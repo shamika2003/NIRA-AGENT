@@ -67,6 +67,7 @@ public static class NIRARichBlockRenderer
         "card" => Card(block),
         "file" => FileResult(block),
         "metric" => Frame(Metric(block)),
+        "equation" => Frame(NIRAMathEquationRenderer.Render(block), false),
         "table" => DesignedSurface(Table(block), Palette[0], 11),
         "chart" => DesignedSurface(Chart(block), Palette[0], 12),
         "code" => DesignedSurface(Code(block), Palette[0], 12),

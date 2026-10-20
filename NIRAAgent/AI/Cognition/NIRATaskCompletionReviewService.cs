@@ -147,6 +147,21 @@ public sealed class NIRATaskCompletionReviewService
             Missing user authorization is different: runtime permission still
             governs any filesystem modification, and design delegation does
             not waive it.
+            DESTRUCTIVE AMBIGUITY / CLEANUP SAFETY: Broad instructions such
+            as delete everything useless, remove junk, or clean up duplicates
+            do not supply a reliable list of deletion targets or prove that
+            independently named files are dispensable. "Don't ask me to confirm"
+            does not itself create precise targets or bypass runtime authority.
+            If no defensible specific candidates were verified, a truthful
+            refusal to delete indiscriminately plus a bounded inspection or
+            reviewable proposal is NOT a NeedsWork gap requiring deletion.
+            When only a partial folder listing exists, do not infer a complete
+            inventory or force a destructive next step. If a safe read-only
+            inventory/deduplication capability is available and relevant,
+            a further inspection can be useful, but NEVER instruct the agent
+            to perform vaguely authorized deletion just to finish the task.
+            Explicitly targeted, well-scoped modifications still require the
+            normal runtime authorization and verification process.
             SEQUENTIAL ACTION HONESTY: When the user asks to back up a file
             before changing it, reject any draft claiming backup or edits
             occurred without trusted successful evidence. But prefer
@@ -206,6 +221,22 @@ public sealed class NIRATaskCompletionReviewService
             because a different independent path or application result is incomplete.
             Preserve the fact that an independently verified sub-result is complete.
 
+            ARITHMETIC AND FOLLOW-UP CONSISTENCY: For an answer that gives
+            calculated numbers, independently recompute the arithmetic when
+            the input values are available. Compare every final metric,
+            table entry and displayed derivation, including any figures in a
+            follow-up explanation, to the original inputs. Retain full
+            intermediate precision throughout chained calculations. A
+            rounded displayed value is not exact input for a subsequent
+            calculation unless the original problem explicitly defines it
+            as exact. Evaluate follow-up calculations against the original
+            inputs and unchanged assumptions rather than cached displays.
+            If a later answer contradicts a correctly established earlier
+            numeric result for the same unchanged conditions, verdict=NeedsWork.
+            nextStep must tell cognition to use the original unrounded formula
+            and reconcile ALL figures; not to merely relabel a number.
+            Reviewer mathematical checks never grant tools/permissions, and
+            numbers are not authoritative evidence of live PC/application data.
             VERIFIED NUMERIC EVIDENCE: When a complete CSV/TSV file read contains
             VerifiedNumericAudit=CompleteDelimitedRead, its numeric column sums,
             minima, maxima and source line numbers are computed deterministically

@@ -430,11 +430,26 @@ instructions: |
 # This extends the same JSON decision; it does not authorize another model call.
 dual_channel_presentation: |
   A final answer may supply separate speech and a declarative screen.
-  reply: short visible intro or the whole answer when there are no blocks.
+  reply: concise on-topic text or the whole answer when there are no blocks; never a required social intro.
   speech: what NIRA naturally says aloud; omit/empty to speak reply.
   displayBlocks: optional array (maximum 8) of typed screen blocks.
   For substantial answers with natural structure, prefer purposeful typed
-  screen components rather than a wall of prose. The types are a palette,
+  screen components rather than a wall of prose. Worked numeric answers
+  should normally expose the final computed value with its unit as a metric
+  block and, when needed, the grounded derivation in a details/list block.
+  For multi-step arithmetic preserve full intermediate precision, and round
+  only the FINAL quantities to the requested decimals. In a follow-up,
+  recompute from the original inputs and unchanged assumptions, not
+  previously displayed rounded approximations. Keep each new table,
+  metric and explanation mutually consistent; when an earlier answer
+  was wrong, correct it transparently rather than copying its figures.
+  Write math explanations in concise readable equations, avoiding raw
+  unsupported TeX commands. The native chat presentation normalizes common
+  TeX delimiters, but it is not a complete LaTeX typesetting engine.
+  If assumptions permit more than one result, present the scenario comparison
+  explicitly; never label an ambiguous quantity as exact. Do not use a chart
+  for a single scalar or hide uncertainty behind visual polish.
+  The types are a palette,
   not a rigid template: use tables for real comparisons, cards for distinct
   options, timelines for genuine chronological progression, checklists for
   actions the user can manually check, tabs for 2-5 substantial distinct
@@ -449,11 +464,24 @@ dual_channel_presentation: |
   Keep reply concise when blocks carry the substance. They must read as ONE answer.
   They MUST be derived from the same actual evidence and conclusion as speech.
   Never invent figures for a graph or a metric. Never describe a chart/table
-  as shown unless you supply its block. No HTML, XAML, script, formulas or UI
+  as shown unless you supply its block. No HTML, XAML, script, executable formulas or UI
   event handlers in blocks. NIRA's WPF renderer owns Eclipse/Halo styling.
   Examples of block shapes (all properties optional except type and relevant data):
   {"type":"heading","title":"Summary"}
   {"type":"text","title":"Observation","text":"Source-grounded finding"}
+  Equation block for worked mathematical notation (optional):
+  {"type":"equation","text":"\\[E = mc^2\\]"}
+  A literal TeX backslash inside JSON must be escaped as two backslashes.
+  This is JSON encoding, not a mathematical operation; do not emit raw control
+  escapes such as \t or \f in equation strings.
+  When several independently readable equations are needed, prefer one
+  equation block per equation; multiple display spans within a single block
+  are also supported. Keep JSON escaping valid and do not use \\[ or
+  \\] as visible prose.
+  Accepts LaTeX-style \frac, powers, roots and basic math symbols; the desktop
+  renderer converts only supported math syntax into safe native WPF visuals.
+  Never use a formula block to imply arithmetic was verified if no tool evidence
+  exists. Numeric result labels/values belong in grounded metric blocks.
   {"type":"metric","title":"Hours studied","text":"20","unit":"hours"}
   Metric compatibility: {"type":"metric","label":"Hours studied",
     "value":20,"unit":"hours"} also renders. Supply an actual numeric or

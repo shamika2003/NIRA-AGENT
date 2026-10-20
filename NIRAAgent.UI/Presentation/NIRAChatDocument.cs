@@ -55,9 +55,13 @@ public static class NIRAChatDocument
         void FlushCode()
         {
             if (code.Count == 0) return;
-            var body = MakeText(string.Join("\n", code), 12.5, 21,
-                new Thickness(12, 10, 12, 10));
-            body.FontFamily = new FontFamily("Cascadia Code, Consolas");
+            var body = new TextBlock
+            {
+                Text = string.Join("\n", code), TextWrapping = TextWrapping.Wrap,
+                FontSize = 12.5, LineHeight = 21, Margin = new Thickness(12, 10, 12, 10),
+                FontFamily = new FontFamily("Cascadia Code, Consolas")
+            };
+            body.SetResourceReference(TextBlock.ForegroundProperty, "NIRATextBrush");
             var frame = new Border { CornerRadius = new CornerRadius(10),
                 Margin = new Thickness(0, 3, 0, 14), BorderThickness = new Thickness(1), Child = body };
             frame.SetResourceReference(Border.BackgroundProperty, "NIRAGlassStrongTintBrush");

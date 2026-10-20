@@ -235,6 +235,36 @@ public sealed class NIRAResponseRealizationService
                 _ollama, ResponseModel, systemPrompt, userPrompt,
                 realized, !string.IsNullOrWhiteSpace(draftSpeech), cancellationToken);
 
+            // The same user's successive tasks must not trigger the same
+            // scripted opener. One bounded model correction is permitted on
+            // actual repeated language; no phrase list, numerical rewriting,
+            // hidden state mutation or deletion of source evidence.
+            if (NIRAConversationCadencePolicy.RepeatsOpening(
+                    realized.Reply, request.ConversationContext))
+            {
+                Debug.WriteLine("[ResponseRealization] CADENCE_RETRY | Recent opening repeated");
+                string feedback = userPrompt + "\n\nFINAL CADENCE CORRECTION: Your previous " +
+                    "candidate repeated an opening used by NIRA in the supplied RECENT CONVERSATION. " +
+                    "Do not paraphrase the same social introduction. Continue the ongoing exchange " +
+                    "directly with the actual answer, fact or relevant observation; do not comment on " +
+                    "how many questions the user has asked. Keep every factual claim, amount, source, " +
+                    "qualification and commitment from the authoritative semantic draft. Return " +
+                    "only the normal reply/speech JSON channels.";
+                string correctedRaw = await _ollama.ChatAsync(
+                    ResponseModel, systemPrompt, feedback, cancellationToken);
+                if (TryNormalizeRealized(correctedRaw,
+                        requireSpeech: !string.IsNullOrWhiteSpace(draftSpeech),
+                        out NIRAResponseRealizationResult corrected, out _) &&
+                    !NIRAConversationCadencePolicy.RepeatsOpening(
+                        corrected.Reply, request.ConversationContext) &&
+                    ValidateRealization(draftReply, corrected.Reply,
+                        request.RequiredVerbatimFragments, out _) &&
+                    (string.IsNullOrWhiteSpace(draftSpeech) ||
+                        ValidateRealization(draftSpeech, corrected.Speech,
+                            Array.Empty<string>(), out _)))
+                    realized = corrected;
+            }
+
             if (!ValidateRealization(
                     draftReply,
                     realized.Reply,
@@ -411,7 +441,11 @@ public sealed class NIRAResponseRealizationService
             phrase, not a description of humor happening. Avoid stock catchphrases.
 
             CHARACTER FIDELITY IS A HARD OUTPUT REQUIREMENT. A polite but generic
-            assistant/help-desk reply is invalid. NIRA is not waiting behind a service
+            assistant/help-desk reply is invalid. An interchangeable recurring
+            personality introduction is ALSO invalid: do not narrate the user's
+            succession of questions merely to sound clever. Distinctiveness is
+            expressed through the substance and NIRA's independent judgment.
+            NIRA is not waiting behind a service
             counter for the next request. In casual conversation, do not manufacture an
             offer of help, reciprocal check-in question, reassurance, or closing merely
             because those are common assistant habits. Use the supplied RECENT
@@ -640,6 +674,12 @@ public sealed class NIRAResponseRealizationService
             "a generic help offer. On a topic switch, adapt immediately without sounding " +
             "like a new help agent. On missing evidence, own the limit with confidence.");
 
+        builder.AppendLine(
+            "- Repeated objective questions are normal ongoing work, not a social invitation " +
+            "or a need for a new character introduction. Let the answer itself carry " +
+            "NIRA's independent voice. Never comment on the user's question count " +
+            "just to sound witty; adapt to actual current conversational intent.");
+
         if (state.Situation.Mode == NIRAInteractionMode.Casual &&
             attitude.Playfulness >= 0.25 &&
             mood.Irritation < 0.35)
@@ -776,6 +816,8 @@ public sealed class NIRAResponseRealizationService
             ==================================================
 
             {Limit(request.ConversationContext, MaximumConversationCharacters)}
+
+            {NIRAConversationCadencePolicy.DescribeRecentOpenings(request.ConversationContext)}
 
             ==================================================
             EXECUTIVE COMMUNICATION PURPOSE
