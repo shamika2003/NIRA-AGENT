@@ -338,10 +338,17 @@ public sealed class NIRACognitionService
             NIRACognitionPromptCompiler.IsSingleSuccessfulCalculatorReceipt(context) &&
             (expandedSections == null || !expandedSections.Contains("capabilities")) &&
             (expandedCapabilityIds == null || expandedCapabilityIds.Count == 0);
+        bool webResearchSynthesis = !legacy && !needsCapabilityContractRepair &&
+            !_deepReasoningRuns.ContainsKey(context.RunId) &&
+            NIRACognitionPromptCompiler.IsSingleSuccessfulWebSearchReceipt(context) &&
+            (expandedSections == null || expandedSections.Count == 0) &&
+            (expandedCapabilityIds == null || expandedCapabilityIds.Count == 0);
         string systemPrompt = legacy
             ? BuildSystemPrompt()
             : calculatorSynthesis
                 ? NIRACognitionPromptCompiler.CalculatorSynthesisSystem(_personality)
+                : webResearchSynthesis
+                    ? NIRACognitionPromptCompiler.WebResearchSynthesisSystem(_personality)
                 : informationOnly || evidenceSynthesisOnly
                     ? NIRACognitionPromptCompiler.BootstrapSystem(_personality)
                     : NIRACognitionPromptCompiler.System(_compactContract, _personality);
@@ -370,7 +377,9 @@ public sealed class NIRACognitionService
 
         string userPrompt = legacy
             ? BuildUserPrompt(context)
-            : NIRACognitionPromptCompiler.User(context, expandedSections, expandedCapabilityIds);
+            : webResearchSynthesis
+                ? NIRACognitionPromptCompiler.WebResearchSynthesisUser(context)
+                : NIRACognitionPromptCompiler.User(context, expandedSections, expandedCapabilityIds);
 
         // App guidance remains active throughout a trusted embedded run;
         // desktop turns load it only for registered, selected/observed app
@@ -444,9 +453,14 @@ public sealed class NIRACognitionService
         }
 
         Debug.WriteLine($"[CognitionPrompt] Run={context.RunId:D} | Cycle={context.Cycle} | " +
-            $"Mode={(legacy ? "Legacy" : evidenceSynthesisOnly ? "EvidenceSynthesis" : calculatorSynthesis ? "CalculatorSynthesis" : bootstrap ? "Bootstrap" : informationOnly ? "Information" : "Focused")} | " +
+            $"Mode={(legacy ? "Legacy" : evidenceSynthesisOnly ? "EvidenceSynthesis" : calculatorSynthesis ? "CalculatorSynthesis" : webResearchSynthesis ? "WebResearchSynthesis" : bootstrap ? "Bootstrap" : informationOnly ? "Information" : "Focused")} | " +
             $"ReasoningModel={selectedModel} | SystemChars={systemPrompt.Length} | " +
             $"UserChars={userPrompt.Length} | TotalChars={systemPrompt.Length + userPrompt.Length}");
+        if (webResearchSynthesis)
+            NIRADiagnosticTrace.Event("WEB-RESEARCH-SYNTHESIS",
+                $"Run={context.RunId:D} Cycle={context.Cycle} " +
+                $"SystemChars={systemPrompt.Length} UserChars={userPrompt.Length} " +
+                "IndependentReview=Retained");
         NIRADiagnosticTrace.Event("COGNITION-ROUND", $"Run={context.RunId:D} " +
             $"Cycle={context.Cycle} Model={selectedModel} " +
             $"SystemChars={systemPrompt.Length} UserChars={userPrompt.Length}");

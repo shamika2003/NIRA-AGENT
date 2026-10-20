@@ -107,6 +107,8 @@ public static class NIRACapabilityIds
         "shell.execute";
 
 
+    public const string WebSearch = "web.search";
+
     public const string HttpRequest =
         "http.request";
 

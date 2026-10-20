@@ -185,6 +185,28 @@ public sealed class NIRACapabilityService
                 $"Status={result.Status} Risk={result.Risk} Changed={result.ChangedSystemState} " +
                 $"Uncertain={result.OutcomeUncertain} ElapsedMs={(result.FinishedAtUtc - result.StartedAtUtc).TotalMilliseconds:F0} " +
                 $"Audit={result.AuditAttemptId?.ToString("D") ?? "-"}");
+            if (result.CapabilityId == NIRACapabilityIds.WebSearch)
+            {
+                // A fixed classification, not the exception text, makes it safe
+                // to diagnose failures even when model/tool arguments are private.
+                string failureKind = result.Status == NIRACapabilityResultStatus.Succeeded
+                    ? "Completed"
+                    : result.Summary.Contains("No configured web search API key", StringComparison.Ordinal)
+                    ? "MissingProviderKey"
+                    : result.Summary.Contains("queries must be an array", StringComparison.Ordinal) ||
+                      result.Summary.Contains("distinct queries", StringComparison.Ordinal) ||
+                      result.Summary.Contains("provider must be", StringComparison.Ordinal) ||
+                      result.Summary.Contains("country must be", StringComparison.Ordinal) ||
+                      result.Summary.Contains("freshness must be", StringComparison.Ordinal)
+                    ? "InvalidSearchArguments"
+                    : result.Status == NIRACapabilityResultStatus.AuthorizationRequired ||
+                      result.Status == NIRACapabilityResultStatus.Rejected
+                    ? "RejectedBeforeSearch"
+                    : "OtherFailure";
+                NIRADiagnosticTrace.Event("WEB-SEARCH-RESULT",
+                    $"Status={result.Status} Kind={failureKind} " +
+                    $"ElapsedMs={(result.FinishedAtUtc - result.StartedAtUtc).TotalMilliseconds:F0}");
+            }
             if (NIRADiagnosticTrace.DetailedToolCaptureEnabled &&
                 (result.CapabilityId.StartsWith("filesystem.", StringComparison.OrdinalIgnoreCase) ||
                  result.CapabilityId.StartsWith("desktop.", StringComparison.OrdinalIgnoreCase) ||

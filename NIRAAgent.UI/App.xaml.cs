@@ -522,6 +522,9 @@ public partial class App : WpfApplication
                 NIRAShellExecuteCapabilityHandler>();
 
 
+            // Structured public research, no Playwright or search-page scraping.
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRAWebSearchCapabilityHandler>();
+
             builder.Services.AddSingleton<
                 INIRACapabilityHandler,
                 NIRAHttpRequestCapabilityHandler>();

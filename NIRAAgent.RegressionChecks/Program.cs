@@ -25,6 +25,231 @@ Console.WriteLine($"[DeepRouting] REGRESSION | Revision={NIRAModelSelection.Rout
     $"Assembly={typeof(NIRAModelSelection).Assembly.Location}");
 Console.WriteLine("[ConcurrentMind] REGRESSION | Revision=NIRA-CONCURRENT-20261014-S4-ADAPTIVE");
 
+// R-web: real production provider parsing and request execution with an in-memory
+// fake HTTP transport. These are NOT specific saved search answers or model fixtures.
+Check("WEB research provider adapters preserve attributed extracts and reject unsafe source URLs", () =>
+{
+    using var brave = JsonDocument.Parse("""
+    {"grounding":{"generic":[
+      {"url":"https://science.example.org/article","title":"Measured results","snippets":["Evidence A.","Evidence B."]},
+      {"url":"http://127.0.0.1/private","title":"Unsafe","snippets":["Never use"]},
+      {"url":"https://science.example.org/article","title":"Duplicate","snippets":["Duplicate"]}]},
+      "sources":{"https://science.example.org/article":{"age":["day","2026-10-18"]}}}
+    """);
+    var braveSources = NIRAWebSearchParsing.ParseBrave(brave.RootElement);
+    if (braveSources.Count != 1 || braveSources[0].Extract != "Evidence A.\nEvidence B." ||
+        braveSources[0].Provider != "brave" || braveSources[0].DateHint != "2026-10-18")
+        throw new Exception("Brave evidence parsing lost provenance or accepted a local URL");
+    using var tavily = JsonDocument.Parse("""
+    {"results":[{"url":"https://docs.example.net/page","title":"Documentation","content":"Extract text","published_date":"2026-10-19"},
+                {"url":"http://localhost/secret","title":"Injected","content":"Private"},
+                {"url":"https://docs.example.net/page","title":"Dup","content":"Repeated"}]}
+    """);
+    var tavilySources = NIRAWebSearchParsing.ParseTavily(tavily.RootElement);
+    if (tavilySources.Count != 1 || tavilySources[0].Provider != "tavily" ||
+        tavilySources[0].DateHint != "2026-10-19" || tavilySources[0].Extract != "Extract text")
+        throw new Exception("Tavily evidence parsing lost source metadata or accepted duplicates");
+    if (NIRAWebSearchParsing.SafeSourceUrl("https://127.0.0.1/private") ||
+        NIRAWebSearchParsing.SafeSourceUrl("https://localhost/a") ||
+        NIRAWebSearchParsing.SafeSourceUrl("https://public.example.com@localhost/private") ||
+        !NIRAWebSearchParsing.SafeSourceUrl("https://public.example.com/page"))
+        throw new Exception("Source URL origin controls changed");
+});
+
+Check("WEB one API call returns attributed sources; memory cache prevents duplicate paid requests", () =>
+{
+    using var transport = new NIRAWebFakeTransport(req =>
+    {
+        if (req.RequestUri?.Host != "api.search.brave.com" ||
+            req.Headers.GetValues("X-Subscription-Token").Single() != "secret-for-test")
+            throw new Exception("Unexpected provider or authentication transport");
+        return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
+            Content = new StringContent("""
+            {"grounding":{"generic":[{"url":"https://journal.example.com/paper","title":"Journal","snippets":["Independent result evidence"]}]}}
+            """)
+        };
+    });
+    using var client = new HttpClient(transport);
+    using var search = new NIRAWebSearchCapabilityHandler(client,
+        name => name == "NIRA_BRAVE_SEARCH_API_KEY" ? "secret-for-test" : null);
+    var req = Request(NIRACapabilityIds.WebSearch, """{"query":"generic research topic","maxSources":4}""");
+    var first = search.ExecuteAsync(req).GetAwaiter().GetResult();
+    var next = search.ExecuteAsync(req).GetAwaiter().GetResult();
+    if (!first.Succeeded || transport.Count != 1 || first.Output.Contains("secret-for-test", StringComparison.Ordinal) ||
+        !next.Output.Contains("\"cached\":true", StringComparison.Ordinal) ||
+        !next.Output.Contains("journal.example.com/paper", StringComparison.Ordinal) ||
+        search.Descriptor.DefaultRisk != NIRACapabilityRisk.Observe)
+        throw new Exception("Web search cache / provenance / key-scrubbing regressed");
+});
+
+Check("WEB provider fallback uses distinct provider and does not retry rate-limited service", () =>
+{
+    using var transport = new NIRAWebFakeTransport(req =>
+    {
+        if (req.RequestUri?.Host == "api.search.brave.com")
+            return new HttpResponseMessage((System.Net.HttpStatusCode)429);
+        if (req.RequestUri?.Host == "api.tavily.com")
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
+                Content = new StringContent("""
+                {"results":[{"url":"https://source.example.edu/resource","title":"Source","content":"Retrieved evidence"}]}
+                """)
+            };
+        throw new Exception("Unknown fallback endpoint");
+    });
+    using var client = new HttpClient(transport);
+    using var search = new NIRAWebSearchCapabilityHandler(client, key => key switch {
+        "NIRA_BRAVE_SEARCH_API_KEY" => "brave-test", "NIRA_TAVILY_API_KEY" => "tavily-test", _ => null });
+    var first = search.ExecuteAsync(Request(NIRACapabilityIds.WebSearch,
+        """{"query":"topic one","provider":"auto"}""")).GetAwaiter().GetResult();
+    var second = search.ExecuteAsync(Request(NIRACapabilityIds.WebSearch,
+        """{"query":"topic two","provider":"auto"}""")).GetAwaiter().GetResult();
+    if (transport.CallsTo("api.search.brave.com") != 1 ||
+        transport.CallsTo("api.tavily.com") != 2 ||
+        !first.Output.Contains("\"provider\":\"tavily\"", StringComparison.Ordinal) ||
+        !second.Output.Contains("\"sourceCount\":1", StringComparison.Ordinal))
+        throw new Exception("Rate-limited provider was retried or alternative provider was not used");
+});
+
+Check("WEB configuration and bounds reject unconfigured keys and oversized search batches", () =>
+{
+    using var transport = new NIRAWebFakeTransport(_ => throw new Exception("Unconfigured capability made an HTTP request"));
+    using var client = new HttpClient(transport);
+    using var search = new NIRAWebSearchCapabilityHandler(client, _ => null);
+    var normal = Request(NIRACapabilityIds.WebSearch, """{"query":"public data"}""");
+    Throws<InvalidOperationException>(() => search.ExecuteAsync(normal).GetAwaiter().GetResult());
+    Throws<InvalidOperationException>(() => search.ExecuteAsync(Request(NIRACapabilityIds.WebSearch,
+        """{"queries":["a","b","c","d"]}""")).GetAwaiter().GetResult());
+    Throws<InvalidOperationException>(() => search.ExecuteAsync(Request(NIRACapabilityIds.WebSearch,
+        """{"query":"topic","provider":"arbitrary"}""")).GetAwaiter().GetResult());
+    if (transport.Count != 0) throw new Exception("Invalid requests caused network side effects");
+});
+
+Check("WEB persisted Windows user keys are available to launched processes with stale environments", () =>
+{
+    string? FromScopes(Func<string, string?> process, Func<string, string?> user) =>
+        NIRAWebSearchCapabilityHandler.ResolveEnvironmentFromScopes(
+            "NIRA_TAVILY_API_KEY", process, user);
+    if (FromScopes(_ => null, _ => "persisted-user-value") != "persisted-user-value" ||
+        FromScopes(_ => "", _ => "persisted-user-value") != "persisted-user-value" ||
+        FromScopes(_ => "process-value", _ => "persisted-user-value") != "process-value" ||
+        FromScopes(_ => "process-value", _ => { throw new Exception("Unneeded user-scope lookup"); }) != "process-value" ||
+        FromScopes(_ => null, _ => null) is not null)
+        throw new Exception("Search key resolution lost process precedence or persisted user fallback");
+});
+
+Check("WEB Exa no-card provider preserves highlights, provenance and fallback", () =>
+{
+    using var parsed = JsonDocument.Parse("""
+    {"results":[
+      {"url":"https://paper.example.org/abstract","title":"A Study",
+       "publishedDate":"2026-10-19T10:00:00Z","highlights":["Key finding A", "Related finding B"]},
+      {"url":"http://127.0.0.1/internal","title":"Unsafe","highlights":["Private"]},
+      {"url":"https://paper.example.org/abstract","title":"Duplicate","highlights":["Same"]},
+      {"url":"https://paper.example.org/no-extract","title":"Metadata only"}
+    ]}
+    """);
+    var sources = NIRAWebSearchParsing.ParseExa(parsed.RootElement);
+    if (sources.Count != 1 || sources[0].Provider != "exa" ||
+        sources[0].Extract != "Key finding A\nRelated finding B" ||
+        sources[0].DateHint != "2026-10-19T10:00:00Z")
+        throw new Exception("Exa search adapter accepted unsafe/empty/duplicate results or lost highlights");
+
+    using var transport = new NIRAWebFakeTransport(req =>
+    {
+        if (req.RequestUri?.Host == "api.tavily.com")
+            return new HttpResponseMessage((System.Net.HttpStatusCode)429);
+        if (req.RequestUri?.Host != "api.exa.ai" ||
+            req.Headers.GetValues("x-api-key").Single() != "exa-fixture-key")
+            throw new Exception("Wrong Exa host or API authentication");
+        string content = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+        using var body = JsonDocument.Parse(content);
+        if (body.RootElement.GetProperty("numResults").GetInt32() != 8 ||
+            body.RootElement.GetProperty("contents").GetProperty("highlights").ValueKind != JsonValueKind.True)
+            throw new Exception("Exa search request lost bounded highlights mode");
+        return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
+            Content = new StringContent("""
+            {"results":[{"url":"https://example.org/data","title":"Data",
+                         "highlights":["Evidence content"],"publishedDate":"2026-10-19"}]}
+            """)
+        };
+    });
+    using var client = new HttpClient(transport);
+    using var search = new NIRAWebSearchCapabilityHandler(client, key => key switch {
+        "NIRA_TAVILY_API_KEY" => "tavily-fixture-key",
+        "NIRA_EXA_API_KEY" => "exa-fixture-key",
+        _ => null
+    });
+    var result = search.ExecuteAsync(Request(NIRACapabilityIds.WebSearch,
+        """{"query":"a generic research question","provider":"auto"}""")).GetAwaiter().GetResult();
+    if (!result.Succeeded || transport.CallsTo("api.tavily.com") != 1 ||
+        transport.CallsTo("api.exa.ai") != 1 ||
+        !result.Output.Contains("\"provider\":\"exa\"", StringComparison.Ordinal) ||
+        result.Output.Contains("exa-fixture-key", StringComparison.Ordinal))
+        throw new Exception("Tavily-to-Exa failover failed or leaked a provider key");
+});
+
+// R-web-efficiency: route using REAL trusted receipt structure, never the
+// wording of the question, a hardcoded domain, or a claimed LLM confidence.
+Check("WEB focused synthesis requires exactly one complete read-only attributed receipt", () =>
+{
+    var payload = JsonSerializer.Serialize(new {
+        evidenceType = "UntrustedPublicWebSearchExtracts",
+        fetchedAtUtc = "2026-10-20T17:29:44Z",
+        completed = true,
+        sourceCount = 2,
+        sources = new[] {
+            new { url = "https://docs.example.org/article", title = "Reference A",
+                extract = "Independent technical facts from A", provider = "tavily", dateHint = "2026-10-19" },
+            new { url = "https://journal.example.com/update", title = "Reference B",
+                extract = "Additional independent observations", provider = "tavily", dateHint = "" }
+        }
+    });
+    string evidence = "\nAUTHORITATIVE CAPABILITY RESULT\n" +
+        "RequestId: 00000000-0000-0000-0000-000000000000\n" +
+        "CapabilityId: web.search\nRisk: Observe\nStatus: Succeeded\n" +
+        "ChangedSystemState: False\nOutcomeUncertain: False\n" +
+        "Summary: Web search returned 2 attributed sources.\nOutput:\n" + payload + "\n";
+    NIRACognitionContext Scope(string source, string dynamic = "", string owned = "") => new() {
+        Cycle = 2,
+        RunId = Guid.NewGuid(),
+        Event = NIRAMindEvent.UserMessage("Research a novel topic", Guid.NewGuid(), "regression:research"),
+        CapabilityEvidence = source,
+        DynamicToolEvidence = dynamic,
+        OwnedTaskContext = owned,
+        ConversationPulseContext = "User: I need two sources."
+    };
+    bool Eligible(string source) => NIRACognitionPromptCompiler.IsSingleSuccessfulWebSearchReceipt(Scope(source));
+    if (!Eligible(evidence) || !Eligible(evidence.Replace("\n", "\r\n")) ||
+        Eligible(evidence.Replace("Status: Succeeded", "Status: Failed", StringComparison.Ordinal)) ||
+        Eligible(evidence.Replace("OutcomeUncertain: False", "OutcomeUncertain: True", StringComparison.Ordinal)) ||
+        Eligible(evidence.Replace("ChangedSystemState: False", "ChangedSystemState: True", StringComparison.Ordinal)) ||
+        Eligible(evidence.Replace("Risk: Observe", "Risk: Modify", StringComparison.Ordinal)) ||
+        Eligible(evidence.Replace("CapabilityId: web.search", "CapabilityId: browser.navigate", StringComparison.Ordinal)) ||
+        Eligible(evidence + "\nAUTHORITATIVE CAPABILITY RESULT\nCapabilityId: math.calculate\n") ||
+        NIRACognitionPromptCompiler.IsSingleSuccessfulWebSearchReceipt(Scope(evidence, dynamic: "tool result")) ||
+        NIRACognitionPromptCompiler.IsSingleSuccessfulWebSearchReceipt(Scope(evidence, owned: "open task")) ||
+        NIRACognitionPromptCompiler.IsSingleSuccessfulWebSearchReceipt(Scope(evidence) with { Cycle = 1 }))
+        throw new Exception("Research synthesis admitted a nonexclusive or untrusted tool outcome");
+    string missingSources = evidence.Replace("\"sourceCount\":2", "\"sourceCount\":0", StringComparison.Ordinal);
+    if (Eligible(missingSources) ||
+        Eligible(evidence.Replace("https://docs.example.org/article", "http://127.0.0.1/secret", StringComparison.Ordinal)) ||
+        Eligible(evidence.Replace("\"completed\":true", "\"completed\":false", StringComparison.Ordinal)) ||
+        Eligible(evidence.Replace("\"extract\":\"Independent technical facts from A\"", "\"extract\":\"\"", StringComparison.Ordinal)))
+        throw new Exception("Bad/empty web source was accepted as verified research context");
+
+    string system = NIRACognitionPromptCompiler.WebResearchSynthesisSystem("");
+    string user = NIRACognitionPromptCompiler.WebResearchSynthesisUser(Scope(evidence));
+    if (!system.Contains("Continue", StringComparison.Ordinal) ||
+        !system.Contains("UNTRUSTED", StringComparison.Ordinal) ||
+        !system.Contains("independent objective reviewer", StringComparison.Ordinal) ||
+        !user.Contains("https://docs.example.org/article", StringComparison.Ordinal) ||
+        !user.Contains("Independent technical facts from A", StringComparison.Ordinal) ||
+        !user.Contains("https://journal.example.com/update", StringComparison.Ordinal) ||
+        user.Contains("Runtime user API key", StringComparison.Ordinal) ||
+        user.Length > 24000 || system.Length > 7000)
+        throw new Exception("Focused synthesis lost sources, authority rules or prompt budget");
+});
+
 // General arithmetic capability checks. These target the real parser and
 // handler, not any memorized conversational test question or canned answer.
 Check("CALC arithmetic precedence, right-associative powers and exact decimals", () =>
@@ -4324,4 +4549,23 @@ static string? LocatePromptFolder()
         }
     }
     return null;
+}
+
+
+// Fake HTTPS adapter. Runs production providers, parsing, caching and fallback
+// without network access or developer API keys.
+internal sealed class NIRAWebFakeTransport : HttpMessageHandler
+{
+    private readonly Func<HttpRequestMessage, HttpResponseMessage> _reply;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> _byHost = new();
+    private int _count;
+    public int Count => _count;
+    public NIRAWebFakeTransport(Func<HttpRequestMessage, HttpResponseMessage> reply) => _reply = reply;
+    public int CallsTo(string host) => _byHost.TryGetValue(host, out int count) ? count : 0;
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+    {
+        Interlocked.Increment(ref _count);
+        _byHost.AddOrUpdate(request.RequestUri?.Host ?? "unknown", 1, (_, n) => n + 1);
+        return Task.FromResult(_reply(request));
+    }
 }
