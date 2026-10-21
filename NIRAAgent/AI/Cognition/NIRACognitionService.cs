@@ -2959,6 +2959,7 @@ public sealed class NIRACognitionService
                 ? (parsed.Speech ?? string.Empty).Trim()[..7000]
                 : (parsed.Speech ?? string.Empty).Trim(),
             DisplayBlocks = NIRAPresentationPolicy.Normalize(parsed.DisplayBlocks),
+            ResourceIntent = parsed.ResourceIntent,
             ProgressUpdate = NormalizeProgress(parsed.ProgressUpdate, 190),
             ProgressSpeech = NormalizeProgress(parsed.ProgressSpeech, 145),
             DecisionSummary =
@@ -3048,6 +3049,7 @@ public sealed class NIRACognitionService
 
             Speech = ReadValue(root, "speech", string.Empty) ?? string.Empty,
             DisplayBlocks = NIRARichBlockJsonReader.Read(root),
+            ResourceIntent = ReadOptional<NIRAResourceIntent>(root, "resourceIntent"),
 
             ReplyPresentation = ReadValue(
                 root,

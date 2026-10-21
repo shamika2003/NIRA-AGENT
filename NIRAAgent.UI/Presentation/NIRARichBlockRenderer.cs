@@ -63,6 +63,7 @@ public static class NIRARichBlockRenderer
         "hero" => Hero(block),
         "insight" => Insight(block),
         "source" => Source(block),
+        "video" => VideoLink(block),
         "text" => Frame(Body(block), false),
         "card" => Card(block),
         "file" => FileResult(block),
@@ -244,6 +245,23 @@ public static class NIRARichBlockRenderer
         link.Margin = new Thickness(37, 10, 0, 0);
         content.Children.Add(link);
         return DesignedSurface(content, Palette[4], 17);
+    }
+
+    // Open an observed publisher/video page. No WebView, autoplay, tracking
+    // iframe or fabricated player. The existing rich-text host owns navigation.
+    private static Border VideoLink(NIRARichBlock block)
+    {
+        var content = new StackPanel();
+        string title = block.Title.Length > 0 ? block.Title : "Watch demonstration";
+        content.Children.Add(SemanticHeading("▶", title, Palette[0]));
+        string link = block.Text;
+        if (Uri.TryCreate(block.Text, UriKind.Absolute, out Uri? uri) &&
+            uri.Scheme is "http" or "https")
+            link = $"[Watch at {uri.Host}  ↗]({uri.AbsoluteUri})";
+        var body = Text(link, 13.1, true, "NIRACyanBrush");
+        body.Margin = new Thickness(37, 10, 0, 0);
+        content.Children.Add(body);
+        return DesignedSurface(content, Palette[0], 17);
     }
 
     private static Border FileResult(NIRARichBlock block)

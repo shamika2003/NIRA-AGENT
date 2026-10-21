@@ -32,6 +32,7 @@ public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDi
             Param("provider", "string", false, "auto (default), brave, tavily or exa. Auto tries configured providers in Brave / Tavily / Exa order with failover."),
             Param("maxSources", "integer", false, "Maximum distinct sources returned overall (1-8, default 5)."),
             Param("freshness", "string", false, "any (default), day, week, month, year; use short freshness for current events."),
+            Param("evidenceDepth", "string", false, "brief (default): fast provider snippets; detailed: request richer extracted page text when Tavily is selected (may increase latency and Tavily credits). Use when primary-source release notes or detailed source verification matter. Neither mode verifies publisher identity by itself."),
             Param("country", "string", false, "Optional 2-letter search-region code (default US); not the user's location."),
             Param("useCache", "boolean", false, "Use a short memory-only evidence cache (default true). Set false for explicit refresh."),
         }
@@ -89,11 +90,14 @@ public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDi
 
     public NIRACapabilityRisk ResolveRisk(NIRACapabilityRequest _) => NIRACapabilityRisk.Observe;
 
-    public async Task<NIRACapabilityHandlerResult> ExecuteAsync(NIRACapabilityRequest request, CancellationToken cancellationToken = default)
+    // Shared with the capability service's dispatch preflight. The handler
+    // keeps the final check as well for callers that bypass the Executive.
+    // No fixed questions, domains, or source answers are interpreted here.
+    internal static IReadOnlyList<string> ReadSearchQueries(NIRACapabilityRequest request)
     {
         string? one = NIRACapabilityArguments.GetOptionalString(request, "query", 400);
         var queries = new List<string>();
-        if (!string.IsNullOrWhiteSpace(one)) queries.Add(one);
+        if (!string.IsNullOrWhiteSpace(one)) queries.Add(one.Trim());
         if (TryArg(request, "queries", out JsonElement array))
         {
             if (array.ValueKind != JsonValueKind.Array || array.GetArrayLength() > 3)
@@ -102,12 +106,18 @@ public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDi
             {
                 if (entry.ValueKind != JsonValueKind.String)
                     throw new InvalidOperationException("Each search query must be a string.");
-                queries.Add(entry.GetString()?.Trim() ?? "");
+                queries.Add(entry.GetString()?.Trim() ?? string.Empty);
             }
         }
         queries = queries.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (queries.Count is < 1 or > 3 || queries.Any(q => q.Length is < 1 or > 400))
             throw new InvalidOperationException("Specify 1-3 distinct queries of 1-400 characters each.");
+        return queries;
+    }
+
+    internal static void ValidateSearchArguments(NIRACapabilityRequest request)
+    {
+        _ = ReadSearchQueries(request);
         string provider = (NIRACapabilityArguments.GetOptionalString(request, "provider", 12) ?? "auto").ToLowerInvariant();
         if (provider is not ("auto" or "brave" or "tavily" or "exa"))
             throw new InvalidOperationException("provider must be auto, brave, tavily or exa.");
@@ -117,6 +127,29 @@ public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDi
         string country = (NIRACapabilityArguments.GetOptionalString(request, "country", 2) ?? "US").ToUpperInvariant();
         if (country.Length != 2 || !country.All(c => c is >= 'A' and <= 'Z'))
             throw new InvalidOperationException("country must be a two-letter country code.");
+        string depth = (NIRACapabilityArguments.GetOptionalString(request, "evidenceDepth", 12) ?? "brief").ToLowerInvariant();
+        if (depth is not ("brief" or "detailed"))
+            throw new InvalidOperationException("evidenceDepth must be brief or detailed.");
+        _ = NIRACapabilityArguments.GetInteger(request, "maxSources", 5, 1, 8);
+        _ = NIRACapabilityArguments.GetBoolean(request, "useCache", true);
+    }
+
+    public async Task<NIRACapabilityHandlerResult> ExecuteAsync(NIRACapabilityRequest request, CancellationToken cancellationToken = default)
+    {
+        ValidateSearchArguments(request);
+        var queries = ReadSearchQueries(request);
+        string provider = (NIRACapabilityArguments.GetOptionalString(request, "provider", 12) ?? "auto").ToLowerInvariant();
+        if (provider is not ("auto" or "brave" or "tavily" or "exa"))
+            throw new InvalidOperationException("provider must be auto, brave, tavily or exa.");
+        string freshness = (NIRACapabilityArguments.GetOptionalString(request, "freshness", 10) ?? "any").ToLowerInvariant();
+        if (freshness is not ("any" or "day" or "week" or "month" or "year"))
+            throw new InvalidOperationException("freshness must be any, day, week, month or year.");
+        string country = (NIRACapabilityArguments.GetOptionalString(request, "country", 2) ?? "US").ToUpperInvariant();
+        if (country.Length != 2 || !country.All(c => c is >= 'A' and <= 'Z'))
+            throw new InvalidOperationException("country must be a two-letter country code.");
+        string evidenceDepth = (NIRACapabilityArguments.GetOptionalString(request, "evidenceDepth", 12) ?? "brief").ToLowerInvariant();
+        if (evidenceDepth is not ("brief" or "detailed"))
+            throw new InvalidOperationException("evidenceDepth must be brief or detailed.");
         int maxSources = NIRACapabilityArguments.GetInteger(request, "maxSources", 5, 1, 8);
         bool useCache = NIRACapabilityArguments.GetBoolean(request, "useCache", true);
         string? braveKey = Key("NIRA_BRAVE_SEARCH_API_KEY", "BRAVE_SEARCH_API_KEY");
@@ -124,7 +157,7 @@ public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDi
         string? exaKey = Key("NIRA_EXA_API_KEY", "EXA_API_KEY");
         NIRADiagnosticTrace.Event("WEB-SEARCH-SETUP",
             $"RequestedProvider={provider} BraveConfigured={braveKey is not null} " +
-            $"TavilyConfigured={tavilyKey is not null} ExaConfigured={exaKey is not null} Queries={queries.Count}");
+            $"TavilyConfigured={tavilyKey is not null} ExaConfigured={exaKey is not null} Queries={queries.Count} EvidenceDepth={evidenceDepth}");
         if ((provider == "brave" && braveKey is null) || (provider == "tavily" && tavilyKey is null) ||
             (provider == "exa" && exaKey is null) ||
             (provider == "auto" && braveKey is null && tavilyKey is null && exaKey is null))
@@ -154,7 +187,7 @@ public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDi
                     _ => null
                 };
                 if (string.IsNullOrWhiteSpace(key)) continue;
-                string cacheKey = string.Join('|', name, country, freshness, query.ToLowerInvariant());
+                string cacheKey = string.Join('|', name, country, freshness, evidenceDepth, query.ToLowerInvariant());
                 if (useCache && _cache.TryGetValue(cacheKey, out CacheEntry? cached) && cached.Expires > DateTimeOffset.UtcNow)
                 {
                     sources = cached.Sources; used = cached.Provider; cacheHit = true;
@@ -173,7 +206,7 @@ public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDi
                 }
                 try
                 {
-                    sources = await FetchAsync(name, key, query, freshness, country, cancellationToken);
+                    sources = await FetchAsync(name, key, query, freshness, country, evidenceDepth, cancellationToken);
                     used = name;
                     NIRADiagnosticTrace.Event("WEB-SEARCH-PROVIDER",
                         $"Provider={name} Outcome={(sources.Count > 0 ? "Sources" : "Empty")} SourceCount={sources.Count}");
@@ -215,6 +248,7 @@ public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDi
             evidenceType = "UntrustedPublicWebSearchExtracts",
             fetchedAtUtc = DateTimeOffset.UtcNow,
             queries,
+            requestedEvidenceDepth = evidenceDepth,
             completed = aggregate.Count > 0,
             sourceCount = aggregate.Count,
             sources = aggregate,
@@ -240,7 +274,7 @@ public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDi
     }
 
     private async Task<IReadOnlyList<NIRAWebSource>> FetchAsync(string provider, string key, string query,
-        string freshness, string country, CancellationToken cancellationToken)
+        string freshness, string country, string evidenceDepth, CancellationToken cancellationToken)
     {
         string url = provider switch {
             "brave" => "https://api.search.brave.com/res/v1/llm/context",
@@ -256,8 +290,8 @@ public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDi
                 maximum_number_of_urls = 8, maximum_number_of_tokens = 4500,
                 maximum_number_of_tokens_per_url = 1200,
                 enable_source_metadata = true, freshness = BraveFreshness(freshness) },
-            "tavily" => (object)new { query, search_depth = "basic", max_results = 8,
-                include_answer = false, include_raw_content = false,
+            "tavily" => (object)new { query, search_depth = evidenceDepth == "detailed" ? "advanced" : "basic", max_results = 8,
+                include_answer = false, include_raw_content = evidenceDepth == "detailed",
                 include_images = false, time_range = freshness == "any" ? null : freshness },
             "exa" => (object)new { query, type = "fast", numResults = 8,
                 contents = new { highlights = true },
@@ -297,7 +331,7 @@ public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDi
             using JsonDocument doc = JsonDocument.Parse(memory.ToArray());
             return provider switch {
                 "brave" => NIRAWebSearchParsing.ParseBrave(doc.RootElement),
-                "tavily" => NIRAWebSearchParsing.ParseTavily(doc.RootElement),
+                "tavily" => NIRAWebSearchParsing.ParseTavily(doc.RootElement, evidenceDepth == "detailed"),
                 "exa" => NIRAWebSearchParsing.ParseExa(doc.RootElement),
                 _ => Array.Empty<NIRAWebSource>()
             };
@@ -330,7 +364,7 @@ public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDi
 }
 
 internal sealed record NIRAWebSource(string Url, string Title, string Extract, string Provider,
-    string? DateHint = null, string Query = "");
+    string? DateHint = null, string Query = "", string ContentKind = "Snippet");
 
 // Parsing is structurally generic. No domain lists, fixed topics or canned facts.
 internal static class NIRAWebSearchParsing
@@ -363,7 +397,7 @@ internal static class NIRAWebSearchParsing
         return result;
     }
 
-    public static IReadOnlyList<NIRAWebSource> ParseTavily(JsonElement root)
+    public static IReadOnlyList<NIRAWebSource> ParseTavily(JsonElement root, bool detailed = false)
     {
         var result = new List<NIRAWebSource>();
         if (!Field(root, "results", out JsonElement items) || items.ValueKind != JsonValueKind.Array)
@@ -372,10 +406,12 @@ internal static class NIRAWebSearchParsing
         {
             string url = String(entry, "url");
             if (!SafeSourceUrl(url) || result.Any(x => x.Url.Equals(url, StringComparison.OrdinalIgnoreCase))) continue;
-            string content = Clean(String(entry, "content"), 1300);
+            string extracted = detailed ? Clean(String(entry, "raw_content"), 3600) : "";
+            string content = extracted.Length > 0 ? extracted : Clean(String(entry, "content"), 1300);
             if (content.Length == 0) continue;
             result.Add(new NIRAWebSource(url, Clean(String(entry, "title"), 220), content,
-                "tavily", Clean(String(entry, "published_date"), 30)));
+                "tavily", Clean(String(entry, "published_date"), 30),
+                ContentKind: extracted.Length > 0 ? "ExtractedPageText" : "Snippet"));
             if (result.Count >= 8) break;
         }
         return result;

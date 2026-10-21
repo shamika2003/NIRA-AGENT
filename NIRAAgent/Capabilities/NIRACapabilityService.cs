@@ -100,6 +100,12 @@ public sealed class NIRACapabilityService
                 normalized,
                 descriptor);
 
+            // A pure, provider-free web preflight catches invalid structured
+            // search inputs before authorization/HTTP, with no extra LLM call.
+            // This validates only the tool's contract, never the query topic.
+            if (normalized.CapabilityId == NIRACapabilityIds.WebSearch)
+                NIRAWebSearchCapabilityHandler.ValidateSearchArguments(normalized);
+
             return true;
         }
         catch (Exception ex) when (
@@ -141,10 +147,28 @@ public sealed class NIRACapabilityService
     {
         List<NIRACapabilityResult> results = [];
         if (requests == null) return results;
+
+        // Parallelism applies ONLY to a complete, independent batch of pure
+        // provider-side observations. Everything else (browser sessions, desktop
+        // actions, files, side effects and dependent operations) remains ordered.
+        // Schema/risk checks run BEFORE starting any parallel operation; each
+        // operation still runs normal authorization and durable auditing.
+        bool parallel = CanParallelizeIndependentResourceReads(requests);
+        NIRACapabilityResult[]? completed = null;
+        if (parallel)
+        {
+            NIRADiagnosticTrace.Event("TOOL-READ-BATCH", $"Mode=Concurrent Count={requests.Count}");
+            // Await EVERY started task, including when cancellation occurs. This
+            // leaves no unobserved background dispatch and preserves input order.
+            completed = await Task.WhenAll(requests.Select(request =>
+                ExecuteOneAsync(request, cancellationToken)));
+        }
         foreach (NIRACapabilityRequest request in requests)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            NIRACapabilityResult result = await ExecuteOneAsync(request, cancellationToken);
+            NIRACapabilityResult result = completed is null
+                ? await ExecuteOneAsync(request, cancellationToken)
+                : completed[results.Count];
             results.Add(result);
 
             bool browserFailure =
@@ -318,6 +342,27 @@ public sealed class NIRACapabilityService
         {
             return false; // Invalid evidence cannot establish a dependency.
         }
+    }
+
+    // No topic heuristics or model-declared safety: the actual registered
+    // capability, validated arguments, and authoritative resolved risk decide.
+    // The whitelist intentionally excludes all browser and desktop observations,
+    // because they may share a mutable user/browser session even when read-only.
+    internal bool CanParallelizeIndependentResourceReads(IReadOnlyList<NIRACapabilityRequest> requests)
+    {
+        if (requests is null || requests.Count < 2 || requests.Count > 3)
+            return false;
+        var identities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (NIRACapabilityRequest request in requests)
+        {
+            if (request.CapabilityId is not (NIRACapabilityIds.ImageSearch or
+                NIRACapabilityIds.WebSearch or NIRACapabilityIds.MathCalculate))
+                return false;
+            if (!identities.Add(request.CapabilityId) ||
+                !TryValidateReadOnlyRequest(request, out _))
+                return false;
+        }
+        return true;
     }
 
     private async Task<NIRACapabilityResult> ExecuteOneAsync(NIRACapabilityRequest raw, CancellationToken ct)
@@ -663,7 +708,19 @@ public sealed class NIRACapabilityService
             string parameterType =
                 parameter.Type.Trim().ToLowerInvariant();
 
-            if (parameterType == "integer")
+            // A model sometimes represents a one-item array as a scalar.
+            // Normalize only the unambiguous web.search single-query shape;
+            // never split text on commas or discard requested queries.
+            if (descriptor.Id == NIRACapabilityIds.WebSearch &&
+                parameter.Name.Equals("queries", StringComparison.OrdinalIgnoreCase) &&
+                parameterType == "array" &&
+                property.Value.ValueKind == JsonValueKind.String)
+            {
+                normalizedValue = JsonSerializer.SerializeToElement(
+                    new[] { property.Value.GetString() ?? string.Empty });
+                changed = true;
+            }
+            else if (parameterType == "integer")
             {
                 if (property.Value.ValueKind == JsonValueKind.String &&
                     int.TryParse(

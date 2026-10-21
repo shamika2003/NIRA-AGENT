@@ -25,6 +25,195 @@ Console.WriteLine($"[DeepRouting] REGRESSION | Revision={NIRAModelSelection.Rout
     $"Assembly={typeof(NIRAModelSelection).Assembly.Location}");
 Console.WriteLine("[ConcurrentMind] REGRESSION | Revision=NIRA-CONCURRENT-20261014-S4-ADAPTIVE");
 
+// R6: Resource planning is based on a model-selected optional intention,
+// never a topic trigger, domain list, phrase classifier or hardcoded test answer.
+Check("R6 optional resource intent dispatch remains model-selected and authorized", () =>
+{
+    var natural = new NIRACognitionDecision {
+        State = NIRACognitionState.Complete, EmitReply = true,
+        Reply = "An informative answer that can stand on its own.", ReplyReady = true,
+        CharacterReady = true
+    };
+    if (!ReferenceEquals(natural, NIRAResourceIntentPlanner.Apply(natural, true)))
+        throw new Exception("Normal answer triggered a media tool without model selection");
+    var rich = natural with {
+        ResourceIntent = new NIRAResourceIntent {
+            ImageQuery = "specific physical reference subject photograph",
+            VideoQuery = "publisher's real demonstration video", Purpose = "Visual evidence"
+        }
+    };
+    var prepared = NIRAResourceIntentPlanner.Apply(rich, true);
+    if (prepared.State != NIRACognitionState.Continue || prepared.EmitReply ||
+        prepared.CapabilityRequests.Count != 2 ||
+        prepared.CapabilityRequests[0].CapabilityId != NIRACapabilityIds.ImageSearch ||
+        prepared.CapabilityRequests[1].CapabilityId != NIRACapabilityIds.WebSearch ||
+        prepared.CapabilityRequests[0].Arguments.GetProperty("query").GetString() != rich.ResourceIntent!.ImageQuery)
+        throw new Exception("Chosen evidence was not routed through normal tool requests");
+    var outsideCycle = rich with { ConversationOnly = true };
+    if (!ReferenceEquals(rich, NIRAResourceIntentPlanner.Apply(rich, false)) ||
+        !ReferenceEquals(outsideCycle, NIRAResourceIntentPlanner.Apply(outsideCycle, false)))
+        throw new Exception("Resource intent bypassed first-cycle boundary");
+    if (NIRAResourceIntentPlanner.Apply(natural with {
+        ConversationOnly = true, ResourceIntent = rich.ResourceIntent
+    }, true).CapabilityRequests.Count != 0)
+        throw new Exception("Interpersonal reply was unexpectedly given resource work");
+    if (NIRAResourceIntentPlanner.Apply(natural with {
+        ResourceIntent = new NIRAResourceIntent { ImageQuery = "https://ignored.invalid/\nunsafe" }
+    }, true).CapabilityRequests.Count != 0)
+        throw new Exception("Untrusted invalid query was accepted");
+    var already = natural with { ResourceIntent = rich.ResourceIntent,
+        CapabilityRequests = new [] { Request(NIRACapabilityIds.ImageSearch,
+            """{"query":"existing query"}""") } };
+    if (NIRAResourceIntentPlanner.Apply(rich with {
+        ResourceIntent = rich.ResourceIntent! with { ImageCount = 3 }
+    }, true).CapabilityRequests[0].Arguments.GetProperty("retrieveCount").GetInt32() != 3)
+        throw new Exception("Model-selected multi-image request was lost");
+    if (NIRAResourceIntentPlanner.Apply(already, true).CapabilityRequests.Count != 2)
+        throw new Exception("Expected only additional video search, no duplicate image search");
+});
+
+// R7: Unfamiliar topics must not have precomputed image, source or video rules.
+// Exercise intent -> actual capability arguments; no model/network calls.
+Check("R7 source, photo and demonstration intent is independent and optional", () =>
+{
+    var natural = new NIRACognitionDecision {
+        State = NIRACognitionState.Complete, EmitReply = true,
+        Reply = "Reasoned answer with no necessary external evidence", ReplyReady = true
+    };
+    if (!ReferenceEquals(NIRAResourceIntentPlanner.Apply(natural, true), natural))
+        throw new Exception("No-evidence answer dispatched unrelated tools");
+
+    var fact = natural with { ResourceIntent = new NIRAResourceIntent {
+        WebQuery = "technical evidence for an unfamiliar material",
+        Purpose = "Recent source attribution" } };
+    var sourceOnly = NIRAResourceIntentPlanner.Apply(fact, true);
+    if (sourceOnly.CapabilityRequests.Count != 1 ||
+        sourceOnly.CapabilityRequests[0].CapabilityId != NIRACapabilityIds.WebSearch ||
+        sourceOnly.CapabilityRequests[0].Arguments.GetProperty("queries")[0].GetString() != fact.ResourceIntent.WebQuery ||
+        sourceOnly.State != NIRACognitionState.Continue || sourceOnly.EmitReply)
+        throw new Exception("Pure source evidence intent was lost");
+
+    var multi = natural with { ResourceIntent = new NIRAResourceIntent {
+        WebQuery = "verifiable publisher source of a new vehicle",
+        ImageQuery = "licensed photograph of an unfamiliar vehicle",
+        VideoQuery = "official flight demonstration of that vehicle",
+        Purpose = "Appearance, technical accuracy and demonstration" } };
+    var planned = NIRAResourceIntentPlanner.Apply(multi with {
+        ResourceIntent = multi.ResourceIntent! with { ImageCount = 2 }
+    }, true);
+    if (planned.CapabilityRequests.Count != 2 ||
+        planned.CapabilityRequests[0].Arguments.GetProperty("retrieveCount").GetInt32() != 2 ||
+        planned.CapabilityRequests[0].CapabilityId != NIRACapabilityIds.ImageSearch ||
+        planned.CapabilityRequests[1].CapabilityId != NIRACapabilityIds.WebSearch ||
+        !planned.CapabilityRequests[0].Arguments.GetProperty("retrieveBest").GetBoolean() ||
+        planned.CapabilityRequests[1].Arguments.GetProperty("queries").GetArrayLength() != 2)
+        throw new Exception("Source, image and video need distinct tool requests without duplicate web search");
+
+    if (!ReferenceEquals(NIRAResourceIntentPlanner.Apply(multi, false), multi) ||
+        NIRAResourceIntentPlanner.Apply(natural with {
+            ConversationOnly = true, ResourceIntent = multi.ResourceIntent
+        }, true).CapabilityRequests.Count != 0)
+        throw new Exception("Resource selection bypassed initial-cycle or interpersonal guard");
+    var duplicate = multi with { CapabilityRequests = new[] {
+        Request(NIRACapabilityIds.WebSearch, """{"query":"already researching"}""") } };
+    if (NIRAResourceIntentPlanner.Apply(duplicate, true).CapabilityRequests.Count != 2)
+        throw new Exception("Parallel plan duplicated web search");
+
+    var unsafePlan = natural with { ResourceIntent = new NIRAResourceIntent {
+        WebQuery = "https://unverified.example.invalid/demo", ImageQuery = "\nunsafe",
+        VideoQuery = "https://unverified.example.invalid/video" } };
+    if (NIRAResourceIntentPlanner.Apply(unsafePlan, true).CapabilityRequests.Count != 0)
+        throw new Exception("Untrusted URLs or malformed queries became tool inputs");
+});
+
+Check("R7 real reference-image retrieval is opt-in and read-only", () =>
+{
+    using var finder = new NIRACommonsImageDiscoveryService();
+    var handler = new NIRAImageSearchCapabilityHandler(finder);
+    if (handler.Descriptor.Parameters.Single(p => p.Name == "retrieveBest").Type != "boolean" ||
+        handler.Descriptor.DefaultRisk != NIRACapabilityRisk.Observe ||
+        handler.ResolveRisk(Request(NIRACapabilityIds.ImageSearch,
+            """{"query":"unfamiliar subject","retrieveBest":true}""")) != NIRACapabilityRisk.Observe)
+        throw new Exception("Real image retrieval bypassed the explicit optional read-only contract");
+    var instructions = NIRACognitionPromptCompiler.BootstrapSystem("");
+    if (!instructions.Contains("webQuery", StringComparison.Ordinal) ||
+        !instructions.Contains("ONE real verified image", StringComparison.OrdinalIgnoreCase))
+        throw new Exception("Production first-round image/source selection instructions missing");
+});
+
+Check("R6 observed video link renders as an optional grounded rich block", () =>
+{
+    using var evidence = JsonDocument.Parse("""
+        {"displayBlocks":[{"type":"video", "title":"Observed demonstration",
+        "url":"https://media.example.org/watch/123"}]}
+        """);
+    var accepted = NIRARichBlockJsonReader.Read(evidence.RootElement);
+    if (accepted.Count != 1 || accepted[0].Type != "video" ||
+        !accepted[0].Text.Contains("media.example.org/watch/123", StringComparison.Ordinal))
+        throw new Exception("Video source link was not accepted as a safe native presentation type");
+    using var empty = JsonDocument.Parse("""{"displayBlocks":[{"type":"video", "title":"Invented", "text":"no proven video"}]}""");
+    if (NIRARichBlockJsonReader.Read(empty.RootElement).Count != 0)
+        throw new Exception("A non-URL video block was accepted");
+});
+
+// R5 general-purpose contract checks. These do not encode conversation topics,
+// expected web search answers, or a special response for a known test question.
+Check("R5 web search accepts a single-query array shape without extra model repair", () =>
+{
+    using var transport = new NIRAWebFakeTransport(req =>
+        new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
+            Content = new StringContent("""{"results":[{"url":"https://research.example.org/a","title":"A","content":"Independent observation"}]}""")
+        });
+    using var client = new HttpClient(transport);
+    using var handler = new NIRAWebSearchCapabilityHandler(client,
+        key => key == "NIRA_TAVILY_API_KEY" ? "offline-test" : null);
+    var req = Request(NIRACapabilityIds.WebSearch,
+        """{"queries":["a completely arbitrary technical topic"],"provider":"tavily"}""");
+    NIRAWebSearchCapabilityHandler.ValidateSearchArguments(req);
+    // The generic descriptor normalizer accepts an unambiguous singleton
+    // array encoded as one JSON string, without interpreting its contents.
+    MethodInfo normalize = typeof(NIRACapabilityService).GetMethod(
+        "NormalizeCapabilityArgumentsToDescriptor", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new Exception("Web schema normalizer missing");
+    var scalar = Request(NIRACapabilityIds.WebSearch,
+        """{"queries":"another arbitrary investigation","provider":"tavily"}""");
+    var repaired = (NIRACapabilityRequest)(normalize.Invoke(null,
+        new object[] { scalar, handler.Descriptor, handler })
+        ?? throw new Exception("Singleton normalization returned null"));
+    if (repaired.Arguments.GetProperty("queries").ValueKind != JsonValueKind.Array ||
+        repaired.Arguments.GetProperty("queries")[0].GetString() != "another arbitrary investigation")
+        throw new Exception("Unambiguous query array normalization failed");
+    NIRAWebSearchCapabilityHandler.ValidateSearchArguments(repaired);
+    var receipt = handler.ExecuteAsync(req).GetAwaiter().GetResult();
+    if (!receipt.Succeeded || transport.Count != 1)
+        throw new Exception("Valid one-query requests required unnecessary recovery");
+    foreach (string invalid in new[] {
+        """{"queries":["one","two","three","four"]}""",
+        """{"queries":[{"topic":"one"}]}""",
+        """{"query":"arbitrary","provider":"nope"}""",
+        """{"query":"arbitrary","evidenceDepth":"strange"}"""
+    })
+        Throws<InvalidOperationException>(() =>
+            NIRAWebSearchCapabilityHandler.ValidateSearchArguments(
+                Request(NIRACapabilityIds.WebSearch, invalid)));
+    if (transport.Count != 1)
+        throw new Exception("Structural preflight produced a network side effect");
+});
+
+Check("R5 resource policy distinguishes actually displayed images from candidates", () =>
+{
+    string prompt = NIRACognitionPromptCompiler.BootstrapSystem("");
+    string reviewer = NIRATaskCompletionReviewService.ReviewerSystemPrompt;
+    string research = NIRACognitionPromptCompiler.WebResearchSynthesisSystem("");
+    if (!prompt.Contains("a candidate identifier is not permission", StringComparison.OrdinalIgnoreCase) ||
+        !prompt.Contains("image.retrieve", StringComparison.Ordinal) ||
+        !prompt.Contains("visible first reading path", StringComparison.Ordinal) ||
+        !reviewer.Contains("EXPLICIT MEDIA COMPLETION", StringComparison.Ordinal) ||
+        !reviewer.Contains("trusted image retrieval", StringComparison.Ordinal) ||
+        !research.Contains("MEDIA FIDELITY", StringComparison.Ordinal))
+        throw new Exception("Image deliverable or visible-overview fidelity lost");
+});
+
 // R-web: real production provider parsing and request execution with an in-memory
 // fake HTTP transport. These are NOT specific saved search answers or model fixtures.
 Check("WEB research provider adapters preserve attributed extracts and reject unsafe source URLs", () =>
@@ -188,6 +377,63 @@ Check("WEB Exa no-card provider preserves highlights, provenance and fallback", 
         throw new Exception("Tavily-to-Exa failover failed or leaked a provider key");
 });
 
+// R-web-detail: higher-fidelity source retrieval is optional and receipt-attributed,
+// not activated by hardcoded questions, sites or version strings. Offline fake HTTP only.
+Check("WEB optional detailed evidence is source-attributed and cache-separated", () =>
+{
+    var requests = new List<(string Depth, bool Raw)>();
+    using var transport = new NIRAWebFakeTransport(req =>
+    {
+        using var body = JsonDocument.Parse(req.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
+        var root = body.RootElement;
+        string depth = root.GetProperty("search_depth").GetString()!;
+        bool raw = root.GetProperty("include_raw_content").GetBoolean();
+        requests.Add((depth, raw));
+        return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new StringContent("""
+            {"results":[{"url":"https://publisher.example.org/notice",
+            "title":"An issuing publisher announcement",
+            "content":"Short provider summary",
+            "raw_content":"Actual publisher announcement with detailed technical evidence.",
+            "published_date":"2026-10-18"}]}
+            """)
+        };
+    });
+    using var http = new HttpClient(transport);
+    using var search = new NIRAWebSearchCapabilityHandler(http,
+        key => key == "NIRA_TAVILY_API_KEY" ? "fixture-not-a-real-key" : null);
+    string briefJson = """{"query":"arbitrary research task","evidenceDepth":"brief","provider":"tavily"}""";
+    string detailedJson = """{"query":"arbitrary research task","evidenceDepth":"detailed","provider":"tavily"}""";
+    var brief = search.ExecuteAsync(Request(NIRACapabilityIds.WebSearch, briefJson)).GetAwaiter().GetResult();
+    var detail = search.ExecuteAsync(Request(NIRACapabilityIds.WebSearch, detailedJson)).GetAwaiter().GetResult();
+    var cachedDetail = search.ExecuteAsync(Request(NIRACapabilityIds.WebSearch, detailedJson)).GetAwaiter().GetResult();
+    if (!brief.Succeeded || !detail.Succeeded || requests.Count != 2 ||
+        requests[0] != ("basic", false) || requests[1] != ("advanced", true) ||
+        !brief.Output.Contains("Short provider summary", StringComparison.Ordinal) ||
+        brief.Output.Contains("Actual publisher announcement", StringComparison.Ordinal) ||
+        !detail.Output.Contains("Actual publisher announcement", StringComparison.Ordinal) ||
+        !detail.Output.Contains("\"contentKind\":\"ExtractedPageText\"", StringComparison.Ordinal) ||
+        !cachedDetail.Output.Contains("\"cached\":true", StringComparison.Ordinal) ||
+        detail.Output.Contains("fixture-not-a-real-key", StringComparison.Ordinal))
+        throw new Exception("Detailed evidence or cache isolation failed");
+    using var synthetic = JsonDocument.Parse("""
+        {"results":[{"url":"https://issuer.example.net/facts",
+        "content":"Short summary",
+        "raw_content":"Long original evidence","published_date":"2026-10-17"}]}
+        """);
+    var original = NIRAWebSearchParsing.ParseTavily(synthetic.RootElement);
+    var detailed = NIRAWebSearchParsing.ParseTavily(synthetic.RootElement, detailed: true);
+    if (original.Single().Extract != "Short summary" ||
+        detailed.Single().Extract != "Long original evidence" ||
+        detailed.Single().ContentKind != "ExtractedPageText")
+        throw new Exception("Tavily extracted page text did not preserve provenance");
+    Throws<InvalidOperationException>(() => search.ExecuteAsync(Request(NIRACapabilityIds.WebSearch,
+        """{"query":"arbitrary task","evidenceDepth":"unbounded"}""")).GetAwaiter().GetResult());
+    if (!NIRACognitionPromptCompiler.WebResearchSynthesisSystem("").Contains("ExtractedPageText", StringComparison.Ordinal))
+        throw new Exception("Detailed source evidence interpretation did not reach synthesis");
+});
+
 // R-web-efficiency: route using REAL trusted receipt structure, never the
 // wording of the question, a hardcoded domain, or a claimed LLM confidence.
 Check("WEB focused synthesis requires exactly one complete read-only attributed receipt", () =>
@@ -248,6 +494,65 @@ Check("WEB focused synthesis requires exactly one complete read-only attributed 
         user.Contains("Runtime user API key", StringComparison.Ordinal) ||
         user.Length > 24000 || system.Length > 7000)
         throw new Exception("Focused synthesis lost sources, authority rules or prompt budget");
+});
+
+// R-web-quality: verify that the ACTUAL search receipt, rather than a truncated
+// Executive summary, reaches the independent reviewer. Topics/domains are
+// arbitrary fixtures; no production research answer or website is memorized.
+Check("WEB latest/official research sends attributed extracts into independent review", () =>
+{
+    var payload = JsonSerializer.Serialize(new {
+        evidenceType = "UntrustedPublicWebSearchExtracts",
+        fetchedAtUtc = "2026-10-20T18:00:00Z",
+        completed = true,
+        sourceCount = 2,
+        sources = new[] {
+            new { url = "https://notes.example.org/summary", title = "Apparently official-looking title",
+                extract = "Secondary article reports a past build identifier.",
+                provider = "tavily", dateHint = "2026-08-10" },
+            new { url = "https://updates.example.com/releases/current", title = "Issuing publisher release",
+                extract = "Primary publication names a newer relevant build identifier.",
+                provider = "tavily", dateHint = "2026-10-19" }
+        }
+    });
+    string receipt = "AUTHORITATIVE CAPABILITY RESULT\n" +
+        "RequestId: 00000000-0000-0000-0000-000000000000\n" +
+        "CapabilityId: web.search\nRisk: Observe\nStatus: Succeeded\n" +
+        "ChangedSystemState: False\nOutcomeUncertain: False\n" +
+        "Summary: Web search returned 2 attributed sources.\nOutput:\n" + payload + "\n";
+    NIRACognitionContext Context(string evidence) => new() {
+        Cycle = 2, RunId = Guid.NewGuid(),
+        Event = NIRAMindEvent.UserMessage("Research a current change", Guid.NewGuid(), "regression:quality"),
+        CapabilityEvidence = evidence
+    };
+    string projection = NIRACognitionPromptCompiler.WebResearchReviewEvidence(Context(receipt.Replace("\n", "\r\n")));
+    if (!projection.Contains("https://notes.example.org/summary", StringComparison.Ordinal) ||
+        !projection.Contains("Secondary article reports", StringComparison.Ordinal) ||
+        !projection.Contains("https://updates.example.com/releases/current", StringComparison.Ordinal) ||
+        !projection.Contains("Primary publication names", StringComparison.Ordinal) ||
+        !projection.Contains("DATE HINT (not verified publication date): 2026-08-10", StringComparison.Ordinal) ||
+        projection.Length > 13600)
+        throw new Exception("Reviewer lost original attributed web sources or misrepresented date hints");
+    if (NIRACognitionPromptCompiler.WebResearchReviewEvidence(Context(
+            receipt.Replace("Status: Succeeded", "Status: Failed", StringComparison.Ordinal))).Length != 0 ||
+        NIRACognitionPromptCompiler.WebResearchReviewEvidence(Context(
+            receipt + "\nAUTHORITATIVE CAPABILITY RESULT\nCapabilityId: filesystem.read\n")).Length != 0 ||
+        NIRACognitionPromptCompiler.WebResearchReviewEvidence(Context(
+            receipt.Replace("https://notes.example.org/summary", "http://127.0.0.1/secret", StringComparison.Ordinal))).Length != 0 ||
+        NIRACognitionPromptCompiler.WebResearchReviewEvidence(Context(receipt) with { Cycle = 1 }).Length != 0)
+        throw new Exception("Reviewer accepted untrusted or nonexclusive search evidence");
+    string synthesis = NIRACognitionPromptCompiler.WebResearchSynthesisSystem("");
+    string review = NIRATaskCompletionReviewService.ReviewerSystemPrompt;
+    if (!synthesis.Contains("PRIMARY-SOURCE TEST", StringComparison.Ordinal) ||
+        !synthesis.Contains("TEMPORAL TEST", StringComparison.Ordinal) ||
+        !review.Contains("WEB RESEARCH SOURCE FIDELITY", StringComparison.Ordinal) ||
+        !review.Contains("NeedsWork", StringComparison.Ordinal) ||
+        !review.Contains("dateHint", StringComparison.Ordinal))
+        throw new Exception("Official/latest source verification instructions are missing");
+    var reviewRequest = new NIRATaskCompletionReviewRequest("Verify current information",
+        "A draft", receipt, ProposedState: "Complete", WebResearchSourceEvidence: projection);
+    if (reviewRequest.WebResearchSourceEvidence != projection)
+        throw new Exception("Independent-review evidence contract dropped source extracts");
 });
 
 // General arithmetic capability checks. These target the real parser and
@@ -1500,6 +1805,85 @@ Check("R26 images are independent native capabilities with visual attribution", 
     if (!visual.PresentToUser || !visual.SourceUri.Contains("commons.wikimedia.org") ||
         (visual with { SourceUri = "https://evil.example/photo" }).Normalize().SourceUri.Length != 0)
         throw new Exception("Trusted media attribution was discarded or source URL was unbounded.");
+});
+
+// R8: an empty result is not an image. Fallback from a detailed query to
+// an article-title query is content-agnostic and never fabricates photographs.
+Check("R8 empty image search is authoritative negative evidence", () =>
+{
+    var query = "rare example artifact photographs";
+    if (NIRACommonsImageDiscoveryService.CompactDiscoveryQuery(query) !=
+            "rare example artifact" ||
+        NIRACommonsImageDiscoveryService.ShortDiscoveryQuery(query) !=
+            "example artifact")
+        throw new Exception("Generic image-title refinement changed its subject unexpectedly");
+    var empty = new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.ImageSearch,
+        Status = NIRACapabilityResultStatus.Succeeded,
+        Output = "Candidates=0\nIMAGE_DISCOVERY_EMPTY=True\nVerifiedImageRetrieved=False"
+    };
+    var method = typeof(NIRAExecutive).GetMethod("ShouldMarkImageProviderUnavailable",
+        BindingFlags.Static | BindingFlags.NonPublic)
+        ?? throw new Exception("Missing negative image-evidence guard");
+    bool End(int count, NIRACapabilityResult result) =>
+        (bool)(method.Invoke(null, new object[] { count,
+            (IReadOnlyList<NIRACapabilityResult>)new[] { result } }) ?? false);
+    if (!End(0, empty) || End(1, empty) ||
+        !End(0, empty with { Output = "ImageMediaUnavailable=True" }) ||
+        End(0, empty with { Output = "Candidates=0" }) ||
+        End(0, empty with { CapabilityId = NIRACapabilityIds.WebSearch }))
+        throw new Exception("Empty image output either looped or suppressed unrelated work");
+});
+
+Check("R8 HTTP200 empty indexes trigger article-image fallback in one tool round", () =>
+{
+    // Fake network, genuine production SearchAsync. No subject-specific paths:
+    // only provider endpoints and real response schemas determine the behavior.
+    using var transport = new NIRAWebFakeTransport(req =>
+    {
+        string host = req.RequestUri?.Host ?? "";
+        if (host == "api.openverse.org")
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
+                Content = new StringContent("""{"results":[]}""")
+            };
+        if (host == "commons.wikimedia.org")
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
+                Content = new StringContent("""{"query":{"pages":[]}}""")
+            };
+        if (host == "en.wikipedia.org")
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
+                Content = new StringContent("""
+                  {"query":{"pages":[{"index":1,"title":"Unfamiliar scientific structure",
+                  "pageimage":"Verified.jpg","thumbnail":{
+                  "source":"https://upload.wikimedia.org/wikipedia/commons/a/ab/Verified.jpg",
+                  "width":1200,"height":800}}]}}
+                  """)
+            };
+        throw new Exception("Unexpected image provider in fallback test");
+    });
+    using var http = new HttpClient(transport);
+    using var service = new NIRACommonsImageDiscoveryService(http);
+    var found = service.SearchAsync("obscure scientific structure photographs", 4)
+        .GetAwaiter().GetResult();
+    if (found.Count != 1 || transport.Count != 3 ||
+        !service.LastSearchStatus.Contains("WikipediaAccepted=1", StringComparison.Ordinal) ||
+        !found[0].MediaUrl.Contains("upload.wikimedia.org", StringComparison.Ordinal))
+        throw new Exception("HTTP200 empty indexes skipped real article-image fallback");
+});
+
+Check("R8 Wikipedia article-image fallback retains real approved media", () =>
+{
+    const string json = """
+      {"query":{"pages":[{"index":1,"title":"Obscure concept","pageimage":"Photo.jpg",
+        "thumbnail":{"source":"https://upload.wikimedia.org/wikipedia/commons/a/ab/Photo.jpg",
+          "width":900,"height":650}}]}}
+      """;
+    var images = NIRACommonsImageDiscoveryService.ParseWikipediaFreeImageResponse(json, 6);
+    if (images.Count != 1 ||
+        !images[0].SourceUri.StartsWith("https://commons.wikimedia.org/wiki/File:", StringComparison.Ordinal) ||
+        images[0].MediaUrl != "https://upload.wikimedia.org/wikipedia/commons/a/ab/Photo.jpg" ||
+        !NIRACommonsImageDiscoveryService.IsPermittedMediaUri(images[0].MediaUrl))
+        throw new Exception("Verified article image fallback failed to preserve a safe source");
 });
 
 Check("R28 independent Openverse results retain licensed Flickr photo and attribution", () =>
@@ -4500,6 +4884,32 @@ Check("R35 companion Off is global and Gallery never allows a chat dock", () =>
         policy(true, true, false, true) ||
         !policy(true, false, false, false))
         throw new Exception("Active Gallery/sidebar state or desktop restoration policy regressed");
+});
+
+// Semantic answer-depth guidance is shared by first-pass cognition, web
+// continuation, YAML and independent review. This validates the real production
+// contracts without memorizing a subject, product, test question or answer.
+Check("General answer depth separates social reactions from useful topical detail without media quotas", () =>
+{
+    string bootstrap = NIRACognitionPromptCompiler.BootstrapSystem("identity:\n  name: NIRA");
+    string web = NIRACognitionPromptCompiler.WebResearchSynthesisSystem("identity:\n  name: NIRA");
+    string review = NIRATaskCompletionReviewService.ReviewerSystemPrompt;
+    string? path = LocatePromptFolder();
+    if (path is null) throw new Exception("Prompt folder unavailable");
+    string yaml = File.ReadAllText(Path.Combine(path, "cognition.yaml"));
+    if (!bootstrap.Contains("INFORMATION DEPTH IS SEMANTIC", StringComparison.Ordinal) ||
+        !bootstrap.Contains("USER VALUE, NOT MEDIA QUOTAS", StringComparison.Ordinal) ||
+        !bootstrap.Contains("a user asking about a named subject's details", StringComparison.Ordinal) ||
+        !web.Contains("INTELLIGENT COMPLETENESS", StringComparison.Ordinal) ||
+        !web.Contains("Never turn predictions", StringComparison.OrdinalIgnoreCase) ||
+        !web.Contains("No LLM-call limit", StringComparison.Ordinal) ||
+        !review.Contains("INTENT-LEVEL ANSWER COMPLETENESS", StringComparison.Ordinal) ||
+        !review.Contains("do not demand every imaginable specification", StringComparison.Ordinal) ||
+        !yaml.Contains("Conversational tone does not necessarily mean social-only intent", StringComparison.Ordinal) ||
+        !yaml.Contains("Images, official videos and rich components are selected", StringComparison.Ordinal))
+        throw new Exception("Response-depth and selective media policies are not consistently wired");
+    // The live model decides information depth; these checks cannot certify
+    // its real-world factual accuracy, judgment, or rendered media availability.
 });
 
 Console.WriteLine($"REGRESSION CHECKS: {passed} passed, {failed} failed");

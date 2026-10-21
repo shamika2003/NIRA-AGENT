@@ -258,6 +258,7 @@ public static class NIRARichBlockJsonReader
             "feature" or "featured" or "spotlight" or "hero" => "hero",
             "takeaway" or "keyinsight" or "highlight" or "insight" => "insight",
             "resource" or "reference" or "sourcelink" or "source" => "source",
+            "videolink" or "videoreference" or "video" => "video",
             "stat" or "statcard" or "statistic" or "kpi" or "metriccard" or "metricpanel" => "metric",
             "math" or "latex" or "formula" or "mathequation" => "equation",
             _ => type
@@ -265,7 +266,7 @@ public static class NIRARichBlockJsonReader
         // "file" cards are reserved for authoritative runtime tool evidence.
         // A model's unverified success claim must never impersonate that status UI.
         if (type == "file") return null;
-        if (type is not ("heading" or "text" or "hero" or "insight" or "source" or "card" or "metric" or "equation" or "table" or "chart" or "code" or "details" or "list" or "quote" or "timeline" or "checklist" or "progress" or "tabs" or "followups"))
+        if (type is not ("heading" or "text" or "hero" or "insight" or "source" or "video" or "card" or "metric" or "equation" or "table" or "chart" or "code" or "details" or "list" or "quote" or "timeline" or "checklist" or "progress" or "tabs" or "followups"))
             type = defaultType;
 
         // A model may use objects instead of the contracted string arrays.
@@ -339,7 +340,7 @@ public static class NIRARichBlockJsonReader
         if (type == "equation") body = NIRAMathMarkup.NormalizeEquationInput(body);
         // A source card may use a conventional URL field. This only preserves
         // model-supplied link text; it does not fetch or verify the destination.
-        if (type == "source" && body.Length == 0)
+        if ((type is "source" or "video") && body.Length == 0)
             body = First(element, "", "url", "href", "uri");
         if (type == "card")
         {

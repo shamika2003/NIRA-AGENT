@@ -40,7 +40,11 @@ public sealed class NIRAExecutive
         IReadOnlyList<NIRACapabilityResult> results) =>
         alreadyRetrieved == 0 && results.Any(result =>
             (result.CapabilityId == NIRACapabilityIds.ImageSearch ||
-             result.CapabilityId == NIRACapabilityIds.ImageRetrieve) && !result.Succeeded);
+             result.CapabilityId == NIRACapabilityIds.ImageRetrieve) &&
+            (!result.Succeeded ||
+             (result.CapabilityId == NIRACapabilityIds.ImageSearch &&
+              (result.Output.Contains("IMAGE_DISCOVERY_EMPTY=True", StringComparison.Ordinal) ||
+               result.Output.Contains("ImageMediaUnavailable=True", StringComparison.Ordinal)))));
 
     // Routing and completion are orthogonal. One foreground serial operation
     // should not allocate a persistent branch; one genuinely delegated operation
@@ -1107,6 +1111,22 @@ public sealed class NIRAExecutive
                     expandedCapabilityIds,
                     synthesizeFromEvidence);
 
+            // General-purpose same-call resource planning. NIRA, not keyword
+            // matching in the runtime, decides whether an optional real image
+            // or published video would improve this particular answer. Normal
+            // authorization, tool receipts and answer completion remain intact.
+            if (cycle == 1 && mindEvent.Source == NIRAMindEventSource.User)
+            {
+                NIRACognitionDecision planned = NIRAResourceIntentPlanner.Apply(decision, true);
+                bool dispatched = !ReferenceEquals(planned, decision);
+                NIRADiagnosticTrace.Event("RESOURCE-PLAN",
+                    $"Run={runId:D} Cycle={cycle} " +
+                    $"ModelSelected={decision.ResourceIntent is not null} " +
+                    $"Dispatched={dispatched} " +
+                    $"ToolTypes={string.Join(",", planned.CapabilityRequests.Select(r => r.CapabilityId).Distinct())} " +
+                    $"TotalRequested={planned.CapabilityRequests.Count}");
+                decision = planned;
+            }
 
             if (unavailableImageProviderCycle > 0 && cycle > unavailableImageProviderCycle &&
                 decision.State == NIRACognitionState.Continue &&
@@ -4197,7 +4217,9 @@ public sealed class NIRAExecutive
                     capabilityResults);
 
             verifiedImageRetrievalCount += capabilityResults.Count(result =>
-                result.CapabilityId == NIRACapabilityIds.ImageRetrieve && result.Succeeded);
+                result.Succeeded &&
+                (result.CapabilityId is NIRACapabilityIds.ImageRetrieve or NIRACapabilityIds.ImageSearch) &&
+                result.VisualArtifacts.Any(artifact => artifact.PresentToUser));
 
             if (verifiedImageRetrievalCount > 0 && capabilityResults.Any(result =>
                 result.CapabilityId == NIRACapabilityIds.ImageRetrieve && !result.Succeeded))
@@ -4224,16 +4246,18 @@ public sealed class NIRAExecutive
                 executiveEvidence.AppendLine();
                 executiveEvidence.AppendLine(
                     "IMAGE PROVIDER UNAVAILABLE (AUTHORITATIVE TOOL RESULT): " +
-                    "Image discovery or verified retrieval failed in this run. No image " +
-                    "file was retrieved. Do not invoke image.search or image.retrieve " +
+                    "Image discovery yielded no downloadable verified image in this run " +
+                    "(this can be an empty source index, not a network outage). " +
+                    "Do not invoke image.search or image.retrieve " +
                     "again for this objective; multiple failed image queries are NOT " +
                     "independent evidence. On the very next cognition turn provide " +
                     "the useful non-image answer from supported knowledge, openly " +
                     "state that reference images could not be displayed, and finish " +
                     "with state=Complete. Do not claim any images or source verification, " +
                     "and do not claim a picture was displayed, or identify a photographer " +
-                    "without authoritative source evidence. You may give a clearly " +
-                    "labeled general site or search link instead. Do not spend additional " +
+                    "without authoritative source evidence. The observed " +
+                    "PublicImageSearchPage is only a browsing link, never a retrieved image. " +
+                    "If present, link it clearly as an optional alternative. Do not spend additional " +
                     "reasoning turns trying the same provider.");
                 NIRADiagnosticTrace.Event("IMAGE-SEARCH-RECOVERY",
                     $"Run={runId:D} Cycle={cycle} Outcome=ProviderUnavailable Next=OneAnswerOnlyRound");
@@ -5543,6 +5567,17 @@ public sealed class NIRAExecutive
                       "process and browser capabilities cannot execute here. " +
                       "Independently available app-scoped subtasks still matter.";
 
+                // Pass the same trusted source receipt that allowed focused
+                // synthesis to the independent reviewer. The general result
+                // tail may truncate search extracts; this projection cannot
+                // grant authority or bypass review.
+                string webResearchReviewEvidence =
+                    NIRACognitionPromptCompiler.WebResearchReviewEvidence(latestContext);
+                if (webResearchReviewEvidence.Length > 0)
+                    NIRADiagnosticTrace.Event("WEB-RESEARCH-EVIDENCE-REVIEW",
+                        $"Run={runId:D} Cycle={cycle} SourceChars={webResearchReviewEvidence.Length} " +
+                        "Review=Independent");
+
                 completionReviewCalls++;
                 Debug.WriteLine(
                     $"[ObjectiveGate] REVIEW | Run={runId:D} | Cycle={cycle} | " +
@@ -5575,7 +5610,8 @@ public sealed class NIRAExecutive
                                 latestContext?.LongTermMemoryContext ?? string.Empty,
                                 "PERSISTED SOCIAL CARRYOVER (context, not proof of a new check):",
                                 latestContext?.SocialCarryoverContext ?? string.Empty),
-                            decision.State.ToString()),
+                            decision.State.ToString(),
+                            webResearchReviewEvidence),
                         cancellationToken);
 
                 // Audit the review outcome without writing private prompt,

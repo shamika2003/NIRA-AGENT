@@ -86,13 +86,19 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
         _ => "UnexpectedError"
     };
 
-    public NIRACommonsImageDiscoveryService()
+    public NIRACommonsImageDiscoveryService(HttpClient? transport = null)
     {
-        // Do not use cookies, auto-redirect, proxy-configured credentials, or arbitrary destinations.
-        var handler = CreateImageHttpHandler();
-        _http = new HttpClient(handler, disposeHandler: true) {
-            Timeout = Timeout.InfiniteTimeSpan
-        };
+        // Production uses a restricted transport. An optional injected client
+        // permits offline end-to-end provider fallback tests, with NO network.
+        // Never inject an external client for normal application execution.
+        if (transport is null)
+        {
+            var handler = CreateImageHttpHandler();
+            _http = new HttpClient(handler, disposeHandler: true) {
+                Timeout = Timeout.InfiniteTimeSpan
+            };
+        }
+        else _http = transport;
         // Operators can supply a fully identifiable UA including their contact URL/email.
         // Never insert credentials or personal user data into this header automatically.
         string? configured = Environment.GetEnvironmentVariable("NIRA_WIKIMEDIA_USER_AGENT");
@@ -165,6 +171,34 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
         NIRADiagnosticTrace.Event("IMAGE-TRANSPORT", "Connect=Failed IPv4AndIPv6=True");
         throw new HttpRequestException(
             "Reference-image HTTPS TCP connection failed for all resolved addresses.", previous);
+    }
+
+    // A long, conversational image query is often a poor MediaWiki title search.
+    // Derive a shorter discovery phrase without knowing or matching ANY subject.
+    // These words describe the requested media, not its topic; dropping them
+    // cannot replace the subject with a preprogrammed test answer.
+    public static string CompactDiscoveryQuery(string query)
+    {
+        string[] words = Regex.Matches(query ?? string.Empty, @"[\p{L}\p{N}][\p{L}\p{N}_-]*")
+            .Cast<Match>()
+            .Select(match => match.Value)
+            .Where(word => !new[] {
+                "photo", "photos", "photograph", "photographs", "picture", "pictures",
+                "image", "images", "reference", "official", "show", "showing"
+            }.Contains(word, StringComparer.OrdinalIgnoreCase))
+            .ToArray();
+        if (words.Length == 0) return (query ?? string.Empty).Trim();
+        return string.Join(' ', words.Length <= 3 ? words : words[^3..]);
+    }
+
+    // Keep a second, more general title search possible for multi-term queries.
+    // An exact two-word phrase tends to match Wikipedia article titles even when
+    // a detailed, model-written search phrase does not. At most ONE refinement.
+    public static string ShortDiscoveryQuery(string query)
+    {
+        string compact = CompactDiscoveryQuery(query);
+        string[] terms = compact.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return terms.Length > 2 ? string.Join(' ', terms[^2..]) : compact;
     }
 
     private static string CommonsSearchUrl(string query, int limit) =>
@@ -241,8 +275,12 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
                         $"Wikimedia Commons image search returned HTTP {(int)response.StatusCode}.",
                         null, response.StatusCode);
                 byte[] bytes = await ReadBoundedAsync(response.Content, MaxApiBytes, timeout.Token);
+                using JsonDocument source = JsonDocument.Parse(bytes);
+                int providerPages = source.RootElement.TryGetProperty("query", out var q) &&
+                    q.TryGetProperty("pages", out var pages) &&
+                    pages.ValueKind == JsonValueKind.Array ? pages.GetArrayLength() : 0;
                 parsed = ParseCommonsSearchResponse(Encoding.UTF8.GetString(bytes), limit);
-                commonsStatus = $"HTTP200 Accepted={parsed.Count}";
+                commonsStatus = $"HTTP200 Results={providerPages} Accepted={parsed.Count}";
             }
             catch (HttpRequestException ex) when (ex.StatusCode is null && openverseReachable)
             {
@@ -261,6 +299,79 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
             {
                 commonsStatus = "Timeout; WikipediaFallback";
                 parsed = await SearchWikipediaFreeImagesAsync(query, limit, cancellationToken);
+            }
+            // R8: HTTP 200 with zero accepted Commons/Openverse candidates is
+            // NOT a successful image deliverable. The article-image index must
+            // also run for empty responses, not only for network errors.
+            // Do it inside this same tool operation: no extra LLM decision.
+            if (parsed.Count == 0 && commonsStatus != "NetworkError; WikipediaFallback" &&
+                commonsStatus != "Timeout; WikipediaFallback")
+            {
+                string articleQuery = CompactDiscoveryQuery(query);
+                try
+                {
+                    parsed = await SearchWikipediaFreeImagesAsync(articleQuery, limit, cancellationToken);
+                    commonsStatus += $"; WikipediaAccepted={parsed.Count}";
+                }
+                catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
+                    ex is HttpRequestException or OperationCanceledException or JsonException)
+                {
+                    commonsStatus += $"; WikipediaFailure={ClassifyProviderFailure(ex)}";
+                }
+            }
+            // If broad natural-language search misses, make one topic-agnostic
+            // title refinement. This is based ONLY on query tokens, not on
+            // specific products, projects, example prompts or company names.
+            if (parsed.Count == 0)
+            {
+                string refined = ShortDiscoveryQuery(query);
+                if (!string.Equals(refined, query, StringComparison.OrdinalIgnoreCase) &&
+                    refined.Length >= 3)
+                {
+                    try
+                    {
+                        parsed = await SearchWikipediaFreeImagesAsync(refined, limit, cancellationToken);
+                        commonsStatus += $"; ArticleRefinedAccepted={parsed.Count}";
+                    }
+                    catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
+                        ex is HttpRequestException or OperationCanceledException or JsonException)
+                    {
+                        commonsStatus += $"; ArticleRefinedFailure={ClassifyProviderFailure(ex)}";
+                    }
+                }
+            }
+            // Some subjects have no free main Wikipedia article image but do
+            // have Commons files under shorter titles. Give Commons one final
+            // targeted, read-only title query inside this SAME capability call.
+            // Never retry a publisher that refused/rate-limited our requests.
+            if (parsed.Count == 0 &&
+                !commonsStatus.Contains("WikipediaFailure=", StringComparison.Ordinal) &&
+                !commonsStatus.Contains("ArticleRefinedFailure=", StringComparison.Ordinal) &&
+                commonsStatus.StartsWith("HTTP200", StringComparison.Ordinal))
+            {
+                string shortQuery = ShortDiscoveryQuery(query);
+                if (shortQuery.Length >= 3 &&
+                    !string.Equals(shortQuery, query, StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                        timeout.CancelAfter(SearchNetworkTimeout);
+                        using var response = await _http.GetAsync(
+                            CommonsSearchUrl(shortQuery, limit), HttpCompletionOption.ResponseHeadersRead,
+                            timeout.Token);
+                        if (!response.IsSuccessStatusCode)
+                            throw new HttpRequestException("Refined Commons query unavailable", null, response.StatusCode);
+                        byte[] bytes = await ReadBoundedAsync(response.Content, MaxApiBytes, timeout.Token);
+                        parsed = ParseCommonsSearchResponse(Encoding.UTF8.GetString(bytes), limit);
+                        commonsStatus += $"; CommonsRefinedAccepted={parsed.Count}";
+                    }
+                    catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
+                        ex is HttpRequestException or OperationCanceledException or JsonException)
+                    {
+                        commonsStatus += $"; CommonsRefinedFailure={ClassifyProviderFailure(ex)}";
+                    }
+                }
             }
             // Group candidates from this one verified search. When a selected
             // CDN URL is broken, image.retrieve may try a few OTHER results
@@ -327,10 +438,13 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
         if (!response.IsSuccessStatusCode)
             throw new HttpRequestException("Openverse search HTTP failure", null, response.StatusCode);
         byte[] bytes = await ReadBoundedAsync(response.Content, MaxApiBytes, timeout.Token);
+        using JsonDocument source = JsonDocument.Parse(bytes);
+        int providerResults = source.RootElement.TryGetProperty("results", out var entries) &&
+            entries.ValueKind == JsonValueKind.Array ? entries.GetArrayLength() : 0;
         IReadOnlyList<NIRACommonsImageCandidate> candidates =
             ParseOpenverseSearchResponse(Encoding.UTF8.GetString(bytes), limit);
         NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
-            $"Operation=Search Stage=Openverse Outcome=Success Accepted={candidates.Count}");
+            $"Operation=Search Stage=Openverse Outcome=Success Results={providerResults} Accepted={candidates.Count}");
         return candidates;
     }
 

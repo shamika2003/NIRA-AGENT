@@ -51,6 +51,23 @@ public sealed record NIRAControlRequest
     public string? BranchId { get; init; }
 }
 
+// The model may optionally nominate evidence that would materially improve an
+// answer. This is NOT permission, a mandatory media quota, or a tool result.
+// The Executive is the only owner of capability validation/dispatch.
+public sealed record NIRAResourceIntent
+{
+    public string ImageQuery { get; init; } = string.Empty;
+    // Optional model-selected number of DISTINCT real references. One is the
+    // default; multiple are appropriate only when the user benefits from them.
+    // Never makes media mandatory for an ordinary text or social request.
+    public int ImageCount { get; init; } = 1;
+    // An optional source-verification request distinct from a video search.
+    // This remains a SEARCH phrase, never an unverified URL or an authority grant.
+    public string WebQuery { get; init; } = string.Empty;
+    public string VideoQuery { get; init; } = string.Empty;
+    public string Purpose { get; init; } = string.Empty;
+}
+
 public sealed record NIRACognitionDecision
 {
     public NIRACognitionState State
@@ -79,6 +96,7 @@ public sealed record NIRACognitionDecision
     // Spoken output differs from on-screen prose; empty falls back to Reply.
     public string Speech { get; init; } = string.Empty;
     public IReadOnlyList<NIRARichBlock> DisplayBlocks { get; init; } = Array.Empty<NIRARichBlock>();
+    public NIRAResourceIntent? ResourceIntent { get; init; }
 
     public NIRAReplyPresentationMode ReplyPresentation
     {
