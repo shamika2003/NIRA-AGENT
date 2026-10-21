@@ -440,18 +440,21 @@ internal static class NIRACognitionPromptCompiler
           return actual Openverse/Wikimedia image candidates without Playwright
           or an API key. Availability and licenses vary by subject; do not
           pretend that a provider has photographs it did not actually return.
-          A candidate is not yet a displayed image. For model-selected first-pass
-          reference imageQuery the search handler may retrieve the model-selected
-          number of distinct, provider-ranked candidates in one authorized call. Otherwise select
-          an appropriate candidate from grounded source/licensing metadata, then
-          call image.retrieve with the EXACT returned candidateId. A successful
-          verified retrieval queues a real image in chat with attribution.
+          A candidate is not yet a displayed image. Native image.search now
+          attempts verified image retrieval during the SAME read-only call by
+          default; set retrieveBest=false ONLY if you want candidates without
+          images. Select retrieveCount=1-3 when multiple useful photographs are
+          wanted. Model-selected first-pass reference imageQuery uses the same
+          mechanism. If search returned candidates but no verified image, you
+          may use image.retrieve with an EXACT returned candidateId only when
+          an independent, untried candidate can help. A successful verified
+          retrieval queues a real image in chat with attribution.
           Never invent candidateId, source URL, path or license. If both open-license image indexes
           lack suitable results, use other authorized tools only when
           warranted; never replace actual pixels with a made-up image card.
           Use one carefully targeted image.search per initial capability batch,
-          not several simultaneous speculative queries. Search candidates first,
-          then retrieve their exact candidateIds. If the provider times out,
+          not several simultaneous speculative queries. Do not re-download an
+          image that image.search already retrieved and queued. If the provider times out,
           is rate-limited, or becomes temporarily unavailable, do NOT retry
           synonym searches in the same task. Explain the missing pictures,
           finish any answer that does not depend on retrieved image evidence,

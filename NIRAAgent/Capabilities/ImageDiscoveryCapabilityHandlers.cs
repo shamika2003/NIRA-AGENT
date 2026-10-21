@@ -17,7 +17,7 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
             new NIRACapabilityParameterDescriptor { Name="query", Type="string", Required=true, Description="Specific visual subject, 2-160 characters; e.g. Karnak temple columns." },
             new NIRACapabilityParameterDescriptor { Name="limit", Type="integer", Required=false, Description="Number of ranked candidates, 1-12; default 6." },
             new NIRACapabilityParameterDescriptor { Name="retrieveBest", Type="boolean", Required=false,
-                Description="Optional: retrieve and present real licensed image(s) from this verified search; default false. Does not create/generate images." },
+                Description="Retrieve and show verified real licensed image(s) as part of this search; default true. Set false only for discovery-only work. Never generates images." },
             new NIRACapabilityParameterDescriptor { Name="retrieveCount", Type="integer", Required=false,
                 Description="Optional count of distinct verified images to show when retrieveBest is true, 1-3; default 1. Pick based on actual user value, never as a quota." }
         }
@@ -30,7 +30,7 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
     {
         string query = NIRACapabilityArguments.RequireString(request, "query", 160);
         int limit = NIRACapabilityArguments.GetInteger(request, "limit", 6, 1, 12);
-        bool retrieveBest = NIRACapabilityArguments.GetBoolean(request, "retrieveBest");
+        bool retrieveBest = NIRACapabilityArguments.GetBoolean(request, "retrieveBest", defaultValue: true);
         int retrieveCount = NIRACapabilityArguments.GetInteger(request, "retrieveCount", 1, 1, 3);
         var images = await _service.SearchAsync(query, limit, cancellationToken);
         var output = new StringBuilder();
@@ -74,7 +74,7 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
             var shown = new List<NIRACapabilityVisualArtifact>();
             var hashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            budget.CancelAfter(TimeSpan.FromSeconds(22));
+            budget.CancelAfter(TimeSpan.FromSeconds(28));
             foreach (var candidate in images)
             {
                 if (shown.Count >= retrieveCount || budget.IsCancellationRequested) break;

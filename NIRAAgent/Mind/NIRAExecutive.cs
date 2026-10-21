@@ -4610,6 +4610,8 @@ public sealed class NIRAExecutive
 
             if (newRuntimeVisuals > 0)
             {
+                NIRADiagnosticTrace.Event("IMAGE-DELIVERY",
+                    $"Run={runId:D} Cycle={cycle} Stage=RuntimeVisualQueued Count={newRuntimeVisuals}");
                 capabilityEvidence.AppendLine();
                 capabilityEvidence.AppendLine(
                     $"RUNTIME VISUAL DELIVERY: {newRuntimeVisuals} grounded image artifact(s) " +
@@ -6306,10 +6308,14 @@ public sealed class NIRAExecutive
                         Debug.WriteLine(
                             $"[VisualArtifact] REJECTED | Run={runId} | " +
                             $"Reason='{TrimLog(ex.Message)}'");
+                        NIRADiagnosticTrace.Event("IMAGE-DELIVERY",
+                            $"Run={runId:D} Stage=PresentationRejected ReasonType={ex.GetType().Name}");
 
                         continue;
                     }
 
+                    NIRADiagnosticTrace.Event("IMAGE-DELIVERY",
+                        $"Run={runId:D} Stage=VisualChunkEmitted");
                     yield return new NIRAOutputChunk
                     {
                         RunId =

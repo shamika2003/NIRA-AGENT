@@ -535,7 +535,11 @@ public partial class App : WpfApplication
                 NIRAHttpDownloadCapabilityHandler>();
 
             // Scoped public image discovery; no Playwright browser required.
-            builder.Services.AddSingleton<NIRACommonsImageDiscoveryService>();
+            // Do not let DI inject the application's shared HttpClient here.
+            // That path bypasses NIRA's verified image-only IPv4/Wikimedia transport
+            // and unexpectedly selects the test-only Openverse-first workflow.
+            builder.Services.AddSingleton<NIRACommonsImageDiscoveryService>(
+                _ => new NIRACommonsImageDiscoveryService());
             builder.Services.AddSingleton<INIRACapabilityHandler, NIRAImageSearchCapabilityHandler>();
             builder.Services.AddSingleton<INIRACapabilityHandler, NIRAImageRetrieveCapabilityHandler>();
             // R37: native image generation, single Cloudflare 4B model, separate from Ollama.
