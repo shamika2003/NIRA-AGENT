@@ -349,9 +349,15 @@ internal static class NIRACognitionPromptCompiler
           phrases: {"webQuery":"current sources or empty", "imageQuery":
           "real reference image or empty", "imageCount":1,
           "videoQuery":"publisher demonstration or empty", "purpose":"concrete value"}.
-          imageCount is OPTIONAL (1-3; one by default). Choose two or three
-          only when multiple actual photographs would help, for example when
-          requested; no forced image count or topic-based media rule.
+          imageCount is OPTIONAL (1-3; one by default). When the user
+          explicitly requests TWO or THREE distinct images, select that count
+          in imageCount OR image.search.retrieveCount in the FIRST decision.
+          Use ONE image.search with retrieveBest=true and the matching count,
+          rather than one search/retrieve and repeated cognition to find more.
+          This rule is about explicit output quantity for ANY subject, not a
+          mandate to insert images into factual answers or ordinary chat.
+          A returned candidate is not displayed, and two cache paths for the
+          same photo are not two distinct pictures.
           Web evidence is useful when changing facts, real price/availability,
           recent developments, contested claims, or source-specific details
           affect answer accuracy. A real picture is useful when its actual
@@ -410,7 +416,7 @@ internal static class NIRACognitionPromptCompiler
           for routine text facts, sensitive content or ordinary chat.
         - For specific visual subjects, choose an appropriate source and keep
           search-result discovery separate from verified image-file retrieval.
-          The independent Openverse/Wikimedia route below is preferred when available; for
+          The independent Wikimedia Commons image capability below is preferred when available; for
           image sources outside the trusted image capabilities first verify the direct image-file URL with
           an authorized read-only browser/HTTP observation, then use the normal
           authorized http.download primitive to a permitted absolute file path.
@@ -437,31 +443,41 @@ internal static class NIRACognitionPromptCompiler
           Gallery. Never claim an image exists before successful execution.
         - For real, identifiable visual subjects (including current products,
           machines, architecture, nature, or historic objects), image.search can
-          return actual Openverse/Wikimedia image candidates without Playwright
+          return actual Wikimedia Commons image candidates without Playwright
           or an API key. Availability and licenses vary by subject; do not
           pretend that a provider has photographs it did not actually return.
-          A candidate is not yet a displayed image. Native image.search now
-          attempts verified image retrieval during the SAME read-only call by
-          default; set retrieveBest=false ONLY if you want candidates without
-          images. Select retrieveCount=1-3 when multiple useful photographs are
-          wanted. Model-selected first-pass reference imageQuery uses the same
-          mechanism. If search returned candidates but no verified image, you
-          may use image.retrieve with an EXACT returned candidateId only when
-          an independent, untried candidate can help. A successful verified
-          retrieval queues a real image in chat with attribution.
-          Never invent candidateId, source URL, path or license. If both open-license image indexes
-          lack suitable results, use other authorized tools only when
+          A candidate is not yet a displayed image. For model-selected first-pass
+          reference imageQuery the search handler may retrieve the model-selected
+          number of distinct, provider-ranked candidates in one authorized call. Otherwise select
+          an appropriate candidate from grounded source/licensing metadata, then
+          call image.retrieve with the EXACT returned candidateId. A successful
+          verified retrieval queues a real image in chat with attribution.
+          Never invent candidateId, source URL, path or license. If the Wikimedia Commons image index
+          lacks suitable results, use other authorized tools only when
           warranted; never replace actual pixels with a made-up image card.
+          The image-search phrase must preserve the EXACT requested subject and
+          what the user wants to SEE. A photograph OF an object is not an image
+          produced BY it, surrounding hardware, maintenance equipment, historical
+          memorabilia, its outputs, or a loosely associated place. Never silently
+          add speculative modifiers such as hardware, servicing, vintage, cinematic,
+          night or diagram unless requested or demonstrably needed. Prefer the
+          subject's ordinary proper name and requested view; keep the phrase short.
+          If a user asks for several real photographs, set imageCount to that
+          useful number in the first resource decision rather than repeatedly
+          requesting another candidate in additional cognition rounds. When the
+          provider delivers images, truthfully acknowledge those verified artifacts
+          in the answer. Image quality and suitability must not be inferred solely
+          from keyword overlap or provider search position.
           Use one carefully targeted image.search per initial capability batch,
-          not several simultaneous speculative queries. Do not re-download an
-          image that image.search already retrieved and queued. If the provider times out,
+          not several simultaneous speculative queries. Search candidates first,
+          then retrieve their exact candidateIds. If the provider times out,
           is rate-limited, or becomes temporarily unavailable, do NOT retry
           synonym searches in the same task. Explain the missing pictures,
           finish any answer that does not depend on retrieved image evidence,
           and use no extra cognition round solely for image formatting.
           Do not repeat image.retrieve results in visualPresentations.
           The inline image card already includes the verified photographer, license and
-          original source link. Do not add a redundant "Source: Flickr" prose line.
+          original source link. Do not repeat the verified source link in prose.
           Never add an "Image Details", "Photo Credits" or "Image Attribution"
           displayBlock when its only contents repeat the image card's trusted
           photographer, license and source. A paragraph can introduce the subject.
@@ -1930,6 +1946,9 @@ internal static class NIRACognitionPromptCompiler
             "another LLM classifier; runtime applies permission and safety rules. " +
             "One selected imageQuery permits real provider-ranked image " +
             "retrieval during image.search when verified candidates are available. " +
+            "imageQuery MUST preserve the exact subject and user's requested visual view; " +
+            "do not invent modifiers like hardware, maintenance, historic or cinematic. " +
+            "A photo OF an object is different from a photo taken BY that object. " +
             "If an imageQuery is chosen, imageCount may optionally be 1, 2 or 3 " +
             "when that many distinct photographs have real value, default 1; " +
             "do not set an image quota based on topic or test wording. " +

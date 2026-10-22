@@ -46,6 +46,30 @@ public sealed class NIRAExecutive
               (result.Output.Contains("IMAGE_DISCOVERY_EMPTY=True", StringComparison.Ordinal) ||
                result.Output.Contains("ImageMediaUnavailable=True", StringComparison.Ordinal)))));
 
+    // This protects the trusted visible-image postcondition. It is not a
+    // topic-dependent classifier, tool planner, or source of new image claims.
+    internal static bool IsFalseImageUnavailableClaim(string? reply)
+    {
+        if (string.IsNullOrWhiteSpace(reply)) return false;
+        // This tests a narrow CONTRADICTION against actual delivered pixels,
+        // never the subject, the need for tools, or response style. Keep the
+        // expressions simple to avoid invalid nested regex construction.
+        const System.Text.RegularExpressions.RegexOptions options =
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase |
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant;
+        bool deniedDisplay = System.Text.RegularExpressions.Regex.IsMatch(reply,
+            @"(?:can't|cannot|couldn't|could not|unable to|failed to|no luck)" +
+            @"[^.!?]{0,140}(?:show|display|pull|retrieve|download|get|find)" +
+            @"[^.!?]{0,140}(?:images?|pictures?|photos?|photographs?|pixels?)", options);
+        bool providerFailure = System.Text.RegularExpressions.Regex.IsMatch(reply,
+            @"image\s+(?:search|retrieval|service|provider)\s+" +
+            @"(?:is\s+|has\s+been\s+)?(?:timing\s+out|unavailable|failing|down)", options);
+        bool deniedResult = System.Text.RegularExpressions.Regex.IsMatch(reply,
+            @"no\s+(?:images?|photos?|pictures?|photographs?)\s+" +
+            @"(?:were|could\s+be)\s+(?:shown|retrieved|displayed|found)", options);
+        return deniedDisplay || providerFailure || deniedResult;
+    }
+
     // Routing and completion are orthogonal. One foreground serial operation
     // should not allocate a persistent branch; one genuinely delegated operation
     // must not be hijacked by the direct lane simply because it has one step.
@@ -885,7 +909,16 @@ public sealed class NIRAExecutive
         // A real image provider outage gets at most ONE answer-only cognition
         // continuation. Never spend further rounds on unchanged image failures.
         int unavailableImageProviderCycle = 0; // Also covers exhausted image retrieval.
-        int verifiedImageRetrievalCount = 0; // Run-wide receipts, not just this capability batch.
+        int verifiedImageRetrievalCount = 0; // Unique *visible* image contents, not cache paths.
+        int? explicitImageCount = mindEvent.Source == NIRAMindEventSource.User
+            ? NIRAImageTurnDeliveryPolicy.ReadExplicitImageCount(mindEvent.Content) : null;
+        int imageDeliveryTarget = explicitImageCount ?? 0;
+        var verifiedImageDeliveryHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var verifiedImageSourceUris = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var verifiedImageDeliveryPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        NIRADiagnosticTrace.Event("IMAGE-TURN-BUDGET",
+            $"Run={runId:D} ExplicitCount={explicitImageCount?.ToString() ?? "None"} " +
+            "ModelStillSelectsImageNeed=True");
 
 
         // Malformed model capability objects are never executed. Give cognition
@@ -1126,6 +1159,48 @@ public sealed class NIRAExecutive
                     $"ToolTypes={string.Join(",", planned.CapabilityRequests.Select(r => r.CapabilityId).Distinct())} " +
                     $"TotalRequested={planned.CapabilityRequests.Count}");
                 decision = planned;
+            }
+
+            // The model controls media selection; the runtime controls actual
+            // fulfillment. Preserve its first chosen quantity for implicit media.
+            if (cycle == 1 && imageDeliveryTarget == 0)
+                imageDeliveryTarget = decision.CapabilityRequests
+                    .Select(NIRAImageTurnDeliveryPolicy.SearchRetrieveCount)
+                    .FirstOrDefault(n => n > 0);
+            if (cycle == 1 && imageDeliveryTarget == 0 &&
+                decision.ResourceIntent is { ImageQuery.Length: > 0 } intent)
+                imageDeliveryTarget = Math.Clamp(intent.ImageCount, 1, 3);
+
+            // A fulfilled, image-only continuation is not permission to chase
+            // more candidate IDs. Terminalize using ACTUAL displayed pixels;
+            // unrelated ongoing work, approvals and other tools are untouched.
+            if (cycle > 1 && imageDeliveryTarget > 0 &&
+                verifiedImageRetrievalCount >= imageDeliveryTarget &&
+                decision.State == NIRACognitionState.Continue &&
+                decision.CapabilityRequests.Count > 0 &&
+                decision.CapabilityRequests.All(r => r.CapabilityId is
+                    NIRACapabilityIds.ImageSearch or NIRACapabilityIds.ImageRetrieve) &&
+                decision.ContextRequests.Count == 0 && decision.ControlRequests.Count == 0 &&
+                decision.GoalProposals.Count == 0 && decision.BranchProposals.Count == 0 &&
+                decision.BranchWorkProposals.Count == 0 &&
+                decision.DynamicToolProposals.Count == 0 &&
+                decision.DynamicToolInvocations.Count == 0 &&
+                decision.MemorySearches.Count == 0 &&
+                decision.ConversationSearches.Count == 0)
+            {
+                string verifiedReply = $"Here are {verifiedImageRetrievalCount} distinct " +
+                    "reference images with their original source details. " +
+                    "You can open each image at full resolution.";
+                decision = decision with {
+                    State = NIRACognitionState.Complete,
+                    EmitReply = true, Reply = verifiedReply, Speech = verifiedReply,
+                    ReplyReady = true, CharacterReady = true,
+                    CapabilityRequests = Array.Empty<NIRACapabilityRequest>(),
+                    DecisionSummary = "Requested distinct image evidence already delivered."
+                };
+                NIRADiagnosticTrace.Event("IMAGE-TURN-BUDGET",
+                    $"Run={runId:D} Cycle={cycle} Action=StopSatisfiedImageLoop " +
+                    $"Verified={verifiedImageRetrievalCount} Target={imageDeliveryTarget}");
             }
 
             if (unavailableImageProviderCycle > 0 && cycle > unavailableImageProviderCycle &&
@@ -3615,6 +3690,22 @@ public sealed class NIRAExecutive
                 }
             }
 
+            // Retarget a first-call model-selected image search to an explicit
+            // requested quantity (e.g. "two photographs"). This fixes quantity
+            // without changing the model's query, provider or permission route.
+            if (cycle == 1 && mindEvent.Source == NIRAMindEventSource.User)
+            {
+                bool photographsOnly = NIRAImageTurnDeliveryPolicy.ExplicitPhotographRequest(mindEvent.Content);
+                if (explicitImageCount.HasValue || photographsOnly)
+                    schemaValidCapabilities = schemaValidCapabilities.Select(request =>
+                        NIRAImageTurnDeliveryPolicy.ApplyExplicitCount(
+                            request, explicitImageCount, photographsOnly)).ToList();
+            }
+            if (cycle == 1)
+                NIRADiagnosticTrace.Event("IMAGE-TURN-BUDGET",
+                    $"Run={runId:D} Target={imageDeliveryTarget} " +
+                    $"PlannedImageSearches={schemaValidCapabilities.Count(r => r.CapabilityId == NIRACapabilityIds.ImageSearch)}");
+
             NIRACapabilityRequest[] requestedCapabilities =
                 schemaValidCapabilities
                     .Where(
@@ -3944,6 +4035,18 @@ public sealed class NIRAExecutive
                     continue;
                 }
 
+                if (imageDeliveryTarget > 0 && verifiedImageRetrievalCount >= imageDeliveryTarget &&
+                    (request.CapabilityId is NIRACapabilityIds.ImageSearch or NIRACapabilityIds.ImageRetrieve))
+                {
+                    capabilityEvidence.AppendLine("IMAGE REQUEST SATISFIED: enough distinct " +
+                        "verified reference images are already queued in this turn. " +
+                        "No extra image search/download was executed.");
+                    NIRADiagnosticTrace.Event("IMAGE-TURN-BUDGET",
+                        $"Run={runId:D} Cycle={cycle} Action=SuppressExcess " +
+                        $"Target={imageDeliveryTarget} Verified={verifiedImageRetrievalCount}");
+                    continue;
+                }
+
                 if (request.CapabilityId == NIRACapabilityIds.ImageGenerate)
                 {
                     if (imageGenerationAttempted)
@@ -4004,6 +4107,20 @@ public sealed class NIRAExecutive
                     SpeechContent = string.Empty,
                     IsImageGenerationProgress = true
                 };
+            }
+
+            foreach (NIRACapabilityRequest imageRequest in newCapabilityRequests.Where(request =>
+                request.CapabilityId is NIRACapabilityIds.ImageSearch or NIRACapabilityIds.ImageRetrieve))
+            {
+                string requestedQuery = imageRequest.Arguments.ValueKind ==
+                        System.Text.Json.JsonValueKind.Object &&
+                    imageRequest.Arguments.TryGetProperty("query", out var queryValue) &&
+                    queryValue.ValueKind == System.Text.Json.JsonValueKind.String
+                        ? queryValue.GetString() ?? "" : "";
+                string safeQuery = requestedQuery.Replace('\r', ' ').Replace('\n', ' ');
+                NIRADiagnosticTrace.Event("IMAGE-EXEC-DISPATCH",
+                    $"Run={runId:D} Cycle={cycle} Capability={imageRequest.CapabilityId} " +
+                    $"Query={safeQuery} PreviousVerified={verifiedImageRetrievalCount}");
             }
 
             IReadOnlyList<NIRACapabilityResult> capabilityResults =
@@ -4216,10 +4333,52 @@ public sealed class NIRAExecutive
                     capabilityEvidence,
                     capabilityResults);
 
-            verifiedImageRetrievalCount += capabilityResults.Count(result =>
-                result.Succeeded &&
-                (result.CapabilityId is NIRACapabilityIds.ImageRetrieve or NIRACapabilityIds.ImageSearch) &&
-                result.VisualArtifacts.Any(artifact => artifact.PresentToUser));
+            // Count and SHOW distinct image bytes, not newly generated cache
+            // paths. The SAME accepted paths are passed to visual presentation.
+            int newlyVerifiedImages = 0;
+            foreach (NIRACapabilityResult imageResult in
+                dynamicToolCapabilityResults.Concat(capabilityResults).Where(result =>
+                result.Succeeded && (result.CapabilityId is
+                    NIRACapabilityIds.ImageRetrieve or NIRACapabilityIds.ImageSearch)))
+                foreach (NIRACapabilityVisualArtifact visual in imageResult.VisualArtifacts.Where(v => v.PresentToUser))
+                {
+                    string pixels = NIRAImageTurnDeliveryPolicy.PixelIdentity(visual.LocalPath);
+                    string source = NIRAImageTurnDeliveryPolicy.SourceIdentity(visual.SourceUri);
+                    bool duplicate = verifiedImageDeliveryHashes.Contains(pixels) ||
+                        (source.Length > 0 && verifiedImageSourceUris.Contains(source));
+                    bool overCount = imageDeliveryTarget > 0 &&
+                        verifiedImageRetrievalCount >= imageDeliveryTarget;
+                    if (duplicate || overCount)
+                    {
+                        NIRADiagnosticTrace.Event("IMAGE-TURN-BUDGET",
+                            $"Run={runId:D} Cycle={cycle} Action=DropVisual " +
+                            $"Reason={(duplicate ? "DuplicatePixelsOrSource" : "RequestedCountReached")}");
+                        continue;
+                    }
+                    verifiedImageDeliveryHashes.Add(pixels);
+                    if (source.Length > 0) verifiedImageSourceUris.Add(source);
+                    verifiedImageDeliveryPaths.Add(visual.LocalPath);
+                    verifiedImageRetrievalCount++;
+                    newlyVerifiedImages++;
+                }
+            if (newlyVerifiedImages > 0)
+            {
+                // The NEXT cognition cycle and objective review need reliable
+                // facts even when every image command succeeded. Previously this
+                // evidence was only appended following a FAILED image.retrieve.
+                string proof = $"AUTHORITATIVE IMAGE RECEIPT: {verifiedImageRetrievalCount} " +
+                    "distinct verified image file(s) have been downloaded and are queued " +
+                    "for inline chat delivery in this run. Do not say none were obtained, " +
+                    "the provider failed for all images, or photos cannot be shown. " +
+                    "A later timeout does not undo these successful receipts. " +
+                    "File validity alone does not establish topical relevance; " +
+                    "keep subject claims grounded in the Commons title/source metadata.";
+                executiveEvidence.AppendLine(proof);
+                capabilityEvidence.AppendLine(proof);
+                NIRADiagnosticTrace.Event("IMAGE-DELIVERY-TRUTH",
+                    $"Run={runId:D} Cycle={cycle} New={newlyVerifiedImages} " +
+                    $"TotalDistinct={verifiedImageRetrievalCount} NextCognition=Informed");
+            }
 
             if (verifiedImageRetrievalCount > 0 && capabilityResults.Any(result =>
                 result.CapabilityId == NIRACapabilityIds.ImageRetrieve && !result.Succeeded))
@@ -4606,7 +4765,8 @@ public sealed class NIRAExecutive
                     runtimeVisualPresentations,
                     runtimeVisualPresentationSignatures,
                     capabilityEvidence,
-                    dynamicToolCapabilityResults.Concat(capabilityResults));
+                    dynamicToolCapabilityResults.Concat(capabilityResults),
+                    verifiedImageDeliveryPaths);
 
             if (newRuntimeVisuals > 0)
             {
@@ -6203,6 +6363,21 @@ public sealed class NIRAExecutive
                     capabilityResultsBySignature, reply);
                 (reply, spoken, blocks) = NIRAPresentationPolicy.RecoverCode(reply, spoken, blocks);
                 spoken = NIRAPresentationPolicy.EnsureInformativeSpeech(spoken, blocks);
+                // Trusted terminal delivery check: the LLM can lose track of
+                // successful photos after a later failed/duplicate search. Fix
+                // only a demonstrably false image-unavailable claim; preserve
+                // NIRA's original character wording in every other case.
+                if (verifiedImageRetrievalCount > 0 &&
+                    IsFalseImageUnavailableClaim(reply))
+                {
+                    reply = $"I retrieved {verifiedImageRetrievalCount} Wikimedia Commons " +
+                        "reference image(s) and queued them below with their source details. " +
+                        "Check each source title to confirm it depicts the subject you requested.";
+                    spoken = reply;
+                    NIRADiagnosticTrace.Event("IMAGE-DELIVERY-TRUTH",
+                        $"Run={runId:D} Stage=FinalReplyCorrected " +
+                        $"Verified={verifiedImageRetrievalCount} Reason=ContradictsRetrievedImages");
+                }
 
                 // The other-work context was accurate when cognition began, but
                 // another run can finish while review/realization is still pending.
@@ -7559,7 +7734,8 @@ public sealed class NIRAExecutive
         List<NIRAVisualArtifactPresentationRequest> target,
         HashSet<string> signatures,
         StringBuilder capabilityEvidence,
-        IEnumerable<NIRACapabilityResult> results)
+        IEnumerable<NIRACapabilityResult> results,
+        HashSet<string>? acceptedReferenceImagePaths = null)
     {
         int added = 0;
 
@@ -7592,6 +7768,14 @@ public sealed class NIRAExecutive
                 {
                     continue;
                 }
+                // A successful capability can return a duplicate or an extra
+                // candidate. Only run-verified, deduplicated reference images
+                // are delivered; generated and unrelated visual artifacts keep
+                // the existing independent presentation path.
+                if (acceptedReferenceImagePaths is not null &&
+                    (result.CapabilityId is NIRACapabilityIds.ImageSearch or NIRACapabilityIds.ImageRetrieve) &&
+                    !acceptedReferenceImagePaths.Contains(normalized.LocalPath))
+                    continue;
 
                 NIRAVisualArtifactPresentationSurface surface =
                     Enum.TryParse(

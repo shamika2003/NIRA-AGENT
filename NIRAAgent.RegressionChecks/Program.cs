@@ -1784,6 +1784,36 @@ Check("R26 Wikimedia image candidates preserve real source, attribution and boun
         throw new Exception("Media origin restrictions accepted a forged URI.");
 });
 
+Check("IMAGE Commons rejects raw non-raster source URLs but retains raster conversions", () =>
+{
+    const string json = """
+        {"query":{"pages":[
+          {"index":1,"title":"File:Blueprint.svg","imageinfo":[{
+            "mime":"image/svg+xml",
+            "thumburl":"https://upload.wikimedia.org/wikipedia/commons/b/bc/Blueprint.svg",
+            "descriptionurl":"https://commons.wikimedia.org/wiki/File:Blueprint.svg"}]},
+          {"index":2,"title":"File:Diagram.svg","imageinfo":[{
+            "mime":"image/svg+xml",
+            "thumburl":"https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bc/Diagram.svg/960px-Diagram.png",
+            "url":"https://upload.wikimedia.org/wikipedia/commons/b/bc/Diagram.svg"}]},
+          {"index":3,"title":"File:Scan.tif","imageinfo":[{
+            "mime":"image/tiff",
+            "thumburl":"https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/Scan.tif/960px-Scan.jpg?width=960",
+            "url":"https://upload.wikimedia.org/wikipedia/commons/a/ab/Scan.tif"}]},
+          {"index":4,"title":"File:Wrong.jpg","imageinfo":[{
+            "mime":"image/jpeg",
+            "thumburl":"https://upload.wikimedia.org/wikipedia/commons/a/b/Wrong.svg"}]}
+        ]}}
+        """;
+    var results = NIRACommonsImageDiscoveryService.ParseCommonsSearchResponse(json, 8);
+    if (results.Count != 2 ||
+        results[0].Title != "Diagram.svg" || results[1].Title != "Scan.tif" ||
+        !results[0].MediaUrl.EndsWith(".png", StringComparison.Ordinal) ||
+        !results[1].MediaUrl.Contains(".jpg?width=960", StringComparison.Ordinal) ||
+        results.Any(x => x.AlternateMediaUrl.Length != 0))
+        throw new Exception("Raw SVG/non-raster media bypassed the raster gate or converted thumbnails were rejected");
+});
+
 Check("R26 images are independent native capabilities with visual attribution", () =>
 {
     using var service = new NIRACommonsImageDiscoveryService();
@@ -1840,12 +1870,12 @@ Check("IMAGE Commons-first gives two verified independent chat photographs", () 
             return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
                 Content = new StringContent("""
                 {"query":{"pages":[
-                {"index":1,"title":"File:Source_A.tif","imageinfo":[{
+                {"index":1,"title":"File:Unfamiliar_archival_subject_A.tif","imageinfo":[{
                     "mime":"image/tiff","thumburl":"https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/Source_A.tif/1000px-Source_A.png",
                     "url":"https://upload.wikimedia.org/wikipedia/commons/a/ab/Source_A.tif",
                     "descriptionurl":"https://commons.wikimedia.org/wiki/File:Source_A.tif",
                     "extmetadata":{"Artist":{"value":"A photographer"},"LicenseShortName":{"value":"CC BY 4.0"}}}]},
-                {"index":2,"title":"File:Source_B.png","imageinfo":[{
+                {"index":2,"title":"File:Unfamiliar_archival_subject_B.png","imageinfo":[{
                     "mime":"image/png","thumburl":"https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bc/Source_B.png/1000px-Source_B.png",
                     "descriptionurl":"https://commons.wikimedia.org/wiki/File:Source_B.png",
                     "extmetadata":{"Artist":{"value":"B photographer"},"LicenseShortName":{"value":"CC BY 4.0"}}}]}
@@ -1866,7 +1896,7 @@ Check("IMAGE Commons-first gives two verified independent chat photographs", () 
         throw new Exception("Commons-first transport was not explicitly selected");
     var handler = new NIRAImageSearchCapabilityHandler(service);
     var result = handler.ExecuteAsync(Request(NIRACapabilityIds.ImageSearch,
-        """{"query":"unfamiliar archival subject", "retrieveBest":true, "retrieveCount":2}"""))
+        """{"query":"unfamiliar archival subject", "retrieveCount":2}"""))
         .GetAwaiter().GetResult();
     try
     {
@@ -1887,82 +1917,392 @@ Check("IMAGE Commons-first gives two verified independent chat photographs", () 
     }
 });
 
-// A live HTTP 200 can still have no usable File: pages. One subject-only
-// Wikimedia query must recover genuine bytes without an extra LLM round or
-// resorting to the Openverse proxy. This is an in-memory, topic-neutral test.
-Check("IMAGE subject-only Commons retry returns verified inline photo", () =>
+
+// Commons-only reset: the exact Wikimedia media hosts may serve thumbnails with
+// resized PNG URLs and safe width parameters. Never accept unrelated origins.
+Check("IMAGE Commons-only parser accepts real media without dropping official imageinfo URLs", () =>
 {
-    const string imageUrl = "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/cd/Artifact.jpg/800px-Artifact.jpg";
-    byte[] png = Convert.FromBase64String(
-        "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFElEQVR4nGOUTDnMgA0wYRUdtBIA/d4BUKK4lNoAAAAASUVORK5CYII=");
-    int commonsRequests = 0;
+    const string response = """
+        {"query":{"pages":[
+          {"index":1,"title":"File:Subject_A.jpg","imageinfo":[{
+            "mime":"image/jpeg",
+            "url":"https://upload.wikimedia.org/wikipedia/commons/1/12/Subject_A.jpg",
+            "thumburl":"https://thumb.wikimedia.org/wikipedia/commons/thumb/1/12/Subject_A.jpg/960px-Subject_A.jpg?width=960",
+            "descriptionurl":"https://commons.wikimedia.org/wiki/File:Subject_A.jpg"}]},
+          {"index":2,"title":"File:Subject_B.tif","imageinfo":[{
+            "mime":"image/tiff",
+            "url":"https://upload.wikimedia.org/wikipedia/commons/a/ab/Subject_B.tif",
+            "thumburl":"https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/Subject_B.tif/960px-Subject_B.png"}]},
+          {"index":3,"title":"File:Evil.jpg","imageinfo":[{
+            "mime":"image/jpeg","url":"https://evil.example.org/Subject_A.jpg"}]}
+        ]}}
+        """;
+    var results = NIRACommonsImageDiscoveryService.ParseCommonsSearchResponse(response, 5);
+    if (results.Count != 2 ||
+        !results.All(x => x.Provider == "Wikimedia Commons") ||
+        results[0].MediaUrl.IndexOf("width=960", StringComparison.Ordinal) < 0 ||
+        results[1].AlternateMediaUrl.Length != 0 ||
+        !results.All(x => Guid.TryParseExact(x.CandidateId, "N", out _)))
+        throw new Exception("Official raster thumbnails were rejected or untrusted candidates slipped through");
+    string[] forbidden = {
+        "http://upload.wikimedia.org/wikipedia/commons/a.jpg",
+        "https://upload.wikimedia.org.evil.example/wikipedia/commons/a.jpg",
+        "https://upload.wikimedia.org@localhost/wikipedia/commons/a.jpg",
+        "https://thumb.wikimedia.org/other/a.jpg",
+        "https://thumb.wikimedia.org/wikipedia/commons/a.jpg?redirect=https://evil.example",
+        "https://api.openverse.org/v1/images/123/thumb/"
+    };
+    if (forbidden.Any(NIRACommonsImageDiscoveryService.IsPermittedMediaUri))
+        throw new Exception("Image URL security boundaries were weakened");
+});
+
+Check("IMAGE Commons-only empty result makes one request without backup provider traffic", () =>
+{
     using var transport = new NIRAWebFakeTransport(request =>
     {
-        if (request.RequestUri?.Host == "commons.wikimedia.org")
-        {
-            commonsRequests++;
-            string search = Uri.UnescapeDataString(System.Text.RegularExpressions.Regex.Match(
-                request.RequestUri.Query, @"(?:^|[?&])gsrsearch=([^&]*)").Groups[1].Value)
-                .Replace('+', ' ');
-            if (search == "real photographs of the unusual artifact")
-                return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
-                    Content = new StringContent("""{"query":{"pages":[]}}""") };
-            if (search == "unusual artifact")
-                return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
-                    Content = new StringContent("""
-                    {"query":{"pages":[{"index":1,"title":"File:Artifact.jpg","imageinfo":[{
+        if (request.RequestUri?.Host != "commons.wikimedia.org")
+            throw new Exception("Commons-only attempted a removed fallback provider");
+        return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
+            Content = new StringContent("""{"query":{"pages":[]}}""")
+        };
+    });
+    using var http = new HttpClient(transport);
+    using var provider = new NIRACommonsImageDiscoveryService(http);
+    var empty = provider.SearchAsync("unknown ordinary test phrase", 4).GetAwaiter().GetResult();
+    if (empty.Count != 0 || transport.Count != 1 ||
+        !provider.LastSearchStatus.Contains("Accepted=0", StringComparison.Ordinal))
+        throw new Exception("Empty image query caused repeat model/provider work or invented image data");
+});
+
+// Live regression: don't discard trusted Commons bitmap URLs because an
+// imageinfo CDN link uses a transformed/suffixless thumbnail name. Still reject
+// raw SVG and forged origins. No model and no live HTTP are involved.
+Check("IMAGE live Commons suffixless bitmap URLs survive validation", () =>
+{
+    const string response = """
+        {"query":{"pages":[
+          {"index":1,"title":"File:Reference_A.jpg","imageinfo":[{
+            "mime":"image/jpeg",
+            "thumburl":"https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Reference_A.jpg/960px-Reference_A?download=1",
+            "url":"https://upload.wikimedia.org/wikipedia/commons/a/ab/Reference_A.jpg",
+            "descriptionurl":"https://commons.wikimedia.org/wiki/File:Reference_A.jpg"}]},
+          {"index":2,"title":"File:Reference_B.jpg","imageinfo":[{
+            "mime":"image/jpeg",
+            "url":"https://upload.wikimedia.org/wikipedia/commons/a/ab/Reference_B?id=42",
+            "descriptionurl":"https://commons.wikimedia.org/wiki/File:Reference_B.jpg"}]},
+          {"index":3,"title":"File:Vector.svg","imageinfo":[{
+            "mime":"image/svg+xml",
+            "thumburl":"https://upload.wikimedia.org/wikipedia/commons/a/ab/Vector.svg"}]},
+          {"index":4,"title":"File:Unsafe.jpg","imageinfo":[{
+            "mime":"image/jpeg",
+            "url":"https://127.0.0.1/private.jpg"}]}
+        ]}}
+        """;
+    var found = NIRACommonsImageDiscoveryService.ParseCommonsSearchResponse(response, 4);
+    if (found.Count != 2 ||
+        !found.All(x => x.MediaUrl.StartsWith("https://upload.wikimedia.org/", StringComparison.Ordinal)) ||
+        found.Any(x => x.Title.Contains("Vector", StringComparison.Ordinal) ||
+            x.Title.Contains("Unsafe", StringComparison.Ordinal)) ||
+        NIRACommonsImageDiscoveryService.IsPermittedMediaUri(
+            "https://upload.wikimedia.org/wikipedia/commons/a.jpg?redirect=https://example.org/"))
+        throw new Exception("Legitimate Wikimedia bitmap API links were filtered or unsafe media escaped");
+});
+
+// The generic bitmap retry runs only after a real, unusable file search.
+// It is a search-provider decision; it requires no additional model call.
+Check("IMAGE unusable Commons result retries one bitmap-only API search", () =>
+{
+    const string goodImage = "https://upload.wikimedia.org/wikipedia/commons/a/ab/Bitmap_A.jpg";
+    int calls = 0;
+    using var transport = new NIRAWebFakeTransport(request =>
+    {
+        if (request.RequestUri?.Host != "commons.wikimedia.org")
+            throw new Exception("Unexpected host in bitmap recovery");
+        calls++;
+        bool bitmap = request.RequestUri.Query.Contains("filetype%3Abitmap", StringComparison.OrdinalIgnoreCase) ||
+            request.RequestUri.Query.Contains("filetype:bitmap", StringComparison.OrdinalIgnoreCase);
+        return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
+            Content = new StringContent(bitmap ? """
+                {"query":{"pages":[{"index":1,"title":"File:New_unseen_topic_bitmap_A.jpg","imageinfo":[{
                     "mime":"image/jpeg",
-                    "thumburl":"https://thumb.wikimedia.org/wikipedia/commons/thumb/c/cd/Artifact.jpg/800px-Artifact.jpg",
-                    "descriptionurl":"https://commons.wikimedia.org/wiki/File:Artifact.jpg"}]}]}}
-                    """) };
-            throw new Exception("The Commons refinement must retain the requested subject");
+                    "url":"https://upload.wikimedia.org/wikipedia/commons/a/ab/Bitmap_A.jpg",
+                    "descriptionurl":"https://commons.wikimedia.org/wiki/File:Bitmap_A.jpg"}]}]}}
+                """ : """
+                {"query":{"pages":[{"index":1,"title":"File:Document.svg","imageinfo":[{
+                    "mime":"image/svg+xml",
+                    "url":"https://upload.wikimedia.org/wikipedia/commons/a/ab/Document.svg"}]}]}}
+                """)
+        };
+    });
+    using var http = new HttpClient(transport);
+    using var service = new NIRACommonsImageDiscoveryService(http);
+    var result = service.SearchAsync("new unseen topic", 3).GetAwaiter().GetResult();
+    if (calls != 2 || result.Count != 1 || result[0].MediaUrl != goodImage)
+        throw new Exception("Commons bitmap recovery did not return an actual candidate in one tool request");
+});
+
+// R8: an empty result is authoritative negative evidence.
+// Previous Wikipedia/Openverse fallbacks are intentionally removed.
+// Previous: an empty result is not an image. Fallback from a detailed query to
+// an article-title query is content-agnostic and never fabricates photographs.
+// Prevent the exact live Hubble failure without hardcoding any subject in production.
+Check("IMAGE subject ranking requires photos OF the object, not by it", () =>
+{
+    var options = new[] {
+        new NIRACommonsImageCandidate { Title = "Grand star-forming region R136",
+            CandidateId = "space", SourceUri = "https://commons.wikimedia.org/wiki/File:Stars.jpg" },
+        new NIRACommonsImageCandidate { Title = "Galaxy photographed by Hubble Space Telescope",
+            CandidateId = "by", SourceUri = "https://commons.wikimedia.org/wiki/File:Galaxy.jpg" },
+        new NIRACommonsImageCandidate { Title = "Hubble Space Telescope in orbit",
+            CandidateId = "of1", SourceUri = "https://commons.wikimedia.org/wiki/File:Orbital.jpg" },
+        new NIRACommonsImageCandidate { Title = "Hubble Space Telescope servicing",
+            CandidateId = "of2", SourceUri = "https://commons.wikimedia.org/wiki/File:Service.jpg" }
+    };
+    var matching = NIRACommonsImageDiscoveryService.RankForSubject(
+        options, "two real photographs of the Hubble Space Telescope", 4);
+    // The relative order of two genuinely relevant photographs can change
+    // when scoring adds resolution, specificity or other general quality signals.
+    // Test subject identity, not the provider's incidental ordering.
+    var ids = matching.Select(candidate => candidate.CandidateId)
+        .ToHashSet(StringComparer.Ordinal);
+    if (matching.Count != 2 || !ids.SetEquals(new[] { "of1", "of2" }))
+        throw new Exception("Expected exactly two photos OF the subject; received: " +
+            string.Join(", ", matching.Select(candidate => candidate.CandidateId)));
+
+    // This is an independent failure assertion: accepting a creator-credit
+    // match must fail even if the two desired photos are also present.
+    var producedBy = NIRACommonsImageDiscoveryService.RankForSubject(
+        new[] { options[1] }, "Hubble Space Telescope", 4);
+    if (producedBy.Count != 0)
+        throw new Exception("An image photographed BY the requested subject was accepted as OF it");
+
+    // The directionality safeguard must remain generic, not bound to a
+    // particular telescope or fixture name.
+    var otherSubject = new[] {
+        new NIRACommonsImageCandidate { Title = "River Bridge in evening sunlight",
+            CandidateId = "bridge-of", SourceUri = "https://commons.wikimedia.org/wiki/File:Bridge.jpg" },
+        new NIRACommonsImageCandidate { Title = "Cityscape photographed by River Bridge",
+            CandidateId = "bridge-by", SourceUri = "https://commons.wikimedia.org/wiki/File:City.jpg" }
+    };
+    var bridgeMatches = NIRACommonsImageDiscoveryService.RankForSubject(
+        otherSubject, "River Bridge", 3);
+    if (bridgeMatches.Count != 1 || bridgeMatches[0].CandidateId != "bridge-of")
+        throw new Exception("Directional relevance failed on another arbitrary subject");
+    var unrelated = NIRACommonsImageDiscoveryService.RankForSubject(options,
+        "two photographs of the unrelated Archive Reading Desk", 4);
+    if (unrelated.Count != 0)
+        throw new Exception("The image search accepted an unrelated object");
+});
+
+Check("IMAGE explicit count is honored without subject hardcoding", () =>
+{
+    Equal((int?)2, NIRAImageTurnDeliveryPolicy.ReadExplicitImageCount(
+        "Show me two real photographs of the Hubble Space Telescope itself."));
+    Equal((int?)3, NIRAImageTurnDeliveryPolicy.ReadExplicitImageCount(
+        "Find 3 different pictures of the medieval bridge."));
+    if (!NIRAImageTurnDeliveryPolicy.ExplicitPhotographRequest(
+        "Two photographs of an unfamiliar radio tower") ||
+        NIRAImageTurnDeliveryPolicy.ExplicitPhotographRequest(
+        "I want two diagrams of a bridge"))
+        throw new Exception("Photo medium detection changed unrelated format requests");
+    Equal((int?)1, NIRAImageTurnDeliveryPolicy.ReadExplicitImageCount(
+        "Get one photo of an unfamiliar device."));
+    Equal((int?)null, NIRAImageTurnDeliveryPolicy.ReadExplicitImageCount(
+        "Explain how two spacecraft work and why they use three cameras."));
+    Equal((int?)null, NIRAImageTurnDeliveryPolicy.ReadExplicitImageCount(
+        "I enjoy looking at photographs of wildlife."));
+    var search = new NIRACapabilityRequest {
+        CapabilityId = NIRACapabilityIds.ImageSearch,
+        Arguments = JsonSerializer.SerializeToElement(new {
+            query = "unfamiliar historical building", limit = 6,
+            retrieveBest = true, retrieveCount = 1
+        })
+    };
+    var corrected = NIRAImageTurnDeliveryPolicy.ApplyExplicitCount(search, 2, true);
+    Equal(2, NIRAImageTurnDeliveryPolicy.SearchRetrieveCount(corrected));
+    if (corrected.Arguments.GetProperty("photographsOnly").ValueKind != JsonValueKind.True)
+        throw new Exception("Photograph intent was not carried through to the retrieval service");
+    Equal("unfamiliar historical building", corrected.Arguments.GetProperty("query").GetString());
+    Equal(1, NIRAImageTurnDeliveryPolicy.SearchRetrieveCount(search));
+    var inspect = search with {
+        Arguments = JsonSerializer.SerializeToElement(new {
+            query = "unfamiliar historical building", retrieveBest = false
+        })
+    };
+    Equal(0, NIRAImageTurnDeliveryPolicy.SearchRetrieveCount(inspect));
+    if (NIRAImageTurnDeliveryPolicy.ApplyExplicitCount(inspect, 3) != inspect)
+        throw new Exception("A metadata-only image search was changed to auto-download");
+});
+
+Check("IMAGE content hash survives distinct cache paths and preserves distinct photos", () =>
+{
+    string folder = Path.Combine(Path.GetTempPath(), "nira-image-regression-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        string a = Path.Combine(folder, "a.jpg");
+        string b = Path.Combine(folder, "b.jpg");
+        string c = Path.Combine(folder, "c.jpg");
+        File.WriteAllBytes(a, new byte[] { 255, 216, 255, 10, 11, 12 });
+        File.WriteAllBytes(b, new byte[] { 255, 216, 255, 10, 11, 12 });
+        File.WriteAllBytes(c, new byte[] { 255, 216, 255, 10, 11, 13 });
+        Equal(NIRAImageTurnDeliveryPolicy.PixelIdentity(a),
+            NIRAImageTurnDeliveryPolicy.PixelIdentity(b));
+        NotEqual(NIRAImageTurnDeliveryPolicy.PixelIdentity(a),
+            NIRAImageTurnDeliveryPolicy.PixelIdentity(c));
+        Equal("https://commons.wikimedia.org/wiki/File:Sample.jpg",
+            NIRAImageTurnDeliveryPolicy.SourceIdentity(
+                "https://commons.wikimedia.org/wiki/File:Sample.jpg?width=960"));
+    }
+    finally { Directory.Delete(folder, true); }
+});
+
+Check("IMAGE photographs distinguish a picture OF an object from its products and diagrams", () =>
+{
+    var candidates = new[] {
+        new NIRACommonsImageCandidate { CandidateId="by", Title="Mountain view photographed by Lunar Camera X", SourceUri="https://commons.wikimedia.org/wiki/File:Mountains.jpg" },
+        new NIRACommonsImageCandidate { CandidateId="model", Title="Lunar Camera X scale model", SourceUri="https://commons.wikimedia.org/wiki/File:Model.jpg" },
+        new NIRACommonsImageCandidate { CandidateId="real-a", Title="Lunar Camera X in its housing", SourceUri="https://commons.wikimedia.org/wiki/File:Real_A.jpg" },
+        new NIRACommonsImageCandidate { CandidateId="real-b", Title="Lunar Camera X servicing", SourceUri="https://commons.wikimedia.org/wiki/File:Real_B.jpg" },
+        new NIRACommonsImageCandidate { CandidateId="diagram", Title="Diagram of Lunar Camera X", SourceUri="https://commons.wikimedia.org/wiki/File:Diagram.jpg" }
+    };
+    var ranked = NIRACommonsImageDiscoveryService.RankForSubject(candidates,
+        "Lunar Camera X", 5, photographsOnly: true);
+    var ids = ranked.Select(x => x.CandidateId).ToHashSet(StringComparer.Ordinal);
+    if (!ids.SetEquals(new[] { "real-a", "real-b" }))
+        throw new Exception("Real-photo selection admitted wrong media or rejected real subject photos: " +
+            string.Join(",", ids));
+    // The same service must still allow a diagram when the user asks for one.
+    if (!NIRACommonsImageDiscoveryService.RankForSubject(candidates,
+        "Lunar Camera X", 5).Any(x => x.CandidateId == "diagram"))
+        throw new Exception("Ordinary image discovery lost diagram support");
+});
+
+Check("IMAGE presentation only emits approved distinct reference photographs", () =>
+{
+    MethodInfo collector = typeof(NIRAExecutive).GetMethod("CollectRuntimeVisualPresentations",
+        BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new Exception("Missing final image presentation gate");
+    var target = new List<NIRAAgent.Artifacts.NIRAVisualArtifactPresentationRequest>();
+    var signatures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"C:\photos\first.jpg" };
+    var results = new[] {
+        new NIRACapabilityResult {
+            CapabilityId = NIRACapabilityIds.ImageSearch,
+            Status = NIRACapabilityResultStatus.Succeeded,
+            VisualArtifacts = new[] {
+                new NIRACapabilityVisualArtifact {
+                    LocalPath = @"C:\photos\first.jpg", Title = "Photo A", PresentToUser = true
+                },
+                new NIRACapabilityVisualArtifact {
+                    LocalPath = @"C:\photos\copy.jpg", Title = "Photo A duplicated", PresentToUser = true
+                }
+            }
+        },
+        new NIRACapabilityResult {
+            CapabilityId = NIRACapabilityIds.ImageGenerate,
+            Status = NIRACapabilityResultStatus.Succeeded,
+            VisualArtifacts = new[] {
+                new NIRACapabilityVisualArtifact {
+                    LocalPath = @"C:\photos\generated.jpg", Title = "Generated", PresentToUser = true
+                }
+            }
         }
-        if (request.RequestUri?.AbsoluteUri == imageUrl)
+    };
+    object? outcome = collector.Invoke(null, new object[] {
+        target, signatures, new System.Text.StringBuilder(), results, allowed
+    });
+    if ((int?)outcome != 2 || target.Count != 2 ||
+        !target.Any(x => x.Title == "Photo A") ||
+        target.Any(x => x.Title == "Photo A duplicated") ||
+        !target.Any(x => x.Title == "Generated"))
+        throw new Exception("Deduplicated photo filter was not applied to the emitted gallery");
+});
+
+Check("IMAGE verified delivery overrides a later false provider-unavailable message", () =>
+{
+    MethodInfo method = typeof(NIRAExecutive).GetMethod(
+        "IsFalseImageUnavailableClaim", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)
+        ?? throw new Exception("Missing source-grounded image completion check");
+    bool FalseClaim(string text) => (bool)(method.Invoke(null, new object[] { text }) ?? false);
+    if (!FalseClaim("My image search is timing out right now. I can't display the pictures.") ||
+        FalseClaim("Here are two Wikimedia Commons reference photos with source links."))
+        throw new Exception("Image completion evidence is inconsistent with displayed images");
+});
+
+Check("IMAGE focused Commons retry never downloads unrelated initial results", () =>
+{
+    const string firstUrl = "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/Hubble_A.jpg/960px-Hubble_A.jpg";
+    const string secondUrl = "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bc/Hubble_B.jpg/960px-Hubble_B.jpg";
+    int plain = 0, focused = 0, downloaded = 0;
+    byte[] one = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFElEQVR4nGOUTDnMgA0wYRUdtBIA/d4BUKK4lNoAAAAASUVORK5CYII=");
+    byte[] two = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFElEQVR4nGM8m8LPgA0wYRUdtBIA/0YBUAqdd0IAAAAASUVORK5CYII=");
+    using var network = new NIRAWebFakeTransport(req =>
+    {
+        string host = req.RequestUri?.Host ?? "";
+        if (host == "commons.wikimedia.org")
         {
-            var content = new ByteArrayContent(png);
+            string query = Uri.UnescapeDataString(System.Text.RegularExpressions.Regex.Match(
+                req.RequestUri!.Query, @"(?:^|[?&])gsrsearch=([^&]*)").Groups[1].Value);
+            if (query == "real photographs of the Hubble Space Telescope")
+            {
+                plain++;
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new StringContent("""
+                {"query":{"pages":[{"index":1,"title":"File:Colorful_spiral_galaxy.jpg","imageinfo":[
+                {"mime":"image/jpeg","thumburl":"https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/Galaxy.jpg/960px-Galaxy.jpg",
+                "descriptionurl":"https://commons.wikimedia.org/wiki/File:Colorful_spiral_galaxy.jpg"}]}]}}
+                """) };
+            }
+            if (query == "intitle:\"hubble space telescope\"")
+            {
+                focused++;
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new StringContent("""
+                {"query":{"pages":[
+                {"index":1,"title":"File:Hubble_Space_Telescope_orbit.jpg","imageinfo":[
+                {"mime":"image/jpeg","thumburl":"https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/Hubble_A.jpg/960px-Hubble_A.jpg",
+                "descriptionurl":"https://commons.wikimedia.org/wiki/File:Hubble_Space_Telescope_orbit.jpg"}]},
+                {"index":2,"title":"File:Hubble_Space_Telescope_service.jpg","imageinfo":[
+                {"mime":"image/jpeg","thumburl":"https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bc/Hubble_B.jpg/960px-Hubble_B.jpg",
+                "descriptionurl":"https://commons.wikimedia.org/wiki/File:Hubble_Space_Telescope_service.jpg"}]}]}}
+                """) };
+            }
+            throw new Exception("Unexpected focused query: " + query);
+        }
+        if (req.RequestUri?.AbsoluteUri == firstUrl || req.RequestUri?.AbsoluteUri == secondUrl)
+        {
+            downloaded++;
+            var content = new ByteArrayContent(req.RequestUri.AbsoluteUri == firstUrl ? one : two);
             content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
             return new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = content };
         }
-        throw new Exception("Unexpected image provider or external image URL");
+        throw new Exception("Unrelated Commons image was downloaded");
     });
-    if (NIRACommonsImageDiscoveryService.SubjectDiscoveryQuery(
-            "real photographs of the unusual artifact") != "unusual artifact")
-        throw new Exception("Subject normalization did not remove the generic media request");
-    string diagnostic = NIRACommonsImageDiscoveryService.DescribeCommonsResponse(
-        """{"query":{"pages":[{"title":"File:X.svg","imageinfo":[{"mime":"image/svg+xml","thumburl":"https://evil.invalid/X.svg"}]}]}}""");
-    if (!diagnostic.Contains("MediaUrlRejected=1", StringComparison.Ordinal))
-        throw new Exception("Live Commons zero-result diagnostics hide rejection reasons");
-    using var client = new HttpClient(transport);
-    using var service = new NIRACommonsImageDiscoveryService(client, preferCommonsFirst: true);
-    var image = new NIRAImageSearchCapabilityHandler(service).ExecuteAsync(
+    using var http = new HttpClient(network);
+    using var service = new NIRACommonsImageDiscoveryService(http, preferCommonsFirst: true);
+    var receipt = new NIRAImageSearchCapabilityHandler(service).ExecuteAsync(
         Request(NIRACapabilityIds.ImageSearch,
-            """{"query":"real photographs of the unusual artifact"}"""))
+        """{"query":"real photographs of the Hubble Space Telescope","retrieveBest":true,"retrieveCount":2}"""))
         .GetAwaiter().GetResult();
     try
     {
-        if (!image.Succeeded || image.VisualArtifacts.Count != 1 ||
-            !File.Exists(image.VisualArtifacts[0].LocalPath) ||
-            !image.VisualArtifacts[0].PresentToUser ||
-            commonsRequests != 2 || transport.CallsTo("api.openverse.org") != 0)
-            throw new Exception("Subject retry failed to deliver Commons pixels directly");
+        if (!receipt.Succeeded || receipt.VisualArtifacts.Count != 2 ||
+            plain != 1 || focused != 1 || downloaded != 2 ||
+            receipt.VisualArtifacts.Any(x => x.Title.Contains("galaxy", StringComparison.OrdinalIgnoreCase)))
+            throw new Exception("Focused search failed to return two distinct relevant images");
     }
     finally
     {
-        foreach (var artifact in image.VisualArtifacts)
+        foreach (var artifact in receipt.VisualArtifacts)
             if (File.Exists(artifact.LocalPath)) File.Delete(artifact.LocalPath);
     }
 });
 
-// R8: an empty result is not an image. Fallback from a detailed query to
-// an article-title query is content-agnostic and never fabricates photographs.
 Check("R8 empty image search is authoritative negative evidence", () =>
 {
     var query = "rare example artifact photographs";
-    if (NIRACommonsImageDiscoveryService.CompactDiscoveryQuery(query) !=
-            "rare example artifact" ||
-        NIRACommonsImageDiscoveryService.ShortDiscoveryQuery(query) !=
-            "example artifact")
-        throw new Exception("Generic image-title refinement changed its subject unexpectedly");
+    if (NIRACommonsImageDiscoveryService.CompactDiscoveryQuery(query) != query ||
+        NIRACommonsImageDiscoveryService.ShortDiscoveryQuery(query) != query)
+        throw new Exception("Commons-only search silently rewrote the model-selected subject");
     var empty = new NIRACapabilityResult {
         CapabilityId = NIRACapabilityIds.ImageSearch,
         Status = NIRACapabilityResultStatus.Succeeded,
@@ -1979,96 +2319,6 @@ Check("R8 empty image search is authoritative negative evidence", () =>
         End(0, empty with { Output = "Candidates=0" }) ||
         End(0, empty with { CapabilityId = NIRACapabilityIds.WebSearch }))
         throw new Exception("Empty image output either looped or suppressed unrelated work");
-});
-
-Check("R8 HTTP200 empty indexes trigger article-image fallback in one tool round", () =>
-{
-    // Fake network, genuine production SearchAsync. No subject-specific paths:
-    // only provider endpoints and real response schemas determine the behavior.
-    using var transport = new NIRAWebFakeTransport(req =>
-    {
-        string host = req.RequestUri?.Host ?? "";
-        if (host == "api.openverse.org")
-            return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
-                Content = new StringContent("""{"results":[]}""")
-            };
-        if (host == "commons.wikimedia.org")
-            return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
-                Content = new StringContent("""{"query":{"pages":[]}}""")
-            };
-        if (host == "en.wikipedia.org")
-            return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
-                Content = new StringContent("""
-                  {"query":{"pages":[{"index":1,"title":"Unfamiliar scientific structure",
-                  "pageimage":"Verified.jpg","thumbnail":{
-                  "source":"https://upload.wikimedia.org/wikipedia/commons/a/ab/Verified.jpg",
-                  "width":1200,"height":800}}]}}
-                  """)
-            };
-        throw new Exception("Unexpected image provider in fallback test");
-    });
-    using var http = new HttpClient(transport);
-    using var service = new NIRACommonsImageDiscoveryService(http);
-    var found = service.SearchAsync("obscure scientific structure photographs", 4)
-        .GetAwaiter().GetResult();
-    if (found.Count != 1 || transport.Count != 3 ||
-        !service.LastSearchStatus.Contains("WikipediaAccepted=1", StringComparison.Ordinal) ||
-        !found[0].MediaUrl.Contains("upload.wikimedia.org", StringComparison.Ordinal))
-        throw new Exception("HTTP200 empty indexes skipped real article-image fallback");
-});
-
-Check("R8 Wikipedia article-image fallback retains real approved media", () =>
-{
-    const string json = """
-      {"query":{"pages":[{"index":1,"title":"Obscure concept","pageimage":"Photo.jpg",
-        "thumbnail":{"source":"https://upload.wikimedia.org/wikipedia/commons/a/ab/Photo.jpg",
-          "width":900,"height":650}}]}}
-      """;
-    var images = NIRACommonsImageDiscoveryService.ParseWikipediaFreeImageResponse(json, 6);
-    if (images.Count != 1 ||
-        !images[0].SourceUri.StartsWith("https://commons.wikimedia.org/wiki/File:", StringComparison.Ordinal) ||
-        images[0].MediaUrl != "https://upload.wikimedia.org/wikipedia/commons/a/ab/Photo.jpg" ||
-        !NIRACommonsImageDiscoveryService.IsPermittedMediaUri(images[0].MediaUrl))
-        throw new Exception("Verified article image fallback failed to preserve a safe source");
-});
-
-Check("R28 independent Openverse results retain licensed Flickr photo and attribution", () =>
-{
-    const string json = """
-        {"results":[
-          {"title":"Great Pyramid of Giza","creator":"Public photographer",
-           "license":"by","license_version":"4.0",
-           "license_url":"https://creativecommons.org/licenses/by/4.0/",
-           "foreign_landing_url":"https://www.flickr.com/photos/author/123456/",
-           "thumbnail":"https://live.staticflickr.com/1234/photohash_b.jpg",
-           "url":"https://live.staticflickr.com/1234/photohash_o.jpg",
-           "width":1024,"height":768,"mature":false},
-          {"title":"Unsafe local image","creator":"No",
-           "license":"by","foreign_landing_url":"https://www.flickr.com/photos/attacker/2/",
-           "thumbnail":"https://localhost/private.jpg","url":"https://127.0.0.1/private.jpg"},
-          {"title":"Unknown image rights","creator":"No",
-           "license":"unknown","foreign_landing_url":"https://www.flickr.com/photos/attacker/3/",
-           "thumbnail":"https://live.staticflickr.com/1234/unknown.jpg"},
-          {"title":"Fake Flickr source","creator":"No",
-           "license":"by","foreign_landing_url":"https://www.flickr.com.evil.test/photos/a/4",
-           "thumbnail":"https://live.staticflickr.com/1234/evil.jpg"}
-        ]}
-        """;
-    var found = NIRACommonsImageDiscoveryService.ParseOpenverseSearchResponse(json, 4);
-    if (found.Count != 1 || found[0].Provider != "Openverse" ||
-        found[0].Title != "Great Pyramid of Giza" ||
-        found[0].Author != "Public photographer" ||
-        found[0].License != "BY 4.0" ||
-        found[0].SourceUri != "https://www.flickr.com/photos/author/123456/" ||
-        !Guid.TryParseExact(found[0].CandidateId, "N", out _) ||
-        !NIRACommonsImageDiscoveryService.IsPermittedMediaUri(found[0].MediaUrl) ||
-        !NIRACommonsImageDiscoveryService.IsPermittedSourcePage(found[0].SourceUri))
-        throw new Exception("Openverse results were dropped or untrusted URLs were accepted");
-    if (NIRACommonsImageDiscoveryService.IsPermittedMediaUri("https://live.staticflickr.com.evil.test/123/a.jpg") ||
-        NIRACommonsImageDiscoveryService.IsPermittedMediaUri("http://live.staticflickr.com/123/a.jpg") ||
-        NIRACommonsImageDiscoveryService.IsPermittedMediaUri("https://live.staticflickr.com@127.0.0.1/a.jpg") ||
-        NIRACommonsImageDiscoveryService.IsPermittedMediaUri("https://live.staticflickr.com/123/a.jpg?redirect=1"))
-        throw new Exception("Flickr media origin check can be forged");
 });
 
 Check("R28 trusted Openverse source attribution survives visual artifact normalization", () =>
@@ -2098,26 +2348,6 @@ Check("R29 image HTTPS transport prefers IPv4 without disabling TLS, proxy or ho
         NIRACommonsImageDiscoveryService.IsPermittedMediaUri("https://127.0.0.1/wikipedia/commons/test.jpg") ||
         NIRACommonsImageDiscoveryService.IsPermittedMediaUri("http://upload.wikimedia.org/wikipedia/commons/a.jpg"))
         throw new Exception("Image transport weakened safe URL restrictions");
-});
-
-Check("R30 Openverse keeps an independent verified backup media URL", () =>
-{
-    const string json = """
-        {"results":[{"title":"Pyramid daytime", "creator":"Test photographer",
-          "license":"by","license_version":"2.0",
-          "foreign_landing_url":"https://www.flickr.com/photos/example/12345/",
-          "thumbnail":"https://live.staticflickr.com/10/thumb_b.jpg",
-          "url":"https://live.staticflickr.com/10/original_o.jpg",
-          "mature":false}]}
-        """;
-    var images = NIRACommonsImageDiscoveryService.ParseOpenverseSearchResponse(json, 3);
-    if (images.Count != 1 || images[0].MediaUrl != "https://live.staticflickr.com/10/thumb_b.jpg" ||
-        images[0].AlternateMediaUrl != "https://live.staticflickr.com/10/original_o.jpg" ||
-        !NIRACommonsImageDiscoveryService.IsPermittedMediaUri(images[0].AlternateMediaUrl))
-        throw new Exception("Alternate approved image CDN source was lost");
-    var failure = new NIRAImageRetrievalUnavailableException("HTTP403");
-    if (!failure.Message.StartsWith("IMAGE_RETRIEVAL_UNAVAILABLE:", StringComparison.Ordinal))
-        throw new Exception("Image retrieval failures must have a typed, terminal marker");
 });
 
 Check("R31 Commons current thumbnail host passes strict grounded provenance", () =>
@@ -2157,133 +2387,6 @@ Check("R31 Commons current thumbnail host passes strict grounded provenance", ()
     if (forbidden.Any(NIRACommonsImageDiscoveryService.IsPermittedMediaUri) ||
         !NIRACommonsImageDiscoveryService.IsPermittedMediaUri(matches[0].MediaUrl))
         throw new Exception("R31 official media allowlist accepted an unauthorized URL");
-});
-
-Check("R31 Openverse proxy thumbnails fall back to approved Flickr originals", () =>
-{
-    const string json = """
-        {"results":[{"title":"Great Pyramid","creator":"Test Creator","license":"by",
-         "foreign_landing_url":"https://www.flickr.com/photos/test/123/",
-         "thumbnail":"https://api.openverse.org/v1/images/xyz/thumb/",
-         "url":"https://live.staticflickr.com/65535/original_o.jpg","mature":false}]}
-        """;
-    var candidates = NIRACommonsImageDiscoveryService.ParseOpenverseSearchResponse(json, 4);
-    if (candidates.Count != 1 ||
-        candidates[0].MediaUrl != "https://live.staticflickr.com/65535/original_o.jpg" ||
-        candidates[0].AlternateMediaUrl.Length != 0)
-        throw new Exception("Openverse proxy thumbnail prevented valid original image selection");
-});
-
-// R13 fixes the observed real-world case: the Openverse API is reachable,
-// but an entire photo CDN times out. Both checks exercise production code
-// with bounded in-memory HTTP responses and NO real network/API credentials.
-Check("R13 verified Openverse proxy thumbnail displays genuine bytes without contacting Flickr", () =>
-{
-    const string proxy = "https://api.openverse.org/v1/images/11111111-2222-4333-8444-555555555555/thumb/";
-    byte[] png = Convert.FromBase64String(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9iMtAAAAAASUVORK5CYII=");
-    using var transport = new NIRAWebFakeTransport(request =>
-    {
-        if (request.RequestUri?.AbsoluteUri == proxy)
-        {
-            var bytes = new ByteArrayContent(png);
-            bytes.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
-            return new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = bytes };
-        }
-        if (request.RequestUri?.Host == "api.openverse.org")
-            return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
-                Content = new StringContent("""
-                    {"results":[{"id":"11111111-2222-4333-8444-555555555555",
-                    "title":"Unfamiliar optical instrument","creator":"Licensed photographer",
-                    "license":"by","license_version":"4.0",
-                    "license_url":"https://creativecommons.org/licenses/by/4.0/",
-                    "foreign_landing_url":"https://www.flickr.com/photos/archive/123/",
-                    "thumbnail":"https://live.staticflickr.com/10/photo_b.jpg",
-                    "url":"https://live.staticflickr.com/10/photo_o.jpg","mature":false}]}
-                    """) };
-        throw new Exception("Unexpected remote origin during independent image proxy retrieval");
-    });
-    using var client = new HttpClient(transport);
-    using var service = new NIRACommonsImageDiscoveryService(client);
-    var search = new NIRAImageSearchCapabilityHandler(service);
-    var result = search.ExecuteAsync(Request(NIRACapabilityIds.ImageSearch,
-        """{"query":"unfamiliar optical instrument","retrieveBest":true}""")).GetAwaiter().GetResult();
-    if (!result.Succeeded || result.VisualArtifacts.Count != 1 ||
-        !result.Output.Contains("VerifiedImageRetrieved=True", StringComparison.Ordinal) ||
-        result.VisualArtifacts[0].SourceUri != "https://www.flickr.com/photos/archive/123/" ||
-        !File.Exists(result.VisualArtifacts[0].LocalPath) ||
-        transport.CallsTo("api.openverse.org") != 2 ||
-        transport.CallsTo("live.staticflickr.com") != 0)
-        throw new Exception("Verified proxy pixels did not reach the real chat image-artifact result");
-    File.Delete(result.VisualArtifacts[0].LocalPath);
-    if (!NIRACommonsImageDiscoveryService.IsPermittedMediaUri(proxy) ||
-        NIRACommonsImageDiscoveryService.IsPermittedMediaUri(
-            "https://api.openverse.org/v1/images/11111111-2222-4333-8444-555555555555/details/") ||
-        NIRACommonsImageDiscoveryService.IsPermittedMediaUri(
-            "https://api.openverse.org.evil.test/v1/images/11111111-2222-4333-8444-555555555555/thumb/") ||
-        NIRACommonsImageDiscoveryService.IsPermittedMediaUri(proxy + "?url=http://localhost/") ||
-        NIRACommonsImageDiscoveryService.IsPermittedMediaUri(
-            "https://api.openverse.org/v1/images/11111111-2222-4333-8444-55555555555x/thumb/"))
-        throw new Exception("Openverse thumbnail allowlist accepted an untrusted origin/path");
-    using var malicious = JsonDocument.Parse("""
-        {"results":[{"id":"../redirect", "title":"Invalid provenance", "license":"by",
-        "foreign_landing_url":"https://www.flickr.com/photos/archive/124/",
-        "thumbnail":"https://live.staticflickr.com/10/photo_b.jpg"}]}
-        """);
-    var items = NIRACommonsImageDiscoveryService.ParseOpenverseSearchResponse(
-        malicious.RootElement.GetRawText(), 2);
-    if (items.Count != 1 || items[0].MediaUrl.Contains("api.openverse.org", StringComparison.Ordinal))
-        throw new Exception("Non-UUID provider data was turned into an Openverse proxy URL");
-});
-
-Check("R13 failed CDN is skipped and independent Commons image actually downloads", () =>
-{
-    byte[] png = Convert.FromBase64String(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9iMtAAAAAASUVORK5CYII=");
-    using var transport = new NIRAWebFakeTransport(request =>
-    {
-        string host = request.RequestUri?.Host ?? "";
-        if (host == "api.openverse.org")
-            return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
-                Content = new StringContent("""
-                    {"results":[{"title":"Licensed subject image A", "license":"by",
-                     "foreign_landing_url":"https://www.flickr.com/photos/archive/1/",
-                     "thumbnail":"https://live.staticflickr.com/1/a.jpg"},
-                    {"title":"Licensed subject image B", "license":"by",
-                     "foreign_landing_url":"https://www.flickr.com/photos/archive/2/",
-                     "thumbnail":"https://live.staticflickr.com/2/b.jpg"}]}
-                    """) };
-        if (host == "live.staticflickr.com")
-            throw new OperationCanceledException("Simulated inaccessible media CDN");
-        if (host == "commons.wikimedia.org")
-            return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
-                Content = new StringContent("""
-                    {"query":{"pages":[{"index":1,"title":"File:Independent.jpg",
-                    "imageinfo":[{"mime":"image/png",
-                    "thumburl":"https://upload.wikimedia.org/wikipedia/commons/a/b/Independent.png",
-                    "descriptionurl":"https://commons.wikimedia.org/wiki/File:Independent.jpg"}]}]}}
-                    """) };
-        if (host == "upload.wikimedia.org")
-        {
-            var bytes = new ByteArrayContent(png);
-            bytes.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
-            return new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = bytes };
-        }
-        throw new Exception("Unexpected HTTP host in fallback regression");
-    });
-    using var client = new HttpClient(transport);
-    using var service = new NIRACommonsImageDiscoveryService(client);
-    var search = new NIRAImageSearchCapabilityHandler(service);
-    var result = search.ExecuteAsync(Request(NIRACapabilityIds.ImageSearch,
-        """{"query":"arbitrary technology photo", "retrieveBest":true}""")).GetAwaiter().GetResult();
-    if (!result.Succeeded || result.VisualArtifacts.Count != 1 ||
-        !result.Output.Contains("VerifiedImageRetrieved=True", StringComparison.Ordinal) ||
-        !File.Exists(result.VisualArtifacts[0].LocalPath) ||
-        transport.CallsTo("live.staticflickr.com") != 1 ||
-        transport.CallsTo("commons.wikimedia.org") != 1 ||
-        transport.CallsTo("upload.wikimedia.org") != 1)
-        throw new Exception("Dead CDN consumed the entire budget or Commons fallback failed to show pixels");
-    File.Delete(result.VisualArtifacts[0].LocalPath);
 });
 
 Check("R32 standalone reference links have bounded, clickable HTTP(S) destinations", () =>
@@ -2510,25 +2613,6 @@ Check("R27 a provider outage blocks subsequent image searches without any networ
     watch.Stop();
     if (watch.Elapsed > TimeSpan.FromSeconds(2))
         throw new Exception("Repeated image search waited for a network timeout instead of using cooldown.");
-});
-
-Check("R27 free Wikipedia image fallback retains trusted Wikimedia media and file provenance", () =>
-{
-    const string response = """
-        {"query":{"pages":[
-            {"index":1,"title":"Karnak","pageimage":"Karnak hall.jpg",
-             "thumbnail":{"source":"https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Karnak.jpg/1000px-Karnak.jpg","width":1000,"height":700}},
-            {"index":2,"title":"Bad host","pageimage":"Unsafe.jpg",
-             "thumbnail":{"source":"https://localhost/private.jpg","width":1000,"height":700}}
-        ]}}
-        """;
-    var results = NIRACommonsImageDiscoveryService.ParseWikipediaFreeImageResponse(response, 6);
-    if (results.Count != 1 || results[0].Title != "Karnak" ||
-        results[0].SourceUri != "https://commons.wikimedia.org/wiki/File:Karnak_hall.jpg" ||
-        !results[0].MediaUrl.StartsWith("https://upload.wikimedia.org/", StringComparison.Ordinal) ||
-        results[0].Author.Length != 0 ||
-        !results[0].Description.Contains("file page", StringComparison.Ordinal))
-        throw new Exception("Wikipedia alternate image source lost source grounding or accepted unsafe media.");
 });
 
 Check("R27 image provider outages use a bounded cooldown and identifiable reason", () =>

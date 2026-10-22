@@ -1,4 +1,5 @@
 using NIRAAgent.Images;
+using NIRAAgent.Diagnostics;
 using System.Text;
 
 namespace NIRAAgent.Capabilities;
@@ -11,15 +12,17 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
     public NIRACapabilityDescriptor Descriptor { get; } = new()
     {
         Id = NIRACapabilityIds.ImageSearch,
-        Description = "Search real openly licensed-reference image candidates from Openverse and Wikimedia Commons (no browser or API key). Returns short-lived candidateId, title, attribution, license, and source page. Then call image.retrieve with a returned candidateId to show a real image; never invent IDs or URLs.",
+        Description = "Search genuine Wikimedia Commons reference-image candidates (no browser, no paid API and no generated images). Returns short-lived candidateId, title, attribution, license, and source page. Then call image.retrieve with a returned candidateId to show a real image; never invent IDs or URLs.",
         DefaultRisk = NIRACapabilityRisk.Observe,
         Parameters = new[] {
-            new NIRACapabilityParameterDescriptor { Name="query", Type="string", Required=true, Description="Specific visual subject, 2-160 characters; e.g. Karnak temple columns." },
+            new NIRACapabilityParameterDescriptor { Name="query", Type="string", Required=true, Description="Specific visual subject, 2-160 characters; no URLs." },
             new NIRACapabilityParameterDescriptor { Name="limit", Type="integer", Required=false, Description="Number of ranked candidates, 1-12; default 6." },
             new NIRACapabilityParameterDescriptor { Name="retrieveBest", Type="boolean", Required=false,
-                Description="Retrieve and show verified real licensed image(s) as part of this search; default true. Set false only for discovery-only work. Never generates images." },
+                Description="Retrieve and present real licensed images in chat by default. Set false only to inspect candidate metadata without downloading. Does not create/generate images." },
             new NIRACapabilityParameterDescriptor { Name="retrieveCount", Type="integer", Required=false,
-                Description="Optional count of distinct verified images to show when retrieveBest is true, 1-3; default 1. Pick based on actual user value, never as a quota." }
+                Description="Optional count of distinct verified images to show when retrieveBest is true, 1-3; default 1. Pick based on actual user value, never as a quota." },
+            new NIRACapabilityParameterDescriptor { Name="photographsOnly", Type="boolean", Required=false,
+                Description="When true, prefer authentic photos and exclude identifiable diagrams, illustrations, models and renderings; default false." }
         }
     };
 
@@ -30,11 +33,24 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
     {
         string query = NIRACapabilityArguments.RequireString(request, "query", 160);
         int limit = NIRACapabilityArguments.GetInteger(request, "limit", 6, 1, 12);
-        bool retrieveBest = NIRACapabilityArguments.GetBoolean(request, "retrieveBest", defaultValue: true);
+        // Searching for photos normally means the user wants visible photos,
+        // not a list of IDs. Direct model capabilityRequests may omit this
+        // optional argument even when the resource planner explicitly sets it.
+        // Preserve the ability to opt out with retrieveBest=false.
+        bool retrieveBest = !request.Arguments.TryGetProperty("retrieveBest", out _) ||
+            NIRACapabilityArguments.GetBoolean(request, "retrieveBest");
         int retrieveCount = NIRACapabilityArguments.GetInteger(request, "retrieveCount", 1, 1, 3);
-        var images = await _service.SearchAsync(query, limit, cancellationToken);
+        bool photographsOnly = NIRACapabilityArguments.GetBoolean(request, "photographsOnly");
+        string safeQuery = query.Replace('\r', ' ').Replace('\n', ' ');
+        NIRADiagnosticTrace.Event("IMAGE-TOOL-REQUEST",
+            $"Capability=image.search Query={safeQuery} Limit={limit} " +
+            $"RetrieveBest={retrieveBest} RetrieveCount={retrieveCount} PhotographsOnly={photographsOnly}");
+        var images = await _service.SearchAsync(query, limit, cancellationToken, photographsOnly);
+        NIRADiagnosticTrace.Event("IMAGE-TOOL-RESULT",
+            $"Capability=image.search Query={query} Candidates={images.Count} " +
+            $"ProviderStatus={_service.LastSearchStatus}");
         var output = new StringBuilder();
-        output.AppendLine($"Provider=Openverse/Wikimedia | Query={query} | Candidates={images.Count} | ResultsAreCandidatesOnly=True");
+        output.AppendLine($"Provider=Wikimedia Commons | Query={query} | Candidates={images.Count} | ResultsAreCandidatesOnly=True");
         foreach (var item in images)
         {
             output.AppendLine($"CandidateId={item.CandidateId}");
@@ -58,11 +74,12 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
             string searchPage = "https://commons.wikimedia.org/wiki/Special:MediaSearch?type=image&search=" +
                 Uri.EscapeDataString(query);
             output.AppendLine("IMAGE_DISCOVERY_EMPTY=True");
+            output.AppendLine("ImageSubjectMatch=False");
             output.AppendLine("VerifiedImageRetrieved=False");
             output.AppendLine($"PublicImageSearchPage={searchPage}");
             output.AppendLine("ImageSearchPageIsNotVerifiedImage=True");
             return new NIRACapabilityHandlerResult {
-                Summary = "IMAGE_DISCOVERY_EMPTY: No suitable licensed image candidates were returned by available indexes. No image was displayed.",
+                Summary = "IMAGE_DISCOVERY_EMPTY: Commons search completed, but no subject-relevant reference image was verified. No image was displayed.",
                 Output = output.ToString(), ChangedSystemState = false
             };
         }
@@ -82,6 +99,10 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
                 {
                     var image = await _service.RetrieveAsync(candidate.CandidateId, budget.Token);
                     if (!hashes.Add(image.Sha256)) continue;
+                    NIRADiagnosticTrace.Event("IMAGE-TOOL-SELECT",
+                        $"Capability=image.search SelectedTitle={image.Title} " +
+                        $"SourceUri={image.SourceUri} Bytes={image.Bytes} " +
+                        $"SelectionNumber={shown.Count + 1}");
                     shown.Add(new NIRACapabilityVisualArtifact {
                         LocalPath = image.LocalPath, Title = image.Title, Caption = image.Caption,
                         SourceUri = image.SourceUri, PresentToUser = true, Surface = "InlineOnly"
@@ -102,6 +123,8 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
             }
             if (shown.Count > 0)
             {
+                NIRAAgent.Diagnostics.NIRADiagnosticTrace.Event("IMAGE-DELIVERY",
+                    $"Outcome=ArtifactsPrepared Count={shown.Count} Surface=InlineOnly");
                 output.AppendLine($"VerifiedImageRetrieved=True\nVerifiedImageCount={shown.Count}");
                 return new NIRACapabilityHandlerResult {
                     Summary = $"Displayed {shown.Count} distinct licensed image(s) out of {images.Count} retrieved candidates.",
@@ -113,7 +136,7 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
         }
         output.AppendLine("Candidates alone are NOT displayed images. Use image.retrieve with a returned candidateId if a different verified photo is needed.");
         return new NIRACapabilityHandlerResult {
-            Summary = $"Found {images.Count} open-license image candidate(s); no verified image has been displayed.",
+            Summary = $"Found {images.Count} Wikimedia Commons image candidate(s); no verified image has been displayed.",
             Output = output.ToString(), ChangedSystemState = false
         };
     }
@@ -140,7 +163,14 @@ public sealed class NIRAImageRetrieveCapabilityHandler : INIRACapabilityHandler
         CancellationToken cancellationToken = default)
     {
         string id = NIRACapabilityArguments.RequireString(request, "candidateId", 80);
+        NIRADiagnosticTrace.Event("IMAGE-TOOL-REQUEST",
+            $"Capability=image.retrieve CandidateId={id}");
         var download = await _service.RetrieveAsync(id, cancellationToken);
+        NIRADiagnosticTrace.Event("IMAGE-TOOL-SELECT",
+            $"Capability=image.retrieve SelectedTitle={download.Title} " +
+            $"SourceUri={download.SourceUri} Bytes={download.Bytes}");
+        NIRAAgent.Diagnostics.NIRADiagnosticTrace.Event("IMAGE-DELIVERY",
+            "Outcome=ArtifactsPrepared Count=1 Surface=InlineOnly");
         return new NIRACapabilityHandlerResult {
             Summary = $"Retrieved a real licensed reference image '{download.Title}' ({download.Bytes} bytes). Image queued for NIRA chat.",
             Output = $"LocalPath={download.LocalPath}\nTitle={download.Title}\nCaption={download.Caption}\nSourceUri={download.SourceUri}\nSHA256={download.Sha256}\nBytes={download.Bytes}\nVerifiedImageRetrieved=True",

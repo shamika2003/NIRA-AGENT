@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
@@ -9,48 +8,43 @@ using NIRAAgent.Diagnostics;
 
 namespace NIRAAgent.Images;
 
-// This provider intentionally exposes no arbitrary URL fetch primitive.
-// Every retrievable candidate must originate from a trusted Commons, Wikipedia, or Openverse API result.
-// Download locations are restricted to known media CDN hosts, never arbitrary model URLs.
+// Commons is the ONLY live image-discovery provider. Neither the user nor the
+// model can supply a download URL. A short-lived candidate ID is required.
 public sealed record NIRACommonsImageCandidate
 {
-    public string CandidateId { get; init; } = string.Empty;
+    public string CandidateId { get; init; } = "";
     public string Provider { get; init; } = "Wikimedia Commons";
-    public string Title { get; init; } = string.Empty;
-    public string Description { get; init; } = string.Empty;
-    public string Author { get; init; } = string.Empty;
-    public string License { get; init; } = string.Empty;
-    public string LicenseUrl { get; init; } = string.Empty;
-    public string SourceUri { get; init; } = string.Empty;
-    public string MediaUrl { get; init; } = string.Empty;
-    // Only the native provider supplies these; never accepted as model URLs.
-    public string AlternateMediaUrl { get; init; } = string.Empty;
-    public string SearchBatchId { get; init; } = string.Empty;
-    public string SearchQuery { get; init; } = string.Empty;
+    public string Title { get; init; } = "";
+    public string Description { get; init; } = "";
+    public string Author { get; init; } = "";
+    public string License { get; init; } = "";
+    public string LicenseUrl { get; init; } = "";
+    public string SourceUri { get; init; } = "";
+    public string MediaUrl { get; init; } = "";
+    public string AlternateMediaUrl { get; init; } = "";
+    public string SearchBatchId { get; init; } = "";
+    public string SearchQuery { get; init; } = "";
     public int Width { get; init; }
     public int Height { get; init; }
 }
 
 public sealed record NIRACommonsImageDownload(
-    string LocalPath, string Title, string Caption,
-    string SourceUri, string Sha256, long Bytes);
+    string LocalPath, string Title, string Caption, string SourceUri, string Sha256, long Bytes);
 
 public sealed class NIRAImageProviderUnavailableException : InvalidOperationException
 {
     public string FailureKind { get; }
     public NIRAImageProviderUnavailableException(string kind, Exception cause)
-        : base($"IMAGE_PROVIDER_UNAVAILABLE: Reference-image services are temporarily unreachable ({kind}). " +
-               "Do not retry this provider in the same task; explain the limitation and answer any non-image portion.", cause)
-    {
-        FailureKind = kind;
-    }
+        : base($"IMAGE_PROVIDER_UNAVAILABLE: Commons image search failed ({kind}). " +
+               "Do not retry this provider in the same task; report the limitation.", cause)
+        => FailureKind = kind;
 }
 
 public sealed class NIRAImageRetrievalUnavailableException : InvalidOperationException
 {
     public NIRAImageRetrievalUnavailableException(string reason, Exception? cause = null)
-        : base($"IMAGE_RETRIEVAL_UNAVAILABLE: No verified image bytes could be downloaded ({reason}). " +
-               "Do not retry image.retrieve in this task. Explain that no image was displayed.", cause) { }
+        : base($"IMAGE_RETRIEVAL_UNAVAILABLE: Could not obtain verified raster bytes ({reason}). " +
+               "Do not retry image.retrieve in this task.", cause) { }
 }
 
 public sealed class NIRACommonsImageDiscoveryService : IDisposable
@@ -58,77 +52,49 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
     private const int MaxApiBytes = 1_200_000;
     private const int MaxImageBytes = 12 * 1024 * 1024;
     private const int MaxCandidates = 120;
-    private static readonly TimeSpan CandidateLifetime = TimeSpan.FromMinutes(35);
+    private static readonly TimeSpan CandidateLifetime = TimeSpan.FromMinutes(30);
+    public static readonly TimeSpan SearchNetworkTimeout = TimeSpan.FromSeconds(9);
+    public static readonly TimeSpan SearchFailureCooldown = TimeSpan.FromMinutes(2);
     private readonly HttpClient _http;
-    private readonly bool _preferCommonsTransport;
-    // This is diagnostic metadata, not an access control decision. Useful for
-    // confirming production DI did not silently supply a general-purpose client.
-    public bool UsesProductionImageTransport => _preferCommonsTransport;
+    private readonly bool _ownsClient;
     private readonly SemaphoreSlim _requests = new(1, 1);
-    private readonly object _lock = new();
     private readonly Dictionary<string, (NIRACommonsImageCandidate Candidate, DateTimeOffset Expires)> _candidates =
         new(StringComparer.Ordinal);
     private readonly string _cacheFolder;
-    // One provider/network outage must not become N serial 22-second timeouts
-    // when cognition requests several image.search operations in one batch.
     private DateTimeOffset _searchUnavailableUntilUtc = DateTimeOffset.MinValue;
     private string _lastSearchFailureKind = "";
-    public static readonly TimeSpan SearchNetworkTimeout = TimeSpan.FromSeconds(7);
-    public static readonly TimeSpan OpenverseNetworkTimeout = TimeSpan.FromSeconds(8);
-    public static readonly TimeSpan SearchFailureCooldown = TimeSpan.FromMinutes(2);
-    // Sanitized, per-search stage summary for the zero-LLM Image Lab. No URLs, user data or queries.
+    public bool UsesProductionImageTransport { get; }
     public string LastSearchStatus { get; private set; } = "NotRun";
 
-    public static string ClassifyProviderFailure(Exception exception) => exception switch
+    public NIRACommonsImageDiscoveryService(HttpClient? transport = null, bool? preferCommonsFirst = null)
     {
-        HttpRequestException http when http.StatusCode == HttpStatusCode.TooManyRequests => "RateLimited",
-        HttpRequestException http when http.StatusCode == HttpStatusCode.Forbidden => "AccessDenied",
-        HttpRequestException http when http.StatusCode == HttpStatusCode.ServiceUnavailable => "ServiceUnavailable",
-        HttpRequestException http when http.StatusCode != null => "HttpError",
-        HttpRequestException => "NetworkError",
-        OperationCanceledException => "Timeout",
-        _ => "UnexpectedError"
-    };
-
-    public NIRACommonsImageDiscoveryService(HttpClient? transport = null,
-        bool? preferCommonsFirst = null)
-    {
-        _preferCommonsTransport = preferCommonsFirst ?? transport is null;
-        // Production uses a restricted transport. An optional injected client
-        // permits offline end-to-end provider fallback tests, with NO network.
-        // Never inject an external client for normal application execution.
-        if (transport is null)
+        _ownsClient = transport is null;
+        UsesProductionImageTransport = transport is null || preferCommonsFirst == true;
+        _http = transport ?? new HttpClient(CreateImageHttpHandler(), disposeHandler: true)
         {
-            var handler = CreateImageHttpHandler();
-            _http = new HttpClient(handler, disposeHandler: true) {
-                Timeout = Timeout.InfiniteTimeSpan
-            };
-        }
-        else _http = transport;
-        NIRADiagnosticTrace.Event("IMAGE-SERVICE",
-            $"ImageOnlyTransport={_preferCommonsTransport} CommonsFirst={_preferCommonsTransport} " +
-            $"Assembly={typeof(NIRACommonsImageDiscoveryService).Assembly.GetName().Version}");
-        // Operators can supply a fully identifiable UA including their contact URL/email.
-        // Never insert credentials or personal user data into this header automatically.
-        string? configured = Environment.GetEnvironmentVariable("NIRA_WIKIMEDIA_USER_AGENT");
-        string ua = !string.IsNullOrWhiteSpace(configured) &&
-                    configured.Length <= 240 && configured.All(c => c >= 32 && c <= 126)
-            ? configured
-            : "NIRAAgent/1.0 (desktop Wikimedia Commons reference image client)";
-        _http.DefaultRequestHeaders.UserAgent.ParseAdd(ua);
-        _cacheFolder = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "NIRAAgent", "visual-artifacts", "commons-cache");
+            Timeout = Timeout.InfiniteTimeSpan
+        };
+        string? userAgent = Environment.GetEnvironmentVariable("NIRA_WIKIMEDIA_USER_AGENT");
+        if (string.IsNullOrWhiteSpace(userAgent) || userAgent.Length > 240 ||
+            userAgent.Any(c => c < 32 || c > 126))
+            userAgent = "NIRAAgent/1.0 (desktop Wikimedia Commons reference-image client)";
+        if (!_http.DefaultRequestHeaders.UserAgent.Any())
+            _http.DefaultRequestHeaders.UserAgent.ParseAdd(userAgent);
+        _cacheFolder = Path.Combine(Environment.GetFolderPath(
+            Environment.SpecialFolder.LocalApplicationData), "NIRAAgent", "visual-artifacts", "commons-cache");
         Directory.CreateDirectory(_cacheFolder);
-        CleanupCacheBestEffort();
+        try
+        {
+            foreach (string file in Directory.EnumerateFiles(_cacheFolder))
+                if (File.GetLastWriteTimeUtc(file) < DateTime.UtcNow.AddDays(-7)) File.Delete(file);
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+        NIRADiagnosticTrace.Event("IMAGE-SERVICE", "Provider=CommonsOnly ImageTransport=" + UsesProductionImageTransport);
     }
 
-    // R29: Prefer an IPv4 connection when both address families exist. Some
-    // dual-stack networks can resolve and even open one IPv6 TCP socket while
-    // .NET HTTPS requests stall on subsequent DNS/address selection. Preserve
-    // normal TLS certificate validation, system proxy policy, fixed source
-    // allowlists, and existing HTTP error handling. This changes only the
-    // image-service HTTP transport, never the general browser or HTTP tools.
+    // This existing transport was proven to work by the user's .NET Step 1.
+    // Preserve TLS verification, system proxy behavior and existing IPv4 preference.
     private static SocketsHttpHandler CreateImageHttpHandler() => new()
     {
         AllowAutoRedirect = false,
@@ -141,16 +107,12 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
     private static async ValueTask<Stream> ConnectPreferIPv4Async(
         SocketsHttpConnectionContext context, CancellationToken cancellationToken)
     {
-        IPAddress[] addresses = await Dns.GetHostAddressesAsync(
-            context.DnsEndPoint.Host, cancellationToken);
-        // Prefer A records; AAAA is a fallback. No hardcoded IPs, DNS bypass,
-        // insecure TLS fallback, redirect following or untrusted destination.
-        IPAddress[] ordered = addresses
-            .Where(address => address.AddressFamily is AddressFamily.InterNetwork or AddressFamily.InterNetworkV6)
-            .OrderBy(address => address.AddressFamily == AddressFamily.InterNetwork ? 0 : 1)
-            .Distinct().Take(8).ToArray();
-        Exception? previous = null;
-        foreach (IPAddress address in ordered)
+        IPAddress[] resolved = await Dns.GetHostAddressesAsync(context.DnsEndPoint.Host, cancellationToken);
+        Exception? last = null;
+        foreach (IPAddress address in resolved
+            .Where(a => a.AddressFamily is AddressFamily.InterNetwork or AddressFamily.InterNetworkV6)
+            .OrderBy(a => a.AddressFamily == AddressFamily.InterNetwork ? 0 : 1)
+            .Distinct().Take(8))
         {
             cancellationToken.ThrowIfCancellationRequested();
             var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
@@ -159,134 +121,52 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
                 using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 attempt.CancelAfter(TimeSpan.FromSeconds(3));
                 await socket.ConnectAsync(new IPEndPoint(address, context.DnsEndPoint.Port), attempt.Token);
-                NIRADiagnosticTrace.Event("IMAGE-TRANSPORT",
-                    $"Connect=Succeeded Family={(address.AddressFamily == AddressFamily.InterNetwork ? "IPv4" : "IPv6")}");
-                // The HTTP stack performs the TLS handshake and validates the
-                // certificate against the ORIGINAL hostname, not this IP.
                 return new NetworkStream(socket, ownsSocket: true);
             }
             catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
-                ex is SocketException or OperationCanceledException or IOException)
+                ex is SocketException or IOException or OperationCanceledException)
             {
                 socket.Dispose();
-                previous = ex;
+                last = ex;
             }
-            catch
-            {
-                socket.Dispose();
-                throw;
-            }
+            catch { socket.Dispose(); throw; }
         }
-        NIRADiagnosticTrace.Event("IMAGE-TRANSPORT", "Connect=Failed IPv4AndIPv6=True");
-        throw new HttpRequestException(
-            "Reference-image HTTPS TCP connection failed for all resolved addresses.", previous);
+        throw new HttpRequestException("Commons connection unavailable", last);
     }
 
-    // A long, conversational image query is often a poor MediaWiki title search.
-    // Derive a shorter discovery phrase without knowing or matching ANY subject.
-    // These words describe the requested media, not its topic; dropping them
-    // cannot replace the subject with a preprogrammed test answer.
-    public static string CompactDiscoveryQuery(string query)
+    public static string ClassifyProviderFailure(Exception exception) => exception switch
     {
-        string[] words = Regex.Matches(query ?? string.Empty, @"[\p{L}\p{N}][\p{L}\p{N}_-]*")
-            .Cast<Match>()
-            .Select(match => match.Value)
-            .Where(word => !new[] {
-                "photo", "photos", "photograph", "photographs", "picture", "pictures",
-                "image", "images", "reference", "official", "show", "showing"
-            }.Contains(word, StringComparer.OrdinalIgnoreCase))
-            .ToArray();
-        if (words.Length == 0) return (query ?? string.Empty).Trim();
-        return string.Join(' ', words.Length <= 3 ? words : words[^3..]);
-    }
+        HttpRequestException e when e.StatusCode == HttpStatusCode.TooManyRequests => "RateLimited",
+        HttpRequestException e when e.StatusCode == HttpStatusCode.Forbidden => "AccessDenied",
+        HttpRequestException e when e.StatusCode == HttpStatusCode.ServiceUnavailable => "ServiceUnavailable",
+        HttpRequestException e when e.StatusCode is not null => "HttpError",
+        HttpRequestException => "NetworkError",
+        OperationCanceledException => "Timeout",
+        JsonException => "InvalidJSON",
+        _ => "UnexpectedError"
+    };
 
-    // Keep a second, more general title search possible for multi-term queries.
-    // An exact two-word phrase tends to match Wikipedia article titles even when
-    // a detailed, model-written search phrase does not. At most ONE refinement.
-    public static string ShortDiscoveryQuery(string query)
-    {
-        string compact = CompactDiscoveryQuery(query);
-        string[] terms = compact.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        return terms.Length > 2 ? string.Join(' ', terms[^2..]) : compact;
-    }
+    // Not a subject-specific list. The model chooses the topic/query freely.
+    // Keeping these methods avoids breaking unrelated callers of the old API.
+    public static string CompactDiscoveryQuery(string query) => (query ?? "").Trim();
+    public static string ShortDiscoveryQuery(string query) => CompactDiscoveryQuery(query);
 
-    // Wikimedia's generator=search is sensitive to conversational qualifiers.
-    // Search the subject itself before giving up on a valid, reachable index.
-    // This normalization is domain-neutral: it does not recognize any particular
-    // telescope, vehicle, movie, person or user test sentence.
-    public static string SubjectDiscoveryQuery(string query)
-    {
-        string[] words = Regex.Matches(query ?? string.Empty, @"[\p{L}\p{N}][\p{L}\p{N}_-]*")
-            .Cast<Match>().Select(match => match.Value)
-            .Where(word => !new[] {
-                "photo", "photos", "photograph", "photographs", "picture", "pictures",
-                "image", "images", "reference", "official", "real", "licensed",
-                "show", "showing", "please", "find", "give", "of", "the", "a", "an",
-                "for", "me", "two", "three", "some", "with", "and", "from"
-            }.Contains(word, StringComparer.OrdinalIgnoreCase))
-            .Take(5).ToArray();
-        return words.Length == 0 ? (query ?? string.Empty).Trim() : string.Join(' ', words);
-    }
-
-    // The search API can return HTTP 200 with no usable images, either because
-    // the search found no File: pages or because every page failed a media gate.
-    // Keep diagnostic metadata safe: counts/host categories only, never query,
-    // URLs, raw provider JSON, or private conversation text.
-    public static string DescribeCommonsResponse(string json)
-    {
-        using JsonDocument doc = JsonDocument.Parse(json);
-        if (doc.RootElement.TryGetProperty("error", out _)) return "ApiError=True";
-        if (!doc.RootElement.TryGetProperty("query", out var query) ||
-            !query.TryGetProperty("pages", out var pages) ||
-            pages.ValueKind != JsonValueKind.Array)
-            return "Pages=0 Shape=NoPages";
-        int total = 0, infoCount = 0, raster = 0, noRaster = 0, mediaRejected = 0, titleRejected = 0;
-        foreach (JsonElement page in pages.EnumerateArray())
-        {
-            total++;
-            if (!page.TryGetProperty("imageinfo", out var infos) ||
-                infos.ValueKind != JsonValueKind.Array || infos.GetArrayLength() == 0) continue;
-            infoCount++;
-            var info = infos[0];
-            string thumbnail = Field(info, "thumburl");
-            string original = Field(info, "url");
-            string mime = Field(info, "mime");
-            bool thumbAllowed = IsPermittedRasterMediaUri(thumbnail);
-            bool originalAllowed = (mime is "image/jpeg" or "image/png" or "image/gif") &&
-                IsPermittedRasterMediaUri(original);
-            if (!thumbAllowed && !originalAllowed)
-            {
-                if (IsPermittedMediaUri(thumbnail) || IsPermittedMediaUri(original)) noRaster++;
-                else mediaRejected++;
-                continue;
-            }
-            if (!Field(page, "title").StartsWith("File:", StringComparison.OrdinalIgnoreCase))
-                titleRejected++;
-            else raster++;
-        }
-        return $"Pages={total} WithImageInfo={infoCount} RasterCandidates={raster} " +
-               $"NonRaster={noRaster} MediaUrlRejected={mediaRejected} TitleRejected={titleRejected}";
-    }
-
-    private static string CommonsSearchUrl(string query, int limit) =>
-        "https://commons.wikimedia.org/w/api.php?action=query&format=json" +
-        "&formatversion=2&generator=search&gsrnamespace=6&gsrlimit=" +
-        Math.Max(limit * 2, 12) + "&gsrsearch=" + Uri.EscapeDataString(query) +
-        "&prop=imageinfo&iiprop=url%7Cmime%7Csize%7Cextmetadata&iiurlwidth=1000" +
-        "&iiextmetadatalanguage=en" +
-        "&iiextmetadatafilter=Artist%7CLicenseShortName%7CLicenseUrl%7CImageDescription%7CCredit";
+    private static string SearchUrl(string query, int limit) =>
+        "https://commons.wikimedia.org/w/api.php?action=query&format=json&formatversion=2" +
+        "&generator=search&gsrnamespace=6&gsrlimit=" + Math.Clamp(limit * 4, 12, 50) +
+        "&gsrsearch=" + Uri.EscapeDataString(query) +
+        "&prop=imageinfo&iiprop=url%7Cmime%7Csize%7Cextmetadata&iiurlwidth=960" +
+        "&iiextmetadatalanguage=en&" +
+        "iiextmetadatafilter=Artist%7CLicenseShortName%7CLicenseUrl%7CImageDescription";
 
     public async Task<IReadOnlyList<NIRACommonsImageCandidate>> SearchAsync(
-        string query, int limit, CancellationToken cancellationToken = default)
+        string query, int limit, CancellationToken cancellationToken = default,
+        bool photographsOnly = false)
     {
-        query = (query ?? string.Empty).Trim();
-        if (query.Length < 2 || query.Length > 160 || query.Any(char.IsControl))
-            throw new ArgumentException("Image query must contain 2-160 visible characters.");
-        if (limit is < 1 or > 12)
-            throw new ArgumentOutOfRangeException(nameof(limit), "Ask for 1-12 candidates.");
-
-        string url = CommonsSearchUrl(query, limit);
-        LastSearchStatus = "Openverse=NotAttempted Commons=NotAttempted";
+        query = (query ?? "").Trim();
+        if (query.Length is < 2 or > 160 || query.Any(char.IsControl))
+            throw new ArgumentException("Image query must have 2-160 visible characters.");
+        if (limit is < 1 or > 12) throw new ArgumentOutOfRangeException(nameof(limit));
 
         await _requests.WaitAsync(cancellationToken);
         try
@@ -294,811 +174,546 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
             if (DateTimeOffset.UtcNow < _searchUnavailableUntilUtc)
             {
                 NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
-                    $"Operation=Search Outcome=Cooldown Reason={_lastSearchFailureKind} NetworkAttempt=False");
+                    $"Operation=Search Outcome=Cooldown Reason={_lastSearchFailureKind}");
                 throw new NIRAImageProviderUnavailableException(_lastSearchFailureKind,
-                    new InvalidOperationException("Prior provider failure in this session."));
+                    new InvalidOperationException("Previous Commons failure still cooling down"));
             }
-            IReadOnlyList<NIRACommonsImageCandidate> parsed = Array.Empty<NIRACommonsImageCandidate>();
-            bool openverseReachable = false;
-            string openverseStatus = "NotAttempted";
-            string commonsStatus = "NotAttempted";
-            // The independently verified Commons API and JPEG host are the
-            // first choice in production. The injected HTTP test transport
-            // preserves the legacy Openverse-first behavior and regression
-            // contracts; this policy does not inspect user questions.
-            if (_preferCommonsTransport)
-            {
-                try
-                {
-                    NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
-                        "Operation=Search Stage=CommonsFirst Attempt=1 QueryLogged=False");
-                    using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                    timeout.CancelAfter(TimeSpan.FromSeconds(9));
-                    using var response = await _http.GetAsync(url,
-                        HttpCompletionOption.ResponseHeadersRead, timeout.Token);
-                    if (!response.IsSuccessStatusCode)
-                        throw new HttpRequestException(
-                            "Wikimedia Commons image search returned an unsuccessful HTTP status.",
-                            null, response.StatusCode);
-                    byte[] bytes = await ReadBoundedAsync(response.Content, MaxApiBytes, timeout.Token);
-                    string commonsJson = Encoding.UTF8.GetString(bytes);
-                    parsed = ParseCommonsSearchResponse(commonsJson, limit);
-                    commonsStatus = $"HTTP200 Accepted={parsed.Count}";
-                    NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
-                        $"Operation=Search Stage=CommonsFirst Outcome=HTTP200 Accepted={parsed.Count} " +
-                        DescribeCommonsResponse(commonsJson));
-                    // A 200 status with zero File: matches is NOT a search success.
-                    // Try the actual subject as a shorter query without calling the LLM
-                    // or substituting images from a different topic.
-                    if (parsed.Count == 0)
-                    {
-                        string subject = SubjectDiscoveryQuery(query);
-                        if (subject.Length is >= 3 and <= 160 &&
-                            !string.Equals(subject, query, StringComparison.OrdinalIgnoreCase))
-                        {
-                            NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
-                                $"Operation=Search Stage=CommonsSubjectRetry Attempt=1 SubjectWords={subject.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length}");
-                            using var subjectTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                            subjectTimeout.CancelAfter(SearchNetworkTimeout);
-                            using var subjectResponse = await _http.GetAsync(
-                                CommonsSearchUrl(subject, limit),
-                                HttpCompletionOption.ResponseHeadersRead, subjectTimeout.Token);
-                            if (!subjectResponse.IsSuccessStatusCode)
-                                throw new HttpRequestException("Wikimedia subject search failed", null, subjectResponse.StatusCode);
-                            string subjectJson = Encoding.UTF8.GetString(await ReadBoundedAsync(
-                                subjectResponse.Content, MaxApiBytes, subjectTimeout.Token));
-                            parsed = ParseCommonsSearchResponse(subjectJson, limit);
-                            commonsStatus += $"; SubjectAccepted={parsed.Count}";
-                            NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
-                                $"Operation=Search Stage=CommonsSubjectRetry Outcome=HTTP200 Accepted={parsed.Count} " +
-                                DescribeCommonsResponse(subjectJson));
-                        }
-                    }
-                }
-                catch (HttpRequestException ex) when (!cancellationToken.IsCancellationRequested)
-                {
-                    commonsStatus = $"HTTPError:{ClassifyProviderFailure(ex)}";
-                    NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
-                        $"Operation=Search Stage=CommonsFirst Outcome=Fallback Reason={ClassifyProviderFailure(ex)}");
-                }
-                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-                {
-                    commonsStatus = "Timeout";
-                    NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
-                        "Operation=Search Stage=CommonsFirst Outcome=Fallback Reason=Timeout");
-                }
-                catch (JsonException) when (!cancellationToken.IsCancellationRequested)
-                {
-                    commonsStatus = "InvalidJSON";
-                    NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
-                        "Operation=Search Stage=CommonsFirst Outcome=Fallback Reason=InvalidJSON");
-                }
-            }
-            // Openverse is an independent open-license index, NOT another
-            // Wikimedia endpoint. A Wikimedia DNS or network outage therefore
-            // does not automatically prevent the user from seeing photographs.
-            if (parsed.Count == 0)
-            {
             try
             {
-                parsed = await SearchOpenverseAsync(query, limit, cancellationToken);
-                openverseReachable = true;
-                openverseStatus = $"HTTP200 Accepted={parsed.Count}";
-            }
-            catch (HttpRequestException ex)
-            {
-                openverseStatus = $"HTTPError:{ClassifyProviderFailure(ex)}";
-                NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
-                    $"Operation=Search Stage=Openverse Outcome=Fallback Reason={ClassifyProviderFailure(ex)} HttpRequestError={ex.HttpRequestError}");
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                openverseStatus = "Timeout";
-                NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
-                    "Operation=Search Stage=Openverse Outcome=Fallback Reason=Timeout");
-            }
-            catch (JsonException)
-            {
-                openverseStatus = "InvalidJSON";
-                NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
-                    "Operation=Search Stage=Openverse Outcome=Fallback Reason=InvalidApiResponse");
-            }
-            }
-            // If Openverse found appropriate, safe thumbnails, there is no
-            // reason to run the slower Wikimedia search or make more calls.
-            if (parsed.Count == 0 && commonsStatus == "NotAttempted") try
-            {
+                NIRADiagnosticTrace.Event("IMAGE-QUERY",
+                    $"Stage=Initial Provider=CommonsOnly Query={DiagnosticText(query)} " +
+                    $"Subject={DiagnosticText(SubjectDiscoveryQuery(query))} Requested={limit}");
+                NIRADiagnosticTrace.Event("IMAGE-PROVIDER", "Operation=Search Stage=CommonsOnly Attempt=1");
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 timeout.CancelAfter(SearchNetworkTimeout);
-                using var response = await _http.GetAsync(
-                    url, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+                using var response = await _http.GetAsync(SearchUrl(query, limit),
+                    HttpCompletionOption.ResponseHeadersRead, timeout.Token);
                 if (!response.IsSuccessStatusCode)
-                    throw new HttpRequestException(
-                        $"Wikimedia Commons image search returned HTTP {(int)response.StatusCode}.",
-                        null, response.StatusCode);
-                byte[] bytes = await ReadBoundedAsync(response.Content, MaxApiBytes, timeout.Token);
-                using JsonDocument source = JsonDocument.Parse(bytes);
-                int providerPages = source.RootElement.TryGetProperty("query", out var q) &&
-                    q.TryGetProperty("pages", out var pages) &&
-                    pages.ValueKind == JsonValueKind.Array ? pages.GetArrayLength() : 0;
-                parsed = ParseCommonsSearchResponse(Encoding.UTF8.GetString(bytes), limit);
-                commonsStatus = $"HTTP200 Results={providerPages} Accepted={parsed.Count}";
-            }
-            catch (HttpRequestException ex) when (ex.StatusCode is null && openverseReachable)
-            {
-                // Openverse responded but had no suitable photos, so one
-                // alternate Wikimedia article-image lookup is worthwhile.
-                // If BOTH independent hosts failed networking, do not also
-                // spend time on Wikipedia (same infrastructure as Commons).
-                // A failed connection to commons.wikimedia.org is not proof
-                // that ALL Wikimedia endpoints are unreachable. One bounded
-                // alternative on the Wikipedia article-image index is useful.
-                // Never switch hosts for a 403/429 (policy/rate limiting).
-                commonsStatus = "NetworkError; WikipediaFallback";
-                parsed = await SearchWikipediaFreeImagesAsync(query, limit, cancellationToken);
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && openverseReachable)
-            {
-                commonsStatus = "Timeout; WikipediaFallback";
-                parsed = await SearchWikipediaFreeImagesAsync(query, limit, cancellationToken);
-            }
-            // R8: HTTP 200 with zero accepted Commons/Openverse candidates is
-            // NOT a successful image deliverable. The article-image index must
-            // also run for empty responses, not only for network errors.
-            // Do it inside this same tool operation: no extra LLM decision.
-            if (parsed.Count == 0 && commonsStatus != "NetworkError; WikipediaFallback" &&
-                commonsStatus != "Timeout; WikipediaFallback")
-            {
-                string articleQuery = CompactDiscoveryQuery(query);
-                try
+                    throw new HttpRequestException("Commons API returned an error", null, response.StatusCode);
+                byte[] data = await ReadBoundedAsync(response.Content, MaxApiBytes, timeout.Token);
+                // Provider search order is NOT evidence of topical relevance. A
+                // photograph taken BY an instrument is different from a photo OF
+                // that instrument. Rank using Commons file-title metadata before
+                // attempting downloads. Fail closed if no subject match exists.
+                string subject = SubjectDiscoveryQuery(query);
+                string initialJson = Encoding.UTF8.GetString(data);
+                var initial = ParseCommonsSearchResponse(initialJson, 50);
+                var candidates = RankForSubject(initial, query, limit, photographsOnly);
+                TraceSelection("Initial", query, initial, candidates, photographsOnly);
+
+                // Distinguish a genuinely empty Commons search from a search
+                // containing images that could not be decoded or displayed.
+                // Never issue a pointless second network request for an empty
+                // index. A bitmap retry applies only to unusable imageinfo.
+                bool unusableMedia = initial.Count == 0 && HasImageInfoPages(data);
+                if (unusableMedia)
                 {
-                    parsed = await SearchWikipediaFreeImagesAsync(articleQuery, limit, cancellationToken);
-                    commonsStatus += $"; WikipediaAccepted={parsed.Count}";
-                }
-                catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
-                    ex is HttpRequestException or OperationCanceledException or JsonException)
-                {
-                    commonsStatus += $"; WikipediaFailure={ClassifyProviderFailure(ex)}";
-                }
-            }
-            // If broad natural-language search misses, make one topic-agnostic
-            // title refinement. This is based ONLY on query tokens, not on
-            // specific products, projects, example prompts or company names.
-            if (parsed.Count == 0)
-            {
-                string refined = ShortDiscoveryQuery(query);
-                if (!string.Equals(refined, query, StringComparison.OrdinalIgnoreCase) &&
-                    refined.Length >= 3)
-                {
+                    string bitmapQuery = query + " filetype:bitmap";
+                    NIRADiagnosticTrace.Event("IMAGE-QUERY",
+                        $"Stage=BitmapRecovery Query={DiagnosticText(bitmapQuery)} " +
+                        $"Original={DiagnosticText(query)} Reason=UnusableImageInfo");
                     try
                     {
-                        parsed = await SearchWikipediaFreeImagesAsync(refined, limit, cancellationToken);
-                        commonsStatus += $"; ArticleRefinedAccepted={parsed.Count}";
+                        using var recovered = await _http.GetAsync(
+                            SearchUrl(bitmapQuery, limit),
+                            HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+                        if (recovered.IsSuccessStatusCode)
+                        {
+                            byte[] recoveredData = await ReadBoundedAsync(recovered.Content, MaxApiBytes, timeout.Token);
+                            var bitmaps = ParseCommonsSearchResponse(Encoding.UTF8.GetString(recoveredData), 50);
+                            candidates = RankForSubject(bitmaps, query, limit, photographsOnly);
+                            TraceSelection("BitmapRecovery", query, bitmaps, candidates, photographsOnly);
+                        }
+                        else
+                            NIRADiagnosticTrace.Event("IMAGE-QUERY",
+                                $"Stage=BitmapRecovery Outcome=HTTP{(int)recovered.StatusCode}");
                     }
                     catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
                         ex is HttpRequestException or OperationCanceledException or JsonException)
                     {
-                        commonsStatus += $"; ArticleRefinedFailure={ClassifyProviderFailure(ex)}";
+                        NIRADiagnosticTrace.Event("IMAGE-QUERY",
+                            $"Stage=BitmapRecovery Outcome=Unavailable Reason={ClassifyProviderFailure(ex)}");
                     }
                 }
-            }
-            // Some subjects have no free main Wikipedia article image but do
-            // have Commons files under shorter titles. Give Commons one final
-            // targeted, read-only title query inside this SAME capability call.
-            // Never retry a publisher that refused/rate-limited our requests.
-            if (parsed.Count == 0 &&
-                !commonsStatus.Contains("WikipediaFailure=", StringComparison.Ordinal) &&
-                !commonsStatus.Contains("ArticleRefinedFailure=", StringComparison.Ordinal) &&
-                commonsStatus.StartsWith("HTTP200", StringComparison.Ordinal))
-            {
-                string shortQuery = ShortDiscoveryQuery(query);
-                if (shortQuery.Length >= 3 &&
-                    !string.Equals(shortQuery, query, StringComparison.OrdinalIgnoreCase))
+
+                // If real Commons candidates are visibly off-topic, search
+                // the requested SUBJECT in file titles. Never transform this
+                // into a topic-specific fallback or use a different provider.
+                // The bitmap-recovery path and truly empty index are terminal.
+                if (!unusableMedia && initial.Count > 0 &&
+                    candidates.Count < Math.Min(limit, 2) && subject.Length >= 3 &&
+                    !query.Contains("intitle:", StringComparison.OrdinalIgnoreCase))
                 {
+                    string focused = "intitle:\"" + subject.Replace("\"", "") + "\"";
+                    NIRADiagnosticTrace.Event("IMAGE-QUERY",
+                        $"Stage=FocusedTitle Query={DiagnosticText(focused)} Original={DiagnosticText(query)} " +
+                        $"PreviouslyRelevant={candidates.Count}");
                     try
                     {
-                        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                        timeout.CancelAfter(SearchNetworkTimeout);
-                        using var response = await _http.GetAsync(
-                            CommonsSearchUrl(shortQuery, limit), HttpCompletionOption.ResponseHeadersRead,
-                            timeout.Token);
-                        if (!response.IsSuccessStatusCode)
-                            throw new HttpRequestException("Refined Commons query unavailable", null, response.StatusCode);
-                        byte[] bytes = await ReadBoundedAsync(response.Content, MaxApiBytes, timeout.Token);
-                        parsed = ParseCommonsSearchResponse(Encoding.UTF8.GetString(bytes), limit);
-                        commonsStatus += $"; CommonsRefinedAccepted={parsed.Count}";
+                        using var recovery = await _http.GetAsync(
+                            SearchUrl(focused, limit), HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+                        if (recovery.IsSuccessStatusCode)
+                        {
+                            byte[] refined = await ReadBoundedAsync(recovery.Content, MaxApiBytes, timeout.Token);
+                            var titleCandidates = ParseCommonsSearchResponse(Encoding.UTF8.GetString(refined), 50);
+                            var combined = candidates.Concat(titleCandidates)
+                                .GroupBy(item => item.SourceUri, StringComparer.OrdinalIgnoreCase)
+                                .Select(group => group.First()).ToArray();
+                            candidates = RankForSubject(combined, query, limit, photographsOnly);
+                            TraceSelection("FocusedTitle", query, titleCandidates, candidates, photographsOnly);
+                        }
+                        else
+                            NIRADiagnosticTrace.Event("IMAGE-QUERY",
+                                $"Stage=FocusedTitle Outcome=HTTP{(int)recovery.StatusCode}");
                     }
                     catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
                         ex is HttpRequestException or OperationCanceledException or JsonException)
                     {
-                        commonsStatus += $"; CommonsRefinedFailure={ClassifyProviderFailure(ex)}";
+                        NIRADiagnosticTrace.Event("IMAGE-QUERY",
+                            $"Stage=FocusedTitle Outcome=Unavailable Reason={ClassifyProviderFailure(ex)} " +
+                            $"RetainedRelevant={candidates.Count}");
                     }
                 }
-            }
-            // Group candidates from this one verified search. When a selected
-            // CDN URL is broken, image.retrieve may try a few OTHER results
-            // from the same query without paying for another model turn.
-            string batch = Guid.NewGuid().ToString("N");
-            parsed = parsed.Select(candidate => candidate with { SearchBatchId = batch, SearchQuery = query }).ToArray();
-            lock (_lock)
-            {
-                PruneCandidates();
-                foreach (var candidate in parsed)
-                    _candidates[candidate.CandidateId] = (candidate, DateTimeOffset.UtcNow + CandidateLifetime);
+                NIRADiagnosticTrace.Event("IMAGE-QUERY",
+                    $"Stage=Final Query={DiagnosticText(query)} Relevant={candidates.Count} " +
+                    $"NoOffTopicFallback=True");
+                string batchId = Guid.NewGuid().ToString("N");
+                DateTimeOffset expires = DateTimeOffset.UtcNow + CandidateLifetime;
+                foreach (var candidate in candidates)
+                {
+                    var tagged = candidate with { SearchBatchId = batchId, SearchQuery = query };
+                    _candidates[tagged.CandidateId] = (tagged, expires);
+                }
+                foreach (string old in _candidates.Where(x => x.Value.Expires < DateTimeOffset.UtcNow)
+                    .Select(x => x.Key).ToArray()) _candidates.Remove(old);
                 while (_candidates.Count > MaxCandidates)
-                {
-                    string old = _candidates.MinBy(kv => kv.Value.Expires).Key;
-                    _candidates.Remove(old);
-                }
+                    _candidates.Remove(_candidates.MinBy(x => x.Value.Expires).Key);
+                _lastSearchFailureKind = "";
+                _searchUnavailableUntilUtc = DateTimeOffset.MinValue;
+                LastSearchStatus = $"Commons=HTTP200 Accepted={candidates.Count}";
+                NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
+                    $"Operation=Search Stage=CommonsOnly Outcome=HTTP200 Accepted={candidates.Count}");
+                return candidates;
             }
-            _searchUnavailableUntilUtc = DateTimeOffset.MinValue;
-            _lastSearchFailureKind = "";
-            LastSearchStatus = $"Openverse={openverseStatus}; Commons={commonsStatus}; Accepted={parsed.Count}";
-            NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
-                $"Operation=Search Outcome={(parsed.Count > 0 ? "Candidates" : "Empty")} {LastSearchStatus}");
-            return parsed;
-        }
-        catch (HttpRequestException ex)
-        {
-            string kind = ClassifyProviderFailure(ex);
-            _lastSearchFailureKind = kind;
-            LastSearchStatus = $"ProviderFailure={kind}";
-            _searchUnavailableUntilUtc = DateTimeOffset.UtcNow + SearchFailureCooldown;
-            NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
-                $"Operation=Search Outcome=Unavailable Reason={kind} NetError={ex.HttpRequestError} CooldownSec={(int)SearchFailureCooldown.TotalSeconds}");
-            throw new NIRAImageProviderUnavailableException(kind, ex);
-        }
-        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
-        {
-            const string kind = "Timeout";
-            _lastSearchFailureKind = kind;
-            LastSearchStatus = $"ProviderFailure={kind}";
-            _searchUnavailableUntilUtc = DateTimeOffset.UtcNow + SearchFailureCooldown;
-            NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
-                $"Operation=Search Outcome=Unavailable Reason={kind} CooldownSec={(int)SearchFailureCooldown.TotalSeconds}");
-            throw new NIRAImageProviderUnavailableException(kind, ex);
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
+                ex is HttpRequestException or OperationCanceledException or JsonException)
+            {
+                string kind = ClassifyProviderFailure(ex);
+                _lastSearchFailureKind = kind;
+                LastSearchStatus = $"Commons={kind}";
+                _searchUnavailableUntilUtc = DateTimeOffset.UtcNow + SearchFailureCooldown;
+                NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
+                    $"Operation=Search Stage=CommonsOnly Outcome=Unavailable Reason={kind}");
+                throw new NIRAImageProviderUnavailableException(kind, ex);
+            }
         }
         finally { _requests.Release(); }
     }
 
-
-    private async Task<IReadOnlyList<NIRACommonsImageCandidate>> SearchOpenverseAsync(
-        string query, int limit, CancellationToken cancellationToken)
+    // Metadata matching is evidence of likely relevance, NOT image understanding.
+    // General-purpose subject extraction removes request-language filler without
+    // containing any named product, telescope, place, person or example topic.
+    private static readonly HashSet<string> SearchFiller = new(StringComparer.OrdinalIgnoreCase)
     {
-        // Anonymous, documented Openverse search; no key or browser required.
-        // It indexes openly licensed images, including Flickr and Wikimedia.
-        // Only HTTPS links from explicitly approved media CDNs can be retrieved.
-        string url = "https://api.openverse.org/v1/images/?q=" +
-            Uri.EscapeDataString(query) + "&page_size=" + Math.Clamp(limit * 3, 6, 30) +
-            "&mature=false";
-        NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
-            "Operation=Search Stage=Openverse Attempt=1 QueryLogged=False");
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(OpenverseNetworkTimeout);
-        using var response = await _http.GetAsync(url,
-            HttpCompletionOption.ResponseHeadersRead, timeout.Token);
-        if (!response.IsSuccessStatusCode)
-            throw new HttpRequestException("Openverse search HTTP failure", null, response.StatusCode);
-        byte[] bytes = await ReadBoundedAsync(response.Content, MaxApiBytes, timeout.Token);
-        using JsonDocument source = JsonDocument.Parse(bytes);
-        int providerResults = source.RootElement.TryGetProperty("results", out var entries) &&
-            entries.ValueKind == JsonValueKind.Array ? entries.GetArrayLength() : 0;
-        IReadOnlyList<NIRACommonsImageCandidate> candidates =
-            ParseOpenverseSearchResponse(Encoding.UTF8.GetString(bytes), limit);
-        NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
-            $"Operation=Search Stage=Openverse Outcome=Success Results={providerResults} Accepted={candidates.Count}");
-        return candidates;
-    }
+        "a", "an", "the", "of", "for", "from", "me", "my", "to", "please", "show",
+        "find", "get", "give", "some", "real", "actual", "genuine", "true", "two", "three",
+        "one", "few", "several", "more", "good", "high", "quality", "photos", "photo",
+        "photographs", "photograph", "pictures", "picture", "images", "image", "reference",
+        "references", "look", "looking", "see", "can", "you", "would", "like", "with"
+    };
 
-    public static IReadOnlyList<NIRACommonsImageCandidate> ParseOpenverseSearchResponse(
-        string json, int limit = 8)
+    private static string[] SubjectTerms(string query) =>
+        Regex.Matches((query ?? "").ToLowerInvariant(), @"[\p{L}\p{N}]+")
+            .Select(match => match.Value)
+            .Where(term => term.Length > 1 && !SearchFiller.Contains(term))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(14).ToArray();
+
+    public static string SubjectDiscoveryQuery(string query) =>
+        string.Join(" ", SubjectTerms(query));
+
+    // Rank only candidates with evidence that the REQUESTED subject is depicted.
+    // Search order is not a relevance score. These generic rules do not name any
+    // particular telescope, landmark, product, provider or user test.
+    public static IReadOnlyList<NIRACommonsImageCandidate> RankForSubject(
+        IReadOnlyList<NIRACommonsImageCandidate> results, string query, int limit,
+        bool photographsOnly = false)
     {
-        if (limit is < 1 or > 12) throw new ArgumentOutOfRangeException(nameof(limit));
-        using JsonDocument document = JsonDocument.Parse(json);
-        if (!document.RootElement.TryGetProperty("results", out var results) ||
-            results.ValueKind != JsonValueKind.Array)
-            return Array.Empty<NIRACommonsImageCandidate>();
-        List<NIRACommonsImageCandidate> found = [];
-        foreach (JsonElement item in results.EnumerateArray())
+        string[] terms = SubjectTerms(query);
+        if (terms.Length == 0 || limit < 1) return Array.Empty<NIRACommonsImageCandidate>();
+        int required = photographsOnly ? terms.Length :
+            terms.Length == 1 ? 1 : Math.Max(2, (int)Math.Ceiling(terms.Length * 0.6));
+        string phrase = string.Join(" ", terms);
+        return results.Select((image, position) =>
         {
-            if (Field(item, "title").Length is < 2 or > 300) continue;
-            if (item.TryGetProperty("mature", out var mature) &&
-                mature.ValueKind == JsonValueKind.True) continue;
-            string media = Field(item, "thumbnail");
-            string original = Field(item, "url");
-            if (!IsPermittedMediaUri(media)) media = original;
-            if (!IsPermittedMediaUri(media)) continue;
-            string alternate = IsPermittedMediaUri(original) &&
-                !string.Equals(media, original, StringComparison.Ordinal) ? original : "";
-            // Openverse documents a same-origin image thumbnail endpoint. Its
-            // HTTPS search API can be reachable even when the external Flickr
-            // CDN is blocked. Build this URL ONLY from a verified UUID in a
-            // trusted Openverse result, never from user/model-controlled URLs.
-            // Keep the original approved CDN as a bounded fallback.
-            string openverseId = Field(item, "id");
-            if (Guid.TryParseExact(openverseId, "D", out Guid providerId))
-            {
-                string proxy = $"https://api.openverse.org/v1/images/{providerId:D}/thumb/";
-                if (IsPermittedMediaUri(proxy))
-                {
-                    alternate = media;
-                    media = proxy;
-                }
-            }
-            string source = Field(item, "foreign_landing_url");
-            if (!IsPermittedSourcePage(source)) continue;
-            string license = Field(item, "license").Trim().ToLowerInvariant();
-            if (license is not ("by" or "by-sa" or "by-nd" or "by-nc" or
-                "by-nc-sa" or "by-nc-nd" or "cc0" or "pdm" or "publicdomain")) continue;
-            string licenseUrl = Field(item, "license_url");
-            if (!Uri.TryCreate(licenseUrl, UriKind.Absolute, out Uri? rights) ||
-                rights.Scheme != Uri.UriSchemeHttps ||
-                (rights.Host != "creativecommons.org" &&
-                 rights.Host != "www.creativecommons.org"))
-                licenseUrl = string.Empty;
-            int Number(string key) => item.TryGetProperty(key, out var v) &&
-                v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out int value)
-                    ? Math.Max(0, value) : 0;
-            string title = SafeText(Field(item, "title"), 180);
-            string creator = SafeText(Field(item, "creator"), 180);
-            string licenseVersion = SafeText(Field(item, "license_version"), 20);
-            string attribution = licenseVersion.Length > 0 ? license.ToUpperInvariant() + " " + licenseVersion : license.ToUpperInvariant();
-            found.Add(new NIRACommonsImageCandidate {
-                CandidateId = Guid.NewGuid().ToString("N"), Provider = "Openverse",
-                Title = title, Author = creator, License = attribution,
-                LicenseUrl = licenseUrl, SourceUri = source,
-                MediaUrl = media, AlternateMediaUrl = alternate,
-                Width = Number("width"), Height = Number("height"),
-                Description = "Openly licensed reference image; attribution and source link verified from Openverse metadata."
-            });
-            if (found.Count >= limit) break;
-        }
-        return found;
+            string title = Regex.Replace(image.Title.ToLowerInvariant(), @"[^\p{L}\p{N}]+", " ").Trim();
+            string description = Regex.Replace(image.Description.ToLowerInvariant(), @"[^\p{L}\p{N}]+", " ").Trim();
+            // Photography is a user-selected media type, not a telescope or
+            // location keyword. A named object is not an authentic photo if
+            // its filename describes a diagram, render, or scale model.
+            bool artificial = photographsOnly && Regex.IsMatch(image.Title,
+                @"\b(?:diagram|schematic|illustration|render(?:ing)?|blueprint|" +
+                @"concept|artist(?:ic)?\s+(?:impression|depiction)|scale\s+model)\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            // If a different primary subject occupies the title and the
+            // queried object appears only in an attribution parenthesis,
+            // do not treat it as a photograph OF the queried object.
+            string rawTitle = image.Title.ToLowerInvariant();
+            int parenthesis = rawTitle.IndexOf('(');
+            int positionOfSubject = rawTitle.IndexOf(phrase, StringComparison.Ordinal);
+            bool attributedOnly = photographsOnly && parenthesis >= 0 &&
+                positionOfSubject > parenthesis;
+            string[] words = title.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            int hits = terms.Count(term => words.Contains(term, StringComparer.OrdinalIgnoreCase));
+            bool exactPhrase = title.Contains(phrase, StringComparison.OrdinalIgnoreCase);
+            // "Taken by / using X" often means an image produced BY X, not OF X.
+            bool producerCredit = Regex.IsMatch(title + " " + description,
+                @"\b(?:photographed|captured|taken|imaged|observed|recorded|shot)\b.{0,48}\b" +
+                @"(?:by|using|with|through)\s+(?:the\s+)?" +
+                Regex.Escape(phrase) + @"\b", RegexOptions.IgnoreCase);
+            if (producerCredit || artificial || attributedOnly) hits = 0;
+            // An explicit full-subject title earns a stronger signal than a
+            // gallery filename mentioning the same words among dozens of others.
+            int extraWords = Math.Max(0, words.Length - terms.Length);
+            double aspect = image.Height > 0 ? (double)image.Width / image.Height : 0;
+            int pixelBonus = image.Width >= 800 && image.Height >= 500 ? 6 : 0;
+            int compositionPenalty = aspect is > 0 and < 0.45 or > 4 ? 8 : 0;
+            int score = hits * 25 + (exactPhrase ? 70 : 0)
+                - Math.Min(32, extraWords * 2) + pixelBonus - compositionPenalty;
+            return new { image, position, hits, score };
+        })
+        .Where(x => x.hits >= required)
+        .OrderByDescending(x => x.score)
+        .ThenBy(x => x.position)
+        .Select(x => x.image)
+        .GroupBy(x => x.SourceUri, StringComparer.OrdinalIgnoreCase)
+        .Select(group => group.First())
+        .Take(limit).ToArray();
     }
 
-    public static bool IsPermittedSourcePage(string? value)
+    private static string DiagnosticText(string text) =>
+        Regex.Replace(text ?? "", @"[\p{Cc}\p{Cf}]", " ") is string safe
+            ? safe[..Math.Min(180, safe.Length)] : "";
+
+    private static void TraceSelection(string stage, string query,
+        IReadOnlyList<NIRACommonsImageCandidate> offered,
+        IReadOnlyList<NIRACommonsImageCandidate> selected,
+        bool photographsOnly = false)
     {
-        if (!Uri.TryCreate(value, UriKind.Absolute, out Uri? uri) ||
+        var relevant = RankForSubject(offered, query, Math.Max(1, offered.Count), photographsOnly);
+        NIRADiagnosticTrace.Event("IMAGE-MATCH",
+            $"Stage={stage} Query={DiagnosticText(query)} Offered={offered.Count} " +
+            $"TopicallyEligible={relevant.Count} Selected={selected.Count} " +
+            $"RejectedAsOffTopic={offered.Count - relevant.Count}");
+        foreach (var item in offered.Take(20))
+        {
+            string reason = selected.Any(s => s.SourceUri == item.SourceUri)
+                ? "Selected" : relevant.Any(r => r.SourceUri == item.SourceUri)
+                    ? "PassedButNotSelected" : "RejectedOffTopic";
+            NIRADiagnosticTrace.Event("IMAGE-CANDIDATE",
+                $"Stage={stage} Decision={reason} " +
+                $"Title={DiagnosticText(item.Title)} Source={DiagnosticText(item.SourceUri)} " +
+                $"Media={DiagnosticText(item.MediaUrl)}");
+        }
+    }
+
+    private static bool HasImageInfoPages(byte[] data)
+    {
+        using var document = JsonDocument.Parse(data);
+        if (!document.RootElement.TryGetProperty("query", out var query) ||
+            !query.TryGetProperty("pages", out var pages) ||
+            pages.ValueKind != JsonValueKind.Array) return false;
+        foreach (var page in pages.EnumerateArray())
+            if (page.TryGetProperty("imageinfo", out var info) &&
+                info.ValueKind == JsonValueKind.Array && info.GetArrayLength() > 0)
+                return true;
+        return false;
+    }
+
+    // Only official Wikimedia hosts, HTTPS, default port, and Commons media paths.
+    // DO NOT reject a verified official media URL merely because MediaWiki's
+    // thumbnail name/extension/query parameters changed. Pixel checks follow.
+    public static bool IsPermittedMediaUri(string? address)
+    {
+        if (!Uri.TryCreate(address, UriKind.Absolute, out Uri? uri) ||
             uri.Scheme != Uri.UriSchemeHttps || !uri.IsDefaultPort ||
             uri.UserInfo.Length != 0 || uri.Fragment.Length != 0) return false;
-        return (uri.Host.Equals("commons.wikimedia.org", StringComparison.OrdinalIgnoreCase) &&
-                uri.AbsolutePath.StartsWith("/wiki/File:", StringComparison.Ordinal)) ||
-               (uri.Host.Equals("www.flickr.com", StringComparison.OrdinalIgnoreCase) &&
-                uri.AbsolutePath.StartsWith("/photos/", StringComparison.Ordinal));
+        if (!uri.Host.Equals("upload.wikimedia.org", StringComparison.OrdinalIgnoreCase) &&
+            !uri.Host.Equals("thumb.wikimedia.org", StringComparison.OrdinalIgnoreCase)) return false;
+        if (!uri.AbsolutePath.StartsWith("/wikipedia/commons/", StringComparison.OrdinalIgnoreCase))
+            return false;
+        // These URLs come from the Commons imageinfo API, not model/user input.
+        // Wikimedia may append cache/version/transform parameters and rename
+        // thumbnails. A fixed query-string pattern wrongly rejected live media.
+        // Bound the URL size; keep HTTPS + exact trusted host + Commons path.
+        // Final content type AND actual file signature are checked on download.
+        if (uri.AbsoluteUri.Length > 2048 ||
+            uri.Query.Length > 512 || uri.AbsolutePath.Length > 1600) return false;
+        string query = Uri.UnescapeDataString(uri.Query);
+        if (query.Contains("://", StringComparison.Ordinal) ||
+            query.Contains("//", StringComparison.Ordinal) ||
+            query.Contains("\\", StringComparison.Ordinal) ||
+            query.Contains("redirect", StringComparison.OrdinalIgnoreCase) ||
+            query.Contains("returnto", StringComparison.OrdinalIgnoreCase) ||
+            query.Contains("url=", StringComparison.OrdinalIgnoreCase)) return false;
+        return true;
     }
 
-    private static string SafeText(string? value, int maxLength)
+    // A trusted Wikimedia link need not have a conventional filename suffix:
+    // the API uses resized thumbnails, encoded filenames and versioned URLs.
+    // Do not infer image content from the URL alone. MediaWiki supplies the
+    // original MIME and download verifies HTTP content type + raster magic.
+    private static bool IsRasterMime(string mime) =>
+        mime is "image/jpeg" or "image/png" or "image/gif" or "image/webp";
+
+    private static bool HasRasterSuffix(string? address)
     {
-        string trimmed = string.Join(' ', (value ?? "").Split(
-            (char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-        return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
+        if (!Uri.TryCreate(address, UriKind.Absolute, out Uri? uri)) return false;
+        string path = Uri.UnescapeDataString(uri.AbsolutePath);
+        return path.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".gif", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".webp", StringComparison.OrdinalIgnoreCase);
     }
 
-    private async Task<IReadOnlyList<NIRACommonsImageCandidate>> SearchWikipediaFreeImagesAsync(
-        string query, int limit, CancellationToken cancellationToken)
+    private static bool HasNonRasterSuffix(string? address)
     {
-        // Wikipedia's PageImages module only returns images passing its
-        // `pilicense=free` restriction. Original file URLs still must be
-        // upload.wikimedia.org media. File pages provide actual attribution.
-        const string baseUrl = "https://en.wikipedia.org/w/api.php?action=query&format=json" +
-            "&formatversion=2&generator=search&gsrnamespace=0&gsrlimit=12" +
-            "&prop=pageimages&piprop=name%7Cthumbnail&pilicense=free&pithumbsize=1000&gsrsearch=";
-        NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
-            "Operation=Search Stage=WikipediaFreeImagesFallback Attempt=1 QueryLogged=False");
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromSeconds(8));
-        using var response = await _http.GetAsync(baseUrl + Uri.EscapeDataString(query),
-            HttpCompletionOption.ResponseHeadersRead, timeout.Token);
-        if (!response.IsSuccessStatusCode)
-            throw new HttpRequestException("Wikipedia free image index unavailable.",
-                null, response.StatusCode);
-        string json = Encoding.UTF8.GetString(await ReadBoundedAsync(
-            response.Content, MaxApiBytes, timeout.Token));
-        return ParseWikipediaFreeImageResponse(json, limit);
+        if (!Uri.TryCreate(address, UriKind.Absolute, out Uri? uri)) return false;
+        string path = Uri.UnescapeDataString(uri.AbsolutePath);
+        return path.EndsWith(".svg", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".tif", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".tiff", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".djvu", StringComparison.OrdinalIgnoreCase);
     }
 
-    public static IReadOnlyList<NIRACommonsImageCandidate> ParseWikipediaFreeImageResponse(
-        string json, int limit = 8)
+    // An imageinfo thumbnail may represent a converted TIFF/SVG/PDF: allow
+    // actual raster thumbnails but never accept a raw SVG merely for coming
+    // from Wikimedia. Everything is byte-verified before appearing in chat.
+    private static bool IsPermittedThumbnail(string? address, string mime) =>
+        IsPermittedMediaUri(address) &&
+        (HasRasterSuffix(address) ||
+         (IsRasterMime(mime) && !HasNonRasterSuffix(address)));
+
+    private static string ImageUrlDiagnostic(string? address)
     {
-        if (limit is < 1 or > 12) throw new ArgumentOutOfRangeException(nameof(limit));
-        using JsonDocument doc = JsonDocument.Parse(json);
+        if (string.IsNullOrWhiteSpace(address)) return "Missing";
+        if (!Uri.TryCreate(address, UriKind.Absolute, out Uri? uri)) return "Malformed";
+        if (uri.Scheme != Uri.UriSchemeHttps) return "NonHTTPS";
+        if (uri.UserInfo.Length > 0 || !uri.IsDefaultPort) return "CredentialOrPort";
+        if (!uri.Host.Equals("upload.wikimedia.org", StringComparison.OrdinalIgnoreCase) &&
+            !uri.Host.Equals("thumb.wikimedia.org", StringComparison.OrdinalIgnoreCase))
+            return "Host:" + uri.Host[..Math.Min(64, uri.Host.Length)];
+        if (!uri.AbsolutePath.StartsWith("/wikipedia/commons/", StringComparison.OrdinalIgnoreCase))
+            return "PathPrefix";
+        if (!IsPermittedMediaUri(address)) return "URLShape";
+        return HasNonRasterSuffix(address) ? "NonRasterExtension" : "TrustedMediaURL";
+    }
+
+    private static string Field(JsonElement element, string key) =>
+        element.ValueKind == JsonValueKind.Object && element.TryGetProperty(key, out var value) &&
+        value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
+
+    public static IReadOnlyList<NIRACommonsImageCandidate> ParseCommonsSearchResponse(string json, int limit = 8)
+    {
+        if (limit is < 1 or > 50) throw new ArgumentOutOfRangeException(nameof(limit));
+        using var doc = JsonDocument.Parse(json);
         if (!doc.RootElement.TryGetProperty("query", out var query) ||
-            !query.TryGetProperty("pages", out var pages) ||
-            pages.ValueKind != JsonValueKind.Array)
+            !query.TryGetProperty("pages", out var pages) || pages.ValueKind != JsonValueKind.Array)
             return Array.Empty<NIRACommonsImageCandidate>();
-        List<(int Position, NIRACommonsImageCandidate Image)> found = [];
+
+        var matches = new List<(int Position, NIRACommonsImageCandidate Image)>();
+        int withInfo = 0, rejectedUrl = 0, missingUrl = 0, rejectedSource = 0;
+        var rejectionSamples = new List<string>(3);
         foreach (JsonElement page in pages.EnumerateArray())
         {
-            if (!page.TryGetProperty("thumbnail", out JsonElement thumbnail) ||
-                thumbnail.ValueKind != JsonValueKind.Object) continue;
-            string mediaUrl = Field(thumbnail, "source");
-            if (!IsPermittedMediaUri(mediaUrl)) continue;
-            string filename = Field(page, "pageimage").Trim();
-            string title = Field(page, "title").Trim();
-            if (filename.Length == 0 || title.Length == 0 || filename.Length > 320) continue;
-            // A real Commons file page, not an arbitrary model-owned URL.
-            string source = "https://commons.wikimedia.org/wiki/File:" +
-                Uri.EscapeDataString(filename.Replace(' ', '_'));
-            int GetInt(string key) => thumbnail.TryGetProperty(key, out var value) &&
-                value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int n) ? n : 0;
+            string fileTitle = Field(page, "title");
+            if (!fileTitle.StartsWith("File:", StringComparison.OrdinalIgnoreCase) ||
+                fileTitle.Length is < 7 or > 305 || fileTitle.Any(char.IsControl)) continue;
+            if (!page.TryGetProperty("imageinfo", out var infos) ||
+                infos.ValueKind != JsonValueKind.Array || infos.GetArrayLength() == 0) continue;
+            withInfo++;
+            JsonElement info = infos[0];
+            string thumb = Field(info, "thumburl");
+            string original = Field(info, "url");
+            string mime = Field(info, "mime").ToLowerInvariant();
+            bool originalRaster = IsRasterMime(mime);
+            string media = IsPermittedThumbnail(thumb, mime) ? thumb : "";
+            // Missing/invalid thumbnails must not make an otherwise valid
+            // raster ORIGINAL vanish. Wikimedia's original may be a PNG/JPEG
+            // with a transformed, encoded or suffixless file URL.
+            if (media.Length == 0 && originalRaster && IsPermittedMediaUri(original))
+                media = original;
+            if (media.Length == 0)
+            {
+                if (thumb.Length == 0 && original.Length == 0) missingUrl++;
+                else rejectedUrl++;
+                if (rejectionSamples.Count < 3)
+                    rejectionSamples.Add($"mime={mime} thumb={ImageUrlDiagnostic(thumb)} original={ImageUrlDiagnostic(original)}");
+                continue;
+            }
+            string source = Field(info, "descriptionurl");
+            if (!Uri.TryCreate(source, UriKind.Absolute, out Uri? src) ||
+                src.Scheme != Uri.UriSchemeHttps || !src.IsDefaultPort ||
+                src.UserInfo.Length > 0 || !src.Host.Equals("commons.wikimedia.org", StringComparison.OrdinalIgnoreCase) ||
+                !src.AbsolutePath.StartsWith("/wiki/File:", StringComparison.OrdinalIgnoreCase))
+            {
+                // Construct an official file-description URL from the API's File title.
+                source = "https://commons.wikimedia.org/wiki/File:" +
+                    Uri.EscapeDataString(fileTitle[5..].Trim().Replace(' ', '_'));
+                rejectedSource++;
+            }
+            string alternative = originalRaster && IsPermittedMediaUri(original) && original != media
+                ? original : "";
+            JsonElement ext = info.TryGetProperty("extmetadata", out var metadata) &&
+                metadata.ValueKind == JsonValueKind.Object ? metadata : default;
+            string Meta(string key) => ext.ValueKind == JsonValueKind.Object &&
+                ext.TryGetProperty(key, out var item) ? CleanHtml(Field(item, "value")) : "";
+            int Int(string key) => info.TryGetProperty(key, out var item) &&
+                item.ValueKind == JsonValueKind.Number && item.TryGetInt32(out int n) ? Math.Max(0, n) : 0;
             int position = page.TryGetProperty("index", out var index) &&
-                index.ValueKind == JsonValueKind.Number && index.TryGetInt32(out int n)
-                ? n : int.MaxValue;
-            found.Add((position, new NIRACommonsImageCandidate {
-                CandidateId = Guid.NewGuid().ToString("N"), Title = title,
-                MediaUrl = mediaUrl, SourceUri = source,
-                License = "See Wikimedia Commons file page",
-                Description = "Free-license article illustration; see its file page for author and terms.",
-                Width = GetInt("width"), Height = GetInt("height")
+                index.ValueKind == JsonValueKind.Number && index.TryGetInt32(out int n) ? n : int.MaxValue;
+            matches.Add((position, new NIRACommonsImageCandidate
+            {
+                CandidateId = Guid.NewGuid().ToString("N"),
+                Title = fileTitle[5..].Replace('_', ' ').Trim(),
+                MediaUrl = media,
+                AlternateMediaUrl = alternative,
+                SourceUri = source,
+                Author = Meta("Artist"),
+                License = Meta("LicenseShortName"),
+                LicenseUrl = Meta("LicenseUrl"),
+                Description = Meta("ImageDescription"),
+                Width = Int("width"), Height = Int("height")
             }));
         }
-        return found.OrderBy(x => x.Position).ThenBy(x => x.Image.Title)
+        NIRADiagnosticTrace.Event("IMAGE-COMMONS-PARSE",
+            $"Pages={pages.GetArrayLength()} WithInfo={withInfo} Accepted={matches.Count} " +
+            $"UrlRejected={rejectedUrl} MissingUrl={missingUrl} SourceRepaired={rejectedSource} " +
+            $"RejectedSamples=[{string.Join("; ", rejectionSamples)}]");
+        return matches.OrderBy(x => x.Position).ThenBy(x => x.Image.Title)
             .Select(x => x.Image).Take(limit).ToArray();
+    }
+
+    private static string CleanHtml(string value)
+    {
+        string text = WebUtility.HtmlDecode(Regex.Replace(value ?? "", "<[^>]*>", " "));
+        text = Regex.Replace(text, @"\s+", " ").Trim();
+        return text.Length > 320 ? text[..320] : text;
     }
 
     public async Task<NIRACommonsImageDownload> RetrieveAsync(
         string candidateId, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(candidateId))
-            throw new ArgumentException("A candidateId from image.search is required.");
-        NIRACommonsImageCandidate selected;
-        IReadOnlyList<NIRACommonsImageCandidate> choices;
-        lock (_lock)
-        {
-            PruneCandidates();
-            if (!_candidates.TryGetValue(candidateId, out var entry))
-                throw new InvalidOperationException(
-                    "Image candidate is unknown or expired. Call image.search again.");
-            selected = entry.Candidate;
-            // Only this exact provider-observed batch, never an invented URL.
-            choices = new[] { selected }.Concat(_candidates.Values
-                .Where(e => e.Candidate.SearchBatchId == selected.SearchBatchId &&
-                    e.Candidate.CandidateId != selected.CandidateId &&
-                    selected.SearchBatchId.Length > 0)
-                .Select(e => e.Candidate)).Take(6).ToArray();
-        }
+        if (string.IsNullOrWhiteSpace(candidateId)) throw new ArgumentException("CandidateId is required");
         await _requests.WaitAsync(cancellationToken);
         try
         {
-            // Reserve time for an INDEPENDENT Commons query, rather than
-            // burning the entire operation on six images from one dead CDN.
-            using var entire = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            entire.CancelAfter(TimeSpan.FromSeconds(25));
-            var failedHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var attemptedUrls = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string expired in _candidates.Where(x => x.Value.Expires < DateTimeOffset.UtcNow)
+                .Select(x => x.Key).ToArray()) _candidates.Remove(expired);
+            if (!_candidates.TryGetValue(candidateId, out var selected))
+                throw new InvalidOperationException("Unknown or expired image candidate. Search first.");
+            var images = new[] { selected.Candidate }.Concat(_candidates.Values
+                .Where(x => x.Candidate.SearchBatchId == selected.Candidate.SearchBatchId &&
+                    x.Candidate.CandidateId != candidateId)
+                .Select(x => x.Candidate)).Take(8).ToArray();
+            Exception? last = null;
             int attempts = 0;
-            Exception? lastError = null;
-            string lastReason = "No accepted image files";
-
-            async Task<NIRACommonsImageDownload?> TryCandidateAsync(
-                NIRACommonsImageCandidate candidate, string media, string source)
+            var tried = new HashSet<string>(StringComparer.Ordinal);
+            using var total = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            total.CancelAfter(TimeSpan.FromSeconds(21));
+            foreach (var image in images)
             {
-                if (entire.IsCancellationRequested || !IsPermittedMediaUri(media) ||
-                    !attemptedUrls.Add(media)) return null;
-                string host = new Uri(media).Host;
-                if (failedHosts.Contains(host))
+                foreach (string url in new[] { image.MediaUrl, image.AlternateMediaUrl })
                 {
-                    NIRADiagnosticTrace.Event("IMAGE-RETRIEVE",
-                        $"Outcome=SkippedPriorHostFailure Host={host} NetworkAttempt=False");
-                    return null;
-                }
-                attempts++;
-                try
-                {
-                    using var attempt = CancellationTokenSource.CreateLinkedTokenSource(entire.Token);
-                    attempt.CancelAfter(TimeSpan.FromSeconds(5));
-                    NIRACommonsImageDownload saved = await DownloadVerifiedAsync(candidate, media, attempt.Token);
-                    NIRADiagnosticTrace.Event("IMAGE-RETRIEVE",
-                        $"Outcome=Success Host={host} Attempts={attempts} Source={source} Bytes={saved.Bytes}");
-                    return saved;
-                }
-                catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
-                    ex is HttpRequestException or InvalidOperationException or OperationCanceledException or IOException or SocketException)
-                {
-                    lastError = ex;
-                    lastReason = ex switch
+                    if (total.IsCancellationRequested) break;
+                    if (!IsPermittedMediaUri(url) || !tried.Add(url)) continue;
+                    attempts++;
+                    try
                     {
-                        HttpRequestException h when h.StatusCode.HasValue => $"HTTP{(int)h.StatusCode.Value}",
-                        HttpRequestException h => $"Network_{h.HttpRequestError}",
-                        OperationCanceledException => "Timeout",
-                        InvalidOperationException => "InvalidMedia",
-                        IOException => "ReadError",
-                        SocketException => "SocketError",
-                        _ => "Unavailable"
-                    };
-                    // A network outage to a HOST is not fixed by trying a
-                    // different picture on the same host. HTTP 404 / image
-                    // format failure can be file-specific, so those remain
-                    // eligible for distinct candidates on that host.
-                    if (ex is OperationCanceledException ||
-                        ex is HttpRequestException { StatusCode: null } or SocketException)
-                        failedHosts.Add(host);
-                    NIRADiagnosticTrace.Event("IMAGE-RETRIEVE",
-                        $"Outcome=CandidateFailed Host={host} Reason={lastReason} Attempt={attempts}");
-                    return null;
-                }
-            }
-
-            foreach (NIRACommonsImageCandidate candidate in choices)
-            {
-                if (entire.IsCancellationRequested) break;
-                // The Openverse search API may work while its thumbnail proxy
-                // cannot stream image bytes. In production, prefer the independently
-                // approved source-CDN alternate; injected regression transports
-                // keep the original proxy-first behavior.
-                string[] mediaOptions = _preferCommonsTransport &&
-                    candidate.Provider == "Openverse" &&
-                    candidate.MediaUrl.StartsWith("https://api.openverse.org/v1/images/", StringComparison.Ordinal) &&
-                    IsPermittedMediaUri(candidate.AlternateMediaUrl)
-                    ? new[] { candidate.AlternateMediaUrl, candidate.MediaUrl }
-                    : new[] { candidate.MediaUrl, candidate.AlternateMediaUrl };
-                foreach (string media in mediaOptions)
-                {
-                    if (entire.IsCancellationRequested) break;
-                    NIRACommonsImageDownload? saved = await TryCandidateAsync(
-                        candidate, media, "InitialSearch");
-                    if (saved is not null) return saved;
-                }
-            }
-
-            // If Openverse only returned Flickr media, fall back to actual
-            // Commons metadata + verified file bytes. Crucially, failed-host
-            // suppression leaves time for this route even after 5 results
-            // all came from live.staticflickr.com.
-            if (selected.Provider == "Openverse" && selected.SearchQuery.Length > 0 &&
-                !entire.IsCancellationRequested)
-            {
-                try
-                {
-                    NIRADiagnosticTrace.Event("IMAGE-RETRIEVE",
-                        "Stage=IndependentCommonsFallback Outcome=Started");
-                    using var lookup = CancellationTokenSource.CreateLinkedTokenSource(entire.Token);
-                    lookup.CancelAfter(TimeSpan.FromSeconds(5));
-                    using var result = await _http.GetAsync(
-                        CommonsSearchUrl(selected.SearchQuery, 6),
-                        HttpCompletionOption.ResponseHeadersRead, lookup.Token);
-                    if (!result.IsSuccessStatusCode)
-                        throw new HttpRequestException("Wikimedia image lookup failed", null, result.StatusCode);
-                    byte[] json = await ReadBoundedAsync(result.Content, MaxApiBytes, lookup.Token);
-                    var commons = ParseCommonsSearchResponse(Encoding.UTF8.GetString(json), 6);
-                    NIRADiagnosticTrace.Event("IMAGE-RETRIEVE",
-                        $"Stage=IndependentCommonsFallback Candidates={commons.Count}");
-                    foreach (NIRACommonsImageCandidate photo in commons)
+                        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(total.Token);
+                        timeout.CancelAfter(TimeSpan.FromSeconds(6));
+                        var result = await DownloadVerifiedAsync(image, url, timeout.Token);
+                        NIRADiagnosticTrace.Event("IMAGE-RETRIEVE",
+                            $"Outcome=Success Host={new Uri(url).Host} Bytes={result.Bytes} Attempts={attempts}");
+                        return result;
+                    }
+                    catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
+                        ex is HttpRequestException or OperationCanceledException or IOException or InvalidOperationException)
                     {
-                        foreach (string media in new[] { photo.MediaUrl, photo.AlternateMediaUrl })
-                        {
-                            NIRACommonsImageDownload? saved = await TryCandidateAsync(
-                                photo, media, "IndependentCommons");
-                            if (saved is not null) return saved;
-                        }
-                        if (entire.IsCancellationRequested) break;
+                        last = ex;
+                        NIRADiagnosticTrace.Event("IMAGE-RETRIEVE",
+                            $"Outcome=CandidateFailed Reason={ClassifyProviderFailure(ex)} " +
+                            $"Error={ex.GetType().Name} Host={new Uri(url).Host} Attempt={attempts}");
                     }
                 }
-                catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
-                    ex is HttpRequestException or InvalidOperationException or OperationCanceledException or JsonException)
-                {
-                    lastError = ex;
-                    lastReason = ex is HttpRequestException h && h.StatusCode.HasValue
-                        ? $"CommonsHTTP{(int)h.StatusCode.Value}" :
-                        ex is OperationCanceledException ? "Timeout" : ex.GetType().Name;
-                    NIRADiagnosticTrace.Event("IMAGE-RETRIEVE",
-                        $"Stage=IndependentCommonsFallback Outcome=Unavailable Reason={lastReason}");
-                }
             }
-            NIRADiagnosticTrace.Event("IMAGE-RETRIEVE",
-                $"Outcome=Unavailable Reason={lastReason} Attempts={attempts} DistinctFailedHosts={failedHosts.Count}");
-            throw new NIRAImageRetrievalUnavailableException(lastReason, lastError);
+            throw new NIRAImageRetrievalUnavailableException($"attempted={attempts}", last);
         }
         finally { _requests.Release(); }
     }
 
     private async Task<NIRACommonsImageDownload> DownloadVerifiedAsync(
-        NIRACommonsImageCandidate candidate, string mediaUrl, CancellationToken token)
+        NIRACommonsImageCandidate candidate, string url, CancellationToken ct)
     {
-        using var response = await _http.GetAsync(mediaUrl,
-            HttpCompletionOption.ResponseHeadersRead, token);
-        // Automatic redirects stay DISABLED. Redirecting to an unapproved
-        // host must never silently download bytes from somewhere else.
+        using var response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
         if (!response.IsSuccessStatusCode)
-            throw new HttpRequestException(
-                $"Reference image download returned HTTP {(int)response.StatusCode}.",
-                null, response.StatusCode);
+            throw new HttpRequestException("Commons image response is not successful", null, response.StatusCode);
         if (response.Content.Headers.ContentLength is > MaxImageBytes)
-            throw new InvalidOperationException("Image exceeds the 12 MiB reference limit.");
-        string mediaType = response.Content.Headers.ContentType?.MediaType ?? "";
-        if (mediaType is not ("image/jpeg" or "image/png" or "image/gif" or "application/octet-stream"))
-            throw new InvalidOperationException("Returned resource is not a supported raster image.");
-        byte[] bytes = await ReadBoundedAsync(response.Content, MaxImageBytes, token);
+            throw new InvalidOperationException("Image larger than permitted budget");
+        string contentType = response.Content.Headers.ContentType?.MediaType ?? "";
+        if (contentType is not ("image/jpeg" or "image/png" or "image/gif" or "image/webp" or "application/octet-stream"))
+            throw new InvalidOperationException("Response is not raster image media");
+        byte[] bytes = await ReadBoundedAsync(response.Content, MaxImageBytes, ct);
         string extension = DetectImageExtension(bytes);
-        if (extension.Length == 0)
-            throw new InvalidOperationException("Returned image signature is invalid or unsupported.");
+        if (extension.Length == 0) throw new InvalidOperationException("Invalid image signature");
         string path = Path.Combine(_cacheFolder, Guid.NewGuid().ToString("N") + extension);
         string temporary = path + ".tmp";
         try
         {
-            await File.WriteAllBytesAsync(temporary, bytes, token);
-            File.Move(temporary, path, overwrite: false);
+            await File.WriteAllBytesAsync(temporary, bytes, ct);
+            File.Move(temporary, path);
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
-        string sha = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
-        string credit = string.IsNullOrWhiteSpace(candidate.Author) ? "Author listed at source" : candidate.Author;
-        string license = string.IsNullOrWhiteSpace(candidate.License) ? "license: see source" : candidate.License;
-        string caption = $"{candidate.Provider} • {credit} • {license}";
-        if (Uri.TryCreate(candidate.LicenseUrl, UriKind.Absolute, out Uri? licenseLink) &&
-            licenseLink.Scheme == Uri.UriSchemeHttps)
-            caption += $" • License: {licenseLink.AbsoluteUri}";
+        string credit = string.IsNullOrWhiteSpace(candidate.Author) ? "Author listed on source" : candidate.Author;
+        string license = string.IsNullOrWhiteSpace(candidate.License) ? "License on source page" : candidate.License;
+        string caption = $"Wikimedia Commons • {credit} • {license}";
+        if (Uri.TryCreate(candidate.LicenseUrl, UriKind.Absolute, out Uri? rights) &&
+            rights.Scheme == Uri.UriSchemeHttps)
+            caption += " • License: " + rights.AbsoluteUri;
         return new NIRACommonsImageDownload(path, candidate.Title, caption,
-            candidate.SourceUri, sha, bytes.Length);
-    }
-
-    public static bool IsPermittedMediaUri(string? address)
-    {
-        if (!Uri.TryCreate(address, UriKind.Absolute, out Uri? uri)) return false;
-        if (uri.Scheme != Uri.UriSchemeHttps || !uri.IsDefaultPort ||
-            uri.UserInfo.Length != 0 || uri.Query.Length != 0 ||
-            uri.Fragment.Length != 0) return false;
-        // Commons changed its thumbnail host to thumb.wikimedia.org. The
-        // returned /wikipedia/commons/... images are genuine Commons media,
-        // but the old upload-only allowlist silently discarded every result.
-        // Only exact official hostnames and Commons file paths are accepted.
-        bool commons = (uri.Host.Equals("upload.wikimedia.org", StringComparison.OrdinalIgnoreCase) ||
-                        uri.Host.Equals("thumb.wikimedia.org", StringComparison.OrdinalIgnoreCase)) &&
-            uri.AbsolutePath.StartsWith("/wikipedia/commons/", StringComparison.Ordinal);
-        bool flickr = uri.Host.Equals("live.staticflickr.com", StringComparison.OrdinalIgnoreCase) &&
-            uri.AbsolutePath.StartsWith("/", StringComparison.Ordinal) &&
-            uri.AbsolutePath.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase);
-        // A generated, immutable Openverse image UUID and one documented
-        // thumbnail path only. Other API paths and malformed paths are denied.
-        bool openverseThumbnail = uri.Host.Equals("api.openverse.org", StringComparison.OrdinalIgnoreCase) &&
-            Regex.IsMatch(uri.AbsolutePath,
-                @"\A/v1/images/[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}/thumb/\z",
-                RegexOptions.CultureInvariant);
-        return commons || flickr || openverseThumbnail;
-    }
-
-    private static bool IsPermittedRasterMediaUri(string? address)
-    {
-        if (!IsPermittedMediaUri(address)) return false;
-        string path = new Uri(address!, UriKind.Absolute).AbsolutePath;
-        return path.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
-               path.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase) ||
-               path.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
-               path.EndsWith(".gif", StringComparison.OrdinalIgnoreCase);
-    }
-
-    public static IReadOnlyList<NIRACommonsImageCandidate> ParseCommonsSearchResponse(
-        string json, int limit = 8)
-    {
-        if (limit is < 1 or > 12) throw new ArgumentOutOfRangeException(nameof(limit));
-        using JsonDocument doc = JsonDocument.Parse(json);
-        if (!doc.RootElement.TryGetProperty("query", out var query) ||
-            !query.TryGetProperty("pages", out var pages) || pages.ValueKind != JsonValueKind.Array)
-            return Array.Empty<NIRACommonsImageCandidate>();
-        var result = new List<(int Position, NIRACommonsImageCandidate Candidate)>();
-        foreach (JsonElement page in pages.EnumerateArray())
-        {
-            if (!page.TryGetProperty("imageinfo", out var infos) || infos.ValueKind != JsonValueKind.Array ||
-                infos.GetArrayLength() == 0) continue;
-            JsonElement info = infos[0];
-            string mime = Field(info, "mime");
-            string thumb = Field(info, "thumburl");
-            string original = Field(info, "url");
-            // Commons describes the ORIGINAL file's MIME, which can be TIFF,
-            // SVG or another non-raster format even when its official thumbnail
-            // is a perfectly valid JPEG/PNG. The old MIME-first gate discarded
-            // these legitimate raster previews before any download could occur.
-            // Restrict both URLs to observed official media hosts AND known raster
-            // suffixes; DownloadVerifiedAsync still checks actual image bytes.
-            bool rasterThumb = IsPermittedRasterMediaUri(thumb);
-            bool rasterOriginal = (mime is "image/jpeg" or "image/png" or "image/gif") &&
-                IsPermittedRasterMediaUri(original);
-            if (!rasterThumb && !rasterOriginal) continue;
-            string imageUrl = rasterThumb ? thumb : original;
-            // A backup original must itself be an allowed raster. Never fetch an
-            // original SVG/TIFF/PDF merely because Commons supplies a PNG preview.
-            string alternate = rasterOriginal &&
-                !string.Equals(original, imageUrl, StringComparison.Ordinal)
-                ? original : string.Empty;
-            string title = Field(page, "title");
-            if (!title.StartsWith("File:", StringComparison.OrdinalIgnoreCase)) continue;
-            string fileName = title[5..].Trim();
-            if (fileName.Length == 0 || fileName.Length > 300 || fileName.Any(char.IsControl)) continue;
-            string source = Field(info, "descriptionurl");
-            if (!Uri.TryCreate(source, UriKind.Absolute, out Uri? sourceUri) ||
-                sourceUri.Scheme != Uri.UriSchemeHttps ||
-                !sourceUri.IsDefaultPort || sourceUri.UserInfo.Length != 0 ||
-                !sourceUri.Host.Equals("commons.wikimedia.org", StringComparison.OrdinalIgnoreCase) ||
-                !sourceUri.AbsolutePath.StartsWith("/wiki/File:", StringComparison.Ordinal))
-            {
-                // The API's own File: title identifies the official Commons
-                // page even when MediaWiki omits descriptionurl metadata.
-                source = "https://commons.wikimedia.org/wiki/File:" +
-                    Uri.EscapeDataString(fileName.Replace(' ', '_'));
-            }
-            title = fileName.Replace('_', ' ').Trim();
-            JsonElement metadata = info.TryGetProperty("extmetadata", out var ext) &&
-                ext.ValueKind == JsonValueKind.Object ? ext : default;
-            string Meta(string key) => metadata.ValueKind == JsonValueKind.Object &&
-                metadata.TryGetProperty(key, out var value) ? CleanHtml(Field(value, "value")) : "";
-            int GetInt(string key) => info.TryGetProperty(key, out var value) &&
-                value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int number) ? number : 0;
-            int pos = page.TryGetProperty("index", out var index) && index.ValueKind == JsonValueKind.Number && index.TryGetInt32(out int n) ? n : int.MaxValue;
-            result.Add((pos, new NIRACommonsImageCandidate {
-                CandidateId = Guid.NewGuid().ToString("N"), Title = title,
-                MediaUrl = imageUrl, AlternateMediaUrl = alternate, SourceUri = source,
-                Author = Meta("Artist"), License = Meta("LicenseShortName"),
-                LicenseUrl = Meta("LicenseUrl"), Description = Meta("ImageDescription"),
-                Width = GetInt("width"), Height = GetInt("height")
-            }));
-        }
-        return result.OrderBy(x => x.Position).ThenBy(x => x.Candidate.Title)
-            .Select(x => x.Candidate).Take(limit).ToArray();
-    }
-
-    private static string Field(JsonElement element, string property) =>
-        element.ValueKind == JsonValueKind.Object &&
-        element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String
-            ? value.GetString() ?? "" : "";
-
-    private static string CleanHtml(string html)
-    {
-        string text = Regex.Replace(html ?? "", "<[^>]*>", " ");
-        text = WebUtility.HtmlDecode(text);
-        text = Regex.Replace(text, @"\s+", " ").Trim();
-        return text.Length <= 320 ? text : text[..320];
+            candidate.SourceUri, Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(), bytes.Length);
     }
 
     private static string DetectImageExtension(byte[] bytes)
     {
-        if (bytes.Length >= 3 && bytes[0] == 0xff && bytes[1] == 0xd8 && bytes[2] == 0xff)
-            return ".jpg";
-        if (bytes.Length >= 8 && bytes.AsSpan(0, 8).SequenceEqual(new byte[] {137,80,78,71,13,10,26,10}))
-            return ".png";
-        if (bytes.Length >= 6 && Encoding.ASCII.GetString(bytes, 0, 6) is "GIF87a" or "GIF89a")
-            return ".gif";
+        if (bytes.Length >= 3 && bytes[0] == 255 && bytes[1] == 216 && bytes[2] == 255) return ".jpg";
+        if (bytes.Length >= 8 && bytes.AsSpan(0, 8).SequenceEqual(new byte[] { 137,80,78,71,13,10,26,10 })) return ".png";
+        if (bytes.Length >= 6 && Encoding.ASCII.GetString(bytes, 0, 6) is "GIF87a" or "GIF89a") return ".gif";
+        if (bytes.Length >= 12 && Encoding.ASCII.GetString(bytes, 0, 4) == "RIFF" &&
+            Encoding.ASCII.GetString(bytes, 8, 4) == "WEBP") return ".webp";
         return "";
     }
 
-    private static async Task<byte[]> ReadBoundedAsync(HttpContent content, int limit, CancellationToken ct)
+    private static async Task<byte[]> ReadBoundedAsync(HttpContent content, int max, CancellationToken ct)
     {
         using Stream input = await content.ReadAsStreamAsync(ct);
         using MemoryStream output = new();
         byte[] buffer = new byte[8192];
         while (true)
         {
-            int read = await input.ReadAsync(buffer, ct);
-            if (read == 0) break;
-            if (output.Length + read > limit)
-                throw new InvalidOperationException("Image provider response exceeded the bounded byte limit.");
-            output.Write(buffer, 0, read);
+            int count = await input.ReadAsync(buffer, ct);
+            if (count == 0) break;
+            if (output.Length + count > max) throw new InvalidOperationException("Response exceeds byte cap");
+            output.Write(buffer, 0, count);
         }
         return output.ToArray();
     }
 
-    private void PruneCandidates()
-    {
-        DateTimeOffset now = DateTimeOffset.UtcNow;
-        foreach (var item in _candidates.Where(x => x.Value.Expires <= now).Select(x => x.Key).ToArray())
-            _candidates.Remove(item);
-    }
-
-    private void CleanupCacheBestEffort()
-    {
-        try
-        {
-            foreach (string file in Directory.EnumerateFiles(_cacheFolder))
-            {
-                if (File.GetLastWriteTimeUtc(file) < DateTime.UtcNow.AddDays(-7))
-                    File.Delete(file);
-            }
-        }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
-    }
-
     public void Dispose()
     {
-        _http.Dispose();
+        if (_ownsClient) _http.Dispose();
         _requests.Dispose();
     }
 }
