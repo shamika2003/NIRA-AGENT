@@ -53,10 +53,12 @@ Check("R6 optional resource intent dispatch remains model-selected and authorize
     if (!ReferenceEquals(rich, NIRAResourceIntentPlanner.Apply(rich, false)) ||
         !ReferenceEquals(outsideCycle, NIRAResourceIntentPlanner.Apply(outsideCycle, false)))
         throw new Exception("Resource intent bypassed first-cycle boundary");
-    if (NIRAResourceIntentPlanner.Apply(natural with {
+    var inconsistent = NIRAResourceIntentPlanner.Apply(natural with {
         ConversationOnly = true, ResourceIntent = rich.ResourceIntent
-    }, true).CapabilityRequests.Count != 0)
-        throw new Exception("Interpersonal reply was unexpectedly given resource work");
+    }, true);
+    if (inconsistent.CapabilityRequests.Count != 2 || inconsistent.ConversationOnly ||
+        inconsistent.State != NIRACognitionState.Continue)
+        throw new Exception("A social classification flag silently cancelled model-selected evidence");
     if (NIRAResourceIntentPlanner.Apply(natural with {
         ResourceIntent = new NIRAResourceIntent { ImageQuery = "https://ignored.invalid/\nunsafe" }
     }, true).CapabilityRequests.Count != 0)
@@ -70,6 +72,98 @@ Check("R6 optional resource intent dispatch remains model-selected and authorize
         throw new Exception("Model-selected multi-image request was lost");
     if (NIRAResourceIntentPlanner.Apply(already, true).CapabilityRequests.Count != 2)
         throw new Exception("Expected only additional video search, no duplicate image search");
+});
+
+// Resource-intent admission is model-owned; the runtime must not silently
+// suppress an evidence plan merely because the same model returned a social
+// or self-contained classification flag. No topic words, LLMs or network.
+Check("R-next first-pass mixed conversational evidence keeps one coherent tool batch", () =>
+{
+    var d = new NIRACognitionDecision {
+        State = NIRACognitionState.Complete, EmitReply = true,
+        Reply = "A fluent answer that is not yet source-grounded.",
+        ReplyReady = true, CharacterReady = true,
+        ConversationOnly = true,
+        ResourceIntent = new NIRAResourceIntent {
+            ImageQuery = "specific real engineering reference photograph",
+            ImageCount = 2,
+            WebQuery = "published research about an unfamiliar technology",
+            VideoQuery = "publisher's actual demonstration of the technology",
+            WebEvidenceDepth = "detailed",
+            Purpose = "Evidence genuinely improves the user's understanding"
+        }
+    };
+    var pending = NIRAResourceIntentPlanner.Apply(d, true);
+    if (pending.State != NIRACognitionState.Continue || pending.EmitReply ||
+        pending.ReplyReady || pending.ConversationOnly || pending.SelfContainedAnswer ||
+        pending.CapabilityRequests.Count != 2 ||
+        pending.CapabilityRequests[0].CapabilityId != NIRACapabilityIds.ImageSearch ||
+        pending.CapabilityRequests[0].Arguments.GetProperty("retrieveCount").GetInt32() != 2 ||
+        pending.CapabilityRequests[1].CapabilityId != NIRACapabilityIds.WebSearch ||
+        pending.CapabilityRequests[1].Arguments.GetProperty("queries").GetArrayLength() != 2 ||
+        pending.CapabilityRequests[1].Arguments.GetProperty("evidenceDepth").GetString() != "detailed")
+        throw new Exception("Selected visual/source/video evidence did not stay in one original-call batch");
+    if (NIRAConversationFastPath.CanUseDirectReply(d, true, false, false, false) ||
+        NIRAConversationFastPath.CanUseDirectReply(pending, true, false, false, false))
+        throw new Exception("A direct reply bypassed an unresolved resource plan");
+    var simple = d with { ResourceIntent = null };
+    if (!NIRAConversationFastPath.CanUseDirectReply(simple, true, false, false, false) ||
+        !ReferenceEquals(simple, NIRAResourceIntentPlanner.Apply(simple, true)))
+        throw new Exception("Ordinary one-call social reply was needlessly slowed down");
+    var knowledge = simple with { ConversationOnly = false, SelfContainedAnswer = true };
+    if (!NIRAConversationFastPath.CanUseDirectReply(knowledge, true, false, false, false))
+        throw new Exception("Evidence-free self-contained knowledge gained unnecessary model calls");
+    var cheap = NIRAResourceIntentPlanner.Apply(d with {
+        ConversationOnly = false,
+        ResourceIntent = d.ResourceIntent! with { WebEvidenceDepth = "unknown" }
+    }, true);
+    if (cheap.CapabilityRequests[1].Arguments.GetProperty("evidenceDepth").GetString() != "brief")
+        throw new Exception("Unrecognized provider evidence depth did not use the cheap default");
+    if (!ReferenceEquals(d, NIRAResourceIntentPlanner.Apply(d, false)))
+        throw new Exception("Resource planning escaped the initial-turn boundary");
+});
+
+// Source synthesis is not authorized to silently swallow a successful read;
+// no real model or network needed to exercise the answer-shape policy.
+Check("R-next successful web source cannot silently terminate the user reply", () =>
+{
+    var empty = new NIRACognitionDecision {
+        State = NIRACognitionState.Complete, EmitReply = false,
+        Reply = string.Empty, ReplyReady = false
+    };
+    if (!NIRAWebResearchReplyPolicy.IsSilentTerminal(empty) ||
+        !NIRAWebResearchReplyPolicy.IsSilentTerminal(empty with {
+            State = NIRACognitionState.Wait
+        }) ||
+        !NIRAWebResearchReplyPolicy.IsSilentTerminal(empty with {
+            State = NIRACognitionState.Continue
+        }))
+        throw new Exception("Empty successful read-only web synthesis escaped its terminal guard");
+    if (NIRAWebResearchReplyPolicy.IsSilentTerminal(empty with {
+        State = NIRACognitionState.Continue,
+        ContextRequests = new [] { "capabilities" }
+    }))
+        throw new Exception("Legitimate capability continuation was suppressed");
+    if (NIRAWebResearchReplyPolicy.IsSilentTerminal(empty with {
+        CapabilityRequests = new [] { Request(NIRACapabilityIds.WebSearch,
+            """{"queries":["an additional relevant query"]}""") }
+    }))
+        throw new Exception("A valid further tool request was overwritten");
+    var complete = empty with { EmitReply = true, Reply = "Verified answer [source](https://example.org)." };
+    if (NIRAWebResearchReplyPolicy.IsSilentTerminal(complete) ||
+        !NIRAWebResearchReplyPolicy.IsGroundedAnswerShape(complete) ||
+        NIRAWebResearchReplyPolicy.IsGroundedAnswerShape(empty))
+        throw new Exception("Accepted answer shapes and missing replies were conflated");
+    if (NIRAWebResearchReplyPolicy.IsGroundedAnswerShape(complete with {
+        CapabilityRequests = new [] { Request(NIRACapabilityIds.ImageSearch,
+            """{"query":"some image"}""") }
+    }))
+        throw new Exception("Recovery permitted an unreviewed tool request");
+    var safe = NIRAWebResearchReplyPolicy.TruthfulFailure();
+    if (safe.State != NIRACognitionState.Blocked || !safe.EmitReply ||
+        string.IsNullOrWhiteSpace(safe.Reply) ||
+        safe.Reply.Contains("checked source", StringComparison.OrdinalIgnoreCase))
+        throw new Exception("Safe fallback either vanished or invented source verification");
 });
 
 // R7: Unfamiliar topics must not have precomputed image, source or video rules.
@@ -112,8 +206,8 @@ Check("R7 source, photo and demonstration intent is independent and optional", (
     if (!ReferenceEquals(NIRAResourceIntentPlanner.Apply(multi, false), multi) ||
         NIRAResourceIntentPlanner.Apply(natural with {
             ConversationOnly = true, ResourceIntent = multi.ResourceIntent
-        }, true).CapabilityRequests.Count != 0)
-        throw new Exception("Resource selection bypassed initial-cycle or interpersonal guard");
+        }, true).CapabilityRequests.Count != 2)
+        throw new Exception("Resource selection ignored initial-cycle boundary or lost selected evidence");
     var duplicate = multi with { CapabilityRequests = new[] {
         Request(NIRACapabilityIds.WebSearch, """{"query":"already researching"}""") } };
     if (NIRAResourceIntentPlanner.Apply(duplicate, true).CapabilityRequests.Count != 2)
@@ -2094,6 +2188,75 @@ Check("IMAGE subject ranking requires photos OF the object, not by it", () =>
         throw new Exception("The image search accepted an unrelated object");
 });
 
+Check("IMAGE name-first matching outranks a different named statue without subject fixtures", () =>
+{
+    var results = new[] {
+        new NIRACommonsImageCandidate { CandidateId="wrong", Title="Statue of Azure River Beacon BKR 08.jpg", SourceUri="https://commons.wikimedia.org/wiki/File:Wrong.jpg" },
+        new NIRACommonsImageCandidate { CandidateId="right", Title="Azure River Beacon - landmark panorama.jpg", SourceUri="https://commons.wikimedia.org/wiki/File:Right.jpg" },
+        new NIRACommonsImageCandidate { CandidateId="right2", Title="Azure River Beacon 2025.jpg", SourceUri="https://commons.wikimedia.org/wiki/File:Right2.jpg" },
+        new NIRACommonsImageCandidate { CandidateId="same-name-other", Title="Azure River Beacon, Cross Street, North Borough - Statue - city archives and travel collection.jpg", SourceUri="https://commons.wikimedia.org/wiki/File:Other_Place.jpg" },
+        new NIRACommonsImageCandidate { CandidateId="unrelated", Title="The River City skyline.jpg", SourceUri="https://commons.wikimedia.org/wiki/File:City.jpg" }
+    };
+    var ranked = NIRACommonsImageDiscoveryService.RankForSubject(
+        results, "Azure River Beacon statue", 4, photographsOnly:true);
+    if (ranked.Count < 2 ||
+        !ranked.Take(2).Select(x => x.CandidateId).ToHashSet(StringComparer.Ordinal)
+            .SetEquals(new[] { "right", "right2" }) ||
+        ranked.Any(x => x.CandidateId == "unrelated"))
+        throw new Exception("An exact named subject was discarded in favor of a generic type modifier");
+});
+
+// Regression for photograph-only ranking: a contextual comparison graphic must
+// not outrank the real subject, and an exact named photograph must survive when
+// the search query also contains object type and location. These are offline
+// title fixtures; no production subject keywords or network calls are added.
+Check("IMAGE specific photo ranking prefers real subject over comparison graphics", () =>
+{
+    var candidates = new[] {
+        new NIRACommonsImageCandidate { CandidateId="comparison", Title="The E-ELT compared to the statue of Christ the Redeemer in Rio de Janeiro, Brazil.jpg", SourceUri="https://commons.wikimedia.org/wiki/File:Comparison.jpg" },
+        new NIRACommonsImageCandidate { CandidateId="real1", Title="Christ the redeemer statue Rio De Janeiro.jpg", SourceUri="https://commons.wikimedia.org/wiki/File:Monument.jpg" },
+        new NIRACommonsImageCandidate { CandidateId="comparison2", Title="The ELT compared to the statue of Christ the Redeemer in Rio de Janeiro, Brazil.jpg", SourceUri="https://commons.wikimedia.org/wiki/File:Comparison2.jpg" },
+        new NIRACommonsImageCandidate { CandidateId="real2", Title="Christ the Redeemer - Cristo Redentor.jpg", SourceUri="https://commons.wikimedia.org/wiki/File:Monument2.jpg" },
+        new NIRACommonsImageCandidate { CandidateId="incidental", Title="Visitor at the Christ the Redeemer statue in Rio de Janeiro.jpg", SourceUri="https://commons.wikimedia.org/wiki/File:Visitor.jpg" }
+    };
+    var photos = NIRACommonsImageDiscoveryService.RankForSubject(candidates,
+        "Christ the Redeemer statue Rio de Janeiro", 5, photographsOnly:true);
+    if (photos.Count < 2 || photos[0].CandidateId != "real1" ||
+        photos[1].CandidateId != "real2" ||
+        photos.Any(c => c.CandidateId.StartsWith("comparison", StringComparison.Ordinal)))
+        throw new Exception("Photograph-only retrieval ranked a size-comparison above genuine subject photos: " +
+            string.Join(",", photos.Select(c => c.CandidateId)));
+
+    // Distinguish formats, not actual subject names. A non-photo request can
+    // legitimately ask for a comparative illustration of an arbitrary device.
+    var unrelated = new [] {
+        new NIRACommonsImageCandidate { CandidateId="graphic", Title="The Eon engine compared to the Orion engine", SourceUri="https://commons.wikimedia.org/wiki/File:Graphic.jpg" },
+        new NIRACommonsImageCandidate { CandidateId="photo", Title="Orion engine on test stand", SourceUri="https://commons.wikimedia.org/wiki/File:Device.jpg" }
+    };
+    var photographed = NIRACommonsImageDiscoveryService.RankForSubject(
+        unrelated, "Orion engine", 5, photographsOnly:true);
+    var illustrated = NIRACommonsImageDiscoveryService.RankForSubject(
+        unrelated, "Orion engine", 5, photographsOnly:false);
+    if (photographed.Count != 1 || photographed[0].CandidateId != "photo" ||
+        !illustrated.Any(c => c.CandidateId == "graphic"))
+        throw new Exception("Photograph/comparison filtering changed ordinary image search behavior");
+});
+
+Check("IMAGE read-only reviewer fastpath is image-only and rejects mixed intents", () =>
+{
+    if (!NIRAImageTurnDeliveryPolicy.IsSimpleImageOnlyRequest(
+            "Show me two real photographs of the Azure River Beacon itself.") ||
+        !NIRAImageTurnDeliveryPolicy.IsSimpleImageOnlyRequest(
+            "Find three different photographs of a steam locomotive.") ||
+        NIRAImageTurnDeliveryPolicy.IsSimpleImageOnlyRequest(
+            "Show me two photos of the Azure River Beacon and explain its construction.") ||
+        NIRAImageTurnDeliveryPolicy.IsSimpleImageOnlyRequest(
+            "Show me two photos of the Azure River Beacon; then delete some files.") ||
+        NIRAImageTurnDeliveryPolicy.IsSimpleImageOnlyRequest(
+            "What is happening with the new batteries?"))
+        throw new Exception("Image-only completion grammar overreached into another user objective");
+});
+
 Check("IMAGE explicit count is honored without subject hardcoding", () =>
 {
     Equal((int?)2, NIRAImageTurnDeliveryPolicy.ReadExplicitImageCount(
@@ -2155,6 +2318,49 @@ Check("IMAGE content hash survives distinct cache paths and preserves distinct p
                 "https://commons.wikimedia.org/wiki/File:Sample.jpg?width=960"));
     }
     finally { Directory.Delete(folder, true); }
+});
+
+Check("IMAGE cache can disappear between candidate search and pixel delivery", () =>
+{
+    const string fileUrl = "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/Example.jpg/960px-Example.jpg";
+    byte[] pixels = Convert.FromBase64String(
+        "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFElEQVR4nGOUTDnMgA0wYRUdtBIA/d4BUKK4lNoAAAAASUVORK5CYII=");
+    using var network = new NIRAWebFakeTransport(req =>
+    {
+        if (req.RequestUri?.Host == "commons.wikimedia.org")
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
+                Content = new StringContent("""
+                {"query":{"pages":[{"index":1,"title":"File:Generic Test Device.jpg",
+                "imageinfo":[{"mime":"image/png",
+                "thumburl":"https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/Example.jpg/960px-Example.jpg",
+                "descriptionurl":"https://commons.wikimedia.org/wiki/File:Generic_Test_Device.jpg"}]}]}}
+                """) };
+        if (req.RequestUri?.AbsoluteUri == fileUrl)
+        {
+            var content = new ByteArrayContent(pixels);
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = content };
+        }
+        throw new Exception("Unexpected image regression request");
+    });
+    using var http = new HttpClient(network);
+    string isolated = Path.Combine(Path.GetTempPath(), "nira-missing-cache-" + Guid.NewGuid().ToString("N"));
+    using var service = new NIRACommonsImageDiscoveryService(http, preferCommonsFirst: true,
+        cacheFolderForTests: isolated);
+    var candidates = service.SearchAsync("Generic Test Device", 2).GetAwaiter().GetResult();
+    if (candidates.Count == 0) throw new Exception("Expected image candidate");
+    Directory.Delete(isolated, recursive: true);
+    try
+    {
+        var image = service.RetrieveAsync(candidates[0].CandidateId).GetAwaiter().GetResult();
+        if (!File.Exists(image.LocalPath) || image.Bytes != pixels.Length ||
+            !image.LocalPath.StartsWith(isolated, StringComparison.OrdinalIgnoreCase))
+            throw new Exception("Image bytes did not survive a missing cache directory");
+    }
+    finally
+    {
+        if (Directory.Exists(isolated)) Directory.Delete(isolated, recursive: true);
+    }
 });
 
 Check("IMAGE photographs distinguish a picture OF an object from its products and diagrams", () =>
@@ -2613,6 +2819,61 @@ Check("R27 a provider outage blocks subsequent image searches without any networ
     watch.Stop();
     if (watch.Elapsed > TimeSpan.FromSeconds(2))
         throw new Exception("Repeated image search waited for a network timeout instead of using cooldown.");
+});
+
+// A request which hits one transient DNS/TCP failure must try the SAME
+// verified Commons API once more before surfacing a missing-image reply.
+// Generic offline query; no hardcoded landmark, telescope or model result.
+Check("IMAGE Commons transient connection failure retries once then recovers", () =>
+{
+    int transportAttempt = 0;
+    using var transport = new NIRAWebFakeTransport(request =>
+    {
+        if (request.RequestUri?.Host != "commons.wikimedia.org")
+            throw new Exception("Retry changed the trusted Commons API host");
+        if (transportAttempt++ == 0)
+            throw new HttpRequestException("Synthetic broken connection");
+        if (request.Headers.ConnectionClose != true)
+            throw new Exception("Retry did not request a fresh HTTP connection");
+        return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
+            Content = new StringContent("""{"query":{"pages":[]}}""")
+        };
+    });
+    using var client = new HttpClient(transport);
+    using var service = new NIRACommonsImageDiscoveryService(client);
+    var results = service.SearchAsync("independent archive reference", 3).GetAwaiter().GetResult();
+    if (transport.Count != 2 || results.Count != 0 ||
+        !service.LastSearchStatus.Contains("HTTP200", StringComparison.Ordinal))
+        throw new Exception("A temporary Commons connection failure incorrectly ended the image search");
+});
+
+Check("IMAGE Commons retry is bounded and does not impose long network cooldown", () =>
+{
+    using var transport = new NIRAWebFakeTransport(_ =>
+        throw new HttpRequestException("Synthetic persistent connection failure"));
+    using var client = new HttpClient(transport);
+    using var service = new NIRACommonsImageDiscoveryService(client);
+    Throws<NIRAImageProviderUnavailableException>(() =>
+        service.SearchAsync("independent reference subject", 3).GetAwaiter().GetResult());
+    var until = typeof(NIRACommonsImageDiscoveryService).GetField(
+        "_searchUnavailableUntilUtc", BindingFlags.NonPublic | BindingFlags.Instance)
+        ?? throw new Exception("Missing Commons circuit breaker");
+    var cutoff = (DateTimeOffset)(until.GetValue(service)
+        ?? throw new Exception("Missing circuit breaker deadline"));
+    if (transport.Count != 2 || cutoff > DateTimeOffset.UtcNow.AddSeconds(14))
+        throw new Exception("Network error either looped retries or caused a two-minute lockout");
+});
+
+Check("IMAGE Commons HTTP denial is not retried as a connection failure", () =>
+{
+    using var transport = new NIRAWebFakeTransport(_ =>
+        new HttpResponseMessage(System.Net.HttpStatusCode.TooManyRequests));
+    using var client = new HttpClient(transport);
+    using var service = new NIRACommonsImageDiscoveryService(client);
+    Throws<NIRAImageProviderUnavailableException>(() =>
+        service.SearchAsync("independent reference photo", 3).GetAwaiter().GetResult());
+    if (transport.Count != 1 || service.LastSearchStatus != "Commons=RateLimited")
+        throw new Exception("Commons rate limit was retried or incorrectly classified");
 });
 
 Check("R27 image provider outages use a bounded cooldown and identifiable reason", () =>

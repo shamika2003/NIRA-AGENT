@@ -1155,6 +1155,12 @@ public sealed class NIRAExecutive
                 NIRADiagnosticTrace.Event("RESOURCE-PLAN",
                     $"Run={runId:D} Cycle={cycle} " +
                     $"ModelSelected={decision.ResourceIntent is not null} " +
+                    $"SelectedSource={!string.IsNullOrWhiteSpace(decision.ResourceIntent?.WebQuery)} " +
+                    $"SelectedImage={!string.IsNullOrWhiteSpace(decision.ResourceIntent?.ImageQuery)} " +
+                    $"SelectedVideo={!string.IsNullOrWhiteSpace(decision.ResourceIntent?.VideoQuery)} " +
+                    $"SelectedImageCount={decision.ResourceIntent?.ImageCount ?? 0} " +
+                    $"SelectedWebDepth={decision.ResourceIntent?.WebEvidenceDepth ?? "none"} " +
+                    $"ModelConversationOnly={decision.ConversationOnly} " +
                     $"Dispatched={dispatched} " +
                     $"ToolTypes={string.Join(",", planned.CapabilityRequests.Select(r => r.CapabilityId).Distinct())} " +
                     $"TotalRequested={planned.CapabilityRequests.Count}");
@@ -4410,8 +4416,11 @@ public sealed class NIRAExecutive
                     "Do not invoke image.search or image.retrieve " +
                     "again for this objective; multiple failed image queries are NOT " +
                     "independent evidence. On the very next cognition turn provide " +
-                    "the useful non-image answer from supported knowledge, openly " +
-                    "state that reference images could not be displayed, and finish " +
+                    "the useful non-image answer from supported knowledge. If the " +
+                    "user explicitly requested pictures, state that reference images " +
+                    "could not be displayed; if the search was OPTIONAL enhancement " +
+                    "of an otherwise sufficient discussion, do not derail the answer " +
+                    "with an unnecessary image-provider failure report. Finish " +
                     "with state=Complete. Do not claim any images or source verification, " +
                     "and do not claim a picture was displayed, or identify a photographer " +
                     "without authoritative source evidence. The observed " +
@@ -5465,6 +5474,22 @@ public sealed class NIRAExecutive
                 $"EmitReply={decision.EmitReply} | ReplyChars={decision.Reply?.Length ?? 0} | " +
                 $"ObservedCapabilities={capabilityResultsBySignature.Count}");
 
+            // Final delivery invariant for one successfully observed read-only
+            // web result. If an upstream state-repair still produced a silent
+            // terminal envelope, do not publish an empty user turn. This is a
+            // last-resort non-factual explanation, not a synthesized web claim;
+            // it never activates on ordinary direct chat or real ongoing work.
+            if (mindEvent.Source == NIRAMindEventSource.User && cycle > 1 &&
+                latestContext is not null &&
+                NIRACognitionPromptCompiler.IsSingleSuccessfulWebSearchReceipt(latestContext) &&
+                NIRAWebResearchReplyPolicy.IsSilentTerminal(decision))
+            {
+                NIRADiagnosticTrace.Event("WEB-TERMINAL-DELIVERY-GUARD",
+                    $"Run={runId:D} Cycle={cycle} PreviousState={decision.State} " +
+                    $"Emit={decision.EmitReply} ReplyChars={decision.Reply?.Length ?? 0}");
+                decision = NIRAWebResearchReplyPolicy.TruthfulFailure();
+            }
+
             bool userTerminalDraft =
                 mindEvent.Source == NIRAMindEventSource.User &&
                 (decision.State == NIRACognitionState.Complete ||
@@ -5669,6 +5694,48 @@ public sealed class NIRAExecutive
                     completionReviewConfirmedComplete = true;
                     Debug.WriteLine($"[ImageGenerationFastPath] REVIEW_SKIPPED | Run={runId:D} | Cycle={cycle} | ExtraModelCalls=0");
                 }
+            }
+
+            // Image-only evidence certificate: when the user's ENTIRE request is
+            // a bounded photograph request, one registered image.search has
+            // already emitted exactly the requested number of distinct files,
+            // and no other work is involved, independent semantic review cannot
+            // add execution proof. No subject/product examples or trigger lists.
+            // Mixed requests, partial images, uncertain/failed work, and unclear
+            // wording retain the independent reviewer unchanged.
+            if (userTerminalDraft && !completionReviewConfirmedComplete &&
+                taskCompletionReviewCount == 0 &&
+                NIRAImageTurnDeliveryPolicy.IsSimpleImageOnlyRequest(mindEvent.Content) &&
+                NIRAImageTurnDeliveryPolicy.ReadExplicitImageCount(mindEvent.Content) is int requestedImages &&
+                imageDeliveryTarget == requestedImages &&
+                verifiedImageRetrievalCount == requestedImages &&
+                !preReviewCommitmentSucceeded &&
+                GetPendingTaskForEvent(mindEvent) == null &&
+                !mindEvent.Metadata.ContainsKey("externalAppId") &&
+                string.IsNullOrWhiteSpace(dynamicToolEvidence.ToString()) &&
+                !IsFalseImageUnavailableClaim(decision.Reply) &&
+                decision.Reply.Length <= 800 &&
+                decision.State == NIRACognitionState.Complete &&
+                decision.CapabilityIds.Count == 0 &&
+                decision.CapabilityRequests.Count == 0 &&
+                decision.ContextRequests.Count == 0 &&
+                decision.MemorySearches.Count == 0 &&
+                decision.ConversationSearches.Count == 0 &&
+                decision.BranchWorkProposals.Count == 0 &&
+                decision.DynamicToolProposals.Count == 0 &&
+                decision.DynamicToolInvocations.Count == 0 &&
+                !decision.ReviewCommitment &&
+                capabilityResultsBySignature.Values.Count == 1 &&
+                capabilityResultsBySignature.Values.All(result =>
+                    result.CapabilityId == NIRACapabilityIds.ImageSearch &&
+                    result.Succeeded &&
+                    result.VisualArtifacts.Count(visual => visual.PresentToUser) >= requestedImages))
+            {
+                completionReviewConfirmedComplete = true;
+                NIRADiagnosticTrace.Event("IMAGE-RECEIPT-FASTPATH",
+                    $"Run={runId:D} Cycle={cycle} Requested={requestedImages} " +
+                    $"Delivered={verifiedImageRetrievalCount} ReviewerCallsSaved=1 " +
+                    "Scope=SimpleImageOnlyWithVerifiedPixels");
             }
 
             // A local, calculator-backed numeric certificate can avoid a third
@@ -6379,24 +6446,13 @@ public sealed class NIRAExecutive
                         $"Verified={verifiedImageRetrievalCount} Reason=ContradictsRetrievedImages");
                 }
 
-                // The other-work context was accurate when cognition began, but
-                // another run can finish while review/realization is still pending.
-                // Correct that stale observation using runtime evidence BEFORE
-                // archiving and emitting the final response. Exact/protected
-                // presentation remains untouched; no additional model call.
-                if (decision.ReplyPresentation == NIRAReplyPresentationMode.Natural)
-                {
-                    string latestStatus = CurrentOtherWorkDeliveryUpdate(mindEvent);
-                    if (latestStatus.Length > 0)
-                    {
-                        reply = string.IsNullOrWhiteSpace(reply)
-                            ? latestStatus : reply.TrimEnd() + "\n\n" + latestStatus;
-                        spoken = string.IsNullOrWhiteSpace(spoken)
-                            ? latestStatus : spoken.TrimEnd() + " " + latestStatus;
-                        Debug.WriteLine($"[ConcurrentMind] FRESH_DELIVERY | Run={runId} | " +
-                            "UpdatedOtherWork=True | ExtraModelCalls=0");
-                    }
-                }
+                // An independent foreground turn completing while this reply was
+                // being written is NOT part of the user's present objective.
+                // Preserve its verified status in the runtime ledger for a user
+                // asking about it; never append it uninvited to an image answer
+                // (or to any other independent chat/task response).
+                // This keeps unrelated task names and verbose lifecycle text
+                // out of both displayed and spoken replies without an LLM call.
                 Guid? archivedResponseId = await RecordResponseAsync(
                     mindEvent, reply, spoken, blocks);
                 Debug.WriteLine($"[DualResponse] Run={runId} | SpeechChars={spoken.Length} | ScreenChars={reply.Length} | Blocks={blocks.Count}");
@@ -6579,7 +6635,7 @@ public sealed class NIRAExecutive
 
             Debug.WriteLine($"[Journey] RUN MODEL CALLS | Run={runId:D} | " +
                 $"CognitionCalls={cognitionModelCalls} | " +
-                $"DeepDelegated={_cognition.GetAdditionalCognitionCallCount(runId) > 0} | " +
+                $"DeepDelegated={_cognition.IsDeepReasoningRun(runId)} | " +
                 $"CompletionReviewCalls={completionReviewCalls} | " +
                 $"ResponseRealizationCalls={responseRealizationCalls} | " +
                 $"MemoryFormationCalls={memoryFormationCalls} | " +
@@ -6588,10 +6644,16 @@ public sealed class NIRAExecutive
                 $"TrackedTotal={cognitionModelCalls + completionReviewCalls + responseRealizationCalls + memoryFormationCalls}");
             NIRADiagnosticTrace.Event("RUN-MODEL-CALLS",
                 $"Run={runId:D} Cognition={cognitionModelCalls} " +
-                $"DeepDelegated={_cognition.GetAdditionalCognitionCallCount(runId) > 0} " +
+                $"DeepDelegated={_cognition.IsDeepReasoningRun(runId)} " +
                 $"Review={completionReviewCalls} Realization={responseRealizationCalls} " +
                 $"MemoryFormation={memoryFormationCalls} " +
                 $"Total={cognitionModelCalls + completionReviewCalls + responseRealizationCalls + memoryFormationCalls}");
+            NIRADiagnosticTrace.Event("USER-TURN-DELIVERY",
+                $"Run={runId:D} Source={mindEvent.Source} Cycle={cycle} " +
+                $"State={decision.State} Emit={decision.EmitReply} " +
+                $"ReplyChars={reply.Length} " +
+                $"WebResults={capabilityResultsBySignature.Values.Count(v => v.CapabilityId == NIRACapabilityIds.WebSearch)} " +
+                $"VerifiedImages={verifiedImageRetrievalCount}");
             yield return new NIRAOutputChunk
             {
                 RunId =

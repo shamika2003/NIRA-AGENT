@@ -64,6 +64,11 @@ public sealed record NIRAResourceIntent
     // An optional source-verification request distinct from a video search.
     // This remains a SEARCH phrase, never an unverified URL or an authority grant.
     public string WebQuery { get; init; } = string.Empty;
+    // The model may choose the provider's existing brief/detailed evidence mode
+    // in its FIRST planning call. Detailed is opt-in because it costs latency
+    // and possibly additional search-provider credits. Invalid values degrade
+    // to brief in the planner; they never change the search provider or grant.
+    public string WebEvidenceDepth { get; init; } = "brief";
     public string VideoQuery { get; init; } = string.Empty;
     public string Purpose { get; init; } = string.Empty;
 }

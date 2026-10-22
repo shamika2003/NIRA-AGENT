@@ -30,6 +30,30 @@ public static class NIRAImageTurnDeliveryPolicy
         };
     }
 
+    // A very narrow, content-agnostic grammar for an image-ONLY delivery.
+    // This is NOT an image search trigger: the first cognition call must have
+    // already chosen image.search and the real tool must have delivered pixels.
+    // Any conjunction or second question falls back to the normal reviewer.
+    // The grammar intentionally recognizes no specific subject or example.
+    private static readonly Regex SimpleImageOnlyRequest = new(
+        @"^\s*(?:show|find|display|give|send|get)\s+(?:(?:me|us)\s+)?" +
+        @"(?:[1-3]|one|two|three)\s+" +
+        @"(?:(?:real|actual|genuine|different|good|clear|high-quality|official)\s+){0,5}" +
+        @"(?:photos?|photographs?|pictures?|images?)\s+(?:of|from|showing)\s+" +
+        @"(?<subject>[^\r\n?!:;]{2,160}?)\s*\.?\s*$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    public static bool IsSimpleImageOnlyRequest(string? userText)
+    {
+        if (string.IsNullOrWhiteSpace(userText)) return false;
+        Match request = SimpleImageOnlyRequest.Match(userText);
+        if (!request.Success || ReadExplicitImageCount(userText) is null) return false;
+        string subject = request.Groups["subject"].Value.Trim();
+        return subject.Length >= 2 && !Regex.IsMatch(subject,
+            @"\b(?:and|then|also|plus|after|before)\b|[.!].*\S",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    }
+
     public static bool ExplicitPhotographRequest(string? userText) =>
         !string.IsNullOrWhiteSpace(userText) && Regex.IsMatch(userText,
             @"\b(?:photos?|photographs?)\b",

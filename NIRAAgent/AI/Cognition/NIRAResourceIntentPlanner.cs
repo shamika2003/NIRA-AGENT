@@ -16,7 +16,7 @@ public static class NIRAResourceIntentPlanner
     {
         if (!isInitialUserCycle || decision.ResourceIntent is null ||
             decision.State is not (NIRACognitionState.Complete or NIRACognitionState.Continue) ||
-            decision.ConversationOnly || decision.ReplyPresentation == NIRAReplyPresentationMode.PreserveExact ||
+            decision.ReplyPresentation == NIRAReplyPresentationMode.PreserveExact ||
             decision.ControlRequests.Count > 0 || decision.ReviewCommitment ||
             decision.GoalProposals.Count > 0 || decision.BranchProposals.Count > 0 ||
             decision.BranchWorkProposals.Count > 0 ||
@@ -87,12 +87,18 @@ public static class NIRAResourceIntentPlanner
             requests.Add(new NIRACapabilityRequest {
                 CapabilityId = NIRACapabilityIds.WebSearch,
                 Arguments = JsonSerializer.SerializeToElement(new {
-                    queries = webQueries, maxSources = 6, evidenceDepth = "brief"
+                    queries = webQueries, maxSources = 6,
+                    evidenceDepth = string.Equals(decision.ResourceIntent.WebEvidenceDepth,
+                        "detailed", StringComparison.OrdinalIgnoreCase) ? "detailed" : "brief"
                 }),
                 Reason = "Model-selected published evidence would substantively improve the answer."
             });
         if (requests.Count == decision.CapabilityRequests.Count) return decision;
 
+        // ConversationOnly and SelfContainedAnswer are model-classification
+        // hints, not permission to discard the SAME model's concrete evidence
+        // plan. A valid selected resource makes this an observable work turn.
+        // Do not infer a tool from the user text, or modify images/media here.
         // An answer isn't final until the proposed evidence has been observed.
         // One ordinary Executive dispatch batch; next model cycle synthesizes
         // actual results. Tool failures must still lead to useful text, not fiction.

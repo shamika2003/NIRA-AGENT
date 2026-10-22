@@ -314,6 +314,15 @@ internal static class NIRACognitionPromptCompiler
     // The user still determines whether a website/image is genuinely relevant.
     private const string ResourcePresentationRules = """
         USER-USEFUL RESOURCE COMPLETENESS (SAME-ROUND DECISION):
+        - MAKE ONE COHERENT FIRST-CALL CHOICE: An interpersonal reaction can
+          remain just conversation, an informational request can be answered
+          from durable knowledge, and a resource-dependent answer should
+          request evidence in this SAME decision. A hybrid friendly question
+          can warrant both NIRA's natural reaction AND useful information.
+          When you select resourceIntent, do not also classify this as a
+          conversationOnly or selfContainedAnswer completion. An accidentally
+          inconsistent flag cannot cancel a concrete safe resource plan.
+          Do not create an extra model/planner turn simply to select tools.
         - INFORMATION DEPTH IS SEMANTIC, NOT THE LENGTH OR FORMALITY OF INPUT.
           A warm reaction to a named subject can be merely interpersonal; an
           invitation to explain, share details, compare or discuss it deserves a
@@ -348,7 +357,12 @@ internal static class NIRACognitionPromptCompiler
           optionally set resourceIntent with independent natural-language SEARCH
           phrases: {"webQuery":"current sources or empty", "imageQuery":
           "real reference image or empty", "imageCount":1,
-          "videoQuery":"publisher demonstration or empty", "purpose":"concrete value"}.
+          "videoQuery":"publisher demonstration or empty", "purpose":"concrete value",
+          "webEvidenceDepth":"brief|detailed"}.
+          Choose detailed only when the user's factual objective needs extracted
+          source detail that a search snippet is unlikely to establish. Detailed
+          web mode can cost more time/provider credits; ordinary discovery
+          and video lookup normally use brief. This changes no permission.
           imageCount is OPTIONAL (1-3; one by default). When the user
           explicitly requests TWO or THREE distinct images, select that count
           in imageCount OR image.search.retrieveCount in the FIRST decision.
@@ -360,8 +374,19 @@ internal static class NIRACognitionPromptCompiler
           same photo are not two distinct pictures.
           Web evidence is useful when changing facts, real price/availability,
           recent developments, contested claims, or source-specific details
-          affect answer accuracy. A real picture is useful when its actual
-          appearance helps understanding or comparing. A verified video link is
+          affect answer accuracy. If a question compares current marketed
+          performance, launch readiness, prices or advertised specifications,
+          do not let a confident-sounding remembered claim substitute for a
+          publisher source: select a brief read-only source check when the
+          verification would change the answer. This is a GENERAL evidence
+          standard, never a named-product trigger or mandatory browsing rule.
+          A real picture is useful when its actual appearance helps
+          understanding or comparing. When the user's curiosity explicitly
+          involves how a concrete product or physical thing LOOKS, consider
+          whether one actual photo would help them inspect what is being
+          discussed; don't merely treat an image as decorative. The image is
+          optional when appearance is incidental, already clear, or reliable
+          photos aren't available. A verified video link is
           useful when watching a real demonstration better conveys the process.
           Choose any combination that earns its cost, OR choose none and answer
           immediately; do not treat images as mandatory and do not search to
@@ -1769,7 +1794,9 @@ internal static class NIRACognitionPromptCompiler
             "selfContainedAnswer": true|false,
             "speech": "optional natural spoken version of reply",
             "resourceIntent": {"webQuery":"optional current source search phrase",
+                "webEvidenceDepth":"brief|detailed (optional; brief default)",
                 "imageQuery":"optional real reference image search phrase",
+                "imageCount":1,
                 "videoQuery":"optional publisher demonstration search phrase",
                 "purpose":"why these resources materially improve THIS answer"},
             Every query is optional; use resourceIntent only for real value and
@@ -1939,9 +1966,18 @@ internal static class NIRACognitionPromptCompiler
             "deserves no report. In your FIRST cognition call, decide whether " +
             "ordinary reasoning and presentation suffice or whether VERIFIED " +
             "real-time sources or real media would materially improve accuracy " +
-            "or comprehension. resourceIntent may independently include webQuery " +
+            "or comprehension. In particular, a conversation about the LOOK " +
+            "of a physical product can benefit from an actual reference photo, " +
+            "while claims about launch readiness, marketing specifications or " +
+            "other changing facts can benefit from short source verification. " +
+            "Neither warrants automatic media: choose based on what this user " +
+            "is trying to understand, not on a named topic or pattern. " +
+            "resourceIntent may independently include webQuery " +
             "for current/source facts, imageQuery for a useful real photograph, " +
             "and videoQuery for published demonstrations. Any or all may be blank. " +
+            "webEvidenceDepth can be detailed only if source extracts are needed " +
+            "to establish substantive facts; otherwise use brief. Never select " +
+            "detailed solely to produce a richer-looking answer. " +
             "The first decision can choose multiple independent tools without " +
             "another LLM classifier; runtime applies permission and safety rules. " +
             "One selected imageQuery permits real provider-ranked image " +

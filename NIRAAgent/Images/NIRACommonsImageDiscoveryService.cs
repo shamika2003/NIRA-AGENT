@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -55,6 +56,10 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
     private static readonly TimeSpan CandidateLifetime = TimeSpan.FromMinutes(30);
     public static readonly TimeSpan SearchNetworkTimeout = TimeSpan.FromSeconds(9);
     public static readonly TimeSpan SearchFailureCooldown = TimeSpan.FromMinutes(2);
+    // A momentary DNS/TCP failure must not make image search unavailable for
+    // two minutes. Rate limits and sustained timeouts retain the old cooldown.
+    public static readonly TimeSpan TransientNetworkFailureCooldown = TimeSpan.FromSeconds(12);
+    private const int MaxTransientSearchAttempts = 2;
     private readonly HttpClient _http;
     private readonly bool _ownsClient;
     private readonly SemaphoreSlim _requests = new(1, 1);
@@ -66,7 +71,7 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
     public bool UsesProductionImageTransport { get; }
     public string LastSearchStatus { get; private set; } = "NotRun";
 
-    public NIRACommonsImageDiscoveryService(HttpClient? transport = null, bool? preferCommonsFirst = null)
+    public NIRACommonsImageDiscoveryService(HttpClient? transport = null, bool? preferCommonsFirst = null, string? cacheFolderForTests = null)
     {
         _ownsClient = transport is null;
         UsesProductionImageTransport = transport is null || preferCommonsFirst == true;
@@ -80,7 +85,7 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
             userAgent = "NIRAAgent/1.0 (desktop Wikimedia Commons reference-image client)";
         if (!_http.DefaultRequestHeaders.UserAgent.Any())
             _http.DefaultRequestHeaders.UserAgent.ParseAdd(userAgent);
-        _cacheFolder = Path.Combine(Environment.GetFolderPath(
+        _cacheFolder = cacheFolderForTests ?? Path.Combine(Environment.GetFolderPath(
             Environment.SpecialFolder.LocalApplicationData), "NIRAAgent", "visual-artifacts", "commons-cache");
         Directory.CreateDirectory(_cacheFolder);
         try
@@ -151,6 +156,64 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
     public static string CompactDiscoveryQuery(string query) => (query ?? "").Trim();
     public static string ShortDiscoveryQuery(string query) => CompactDiscoveryQuery(query);
 
+    // Only a transport-level network failure (not malformed data, HTTP 403,
+    // HTTP 429, bad queries, or an owner's cancellation) gets one transparent
+    // re-connection attempt. This does NOT invoke the model or change providers.
+    // It also applies to the two existing Commons query refinements.
+    private async Task<HttpResponseMessage> GetCommonsSearchResponseAsync(
+        string url, string stage, CancellationToken cancellationToken)
+    {
+        for (int attempt = 1; attempt <= MaxTransientSearchAttempts; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(SearchNetworkTimeout);
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            // A transient broken pooled connection should not be re-used on
+            // attempt two. Keep default TLS checks, proxy handling and the
+            // working IPv4-preferred connection callback unchanged.
+            if (attempt > 1) request.Headers.ConnectionClose = true;
+            var clock = Stopwatch.StartNew();
+            try
+            {
+                HttpResponseMessage response = await _http.SendAsync(request,
+                    HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+                NIRADiagnosticTrace.Event("IMAGE-SEARCH-HTTP",
+                    $"Stage={stage} Attempt={attempt} Outcome=HTTP{(int)response.StatusCode} " +
+                    $"ElapsedMs={clock.ElapsedMilliseconds} FreshConnection={attempt > 1}");
+                return response;
+            }
+            catch (HttpRequestException ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                // Log the type/code, never URL contents, auth headers or
+                // exception messages (which may contain request parameters).
+                var socket = NestedSocketError(ex);
+                bool retry = ex.StatusCode is null && attempt < MaxTransientSearchAttempts;
+                NIRADiagnosticTrace.Event("IMAGE-SEARCH-HTTP",
+                    $"Stage={stage} Attempt={attempt} Outcome=NetworkFailure " +
+                    $"Error={ex.HttpRequestError} Socket={socket} " +
+                    $"ElapsedMs={clock.ElapsedMilliseconds} Retry={retry}");
+                if (!retry) throw;
+                await Task.Delay(150, cancellationToken);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                NIRADiagnosticTrace.Event("IMAGE-SEARCH-HTTP",
+                    $"Stage={stage} Attempt={attempt} Outcome=Timeout " +
+                    $"ElapsedMs={clock.ElapsedMilliseconds} Retry=False");
+                throw;
+            }
+        }
+        throw new InvalidOperationException("Unreachable Commons search attempt state");
+    }
+
+    private static string NestedSocketError(Exception exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+            if (current is SocketException socket) return socket.SocketErrorCode.ToString();
+        return "None";
+    }
+
     private static string SearchUrl(string query, int limit) =>
         "https://commons.wikimedia.org/w/api.php?action=query&format=json&formatversion=2" +
         "&generator=search&gsrnamespace=6&gsrlimit=" + Math.Clamp(limit * 4, 12, 50) +
@@ -184,13 +247,13 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
                     $"Stage=Initial Provider=CommonsOnly Query={DiagnosticText(query)} " +
                     $"Subject={DiagnosticText(SubjectDiscoveryQuery(query))} Requested={limit}");
                 NIRADiagnosticTrace.Event("IMAGE-PROVIDER", "Operation=Search Stage=CommonsOnly Attempt=1");
-                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                timeout.CancelAfter(SearchNetworkTimeout);
-                using var response = await _http.GetAsync(SearchUrl(query, limit),
-                    HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+                using var response = await GetCommonsSearchResponseAsync(
+                    SearchUrl(query, limit), "Initial", cancellationToken);
                 if (!response.IsSuccessStatusCode)
                     throw new HttpRequestException("Commons API returned an error", null, response.StatusCode);
-                byte[] data = await ReadBoundedAsync(response.Content, MaxApiBytes, timeout.Token);
+                using var readTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                readTimeout.CancelAfter(SearchNetworkTimeout);
+                byte[] data = await ReadBoundedAsync(response.Content, MaxApiBytes, readTimeout.Token);
                 // Provider search order is NOT evidence of topical relevance. A
                 // photograph taken BY an instrument is different from a photo OF
                 // that instrument. Rank using Commons file-title metadata before
@@ -214,12 +277,13 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
                         $"Original={DiagnosticText(query)} Reason=UnusableImageInfo");
                     try
                     {
-                        using var recovered = await _http.GetAsync(
-                            SearchUrl(bitmapQuery, limit),
-                            HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+                        using var recovered = await GetCommonsSearchResponseAsync(
+                            SearchUrl(bitmapQuery, limit), "BitmapRecovery", cancellationToken);
                         if (recovered.IsSuccessStatusCode)
                         {
-                            byte[] recoveredData = await ReadBoundedAsync(recovered.Content, MaxApiBytes, timeout.Token);
+                            using var recoveredTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                            recoveredTimeout.CancelAfter(SearchNetworkTimeout);
+                            byte[] recoveredData = await ReadBoundedAsync(recovered.Content, MaxApiBytes, recoveredTimeout.Token);
                             var bitmaps = ParseCommonsSearchResponse(Encoding.UTF8.GetString(recoveredData), 50);
                             candidates = RankForSubject(bitmaps, query, limit, photographsOnly);
                             TraceSelection("BitmapRecovery", query, bitmaps, candidates, photographsOnly);
@@ -250,11 +314,13 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
                         $"PreviouslyRelevant={candidates.Count}");
                     try
                     {
-                        using var recovery = await _http.GetAsync(
-                            SearchUrl(focused, limit), HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+                        using var recovery = await GetCommonsSearchResponseAsync(
+                            SearchUrl(focused, limit), "FocusedTitle", cancellationToken);
                         if (recovery.IsSuccessStatusCode)
                         {
-                            byte[] refined = await ReadBoundedAsync(recovery.Content, MaxApiBytes, timeout.Token);
+                            using var refinementTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                            refinementTimeout.CancelAfter(SearchNetworkTimeout);
+                            byte[] refined = await ReadBoundedAsync(recovery.Content, MaxApiBytes, refinementTimeout.Token);
                             var titleCandidates = ParseCommonsSearchResponse(Encoding.UTF8.GetString(refined), 50);
                             var combined = candidates.Concat(titleCandidates)
                                 .GroupBy(item => item.SourceUri, StringComparer.OrdinalIgnoreCase)
@@ -301,9 +367,13 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
                 string kind = ClassifyProviderFailure(ex);
                 _lastSearchFailureKind = kind;
                 LastSearchStatus = $"Commons={kind}";
-                _searchUnavailableUntilUtc = DateTimeOffset.UtcNow + SearchFailureCooldown;
+                TimeSpan cooldown = kind == "NetworkError"
+                    ? TransientNetworkFailureCooldown : SearchFailureCooldown;
+                _searchUnavailableUntilUtc = DateTimeOffset.UtcNow + cooldown;
                 NIRADiagnosticTrace.Event("IMAGE-PROVIDER",
-                    $"Operation=Search Stage=CommonsOnly Outcome=Unavailable Reason={kind}");
+                    $"Operation=Search Stage=CommonsOnly Outcome=Unavailable Reason={kind} " +
+                    $"CooldownSec={(int)cooldown.TotalSeconds} " +
+                    $"Error={ex.GetType().Name} Socket={NestedSocketError(ex)}");
                 throw new NIRAImageProviderUnavailableException(kind, ex);
             }
         }
@@ -335,54 +405,104 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
     // Rank only candidates with evidence that the REQUESTED subject is depicted.
     // Search order is not a relevance score. These generic rules do not name any
     // particular telescope, landmark, product, provider or user test.
+    // Title ranking is a confidence estimate, not visual proof. In particular,
+    // the request may be "Named Landmark statue" while the authentic file is
+    // titled "Named Landmark ...". Requiring EVERY query token would discard
+    // the exact subject and promote a different object whose caption includes
+    // the trailing generic type word. Use ordered name evidence as well as
+    // bag-of-words coverage; never hardcode any place or landmark name.
+    private static int ConsecutiveMatch(string[] query, string[] title)
+    {
+        int best = 0;
+        for (int q = 0; q < query.Length; q++)
+            for (int t = 0; t < title.Length; t++)
+            {
+                int n = 0;
+                while (q + n < query.Length && t + n < title.Length &&
+                    string.Equals(query[q + n], title[t + n], StringComparison.OrdinalIgnoreCase)) n++;
+                best = Math.Max(best, n);
+            }
+        return best;
+    }
+
     public static IReadOnlyList<NIRACommonsImageCandidate> RankForSubject(
         IReadOnlyList<NIRACommonsImageCandidate> results, string query, int limit,
         bool photographsOnly = false)
     {
         string[] terms = SubjectTerms(query);
         if (terms.Length == 0 || limit < 1) return Array.Empty<NIRACommonsImageCandidate>();
-        int required = photographsOnly ? terms.Length :
-            terms.Length == 1 ? 1 : Math.Max(2, (int)Math.Ceiling(terms.Length * 0.6));
+        // A photo request does not mean every appended descriptor/location must
+        // appear in the file title. In particular, exact named photographs
+        // frequently omit words from the discovery query. Keep ordinary title
+        // coverage, but admit a short, ordered SUBJECT name at the beginning
+        // when the full query contains additional context.
+        int required = terms.Length == 1 ? 1 :
+            Math.Max(2, (int)Math.Ceiling(terms.Length * 0.6));
         string phrase = string.Join(" ", terms);
         return results.Select((image, position) =>
         {
             string title = Regex.Replace(image.Title.ToLowerInvariant(), @"[^\p{L}\p{N}]+", " ").Trim();
             string description = Regex.Replace(image.Description.ToLowerInvariant(), @"[^\p{L}\p{N}]+", " ").Trim();
-            // Photography is a user-selected media type, not a telescope or
-            // location keyword. A named object is not an authentic photo if
-            // its filename describes a diagram, render, or scale model.
+            // A size comparison, montage, or schematic can mention the exact
+            // subject repeatedly while depicting ANOTHER object or a graphic.
+            // Only suppress such formats for requests for genuine photographs;
+            // ordinary image search still supports comparative illustrations.
             bool artificial = photographsOnly && Regex.IsMatch(image.Title,
                 @"\b(?:diagram|schematic|illustration|render(?:ing)?|blueprint|" +
-                @"concept|artist(?:ic)?\s+(?:impression|depiction)|scale\s+model)\b",
+                @"concept|artist(?:ic)?\s+(?:impression|depiction)|scale\s+model|" +
+                @"compar(?:e|ed|es|ing|ison)|versus|infographic|photomontage|mockup)\b",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-            // If a different primary subject occupies the title and the
-            // queried object appears only in an attribution parenthesis,
-            // do not treat it as a photograph OF the queried object.
             string rawTitle = image.Title.ToLowerInvariant();
             int parenthesis = rawTitle.IndexOf('(');
             int positionOfSubject = rawTitle.IndexOf(phrase, StringComparison.Ordinal);
             bool attributedOnly = photographsOnly && parenthesis >= 0 &&
                 positionOfSubject > parenthesis;
             string[] words = title.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            string[] normalizedTitle = SubjectTerms(image.Title);
             int hits = terms.Count(term => words.Contains(term, StringComparer.OrdinalIgnoreCase));
+            int consecutive = ConsecutiveMatch(terms, normalizedTitle);
+            // For names with three or more substantial words, the title can
+            // identify the exact ordered name without repeating a trailing
+            // category word (e.g., "... statue" or "... building"). If it
+            // does, preserve it as a candidate for ranking rather than dropping
+            // it before a more precise title search can select it.
+            bool startsWithSubject = normalizedTitle.Length > 0 &&
+                normalizedTitle[0] == terms[0] && consecutive >= Math.Min(2, terms.Length);
+            // A query with extra detail can still refer to a photo whose title
+            // begins with the actual named subject. Preserve that evidence
+            // instead of requiring the location/descriptor tokens as well.
+            bool orderedName = startsWithSubject && terms.Length >= 3 &&
+                (consecutive >= terms.Length - 1 ||
+                 (terms.Length >= 4 && consecutive >= 2));
             bool exactPhrase = title.Contains(phrase, StringComparison.OrdinalIgnoreCase);
-            // "Taken by / using X" often means an image produced BY X, not OF X.
             bool producerCredit = Regex.IsMatch(title + " " + description,
                 @"\b(?:photographed|captured|taken|imaged|observed|recorded|shot)\b.{0,48}\b" +
                 @"(?:by|using|with|through)\s+(?:the\s+)?" +
                 Regex.Escape(phrase) + @"\b", RegexOptions.IgnoreCase);
-            if (producerCredit || artificial || attributedOnly) hits = 0;
-            // An explicit full-subject title earns a stronger signal than a
-            // gallery filename mentioning the same words among dozens of others.
-            int extraWords = Math.Max(0, words.Length - terms.Length);
+            if (producerCredit || artificial || attributedOnly) { hits = 0; orderedName = false; }
+            int extraWords = Math.Max(0, normalizedTitle.Length - terms.Length);
             double aspect = image.Height > 0 ? (double)image.Width / image.Height : 0;
             int pixelBonus = image.Width >= 800 && image.Height >= 500 ? 6 : 0;
             int compositionPenalty = aspect is > 0 and < 0.45 or > 4 ? 8 : 0;
-            int score = hits * 25 + (exactPhrase ? 70 : 0)
-                - Math.Min(32, extraWords * 2) + pixelBonus - compositionPenalty;
-            return new { image, position, hits, score };
+            // A matching name at the START of a title is stronger than an
+            // adjective or incidental attribution halfway through a filename.
+            // The boost applies to arbitrary names; there are no case fixtures.
+            int anchoredName = startsWithSubject ? 115 : 0;
+            // A very long filename sharing a monument's name may describe
+            // a similarly named object at a different locality. When the
+            // requested identity has multiple substantial words, prefer a
+            // compact, complete name over an incidental long title. Short
+            // generic queries keep the earlier gentler length preference.
+            int specificityPenalty = terms.Length >= 3
+                ? Math.Min(144, extraWords * 16)
+                : Math.Min(32, extraWords * 2);
+            int score = hits * 25 + (exactPhrase ? 70 : 0) + anchoredName +
+                (orderedName ? 35 : 0) + consecutive * 12 -
+                specificityPenalty + pixelBonus - compositionPenalty;
+            return new { image, position, eligible = !artificial && !producerCredit &&
+                !attributedOnly && (hits >= required || orderedName), score };
         })
-        .Where(x => x.hits >= required)
+        .Where(x => x.eligible)
         .OrderByDescending(x => x.score)
         .ThenBy(x => x.position)
         .Select(x => x.image)
@@ -672,8 +792,20 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
         string temporary = path + ".tmp";
         try
         {
+            // The cache can disappear after service construction (cleanup,
+            // relocation or another process). Re-establish it at the exact
+            // point of use, not only in the constructor. Do not alter the
+            // already-working Commons search or HTTPS transport.
+            if (!Directory.Exists(_cacheFolder))
+            {
+                Directory.CreateDirectory(_cacheFolder);
+                NIRADiagnosticTrace.Event("IMAGE-CACHE",
+                    "Outcome=RecreatedBeforeWrite Storage=LocalAppData");
+            }
             await File.WriteAllBytesAsync(temporary, bytes, ct);
             File.Move(temporary, path);
+            NIRADiagnosticTrace.Event("IMAGE-CACHE",
+                $"Outcome=Saved Bytes={bytes.Length} Exists={File.Exists(path)}");
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
         string credit = string.IsNullOrWhiteSpace(candidate.Author) ? "Author listed on source" : candidate.Author;

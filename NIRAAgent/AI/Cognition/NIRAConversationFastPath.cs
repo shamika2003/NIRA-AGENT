@@ -24,6 +24,7 @@ public static class NIRAConversationFastPath
             !string.IsNullOrWhiteSpace(d.Reply) &&
             !d.ReviewCommitment && !d.ReviewExperience &&
             string.IsNullOrWhiteSpace(d.NovelExperienceEvidence) &&
+            d.ResourceIntent is null &&
             d.DisplayBlocks.Count == 0 &&
             d.ContextRequests.Count == 0 && d.CapabilityIds.Count == 0 &&
             d.CapabilityRequests.Count == 0 &&
