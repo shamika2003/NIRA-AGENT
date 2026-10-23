@@ -700,10 +700,10 @@ public sealed record NIRACapabilityVisualArtifact
     private static string NormalizeSourceUri(string? value) =>
         Uri.TryCreate(value, UriKind.Absolute, out Uri? uri) &&
         uri.Scheme == Uri.UriSchemeHttps &&
-        ((uri.Host.Equals("commons.wikimedia.org", StringComparison.OrdinalIgnoreCase) &&
-          uri.AbsolutePath.StartsWith("/wiki/File:", StringComparison.Ordinal)) ||
-         (uri.Host.Equals("www.flickr.com", StringComparison.OrdinalIgnoreCase) &&
-          uri.AbsolutePath.StartsWith("/photos/", StringComparison.Ordinal))) &&
+        // Source provenance comes from the trusted native image provider;
+        // a Tavily result may originate on any public HTTPS site. The UI never
+        // downloads this URI. Never present local/reserved or test origins.
+        global::NIRAAgent.Images.NIRATavilyImageDiscoveryService.PublicPageUrl(uri.AbsoluteUri) &&
         uri.IsDefaultPort && uri.UserInfo.Length == 0
             ? uri.AbsoluteUri
             : string.Empty;

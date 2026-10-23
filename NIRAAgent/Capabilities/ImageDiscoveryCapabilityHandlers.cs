@@ -6,13 +6,13 @@ namespace NIRAAgent.Capabilities;
 
 public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
 {
-    private readonly NIRACommonsImageDiscoveryService _service;
-    public NIRAImageSearchCapabilityHandler(NIRACommonsImageDiscoveryService service) => _service = service;
+    private readonly INIRAImageDiscoveryService _service;
+    public NIRAImageSearchCapabilityHandler(INIRAImageDiscoveryService service) => _service = service;
 
     public NIRACapabilityDescriptor Descriptor { get; } = new()
     {
         Id = NIRACapabilityIds.ImageSearch,
-        Description = "Search genuine Wikimedia Commons reference-image candidates (no browser, no paid API and no generated images). Returns short-lived candidateId, title, attribution, license, and source page. Then call image.retrieve with a returned candidateId to show a real image; never invent IDs or URLs.",
+        Description = "Search genuine current web images via Tavily (existing NIRA_TAVILY_API_KEY; no generation). Returns short-lived candidateId, title, source URL and rights status (third-party licensing is not verified). Then call image.retrieve with a returned candidateId to show a real image; never invent IDs or URLs.",
         DefaultRisk = NIRACapabilityRisk.Observe,
         Parameters = new[] {
             new NIRACapabilityParameterDescriptor { Name="query", Type="string", Required=true, Description="Specific visual subject, 2-160 characters; no URLs." },
@@ -50,7 +50,7 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
             $"Capability=image.search Query={query} Candidates={images.Count} " +
             $"ProviderStatus={_service.LastSearchStatus}");
         var output = new StringBuilder();
-        output.AppendLine($"Provider=Wikimedia Commons | Query={query} | Candidates={images.Count} | ResultsAreCandidatesOnly=True");
+        output.AppendLine($"Provider=Tavily | Query={query} | Candidates={images.Count} | ResultsAreCandidatesOnly=True");
         foreach (var item in images)
         {
             output.AppendLine($"CandidateId={item.CandidateId}");
@@ -71,15 +71,13 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
             // ask the model to repeat an equivalent search in another cycle.
             // The link is to a REAL Wikimedia search page, NOT an image or a
             // fabricated source attribution. Search text is URL-encoded only.
-            string searchPage = "https://commons.wikimedia.org/wiki/Special:MediaSearch?type=image&search=" +
-                Uri.EscapeDataString(query);
             output.AppendLine("IMAGE_DISCOVERY_EMPTY=True");
             output.AppendLine("ImageSubjectMatch=False");
             output.AppendLine("VerifiedImageRetrieved=False");
-            output.AppendLine($"PublicImageSearchPage={searchPage}");
+            // Do not invent or promote an unrelated image-search page.
             output.AppendLine("ImageSearchPageIsNotVerifiedImage=True");
             return new NIRACapabilityHandlerResult {
-                Summary = "IMAGE_DISCOVERY_EMPTY: Commons search completed, but no subject-relevant reference image was verified. No image was displayed.",
+                Summary = "IMAGE_DISCOVERY_EMPTY: Tavily search completed, but no subject-relevant reference image was verified. No image was displayed.",
                 Output = output.ToString(), ChangedSystemState = false
             };
         }
@@ -127,7 +125,7 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
                     $"Outcome=ArtifactsPrepared Count={shown.Count} Surface=InlineOnly");
                 output.AppendLine($"VerifiedImageRetrieved=True\nVerifiedImageCount={shown.Count}");
                 return new NIRACapabilityHandlerResult {
-                    Summary = $"Displayed {shown.Count} distinct licensed image(s) out of {images.Count} retrieved candidates.",
+                    Summary = $"Displayed {shown.Count} distinct verified raster image(s) out of {images.Count} retrieved candidates.",
                     Output = output.ToString(), ChangedSystemState = false,
                     VisualArtifacts = shown.ToArray()
                 };
@@ -136,7 +134,7 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
         }
         output.AppendLine("Candidates alone are NOT displayed images. Use image.retrieve with a returned candidateId if a different verified photo is needed.");
         return new NIRACapabilityHandlerResult {
-            Summary = $"Found {images.Count} Wikimedia Commons image candidate(s); no verified image has been displayed.",
+            Summary = $"Found {images.Count} Tavily image candidate(s); no verified image has been displayed.",
             Output = output.ToString(), ChangedSystemState = false
         };
     }
@@ -144,13 +142,13 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
 
 public sealed class NIRAImageRetrieveCapabilityHandler : INIRACapabilityHandler
 {
-    private readonly NIRACommonsImageDiscoveryService _service;
-    public NIRAImageRetrieveCapabilityHandler(NIRACommonsImageDiscoveryService service) => _service = service;
+    private readonly INIRAImageDiscoveryService _service;
+    public NIRAImageRetrieveCapabilityHandler(INIRAImageDiscoveryService service) => _service = service;
 
     public NIRACapabilityDescriptor Descriptor { get; } = new()
     {
         Id = NIRACapabilityIds.ImageRetrieve,
-        Description = "Retrieve a verified openly licensed image candidate into NIRA's own bounded visual cache and automatically present it in chat with the real source page and author/license attribution. CandidateId MUST come from image.search. This does not write user files, require a browser, or accept a URL/path from the model.",
+        Description = "Retrieve a verified raster image candidate into NIRA's own bounded visual cache and automatically present it in chat with its known source and explicit rights status. CandidateId MUST come from image.search. This does not write user files, require a browser, or accept a URL/path from the model.",
         DefaultRisk = NIRACapabilityRisk.Observe,
         Parameters = new[] {
             new NIRACapabilityParameterDescriptor { Name="candidateId", Type="string", Required=true, Description="Exact short-lived candidateId from a successful image.search result. No URL/path." }
@@ -172,7 +170,7 @@ public sealed class NIRAImageRetrieveCapabilityHandler : INIRACapabilityHandler
         NIRAAgent.Diagnostics.NIRADiagnosticTrace.Event("IMAGE-DELIVERY",
             "Outcome=ArtifactsPrepared Count=1 Surface=InlineOnly");
         return new NIRACapabilityHandlerResult {
-            Summary = $"Retrieved a real licensed reference image '{download.Title}' ({download.Bytes} bytes). Image queued for NIRA chat.",
+            Summary = $"Retrieved a real raster reference image '{download.Title}' ({download.Bytes} bytes). Image queued for NIRA chat.",
             Output = $"LocalPath={download.LocalPath}\nTitle={download.Title}\nCaption={download.Caption}\nSourceUri={download.SourceUri}\nSHA256={download.Sha256}\nBytes={download.Bytes}\nVerifiedImageRetrieved=True",
             VisualArtifacts = new [] { new NIRACapabilityVisualArtifact {
                 LocalPath=download.LocalPath, Title=download.Title, Caption=download.Caption,

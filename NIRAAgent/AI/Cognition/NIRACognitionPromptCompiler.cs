@@ -408,8 +408,9 @@ internal static class NIRACognitionPromptCompiler
           verification does not preclude a relevant image of the physical
           subject, and an image does not substitute for factual verification.
           The same initial decision can select webQuery AND imageQuery when
-          both genuinely help; they are independent tools that can run in one
-          authorized batch. Do not confuse asking for facts with forbidding an
+          both genuinely help. The runtime combines their Tavily search into
+          one web.search response with images when possible; text evidence
+          remains primary and images may fail independently. Do not confuse asking for facts with forbidding an
           illustration. Equally, selecting a web source does not oblige an image.
           Either choice can remain empty when it would add no real value.
           Image search is an actual photo lookup, not a source of specification
@@ -484,7 +485,7 @@ internal static class NIRACognitionPromptCompiler
           for routine text facts, sensitive content or ordinary chat.
         - For specific visual subjects, choose an appropriate source and keep
           search-result discovery separate from verified image-file retrieval.
-          The independent Wikimedia Commons image capability below is preferred when available; for
+          The native Tavily reference-image capability below is preferred when available; for
           image sources outside the trusted image capabilities first verify the direct image-file URL with
           an authorized read-only browser/HTTP observation, then use the normal
           authorized http.download primitive to a permitted absolute file path.
@@ -511,8 +512,8 @@ internal static class NIRACognitionPromptCompiler
           Gallery. Never claim an image exists before successful execution.
         - For real, identifiable visual subjects (including current products,
           machines, architecture, nature, or historic objects), image.search can
-          return actual Wikimedia Commons image candidates without Playwright
-          or an API key. Availability and licenses vary by subject; do not
+          return actual Tavily-discovered image candidates without Playwright
+          using NIRA’s existing Tavily API key. Image rights are not guaranteed by search; do not
           pretend that a provider has photographs it did not actually return.
           A candidate is not yet a displayed image. For model-selected first-pass
           reference imageQuery the search handler may retrieve the model-selected
@@ -520,7 +521,7 @@ internal static class NIRACognitionPromptCompiler
           an appropriate candidate from grounded source/licensing metadata, then
           call image.retrieve with the EXACT returned candidateId. A successful
           verified retrieval queues a real image in chat with attribution.
-          Never invent candidateId, source URL, path or license. If the Wikimedia Commons image index
+          Never invent candidateId, source URL, path or license. If the Tavily image index
           lacks suitable results, use other authorized tools only when
           warranted; never replace actual pixels with a made-up image card.
           The image-search phrase must preserve the EXACT requested subject and
@@ -544,8 +545,8 @@ internal static class NIRACognitionPromptCompiler
           finish any answer that does not depend on retrieved image evidence,
           and use no extra cognition round solely for image formatting.
           Do not repeat image.retrieve results in visualPresentations.
-          The inline image card already includes the verified photographer, license and
-          original source link. Do not repeat the verified source link in prose.
+          The image card includes the observed source; author and reuse license must
+          not be invented when a provider does not supply them. Do not repeat the verified source link in prose.
           Never add an "Image Details", "Photo Credits" or "Image Attribution"
           displayBlock when its only contents repeat the image card's trusted
           photographer, license and source. A paragraph can introduce the subject.
@@ -1362,7 +1363,7 @@ internal static class NIRACognitionPromptCompiler
         Do not invent numbers, images, quotations, facts, or URLs to decorate
         answers. Only the established authorized visualPresentations pipeline
         may show real images. Native image.search / image.retrieve provide
-        openly licensed reference-image discovery and verified automatic inline delivery;
+        current web reference-image discovery with verified raster bytes and actual-source attribution;
         neither accepts model-invented local paths or remote URLs.
         Never use another LLM call solely to choose or refine styling.
         AVAILABLE DISPLAY BLOCK TYPES (OPTIONAL, NOT A RECIPE):

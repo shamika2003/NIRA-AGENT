@@ -61,10 +61,14 @@ public static class NIRAImageTurnDeliveryPolicy
 
     public static int SearchRetrieveCount(NIRACapabilityRequest request)
     {
-        if (request.CapabilityId != NIRACapabilityIds.ImageSearch ||
+        if (request.CapabilityId is not (NIRACapabilityIds.ImageSearch or NIRACapabilityIds.WebSearch) ||
             request.Arguments.ValueKind != JsonValueKind.Object ||
-            (request.Arguments.TryGetProperty("retrieveBest", out var automatic) &&
-             automatic.ValueKind == JsonValueKind.False))
+            (request.CapabilityId == NIRACapabilityIds.ImageSearch &&
+             request.Arguments.TryGetProperty("retrieveBest", out var automatic) &&
+             automatic.ValueKind == JsonValueKind.False) ||
+            (request.CapabilityId == NIRACapabilityIds.WebSearch &&
+             (!request.Arguments.TryGetProperty("includeImages", out var combined) ||
+              combined.ValueKind != JsonValueKind.True)))
             return 0;
         return request.Arguments.TryGetProperty("retrieveCount", out var count) &&
                count.ValueKind == JsonValueKind.Number && count.TryGetInt32(out int n)

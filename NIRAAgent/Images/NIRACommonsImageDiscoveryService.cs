@@ -36,7 +36,7 @@ public sealed class NIRAImageProviderUnavailableException : InvalidOperationExce
 {
     public string FailureKind { get; }
     public NIRAImageProviderUnavailableException(string kind, Exception cause)
-        : base($"IMAGE_PROVIDER_UNAVAILABLE: Commons image search failed ({kind}). " +
+        : base($"IMAGE_PROVIDER_UNAVAILABLE: image search failed ({kind}). " +
                "Do not retry this provider in the same task; report the limitation.", cause)
         => FailureKind = kind;
 }
@@ -48,7 +48,7 @@ public sealed class NIRAImageRetrievalUnavailableException : InvalidOperationExc
                "Do not retry image.retrieve in this task.", cause) { }
 }
 
-public sealed class NIRACommonsImageDiscoveryService : IDisposable
+public sealed class NIRACommonsImageDiscoveryService : IDisposable, INIRAImageDiscoveryService
 {
     private const int MaxApiBytes = 1_200_000;
     private const int MaxImageBytes = 12 * 1024 * 1024;

@@ -63,8 +63,15 @@ public static class NIRAResourceIntentPlanner
             return decision;
 
         var requests = decision.CapabilityRequests.ToList();
+        // If NIRA independently chooses both research and a useful reference
+        // image, ONE Tavily response can carry both. This avoids paying for a
+        // second image-search API call. If the user asks only for photos, use
+        // image.search unchanged. No subject/topic keywords are hardcoded.
+        bool sharedTavily = imageQuery.Length > 0 && webQuery.Length > 0 &&
+            !requests.Any(r => r.CapabilityId is NIRACapabilityIds.ImageSearch or
+                NIRACapabilityIds.ImageRetrieve or NIRACapabilityIds.WebSearch);
         // Do not duplicate capability families the model has already planned.
-        if (imageQuery.Length > 0 && !requests.Any(r => r.CapabilityId is
+        if (imageQuery.Length > 0 && !sharedTavily && !requests.Any(r => r.CapabilityId is
                 NIRACapabilityIds.ImageSearch or NIRACapabilityIds.ImageRetrieve))
             requests.Add(new NIRACapabilityRequest {
                 CapabilityId = NIRACapabilityIds.ImageSearch,
@@ -89,7 +96,10 @@ public static class NIRAResourceIntentPlanner
                 Arguments = JsonSerializer.SerializeToElement(new {
                     queries = webQueries, maxSources = 6,
                     evidenceDepth = string.Equals(decision.ResourceIntent.WebEvidenceDepth,
-                        "detailed", StringComparison.OrdinalIgnoreCase) ? "detailed" : "brief"
+                        "detailed", StringComparison.OrdinalIgnoreCase) ? "detailed" : "brief",
+                    includeImages = sharedTavily, imageQuery = sharedTavily ? imageQuery : "",
+                    retrieveCount = Math.Clamp(decision.ResourceIntent.ImageCount, 1, 3),
+                    provider = sharedTavily ? "tavily" : "auto"
                 }),
                 Reason = "Model-selected published evidence would substantively improve the answer."
             });

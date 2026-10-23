@@ -274,6 +274,85 @@ Check("WEB reviewer outage exposes only observed public links, not unchecked cla
         throw new Exception("Failed reviewer fallback invented sources or accepted unsafe evidence");
 });
 
+// Tavily API response already contains article extracts and source images.
+// One provider call must supply BOTH independently verified outputs, while
+// unrelated image-only requests use image.search. No live network or LLM.
+Check("TAVILY shared web and images uses ONE provider request and real bytes", () =>
+{
+    byte[] picture = Convert.FromBase64String(
+        "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFElEQVR4nGOUTDnMgA0wYRUdtBIA/d4BUKK4lNoAAAAASUVORK5CYII=");
+    using var transport = new NIRAWebFakeTransport(req =>
+    {
+        if (req.RequestUri?.Host == "api.tavily.com")
+        {
+            using var posted = JsonDocument.Parse(req.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
+            if (!posted.RootElement.GetProperty("include_images").GetBoolean() ||
+                posted.RootElement.GetProperty("search_depth").GetString() != "basic")
+                throw new Exception("The shared call did not enable images at basic credit depth");
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
+                Content = new StringContent("""
+                {"results":[{"url":"https://www.nasa.gov/mission",
+                    "title":"Unfamiliar engineering device", "content":"Publisher reports a measured prototype.",
+                    "images":[{"url":"https://images.nasa.gov/a.png",
+                               "description":"Unfamiliar engineering device exterior"}]}],
+                 "images":[{"url":"https://images.nasa.gov/a.png",
+                            "description":"Unfamiliar engineering device exterior"}]}
+                """) };
+        }
+        if (req.RequestUri?.AbsoluteUri == "https://images.nasa.gov/a.png")
+        {
+            var body = new ByteArrayContent(picture);
+            body.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = body };
+        }
+        throw new Exception("Combined Tavily response requested an unexpected endpoint");
+    });
+    using var client = new HttpClient(transport);
+    string temporary = Path.Combine(Path.GetTempPath(), "nira-tavily-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        using var images = new NIRATavilyImageDiscoveryService(client,
+            key => key == "NIRA_TAVILY_API_KEY" ? "test-not-a-real-key" : null, temporary);
+        using var search = new NIRAWebSearchCapabilityHandler(client,
+            key => key == "NIRA_TAVILY_API_KEY" ? "test-not-a-real-key" : null, images);
+        var result = search.ExecuteAsync(Request(NIRACapabilityIds.WebSearch,
+            """{"query":"unfamiliar engineering device measurements","provider":"tavily","includeImages":true,"imageQuery":"unfamiliar engineering device exterior","retrieveCount":1}"""))
+            .GetAwaiter().GetResult();
+        if (!result.Succeeded || transport.CallsTo("api.tavily.com") != 1 ||
+            transport.CallsTo("images.nasa.gov") != 1 ||
+            result.VisualArtifacts.Count != 1 ||
+            !File.Exists(result.VisualArtifacts[0].LocalPath) ||
+            !result.Output.Contains("Publisher reports a measured prototype", StringComparison.Ordinal) ||
+            !result.Output.Contains("\"verifiedImages\":1", StringComparison.Ordinal))
+            throw new Exception("Combined web/image request spent extra calls or dropped evidence/artifacts");
+    }
+    finally { if (Directory.Exists(temporary)) Directory.Delete(temporary, true); }
+});
+
+Check("TAVILY image-only discovery uses existing key without calling web.search", () =>
+{
+    using var transport = new NIRAWebFakeTransport(req =>
+    {
+        if (req.RequestUri?.Host != "api.tavily.com") throw new Exception("Wrong image provider");
+        return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
+            Content = new StringContent("""
+            {"images":[{"url":"https://images.nasa.gov/photo.jpg",
+                        "description":"Novel mountain transport bridge exterior"}]}
+            """) };
+    });
+    using var client = new HttpClient(transport);
+    using var service = new NIRATavilyImageDiscoveryService(client,
+        name => name == "NIRA_TAVILY_API_KEY" ? "test-not-a-real-key" : null);
+    var candidates = service.SearchAsync("Novel mountain transport bridge", 2).GetAwaiter().GetResult();
+    if (candidates.Count != 1 || candidates[0].Provider != "Tavily" ||
+        !Guid.TryParseExact(candidates[0].CandidateId, "N", out _) ||
+        transport.CallsTo("api.tavily.com") != 1 ||
+        NIRATavilyImageDiscoveryService.PublicImageUrl("https://localhost/private.png") ||
+        NIRATavilyImageDiscoveryService.PublicImageUrl("https://127.0.0.1/private.jpg") ||
+        NIRATavilyImageDiscoveryService.PublicImageUrl("https://cdn.example.org/book.pdf"))
+        throw new Exception("Tavily-only discovery, candidate integrity, or media URL security regressed");
+});
+
 // R6: Resource planning is based on a model-selected optional intention,
 // never a topic trigger, domain list, phrase classifier or hardcoded test answer.
 Check("R6 optional resource intent dispatch remains model-selected and authorized", () =>
@@ -345,12 +424,14 @@ Check("R-next first-pass mixed conversational evidence keeps one coherent tool b
     var pending = NIRAResourceIntentPlanner.Apply(d, true);
     if (pending.State != NIRACognitionState.Continue || pending.EmitReply ||
         pending.ReplyReady || pending.ConversationOnly || pending.SelfContainedAnswer ||
-        pending.CapabilityRequests.Count != 2 ||
-        pending.CapabilityRequests[0].CapabilityId != NIRACapabilityIds.ImageSearch ||
+        pending.CapabilityRequests.Count != 1 ||
+        pending.CapabilityRequests[0].CapabilityId != NIRACapabilityIds.WebSearch ||
         pending.CapabilityRequests[0].Arguments.GetProperty("retrieveCount").GetInt32() != 2 ||
-        pending.CapabilityRequests[1].CapabilityId != NIRACapabilityIds.WebSearch ||
-        pending.CapabilityRequests[1].Arguments.GetProperty("queries").GetArrayLength() != 2 ||
-        pending.CapabilityRequests[1].Arguments.GetProperty("evidenceDepth").GetString() != "detailed")
+        !pending.CapabilityRequests[0].Arguments.GetProperty("includeImages").GetBoolean() ||
+        pending.CapabilityRequests[0].Arguments.GetProperty("imageQuery").GetString() != d.ResourceIntent!.ImageQuery ||
+        pending.CapabilityRequests[0].Arguments.GetProperty("provider").GetString() != "tavily" ||
+        pending.CapabilityRequests[0].Arguments.GetProperty("queries").GetArrayLength() != 2 ||
+        pending.CapabilityRequests[0].Arguments.GetProperty("evidenceDepth").GetString() != "detailed")
         throw new Exception("Selected visual/source/video evidence did not stay in one original-call batch");
     if (NIRAConversationFastPath.CanUseDirectReply(d, true, false, false, false) ||
         NIRAConversationFastPath.CanUseDirectReply(pending, true, false, false, false))
@@ -366,7 +447,7 @@ Check("R-next first-pass mixed conversational evidence keeps one coherent tool b
         ConversationOnly = false,
         ResourceIntent = d.ResourceIntent! with { WebEvidenceDepth = "unknown" }
     }, true);
-    if (cheap.CapabilityRequests[1].Arguments.GetProperty("evidenceDepth").GetString() != "brief")
+    if (cheap.CapabilityRequests[0].Arguments.GetProperty("evidenceDepth").GetString() != "brief")
         throw new Exception("Unrecognized provider evidence depth did not use the cheap default");
     if (!ReferenceEquals(d, NIRAResourceIntentPlanner.Apply(d, false)))
         throw new Exception("Resource planning escaped the initial-turn boundary");
@@ -533,18 +614,17 @@ Check("R7 source, photo and demonstration intent is independent and optional", (
     var planned = NIRAResourceIntentPlanner.Apply(multi with {
         ResourceIntent = multi.ResourceIntent! with { ImageCount = 2 }
     }, true);
-    if (planned.CapabilityRequests.Count != 2 ||
+    if (planned.CapabilityRequests.Count != 1 ||
         planned.CapabilityRequests[0].Arguments.GetProperty("retrieveCount").GetInt32() != 2 ||
-        planned.CapabilityRequests[0].CapabilityId != NIRACapabilityIds.ImageSearch ||
-        planned.CapabilityRequests[1].CapabilityId != NIRACapabilityIds.WebSearch ||
-        !planned.CapabilityRequests[0].Arguments.GetProperty("retrieveBest").GetBoolean() ||
-        planned.CapabilityRequests[1].Arguments.GetProperty("queries").GetArrayLength() != 2)
-        throw new Exception("Source, image and video need distinct tool requests without duplicate web search");
+        planned.CapabilityRequests[0].CapabilityId != NIRACapabilityIds.WebSearch ||
+        !planned.CapabilityRequests[0].Arguments.GetProperty("includeImages").GetBoolean() ||
+        planned.CapabilityRequests[0].Arguments.GetProperty("queries").GetArrayLength() != 2)
+        throw new Exception("Model-selected web and visual evidence was not combined in the same Tavily search");
 
     if (!ReferenceEquals(NIRAResourceIntentPlanner.Apply(multi, false), multi) ||
         NIRAResourceIntentPlanner.Apply(natural with {
             ConversationOnly = true, ResourceIntent = multi.ResourceIntent
-        }, true).CapabilityRequests.Count != 2)
+        }, true).CapabilityRequests.Count != 1)
         throw new Exception("Resource selection ignored initial-cycle boundary or lost selected evidence");
     var duplicate = multi with { CapabilityRequests = new[] {
         Request(NIRACapabilityIds.WebSearch, """{"query":"already researching"}""") } };

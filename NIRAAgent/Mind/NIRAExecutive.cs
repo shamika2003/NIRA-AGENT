@@ -40,12 +40,31 @@ public sealed class NIRAExecutive
     private static bool ShouldMarkImageProviderUnavailable(int alreadyRetrieved,
         IReadOnlyList<NIRACapabilityResult> results) =>
         alreadyRetrieved == 0 && results.Any(result =>
-            (result.CapabilityId == NIRACapabilityIds.ImageSearch ||
-             result.CapabilityId == NIRACapabilityIds.ImageRetrieve) &&
-            (!result.Succeeded ||
-             (result.CapabilityId == NIRACapabilityIds.ImageSearch &&
-              (result.Output.Contains("IMAGE_DISCOVERY_EMPTY=True", StringComparison.Ordinal) ||
-               result.Output.Contains("ImageMediaUnavailable=True", StringComparison.Ordinal)))));
+            ((result.CapabilityId == NIRACapabilityIds.ImageSearch ||
+              result.CapabilityId == NIRACapabilityIds.ImageRetrieve) &&
+             (!result.Succeeded ||
+              (result.CapabilityId == NIRACapabilityIds.ImageSearch &&
+               (result.Output.Contains("IMAGE_DISCOVERY_EMPTY=True", StringComparison.Ordinal) ||
+                result.Output.Contains("ImageMediaUnavailable=True", StringComparison.Ordinal))))) ||
+            SharedWebImageExhausted(result));
+
+    // A combined Tavily web.search already included image discovery. Missing
+    // optional photos must not trigger another paid search or erase text sources.
+    private static bool SharedWebImageExhausted(NIRACapabilityResult result)
+    {
+        if (result.CapabilityId != NIRACapabilityIds.WebSearch || !result.Succeeded ||
+            result.VisualArtifacts.Any(v => v.PresentToUser)) return false;
+        try
+        {
+            using var document = JsonDocument.Parse(result.Output);
+            if (!document.RootElement.TryGetProperty("imageEvidence", out var image) ||
+                !image.TryGetProperty("requested", out var requested) ||
+                requested.ValueKind != JsonValueKind.True ||
+                !image.TryGetProperty("verifiedImages", out var count)) return false;
+            return count.ValueKind == JsonValueKind.Number && count.GetInt32() == 0;
+        }
+        catch (JsonException) { return false; }
+    }
 
     // This protects the trusted visible-image postcondition. It is not a
     // topic-dependent classifier, tool planner, or source of new image claims.
@@ -4363,7 +4382,8 @@ public sealed class NIRAExecutive
             foreach (NIRACapabilityResult imageResult in
                 dynamicToolCapabilityResults.Concat(capabilityResults).Where(result =>
                 result.Succeeded && (result.CapabilityId is
-                    NIRACapabilityIds.ImageRetrieve or NIRACapabilityIds.ImageSearch)))
+                    NIRACapabilityIds.ImageRetrieve or NIRACapabilityIds.ImageSearch or
+                    NIRACapabilityIds.WebSearch)))
                 foreach (NIRACapabilityVisualArtifact visual in imageResult.VisualArtifacts.Where(v => v.PresentToUser))
                 {
                     string pixels = NIRAImageTurnDeliveryPolicy.PixelIdentity(visual.LocalPath);
@@ -4396,7 +4416,7 @@ public sealed class NIRAExecutive
                     "the provider failed for all images, or photos cannot be shown. " +
                     "A later timeout does not undo these successful receipts. " +
                     "File validity alone does not establish topical relevance; " +
-                    "keep subject claims grounded in the Commons title/source metadata.";
+                    "keep subject claims grounded in the observed source metadata.";
                 executiveEvidence.AppendLine(proof);
                 capabilityEvidence.AppendLine(proof);
                 NIRADiagnosticTrace.Event("IMAGE-DELIVERY-TRUTH",
@@ -6612,7 +6632,7 @@ public sealed class NIRAExecutive
                 if (verifiedImageRetrievalCount > 0 &&
                     IsFalseImageUnavailableClaim(reply))
                 {
-                    reply = $"I retrieved {verifiedImageRetrievalCount} Wikimedia Commons " +
+                    reply = $"I retrieved {verifiedImageRetrievalCount} verified " +
                         "reference image(s) and queued them below with their source details. " +
                         "Check each source title to confirm it depicts the subject you requested.";
                     spoken = reply;
@@ -8010,7 +8030,8 @@ public sealed class NIRAExecutive
                 // are delivered; generated and unrelated visual artifacts keep
                 // the existing independent presentation path.
                 if (acceptedReferenceImagePaths is not null &&
-                    (result.CapabilityId is NIRACapabilityIds.ImageSearch or NIRACapabilityIds.ImageRetrieve) &&
+                    (result.CapabilityId is NIRACapabilityIds.ImageSearch or NIRACapabilityIds.ImageRetrieve or
+                        NIRACapabilityIds.WebSearch) &&
                     !acceptedReferenceImagePaths.Contains(normalized.LocalPath))
                     continue;
 

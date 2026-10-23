@@ -540,6 +540,12 @@ public partial class App : WpfApplication
             // and unexpectedly selects the test-only Openverse-first workflow.
             builder.Services.AddSingleton<NIRACommonsImageDiscoveryService>(
                 _ => new NIRACommonsImageDiscoveryService());
+            // Production image.search and image.retrieve now share Tavily discovery.
+            // Keep the legacy Commons service registration above for compatibility
+            // with existing diagnostic/regression tooling; it is NOT the live provider.
+            builder.Services.AddSingleton<NIRATavilyImageDiscoveryService>();
+            builder.Services.AddSingleton<INIRAImageDiscoveryService>(sp =>
+                sp.GetRequiredService<NIRATavilyImageDiscoveryService>());
             builder.Services.AddSingleton<INIRACapabilityHandler, NIRAImageSearchCapabilityHandler>();
             builder.Services.AddSingleton<INIRACapabilityHandler, NIRAImageRetrieveCapabilityHandler>();
             // R37: native image generation, single Cloudflare 4B model, separate from Ollama.
