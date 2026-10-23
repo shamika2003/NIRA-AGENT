@@ -243,6 +243,23 @@ public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDi
             traces.Add(new { query, provider = used, cached = cacheHit, sourcesFound = sources.Count, fallbacks = tried });
             if (aggregate.Count >= maxSources) break;
         }
+        // Explicitly opt-in developer source diagnostics. Ordinary event logs
+        // keep only provider/status counts; the developer may inspect exact
+        // query and source attribution without capturing entire LLM prompts.
+        if (NIRADiagnosticTrace.DetailedToolCaptureEnabled)
+        {
+            for (int i = 0; i < queries.Count; i++)
+                NIRADiagnosticTrace.Event("WEB-SEARCH-QUERY",
+                    $"Index={i + 1} Text={queries[i]}");
+            for (int i = 0; i < aggregate.Count; i++)
+            {
+                NIRAWebSource source = aggregate[i];
+                NIRADiagnosticTrace.Event("WEB-SEARCH-SOURCE",
+                    $"Index={i + 1} Provider={source.Provider} " +
+                    $"Title={source.Title} Url={source.Url} " +
+                    $"ExtractPreview={source.Extract[..Math.Min(source.Extract.Length, 450)]}");
+            }
+        }
         var evidence = new
         {
             evidenceType = "UntrustedPublicWebSearchExtracts",

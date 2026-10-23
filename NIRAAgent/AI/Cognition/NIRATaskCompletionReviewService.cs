@@ -99,6 +99,39 @@ public sealed class NIRATaskCompletionReviewService
             authorized ability to change a third-party product. Do not suggest
             switching surfaces for an unregistered trade, account or setting
             mutation. Tool inventory and runtime authorization decide access.
+            EVIDENCE-TO-CLAIM REVIEW (MANDATORY for ANY researched factual
+            answer): Independently cross-check the draft's principal specific
+            assertions against the actual extracts. Identify the exact wording
+            that supports or fails to support each central claim; silently do
+            this comparison before assigning your verdict. A web result's
+            existence or citation link is NEVER evidence that the draft's
+            interpretation is right. Test especially extraordinary capabilities,
+            precise speed/range/time/power figures, launch readiness, official
+            features, and whether an alleged demonstration actually occurred.
+            Those are general claim categories, not an instruction to demand
+            all such facts for every subject. Distinguish 'announced', 'targets',
+            'reports', 'achieved', and 'commercially available'. Secondary news
+            repeating a speculative assertion does not make it verified.
+            If a crucial claim overstates what the extracts say, verdict=NeedsWork,
+            gap=that unsupported claim, nextStep=revise using only supported
+            facts and clearly attribute unverified claims. A caveat at the end
+            does not excuse falsely certain wording at the beginning. An
+            evidentially sound concise answer is Complete; do not demand
+            extra media, searches or extra review calls for style alone.
+            RESEARCH COVERAGE MUST FOLLOW AVAILABLE EVIDENCE: The user's request
+            for details does not obligate the draft to reproduce every precise
+            number, product variant or sensational detail mentioned somewhere in
+            weak/secondary extracts. Do not reject a well-supported explanation
+            merely because it omits uncertain numeric tiers or rumors. Reject
+            unsupported factual assertions, not the absence of speculative
+            embellishments. If the response explains the distinctive ideas,
+            distinguishes observed facts from aspirations, names meaningful
+            remaining unknowns and offers its requested perspective, that is a
+            substantive completion even when exact metrics cannot be certified.
+            A partial answer with accurate attribution is better than turning a
+            successful source lookup into a generic verification refusal.
+            Never require model-authored numbers that the deterministic
+            grounding preflight has already shown to be unobserved.
             WEB RESEARCH SOURCE FIDELITY: Search API success proves that an
             extract was returned, NOT that any particular claim is true or that
             NIRA visited or verified the underlying website. When the ORIGINAL
@@ -116,7 +149,14 @@ public sealed class NIRATaskCompletionReviewService
             source support, or ignores a material conflicting newer result,
             return NeedsWork with the precise missing source or conflict. A
             correctly qualified, useful partial answer may be Complete when it
-            explicitly acknowledges the unverified part.             Never request a new
+            explicitly acknowledges the unverified part. For evolving or
+            unreleased products, distinguish manufacturer performance targets
+            from independently measured results. An unverified precise metric,
+            speculative capability, invented configuration or unsupported
+            release status must not become a factual claim or a numeric display
+            block merely because the model sounds confident. When evidence is
+            absent, require honest qualification or one warranted source check,
+            not repeated web searches or forced photos. Never request a new
             search merely because a response has fewer cards or citations.
             PREFERENCE AND SUBQUESTION COVERAGE: Check every material
             constraint in the current message and grounded recent conversation.
@@ -486,6 +526,27 @@ public sealed class NIRATaskCompletionReviewService
             string.IsNullOrWhiteSpace(request.DraftReply))
             return null;
 
+        // A deterministic, source-URL and measurement grounding preflight.
+        // No new model call, no topic trigger, no URL fabrication. Ordinary
+        // answer style and optional media selection remain model-owned.
+        NIRAWebResearchGroundingVerdict grounding = NIRAWebResearchGroundingGate.Check(
+            request.WebResearchSourceEvidence, request.DraftReply);
+        if (!grounding.Accepted)
+        {
+            NIRAAgent.Diagnostics.NIRADiagnosticTrace.Event("WEB-CLAIM-GROUNDING",
+                $"Outcome=NeedsWork Reason={grounding.Code} WebEvidence=True");
+            return new NIRATaskCompletionReview("NeedsWork", grounding.Explanation,
+                "Revise the reply to rely only on observed source URLs and " +
+                "source-supported quantitative facts, or explicitly omit " +
+                "unsupported claims. Keep the useful supported explanation.")
+            {
+                TemporalMode = "Current"
+            };
+        }
+        if (!string.IsNullOrWhiteSpace(request.WebResearchSourceEvidence))
+            NIRAAgent.Diagnostics.NIRADiagnosticTrace.Event("WEB-CLAIM-GROUNDING",
+                "Outcome=PreflightPass Review=Independent");
+
         string model = Environment.GetEnvironmentVariable(ModelEnvironmentVariable)?.Trim()
             ?? string.Empty;
         if (model.Length == 0) model = DefaultModel;
@@ -530,6 +591,13 @@ public sealed class NIRATaskCompletionReviewService
 
             PROPOSED USER-FACING REPLY:
             {Limit(request.DraftReply, MaxDraft)}
+
+            FINAL RESEARCH FACT CHECK (when web extracts are present):
+            Identify which source EXTRACT supports every central concrete claim.
+            If a claimed feature is only a proposed/rumored future capability,
+            do not approve a reply that reports it as demonstrated or delivered.
+            Distinguish unsupported hyperbole from the real distinguishing facts.
+            A generic list of links does not substantiate the adjacent numbers.
             """;
         try
         {

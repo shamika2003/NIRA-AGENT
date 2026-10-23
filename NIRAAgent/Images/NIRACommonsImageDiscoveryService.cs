@@ -340,6 +340,60 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
                             $"RetainedRelevant={candidates.Count}");
                     }
                 }
+                // Keep correct strict-search matches. If too few were found,
+                // one relaxed SUBJECT query may recover missing relevant photos
+                // from a phrase padded with generic
+                // press/recency descriptors. Results must still pass independent
+                // metadata relevance ranking; never select the first arbitrary
+                // provider result merely to fill a media quota.
+                if (candidates.Count < Math.Min(limit, 2) && !unusableMedia)
+                {
+                    string recoveredSubject = SubjectRecoveryQuery(query);
+                    if (recoveredSubject.Length > 0 &&
+                        !string.Equals(recoveredSubject, subject,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        NIRADiagnosticTrace.Event("IMAGE-QUERY",
+                            $"Stage=SubjectRecovery Query={DiagnosticText(recoveredSubject)} " +
+                            $"Original={DiagnosticText(query)} Reason=OverQualifiedSearch");
+                        try
+                        {
+                            using var responseForSubject = await GetCommonsSearchResponseAsync(
+                                SearchUrl(recoveredSubject, limit), "SubjectRecovery", cancellationToken);
+                            if (responseForSubject.IsSuccessStatusCode)
+                            {
+                                using var recoveryTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                                recoveryTimeout.CancelAfter(SearchNetworkTimeout);
+                                byte[] subjectBytes = await ReadBoundedAsync(responseForSubject.Content,
+                                    MaxApiBytes, recoveryTimeout.Token);
+                                var subjectCandidates = ParseCommonsSearchResponse(
+                                    Encoding.UTF8.GetString(subjectBytes), 50);
+                                // Preserve verified relevant candidates from the earlier
+                                // search. A single correct photo is not a complete answer
+                                // when another different photo can be recovered, and an
+                                // unrelated PDF thumbnail must never fill that shortfall.
+                                var merged = candidates.Concat(subjectCandidates)
+                                    .GroupBy(item => item.SourceUri, StringComparer.OrdinalIgnoreCase)
+                                    .Select(group => group.First()).ToArray();
+                                candidates = RankForSubject(merged, recoveredSubject,
+                                    limit, photographsOnly, originalIntentQuery: query);
+                                TraceSelection("SubjectRecovery", recoveredSubject,
+                                    subjectCandidates, candidates, photographsOnly,
+                                    originalIntentQuery: query);
+                            }
+                            else
+                                NIRADiagnosticTrace.Event("IMAGE-QUERY",
+                                    $"Stage=SubjectRecovery Outcome=HTTP{(int)responseForSubject.StatusCode}");
+                        }
+                        catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
+                            ex is HttpRequestException or OperationCanceledException or JsonException)
+                        {
+                            NIRADiagnosticTrace.Event("IMAGE-QUERY",
+                                $"Stage=SubjectRecovery Outcome=Unavailable " +
+                                $"Reason={ClassifyProviderFailure(ex)}");
+                        }
+                    }
+                }
                 NIRADiagnosticTrace.Event("IMAGE-QUERY",
                     $"Stage=Final Query={DiagnosticText(query)} Relevant={candidates.Count} " +
                     $"NoOffTopicFallback=True");
@@ -402,6 +456,52 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
     public static string SubjectDiscoveryQuery(string query) =>
         string.Join(" ", SubjectTerms(query));
 
+    // Descriptors of image origin/recency are not the identity of a photographed
+    // subject. Relax them ONLY when the literal provider search found no relevant
+    // results. This is a generic lexical recovery, never a catalog of subjects,
+    // products, places or expected search answers. Keep "new" when it is the
+    // only removable word (for instance a proper name starting with New).
+    private static readonly HashSet<string> DiscoveryQualifiers = new(
+        StringComparer.OrdinalIgnoreCase)
+    {
+        "official", "press", "publicity", "promotional", "marketing", "stock",
+        "recent", "latest", "current", "new", "licensed"
+    };
+
+    public static string SubjectRecoveryQuery(string query)
+    {
+        string[] terms = SubjectTerms(query);
+        if (terms.Length < 3) return string.Empty;
+
+        // A model can ask for a named subject followed by search qualifiers,
+        // e.g. "Orion coupe new model exterior". Once the full search and
+        // title-focused search fail, keep the subject preceding the modifier
+        // instead of requiring every descriptive word to occur in a filename.
+        // No product/landmark names or known answers are embedded here.
+        int trailingQualifier = Array.FindIndex(terms, 2, term =>
+            DiscoveryQualifiers.Contains(term));
+        if (trailingQualifier >= 2)
+        {
+            string[] head = terms.Take(trailingQualifier)
+                .Where((term, index) => !DiscoveryQualifiers.Contains(term) ||
+                    (index == 0 && term.Equals("new", StringComparison.OrdinalIgnoreCase)))
+                .ToArray();
+            if (head.Length >= 2 && head.Length < terms.Length)
+                return string.Join(" ", head);
+        }
+
+        string[] withoutDescriptive = terms.Where(term =>
+            !DiscoveryQualifiers.Contains(term)).ToArray();
+        if (withoutDescriptive.Length < 2 ||
+            withoutDescriptive.Length == terms.Length)
+            return string.Empty;
+        // A leading 'New' can be part of a proper geographical/product name;
+        // do not turn an exact name into a different subject.
+        if (terms[0].Equals("new", StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+        return string.Join(" ", withoutDescriptive);
+    }
+
     // Rank only candidates with evidence that the REQUESTED subject is depicted.
     // Search order is not a relevance score. These generic rules do not name any
     // particular telescope, landmark, product, provider or user test.
@@ -425,9 +525,39 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
         return best;
     }
 
+    // These describe camera/viewpoint intent, not a catalogue of subjects. A
+    // generic picture of a physical object should ordinarily show the object,
+    // not just its dashboard, seats or other isolated interior components.
+    // Explicit requests for those details always take precedence.
+    private static readonly HashSet<string> InteriorViewWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "interior", "inside", "cabin", "cockpit", "dashboard", "dash", "steering",
+        "seat", "seats", "upholstery", "console", "instrument", "instruments"
+    };
+    private static readonly HashSet<string> ExteriorViewWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "exterior", "outside", "front", "rear", "side", "profile", "bodywork",
+        "body", "facade", "façade", "facades", "silhouette"
+    };
+
+    private static string[] WordTokens(string text) =>
+        Regex.Matches(text ?? "", @"[\p{L}\p{N}]+")
+            .Select(match => match.Value.ToLowerInvariant()).ToArray();
+
+    private static bool HasAny(IReadOnlyList<string> terms, HashSet<string> words) =>
+        terms.Any(words.Contains);
+
+    // Only an explicitly named year is a trustworthy generation constraint.
+    // An undated filename remains unverified (not falsely declared current).
+    // A different year in the file title must not masquerade as the requested
+    // model/release year; unrelated photo-date metadata is not inferred.
+    private static int[] NamedYears(string value) => WordTokens(value)
+        .Where(x => x.Length == 4 && int.TryParse(x, out int year) && year is >= 1900 and <= 2099)
+        .Select(int.Parse).Distinct().ToArray();
+
     public static IReadOnlyList<NIRACommonsImageCandidate> RankForSubject(
         IReadOnlyList<NIRACommonsImageCandidate> results, string query, int limit,
-        bool photographsOnly = false)
+        bool photographsOnly = false, string? originalIntentQuery = null)
     {
         string[] terms = SubjectTerms(query);
         if (terms.Length == 0 || limit < 1) return Array.Empty<NIRACommonsImageCandidate>();
@@ -439,6 +569,13 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
         int required = terms.Length == 1 ? 1 :
             Math.Max(2, (int)Math.Ceiling(terms.Length * 0.6));
         string phrase = string.Join(" ", terms);
+        // A shortened Commons retry may drop "exterior", "interior" or a
+        // release year. Preserve the user's/model's ORIGINAL visual intent
+        // when ranking the relaxed subject results.
+        string[] intent = WordTokens(originalIntentQuery ?? query);
+        bool wantsInterior = HasAny(intent, InteriorViewWords);
+        bool wantsExterior = !wantsInterior && HasAny(intent, ExteriorViewWords);
+        int[] requestedYears = NamedYears(originalIntentQuery ?? query);
         return results.Select((image, position) =>
         {
             string title = Regex.Replace(image.Title.ToLowerInvariant(), @"[^\p{L}\p{N}]+", " ").Trim();
@@ -452,6 +589,10 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
                 @"concept|artist(?:ic)?\s+(?:impression|depiction)|scale\s+model|" +
                 @"compar(?:e|ed|es|ing|ison)|versus|infographic|photomontage|mockup)\b",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            // Commons indexes brochures, books and scanned documents. Their
+            // PDF/DjVu page previews may be JPEG thumbnails, but those bytes
+            // are NOT photographs of the user's requested subject.
+            bool documentPreview = IsDocumentPreview(image.Title);
             string rawTitle = image.Title.ToLowerInvariant();
             int parenthesis = rawTitle.IndexOf('(');
             int positionOfSubject = rawTitle.IndexOf(phrase, StringComparison.Ordinal);
@@ -496,11 +637,33 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
             int specificityPenalty = terms.Length >= 3
                 ? Math.Min(144, extraWords * 16)
                 : Math.Min(32, extraWords * 2);
+            // Filename view evidence is a tie-breaker for photographs of the
+            // SAME subject. It is NOT an image classifier and never creates
+            // new candidates. It prevents a matching interior/detail photo
+            // from outranking a matching overall/exterior image solely because
+            // its first 3 words match the query slightly better.
+            string[] titleWords = WordTokens(image.Title);
+            bool interior = HasAny(titleWords, InteriorViewWords);
+            bool exterior = HasAny(titleWords, ExteriorViewWords);
+            int viewScore = wantsInterior
+                ? (interior ? 105 : exterior ? -75 : 0)
+                : wantsExterior
+                    ? (exterior ? 105 : interior ? -165 : 0)
+                    : (interior ? -145 : exterior ? 65 : 0);
+            // A filename explicitly dated 2020 is not proof of a 2026
+            // model. With a specific requested year, reject known conflicts;
+            // yearless files remain candidates but are not labeled current.
+            int[] titleYears = NamedYears(image.Title);
+            bool conflictingYear = requestedYears.Length > 0 && titleYears.Length > 0 &&
+                !titleYears.Any(requestedYears.Contains);
             int score = hits * 25 + (exactPhrase ? 70 : 0) + anchoredName +
                 (orderedName ? 35 : 0) + consecutive * 12 -
-                specificityPenalty + pixelBonus - compositionPenalty;
-            return new { image, position, eligible = !artificial && !producerCredit &&
-                !attributedOnly && (hits >= required || orderedName), score };
+                specificityPenalty + pixelBonus - compositionPenalty + viewScore;
+            return new { image, position, eligible = !conflictingYear &&
+                !documentPreview && !artificial && !producerCredit &&
+                !attributedOnly && (!wantsExterior || !interior || exterior) &&
+                (!wantsInterior || !exterior || interior) &&
+                (hits >= required || orderedName), score };
         })
         .Where(x => x.eligible)
         .OrderByDescending(x => x.score)
@@ -511,6 +674,11 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
         .Take(limit).ToArray();
     }
 
+    private static bool IsDocumentPreview(string title) =>
+        title.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase) ||
+        title.EndsWith(".djvu", StringComparison.OrdinalIgnoreCase) ||
+        title.EndsWith(".djv", StringComparison.OrdinalIgnoreCase);
+
     private static string DiagnosticText(string text) =>
         Regex.Replace(text ?? "", @"[\p{Cc}\p{Cf}]", " ") is string safe
             ? safe[..Math.Min(180, safe.Length)] : "";
@@ -518,18 +686,24 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable
     private static void TraceSelection(string stage, string query,
         IReadOnlyList<NIRACommonsImageCandidate> offered,
         IReadOnlyList<NIRACommonsImageCandidate> selected,
-        bool photographsOnly = false)
+        bool photographsOnly = false, string? originalIntentQuery = null)
     {
-        var relevant = RankForSubject(offered, query, Math.Max(1, offered.Count), photographsOnly);
+        var relevant = RankForSubject(offered, query, Math.Max(1, offered.Count),
+            photographsOnly, originalIntentQuery);
+        string[] viewIntent = WordTokens(originalIntentQuery ?? query);
+        string wantedView = HasAny(viewIntent, InteriorViewWords) ? "Interior" :
+            HasAny(viewIntent, ExteriorViewWords) ? "Exterior" : "Overall";
         NIRADiagnosticTrace.Event("IMAGE-MATCH",
-            $"Stage={stage} Query={DiagnosticText(query)} Offered={offered.Count} " +
+            $"Stage={stage} Query={DiagnosticText(query)} View={wantedView} " +
+            $"OriginalIntent={DiagnosticText(originalIntentQuery ?? query)} Offered={offered.Count} " +
             $"TopicallyEligible={relevant.Count} Selected={selected.Count} " +
             $"RejectedAsOffTopic={offered.Count - relevant.Count}");
         foreach (var item in offered.Take(20))
         {
-            string reason = selected.Any(s => s.SourceUri == item.SourceUri)
-                ? "Selected" : relevant.Any(r => r.SourceUri == item.SourceUri)
-                    ? "PassedButNotSelected" : "RejectedOffTopic";
+            string reason = IsDocumentPreview(item.Title) ? "RejectedDocumentPreview" :
+                selected.Any(s => s.SourceUri == item.SourceUri)
+                    ? "Selected" : relevant.Any(r => r.SourceUri == item.SourceUri)
+                        ? "PassedButNotSelected" : "RejectedOffTopic";
             NIRADiagnosticTrace.Event("IMAGE-CANDIDATE",
                 $"Stage={stage} Decision={reason} " +
                 $"Title={DiagnosticText(item.Title)} Source={DiagnosticText(item.SourceUri)} " +

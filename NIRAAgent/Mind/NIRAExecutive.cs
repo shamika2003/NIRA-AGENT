@@ -6,6 +6,7 @@ using NIRAAgent.Temporal;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Text.Json;
 
 using NIRAAgent.AI.Cognition;
 using NIRAAgent.Capabilities;
@@ -952,6 +953,9 @@ public sealed class NIRAExecutive
         // At most two independent reviews of an action-based user's final
         // answer. A review is a reconsideration signal, never world evidence.
         int taskCompletionReviewCount = 0;
+        // Numeric preflight corrections are distinct from independent objective reviews.
+        // Sharing a counter made one unsupported detail exhaust the entire answer path.
+        int webGroundingCorrectionCount = 0;
 
 
         HashSet<string> executedMemorySearches =
@@ -1164,6 +1168,20 @@ public sealed class NIRAExecutive
                     $"Dispatched={dispatched} " +
                     $"ToolTypes={string.Join(",", planned.CapabilityRequests.Select(r => r.CapabilityId).Distinct())} " +
                     $"TotalRequested={planned.CapabilityRequests.Count}");
+                if (NIRADiagnosticTrace.DetailedToolCaptureEnabled)
+                {
+                    NIRADiagnosticTrace.Event("RESOURCE-DECISION-DETAIL",
+                        $"Run={runId:D} Cycle={cycle} " +
+                        $"WebQuery={TrimLog(decision.ResourceIntent?.WebQuery ?? "")} " +
+                        $"ImageQuery={TrimLog(decision.ResourceIntent?.ImageQuery ?? "")} " +
+                        $"VideoQuery={TrimLog(decision.ResourceIntent?.VideoQuery ?? "")} " +
+                        $"Purpose={TrimLog(decision.ResourceIntent?.Purpose ?? "")} " +
+                        $"ModelRequests={decision.CapabilityRequests.Count} " +
+                        $"ActualRequests={planned.CapabilityRequests.Count} " +
+                        $"Reason={(dispatched ? "SelectedAndDispatched" :
+                            decision.ResourceIntent is null ? "NoOptionalIntent" :
+                            "NoNewAcceptedCapabilities")}");
+                }
                 decision = planned;
             }
 
@@ -4428,7 +4446,8 @@ public sealed class NIRAExecutive
                     "If present, link it clearly as an optional alternative. Do not spend additional " +
                     "reasoning turns trying the same provider.");
                 NIRADiagnosticTrace.Event("IMAGE-SEARCH-RECOVERY",
-                    $"Run={runId:D} Cycle={cycle} Outcome=ProviderUnavailable Next=OneAnswerOnlyRound");
+                    $"Run={runId:D} Cycle={cycle} Outcome=NoVerifiedImage " +
+                    "(empty candidates or retrieval failure) Next=OneAnswerOnlyRound");
             }
 
             // A successful close with a fresh zero-process/zero-window OS read
@@ -5802,11 +5821,103 @@ public sealed class NIRAExecutive
                 // grant authority or bypass review.
                 string webResearchReviewEvidence =
                     NIRACognitionPromptCompiler.WebResearchReviewEvidence(latestContext);
+                if (webResearchReviewEvidence.Length == 0)
+                {
+                    webResearchReviewEvidence =
+                        NIRACognitionPromptCompiler.WebResearchReviewEvidence(
+                            capabilityResultsBySignature.Values.ToArray());
+                    if (webResearchReviewEvidence.Length > 0)
+                        NIRADiagnosticTrace.Event("WEB-RESEARCH-EVIDENCE-REVIEW",
+                            $"Run={runId:D} Cycle={cycle} Source=MixedReadOnlyBatch");
+                }
                 if (webResearchReviewEvidence.Length > 0)
                     NIRADiagnosticTrace.Event("WEB-RESEARCH-EVIDENCE-REVIEW",
                         $"Run={runId:D} Cycle={cycle} SourceChars={webResearchReviewEvidence.Length} " +
                         "Review=Independent");
 
+                // A real web response must not invent unseen citation URLs or
+                // claim unsupported precise measurements. This guard is cheap,
+                // topic-independent and checks only observable source structure;
+                // the independent LLM reviewer continues to judge semantic truth.
+                if (webResearchReviewEvidence.Length > 0 &&
+                    decision.State == NIRACognitionState.Complete &&
+                    decision.EmitReply)
+                {
+                    string visibleDraft = NIRAPresentationPolicy.ForObjectiveReview(
+                        decision.Reply, decision.DisplayBlocks);
+                    var grounding = NIRAWebResearchGroundingGate.Check(
+                        webResearchReviewEvidence, visibleDraft);
+                    NIRADiagnosticTrace.Event("WEB-GROUNDING-PREFLIGHT",
+                        $"Run={runId:D} Cycle={cycle} Accepted={grounding.Accepted} " +
+                        $"Code={grounding.Code} DraftChars={visibleDraft.Length} " +
+                        $"SourceChars={webResearchReviewEvidence.Length} " +
+                        $"PriorObjections={taskCompletionReviewCount}");
+                    if (!grounding.Accepted)
+                    {
+                        webGroundingCorrectionCount++;
+                        if (webGroundingCorrectionCount < 2)
+                        {
+                            executiveEvidence.AppendLine();
+                            executiveEvidence.AppendLine(
+                                "AUTHORITATIVE WEB DRAFT GROUNDING REJECTION: " +
+                                grounding.Explanation + " Use the observed source " +
+                                "extracts to correct or REMOVE the unsupported " +
+                                "numeric claim or unobserved citation. Do not repeat " +
+                                "the same ungrounded draft; give a useful partial " +
+                                "answer if full verification is impossible.");
+                            NIRADiagnosticTrace.Event("WEB-GROUNDING-RECOVERY",
+                                $"Run={runId:D} Cycle={cycle} " +
+                                $"Reason={grounding.Code} Action=Reconsider " +
+                                $"NextCycle={cycle + 1}");
+                            continue;
+                        }
+                        // The numeric check is NOT a reason to erase the user's factual
+                        // answer. If the second draft still includes an unsupported
+                        // precise claim, fall back to bounded, mechanically attributed
+                        // source EXCERPTS, never an unchecked model claim.
+                        string? partial = !preReviewCommitmentSucceeded &&
+                            !desktopActionNeedsObservation &&
+                            NIRAWebResearchReplyPolicy.IsGroundedAnswerShape(decision)
+                                ? NIRAWebResearchReplyPolicy.ObservedSourceDigestFromResults(
+                                    capabilityResultsBySignature.Values.ToArray())
+                                : null;
+                        if (partial is not null)
+                        {
+                            decision = decision with {
+                                State = NIRACognitionState.Complete,
+                                EmitReply = true, Reply = partial,
+                                Speech = string.Empty, ReplyReady = true,
+                                DisplayBlocks = Array.Empty<NIRARichBlock>(),
+                                DecisionSummary = "Bounded attributable source excerpts after web grounding failure."
+                            };
+                            // This is *not* an LLM-authored researched claim. The
+                            // trust-validated source-only handoff can be delivered
+                            // without the same reviewer asking the LLM to rewrite it.
+                            completionReviewConfirmedComplete = true;
+                        }
+                        else
+                        {
+                            decision = decision with {
+                                State = NIRACognitionState.Blocked,
+                                EmitReply = true,
+                                Reply = "I couldn't verify the exact figures I drafted. " +
+                                        "I won't present them as established results.",
+                                Speech = string.Empty, ReplyReady = true,
+                                DisplayBlocks = Array.Empty<NIRARichBlock>()
+                            };
+                        }
+                        NIRADiagnosticTrace.Event("WEB-GROUNDING-RECOVERY",
+                            $"Run={runId:D} Cycle={cycle} " +
+                            $"Reason={grounding.Code} Action=SourceAttributedPartial " +
+                            $"Available={partial is not null}");
+                    }
+                }
+
+                // Source-only digest is already mechanically validated: do not
+                // ask the semantic reviewer to turn safe excerpts into invented
+                // figures, then reject its own replacement again.
+                if (!completionReviewConfirmedComplete)
+                {
                 completionReviewCalls++;
                 Debug.WriteLine(
                     $"[ObjectiveGate] REVIEW | Run={runId:D} | Cycle={cycle} | " +
@@ -5814,9 +5925,7 @@ public sealed class NIRAExecutive
                     $"ObservedCapabilities={capabilityResultsBySignature.Count} | " +
                     $"PriorObjections={taskCompletionReviewCount}");
 
-                NIRATaskCompletionReview? taskReview =
-                    await _taskCompletionReview.ReviewAsync(
-                        new NIRATaskCompletionReviewRequest(
+                var reviewRequest = new NIRATaskCompletionReviewRequest(
                             mindEvent.Content,
                             NIRAPresentationPolicy.ForObjectiveReview(decision.Reply, decision.DisplayBlocks),
                             string.Join(Environment.NewLine + Environment.NewLine,
@@ -5840,8 +5949,21 @@ public sealed class NIRAExecutive
                                 "PERSISTED SOCIAL CARRYOVER (context, not proof of a new check):",
                                 latestContext?.SocialCarryoverContext ?? string.Empty),
                             decision.State.ToString(),
-                            webResearchReviewEvidence),
-                        cancellationToken);
+                            webResearchReviewEvidence);
+                NIRATaskCompletionReview? taskReview =
+                    await _taskCompletionReview.ReviewAsync(reviewRequest, cancellationToken);
+                // Recheck ONLY an unavailable verdict following real web evidence.
+                // Normally this uses no extra calls. Preserve the independent
+                // review contract: a missing verdict never certifies draft facts.
+                if (taskReview is null && webResearchReviewEvidence.Length > 0)
+                {
+                    NIRADiagnosticTrace.Event("OBJECTIVE-REVIEW-RECOVERY",
+                        $"Run={runId:D} Cycle={cycle} Stage=RetryUnavailable " +
+                        "SourceEvidence=True");
+                    completionReviewCalls++;
+                    taskReview = await _taskCompletionReview.ReviewAsync(
+                        reviewRequest, cancellationToken);
+                }
 
                 // Audit the review outcome without writing private prompt,
                 // user text or model-authored objection into the log.
@@ -5864,24 +5986,47 @@ public sealed class NIRAExecutive
                 }
                 else if (taskReview is null)
                 {
-                    // A failed reviewer must not silently certify an answer
-                    // that may have abandoned an entire user request.
+                    // A failed reviewer must not silently certify a factual
+                    // draft. However, we can present URLs from a trusted,
+                    // successful read-only source receipt as an explicitly
+                    // UNREVIEWED partial handoff. Do not do this for actions,
+                    // commitments, unsafe outcomes or unverified tool output.
+                    string? sourceHandoff = !preReviewCommitmentSucceeded &&
+                        decision.State == NIRACognitionState.Complete &&
+                        !decision.ReviewCommitment &&
+                        !desktopActionNeedsObservation &&
+                        decision.CapabilityRequests.Count == 0 &&
+                        decision.ControlRequests.Count == 0 &&
+                        decision.GoalProposals.Count == 0 &&
+                        decision.BranchProposals.Count == 0 &&
+                        decision.BranchWorkProposals.Count == 0 &&
+                        decision.DynamicToolProposals.Count == 0 &&
+                        decision.DynamicToolInvocations.Count == 0 &&
+                        capabilityResultsBySignature.Values.All(r => r.Risk == NIRACapabilityRisk.Observe) &&
+                        webResearchReviewEvidence.Length > 0
+                        ? NIRAWebResearchReplyPolicy.ObservedSourceHandoff(
+                            capabilityResultsBySignature.Values.ToArray())
+                        : null;
+                    NIRADiagnosticTrace.Event("OBJECTIVE-REVIEW-RECOVERY",
+                        $"Run={runId:D} Cycle={cycle} Stage=Terminal " +
+                        $"ObservedSourceHandoff={sourceHandoff is not null}");
                     Debug.WriteLine(
                         $"[ObjectiveGate] UNAVAILABLE | Run={runId:D} | Cycle={cycle}");
                     decision = decision with
                     {
                         State = NIRACognitionState.Blocked,
                         EmitReply = true,
-                        Reply = preReviewCommitmentSucceeded
+                        Reply = sourceHandoff ?? (preReviewCommitmentSucceeded
                             ? "I saved the future commitment, but couldn't verify " +
                               "the rest of my answer right now."
                             : "I couldn't verify my answer to that request just " +
                               "now, so I won't pretend it's completed. " +
-                              "Please try again.",
+                              "Please try again."),
                         Speech = string.Empty,
                         ReplyReady = true,
                         CharacterReady = true,
-                        DecisionSummary = "Independent objective check unavailable."
+                        DecisionSummary = "Independent objective check unavailable; " +
+                            (sourceHandoff is null ? "no source-only fallback" : "observed URLs only")
                     };
                 }
                 else
@@ -5942,9 +6087,37 @@ public sealed class NIRAExecutive
                         continue;
                     }
 
-                    // A reviewer objection is machine diagnostic text, not a
-                    // user-facing response. Avoid leaking its model-written gap.
-                    decision = decision with
+                    // Repeated review objections do not erase successfully
+                    // retrieved read-only research. A mechanically attributed
+                    // source digest is a safe PARTIAL result, not an independently
+                    // verified or model-invented answer. Never use it for writes,
+                    // permissions, commitments, or blocked safety outcomes.
+                    string? researchDigest = taskReview.Verdict == "NeedsWork" &&
+                        webResearchReviewEvidence.Length > 0 &&
+                        !preReviewCommitmentSucceeded && !desktopActionNeedsObservation &&
+                        NIRAWebResearchReplyPolicy.IsGroundedAnswerShape(decision)
+                            ? NIRAWebResearchReplyPolicy.ObservedSourceDigestFromResults(
+                                capabilityResultsBySignature.Values.ToArray())
+                            : null;
+                    if (researchDigest is not null)
+                    {
+                        decision = decision with
+                        {
+                            State = NIRACognitionState.Complete,
+                            EmitReply = true, Reply = researchDigest,
+                            Speech = string.Empty, ReplyReady = true,
+                            DisplayBlocks = Array.Empty<NIRARichBlock>(),
+                            DecisionSummary = "Observed read-only sources; partially answered with attributed excerpts."
+                        };
+                        completionReviewConfirmedComplete = true;
+                        NIRADiagnosticTrace.Event("WEB-RESEARCH-PARTIAL-DELIVERY",
+                            $"Run={runId:D} Cycle={cycle} Reason=ReviewerExhausted SourceOnly=True");
+                    }
+                    else
+                    {
+                        // A reviewer objection is diagnostic text, not a
+                        // user-facing response. Do not leak its model-written gap.
+                        decision = decision with
                     {
                         State = NIRACognitionState.Blocked,
                         EmitReply = true,
@@ -5962,10 +6135,12 @@ public sealed class NIRAExecutive
                         ReplyReady = true,
                         CharacterReady = true,
                         DecisionSummary = "Repeated independent objective review rejected the draft."
-                    };
+                        };
+                    }
                     Debug.WriteLine(
                         $"[ObjectiveGate] BOUNDED_STOP | Run={runId:D} | Cycle={cycle}");
                 }
+                } // independent semantic review (not needed for safe source-only digest)
             }
 
             // A deferred model goal-completion proposal is bookkeeping only.
