@@ -60,16 +60,25 @@ public static class NIRAWebResearchReplyPolicy
             observedResults.Any(result => result.Risk != NIRACapabilityRisk.Observe ||
                 result.ChangedSystemState || result.OutcomeUncertain))
             return null;
-        var web = observedResults.Where(result =>
-            result.CapabilityId == NIRACapabilityIds.WebSearch).ToArray();
-        if (web.Length != 1 || !web[0].Succeeded) return null;
-        try
+        // Reconsideration can legitimately produce more than one successful
+        // web.search result. The old exactly-one check erased ALL retrieved
+        // evidence after repeated NeedsWork review verdicts. Prefer the newest
+        // structurally validated receipt; never merge snippets into claims.
+        // This remains failure-only and never certifies a model-written draft.
+        foreach (var web in observedResults.Reverse())
         {
-            using JsonDocument receipt = JsonDocument.Parse(web[0].Output);
-            return ObservedSourceDigestFromPayload(receipt.RootElement);
+            if (web.CapabilityId != NIRACapabilityIds.WebSearch || !web.Succeeded)
+                continue;
+            try
+            {
+                using JsonDocument receipt = JsonDocument.Parse(web.Output);
+                string? digest = ObservedSourceDigestFromPayload(receipt.RootElement);
+                if (digest is not null) return digest;
+            }
+            catch (JsonException) { }
+            catch (InvalidOperationException) { }
         }
-        catch (JsonException) { return null; }
-        catch (InvalidOperationException) { return null; }
+        return null;
     }
 
     // Failure-only, source-attributed partial handoff. The reviewer is still

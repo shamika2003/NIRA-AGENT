@@ -287,6 +287,9 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         }
     }
 
+    // The prose document may find the same video as a structured block.
+    // These keys suppress duplicate embedded players, never the explanatory text.
+    public string EmbeddedVideoKeys { get; private set; } = string.Empty;
     public ObservableCollection<FrameworkElement> RichElements { get; } = new();
     private readonly List<(FrameworkElement View, NIRARichBlock Block)> _photoCreditFrames = new();
     public bool HasRichElements => RichElements.Count > 0;
@@ -309,6 +312,16 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         Action<string>? followUp = null)
     {
         var normalized = NIRAPresentationPolicy.Normalize(blocks);
+        string keys = string.Join("|", normalized.Where(b => b.Type == "video")
+            .Select(b => NIRAVideoReferencePolicy.TryParse(b.Text, out var video)
+                ? video?.Key : null)
+            .Where(k => !string.IsNullOrEmpty(k))
+            .Distinct(StringComparer.OrdinalIgnoreCase));
+        if (keys.Length > 0 && keys != EmbeddedVideoKeys)
+        {
+            EmbeddedVideoKeys = keys;
+            OnPropertyChanged(nameof(EmbeddedVideoKeys));
+        }
         IReadOnlyDictionary<int, NIRARichInteractionState> states =
             new Dictionary<int, NIRARichInteractionState>();
         if (archive is { Enabled: true } && messageId is Guid id)

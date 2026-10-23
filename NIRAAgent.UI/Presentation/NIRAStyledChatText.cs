@@ -117,7 +117,14 @@ public static class NIRAStyledChatText
                     inlines.Add(new Run(original[hostnameAndPath.Length..]));
             }
             else if (match.Groups["bold"].Success)
-                inlines.Add(new Bold(new Run(match.Groups["bold"].Value)));
+            {
+                // Bold text can itself contain an observed Markdown URL.
+                // Parse its child inlines rather than showing raw [label](url).
+                // Links are still HTTPS/HTTP and user-click-only in AddLink.
+                var bold = new Bold();
+                AppendInline(bold.Inlines, match.Groups["bold"].Value);
+                inlines.Add(bold);
+            }
             else if (match.Groups["italic"].Success)
                 inlines.Add(new Italic(new Run(match.Groups["italic"].Value)));
             else if (match.Groups["code"].Success)

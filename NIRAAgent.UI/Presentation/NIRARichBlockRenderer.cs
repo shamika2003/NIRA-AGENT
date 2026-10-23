@@ -63,7 +63,7 @@ public static class NIRARichBlockRenderer
         "hero" => Hero(block),
         "insight" => Insight(block),
         "source" => Source(block),
-        "video" => VideoLink(block),
+        "video" => NIRAVideoPlayer.Render(block),
         "text" => Frame(Body(block), false),
         "card" => Card(block),
         "file" => FileResult(block),
@@ -247,9 +247,9 @@ public static class NIRARichBlockRenderer
         return DesignedSurface(content, Palette[4], 17);
     }
 
-    // Open an observed publisher/video page. No WebView, autoplay, tracking
-    // iframe or fabricated player. The existing rich-text host owns navigation.
-    private static Border VideoLink(NIRARichBlock block)
+    // Fallback for links without a supported embedded video host. The existing
+    // safe rich-text host owns external navigation; no automatic video fetching.
+    internal static Border VideoLinkFallback(NIRARichBlock block)
     {
         var content = new StackPanel();
         string title = block.Title.Length > 0 ? block.Title : "Watch demonstration";

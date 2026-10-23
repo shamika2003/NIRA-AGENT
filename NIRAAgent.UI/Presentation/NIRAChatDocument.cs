@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using NIRAAgent.Presentation;
+using NIRAAgent.Diagnostics;
 
 namespace NIRAAgent.UI.Presentation;
 
@@ -23,6 +24,18 @@ public static class NIRAChatDocument
     public static string GetText(DependencyObject element) =>
         (string)element.GetValue(TextProperty);
 
+    public static readonly DependencyProperty EmbeddedVideoKeysProperty =
+        DependencyProperty.RegisterAttached("EmbeddedVideoKeys", typeof(string),
+            typeof(NIRAChatDocument), new PropertyMetadata(string.Empty, OnKeysChanged));
+
+    public static void SetEmbeddedVideoKeys(DependencyObject element, string value) =>
+        element.SetValue(EmbeddedVideoKeysProperty, value);
+    public static string GetEmbeddedVideoKeys(DependencyObject element) =>
+        (string)element.GetValue(EmbeddedVideoKeysProperty);
+
+    private static void OnKeysChanged(DependencyObject sender, DependencyPropertyChangedEventArgs e) =>
+        Build(sender, GetText(sender));
+
     private static readonly Regex Heading = new(@"^\s{0,3}(#{1,4})\s+(.+)$",
         RegexOptions.CultureInvariant);
     private static readonly Regex Bullet = new(@"^\s{0,3}(?<mark>[-*+]|\d{1,3}[.)])\s+(?<body>.*)$",
@@ -32,11 +45,15 @@ public static class NIRAChatDocument
     private static readonly Regex TableSeparator = new(@"^:?-{3,}:?$",
         RegexOptions.CultureInvariant);
 
-    private static void OnChanged(DependencyObject element, DependencyPropertyChangedEventArgs e)
+    private static void OnChanged(DependencyObject element, DependencyPropertyChangedEventArgs e) =>
+        Build(element, (string?)e.NewValue ?? string.Empty);
+
+    private static void Build(DependencyObject element, string raw)
     {
         if (element is not StackPanel root) return;
         root.Children.Clear();
-        string source = ((string?)e.NewValue ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n');
+        string source = raw.Replace("\r\n", "\n").Replace('\r', '\n');
+        string knownVideoKeys = GetEmbeddedVideoKeys(element);
         if (string.IsNullOrWhiteSpace(source)) return;
 
         string[] lines = source.Split('\n');
@@ -130,6 +147,29 @@ public static class NIRAChatDocument
                     Type = "checklist", Title = "Checklist", Items = items
                 }, new NIRARichInteractionState { CheckedIndices = checkedIndices }));
                 i = next - 1;
+                continue;
+            }
+
+            // Videos already represented by a typed displayBlock must NOT be
+            // repeated as a second player merely because NIRA cited its URL.
+            // Ordinary video links receive the identical player without asking
+            // cognition to change its existing answer construction.
+            if (NIRAVideoReferencePolicy.TryParseStandaloneLine(line,
+                out var video, out string videoTitle) && video != null)
+            {
+                FlushParagraph();
+                bool isAlreadyRendered = knownVideoKeys.Split('|',
+                        StringSplitOptions.RemoveEmptyEntries)
+                    .Contains(video.Key, StringComparer.OrdinalIgnoreCase);
+                NIRADiagnosticTrace.Event("VIDEO-REFERENCE-PRESENTATION",
+                    "Provider=" + video.Provider +
+                    " Source=StandaloneReply" +
+                    " Outcome=" + (isAlreadyRendered ? "AlreadyInTypedBlock" : "PlayerCreated"));
+                if (!isAlreadyRendered)
+                    root.Children.Add(NIRAVideoPlayer.Render(new NIRARichBlock
+                    {
+                        Type = "video", Title = videoTitle, Text = video.OriginalUrl
+                    }));
                 continue;
             }
 

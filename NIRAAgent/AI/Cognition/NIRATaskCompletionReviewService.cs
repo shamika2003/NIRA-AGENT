@@ -109,7 +109,14 @@ public sealed class NIRATaskCompletionReviewService
             precise speed/range/time/power figures, launch readiness, official
             features, and whether an alleged demonstration actually occurred.
             Those are general claim categories, not an instruction to demand
-            all such facts for every subject. Distinguish 'announced', 'targets',
+            all such facts for every subject. Identify unsupported extrapolation
+            even when it is phrased in a confident, entertaining scientific
+            metaphor. A hypothetical failure mechanism is not an observed
+            accident; a theoretical technology is not a commercial product;
+            precise parameters from an example calculation are not measured
+            performance. Where a claim goes beyond evidence, insist on explicit
+            assumptions, conditional language or removal, without rejecting
+            the user's entire useful answer. Distinguish 'announced', 'targets',
             'reports', 'achieved', and 'commercially available'. Secondary news
             repeating a speculative assertion does not make it verified.
             If a crucial claim overstates what the extracts say, verdict=NeedsWork,

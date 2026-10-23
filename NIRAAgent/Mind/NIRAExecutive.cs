@@ -6112,8 +6112,11 @@ public sealed class NIRAExecutive
                     // source digest is a safe PARTIAL result, not an independently
                     // verified or model-invented answer. Never use it for writes,
                     // permissions, commitments, or blocked safety outcomes.
+                    // The latest cycle's reviewer projection can be empty after
+                    // several source reads, even though the trusted result
+                    // ledger still contains valid web.search receipts. The
+                    // fallback itself validates those receipts independently.
                     string? researchDigest = taskReview.Verdict == "NeedsWork" &&
-                        webResearchReviewEvidence.Length > 0 &&
                         !preReviewCommitmentSucceeded && !desktopActionNeedsObservation &&
                         NIRAWebResearchReplyPolicy.IsGroundedAnswerShape(decision)
                             ? NIRAWebResearchReplyPolicy.ObservedSourceDigestFromResults(
@@ -6154,6 +6157,9 @@ public sealed class NIRAExecutive
                         Speech = string.Empty,
                         ReplyReady = true,
                         CharacterReady = true,
+                        // An unreviewed player block must not survive a blocked
+                        // factual answer and look like verified video evidence.
+                        DisplayBlocks = Array.Empty<NIRARichBlock>(),
                         DecisionSummary = "Repeated independent objective review rejected the draft."
                         };
                     }

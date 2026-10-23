@@ -205,6 +205,42 @@ Check("WEB mixed image/source batch preserves provider extracts for independent 
         throw new Exception("Mixed read-only results lost authoritative source extraction or weakened trust");
 });
 
+// An exhausted objective review may have made several successful read-only
+// searches. Those results still exist; no blanket refusal should discard them.
+// These are offline synthetic receipts, never a hardcoded production answer.
+Check("WEB multiple valid read-only receipts retain source-only partial after reviewer exhaustion", () =>
+{
+    string Receipt(string label) => JsonSerializer.Serialize(new {
+        evidenceType = "UntrustedPublicWebSearchExtracts", completed = true,
+        sourceCount = 1, sources = new[] { new {
+            url = "https://publisher.example.org/" + label,
+            title = label, extract = "Observed publisher extract for " + label }
+        }
+    });
+    NIRACapabilityResult Search(string label) => new() {
+        CapabilityId = NIRACapabilityIds.WebSearch,
+        Risk = NIRACapabilityRisk.Observe,
+        Status = NIRACapabilityResultStatus.Succeeded,
+        Output = Receipt(label)
+    };
+    var first = Search("earlier");
+    var second = Search("latest");
+    var olderFailed = first with { Status = NIRACapabilityResultStatus.Failed };
+    string? partial = NIRAWebResearchReplyPolicy.ObservedSourceDigestFromResults(
+        new[] { first, olderFailed, second });
+    if (partial is null ||
+        !partial.Contains("https://publisher.example.org/latest", StringComparison.Ordinal) ||
+        !partial.Contains("Observed publisher extract", StringComparison.Ordinal) ||
+        partial.Contains("https://publisher.example.org/earlier", StringComparison.Ordinal) ||
+        NIRAWebResearchReplyPolicy.ObservedSourceDigestFromResults(
+            new[] { first with { Risk = NIRACapabilityRisk.Modify }, second }) is not null ||
+        NIRAWebResearchReplyPolicy.ObservedSourceDigestFromResults(
+            new[] { olderFailed }) is not null ||
+        NIRAWebResearchReplyPolicy.ObservedSourceDigestFromResults(
+            new[] { first, second with { OutcomeUncertain = true } }) is not null)
+        throw new Exception("Multi-search source recovery lost evidence or relaxed authority checks");
+});
+
 // A knowledge-first answer remains useful if optional photography is absent
 // or the independent research reviewer exhausts its correction attempts.
 // This is a trust-validated, source-only PARTIAL delivery: not a model answer.
@@ -351,6 +387,106 @@ Check("TAVILY image-only discovery uses existing key without calling web.search"
         NIRATavilyImageDiscoveryService.PublicImageUrl("https://127.0.0.1/private.jpg") ||
         NIRATavilyImageDiscoveryService.PublicImageUrl("https://cdn.example.org/book.pdf"))
         throw new Exception("Tavily-only discovery, candidate integrity, or media URL security regressed");
+});
+
+// Live failure regression: Tavily supplies several independent candidates.
+// A blocked CDN image must not prevent another candidate from being verified.
+// These synthetic subjects and hosts are fixtures, NOT production routing rules.
+Check("TAVILY image-only skips inaccessible candidate and delivers next verified raster", () =>
+{
+    byte[] png = Convert.FromBase64String(
+        "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFElEQVR4nGOUTDnMgA0wYRUdtBIA/d4BUKK4lNoAAAAASUVORK5CYII=");
+    using var transport = new NIRAWebFakeTransport(req =>
+    {
+        if (req.RequestUri?.Host == "api.tavily.com")
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
+                Content = new StringContent("""
+                  {"images":[
+                   {"url":"https://media.example.org/first.png","description":"Sample apparatus structure photo view one"},
+                   {"url":"https://media.example.org/second.png","description":"Sample apparatus structure photo view two"}]}
+                  """)
+            };
+        if (req.RequestUri?.AbsoluteUri == "https://media.example.org/first.png")
+            return new HttpResponseMessage(System.Net.HttpStatusCode.Forbidden);
+        if (req.RequestUri?.AbsoluteUri == "https://media.example.org/second.png")
+        {
+            var bytes = new ByteArrayContent(png);
+            bytes.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = bytes };
+        }
+        throw new Exception("Unexpected image retrieval network call");
+    });
+    using var client = new HttpClient(transport);
+    string temporary = Path.Combine(Path.GetTempPath(), "nira-image-recovery-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        using var service = new NIRATavilyImageDiscoveryService(client,
+            key => key == "NIRA_TAVILY_API_KEY" ? "offline-key" : null, temporary);
+        var result = new NIRAImageSearchCapabilityHandler(service).ExecuteAsync(
+            Request(NIRACapabilityIds.ImageSearch,
+                """{"query":"Sample apparatus structure photo","limit":5,"retrieveBest":true,"retrieveCount":1} """))
+            .GetAwaiter().GetResult();
+        if (transport.CallsTo("api.tavily.com") != 1 ||
+            transport.CallsTo("media.example.org") != 2 ||
+            result.VisualArtifacts.Count != 1 ||
+            !File.Exists(result.VisualArtifacts[0].LocalPath) ||
+            !result.Output.Contains("ImageCandidateAttempts=2", StringComparison.Ordinal) ||
+            !result.Output.Contains("ImageCandidateFailures=1", StringComparison.Ordinal) ||
+            !result.Output.Contains("VerifiedImageCount=1", StringComparison.Ordinal))
+            throw new Exception("The failed candidate terminated retrieval, duplicated Tavily credits, or invented pixels");
+    }
+    finally { if (Directory.Exists(temporary)) Directory.Delete(temporary, true); }
+});
+
+Check("TAVILY every image download fails without fabricating an image", () =>
+{
+    using var transport = new NIRAWebFakeTransport(req =>
+    {
+        if (req.RequestUri?.Host == "api.tavily.com")
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
+                Content = new StringContent("""
+                  {"images":[
+                   {"url":"https://media.example.org/missing-one.png","description":"Sample apparatus structure photo view one"},
+                   {"url":"https://media.example.org/missing-two.png","description":"Sample apparatus structure photo view two"}]}
+                  """)
+            };
+        return new HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
+    });
+    using var client = new HttpClient(transport);
+    using var service = new NIRATavilyImageDiscoveryService(client,
+        key => key == "NIRA_TAVILY_API_KEY" ? "offline-key" : null);
+    var result = new NIRAImageSearchCapabilityHandler(service).ExecuteAsync(
+        Request(NIRACapabilityIds.ImageSearch,
+            """{"query":"Sample apparatus structure photo","limit":4,"retrieveBest":true,"retrieveCount":2} """))
+        .GetAwaiter().GetResult();
+    if (transport.CallsTo("api.tavily.com") != 1 ||
+        transport.CallsTo("media.example.org") != 2 ||
+        result.VisualArtifacts.Count != 0 ||
+        !result.Output.Contains("ImageCandidateFailures=2", StringComparison.Ordinal) ||
+        !result.Output.Contains("ImageMediaUnavailable=True", StringComparison.Ordinal))
+        throw new Exception("Candidate failure was not bounded or a missing image was falsely delivered");
+});
+
+Check("RESEARCH video and scientific confidence preserve existing declarative media flow", () =>
+{
+    string first = NIRACognitionPromptCompiler.BootstrapSystem("");
+    string synthesis = NIRACognitionPromptCompiler.WebResearchSynthesisSystem("");
+    string reviewer = NIRATaskCompletionReviewService.ReviewerSystemPrompt;
+    if (!first.Contains("MEDIA CONTINUITY:", StringComparison.Ordinal) ||
+        !first.Contains("text field must contain ONLY", StringComparison.Ordinal) ||
+        !synthesis.Contains("SCIENTIFIC CLAIM CALIBRATION:", StringComparison.Ordinal) ||
+        !synthesis.Contains("future native player", StringComparison.Ordinal) ||
+        !reviewer.Contains("A theoretical technology is not a commercial product", StringComparison.OrdinalIgnoreCase))
+        throw new Exception("Context-sensitive media handling or source-calibrated technical reasoning regressed");
+    using var response = JsonDocument.Parse("""
+      {"displayBlocks":[{"type":"video","title":"Verified demonstration",
+      "text":"https://publisher.example.org/watch/recording"}]}
+      """);
+    var blocks = NIRARichBlockJsonReader.Read(response.RootElement);
+    if (blocks.Count != 1 || blocks[0].Type != "video" ||
+        blocks[0].Title != "Verified demonstration" ||
+        blocks[0].Text != "https://publisher.example.org/watch/recording")
+        throw new Exception("Structured watch URL was not preserved for a future player");
 });
 
 // R6: Resource planning is based on a model-selected optional intention,

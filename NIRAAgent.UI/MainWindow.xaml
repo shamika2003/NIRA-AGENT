@@ -567,7 +567,8 @@
                                  its own readable spacing without a white chat box. -->
                             <StackPanel x:Name="AssistantContentText"
                                         Grid.Row="0" HorizontalAlignment="Stretch"
-                                        present:NIRAChatDocument.Text="{Binding Content}"/>
+                                        present:NIRAChatDocument.Text="{Binding Content}"
+                                        present:NIRAChatDocument.EmbeddedVideoKeys="{Binding EmbeddedVideoKeys}"/>
 
                             <ItemsControl x:Name="AssistantRichBlocks" Grid.Row="1"
                                           ItemsSource="{Binding RichElements}" Visibility="Collapsed"

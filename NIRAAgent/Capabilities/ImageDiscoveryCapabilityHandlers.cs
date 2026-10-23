@@ -90,9 +90,12 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
             var hashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             budget.CancelAfter(TimeSpan.FromSeconds(28));
+            int attempted = 0;
+            int unavailable = 0;
             foreach (var candidate in images)
             {
                 if (shown.Count >= retrieveCount || budget.IsCancellationRequested) break;
+                attempted++;
                 try
                 {
                     var image = await _service.RetrieveAsync(candidate.CandidateId, budget.Token);
@@ -110,15 +113,23 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
                 }
                 catch (NIRAImageRetrievalUnavailableException)
                 {
-                    // Exhaustion of this already-searched batch is terminal.
-                    // The retrieval service itself tried independent candidates.
-                    break;
+                    // This candidate failed; the other search results may be hosted
+                    // elsewhere. Preserve the SAME search/provider call, bounded
+                    // deadline, verified-byte requirement and requested image count.
+                    unavailable++;
+                    continue;
                 }
                 catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                 {
                     break;
                 }
             }
+            NIRADiagnosticTrace.Event("IMAGE-RETRIEVE-BATCH",
+                $"Provider=Tavily Attempted={attempted} Unavailable={unavailable} " +
+                $"VerifiedDistinct={shown.Count} Requested={retrieveCount} " +
+                $"BudgetExpired={budget.IsCancellationRequested}");
+            output.AppendLine($"ImageCandidateAttempts={attempted}");
+            output.AppendLine($"ImageCandidateFailures={unavailable}");
             if (shown.Count > 0)
             {
                 NIRAAgent.Diagnostics.NIRADiagnosticTrace.Event("IMAGE-DELIVERY",
