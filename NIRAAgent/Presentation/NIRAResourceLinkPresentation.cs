@@ -9,7 +9,7 @@ public sealed record NIRAResourceLinkPresentation(string Label, string Address, 
 public static class NIRAResourceLinkPolicy
 {
     private static readonly Regex Standalone = new(
-        @"^\s*(?:(?:[-*+]|\d{1,3}[.)])\s+)?(?:(?<kind>Source|Sources|Reference|References|Read more|Further reading)\s*:\s*)?\[(?<label>[^\]\r\n]{1,120})\]\((?<url>https?://[^\s<>]{1,1900})\)\s*$",
+        @"^\s*(?:(?:[-*+]|\d{1,3}[.)])\s+)?(?:\[\d{1,3}\]\s*)?(?:(?<kind>Source|Sources|Reference|References|Read more|Further reading)\s*:\s*)?\[(?<label>[^\]\r\n]{1,120})\]\((?<url>https?://[^\s<>]{1,1900})\)\s*$",
         RegexOptions.CultureInvariant | RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     public static bool TryParse(string? line, out NIRAResourceLinkPresentation? result)

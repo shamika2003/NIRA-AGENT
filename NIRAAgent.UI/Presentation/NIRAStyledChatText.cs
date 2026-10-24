@@ -64,7 +64,7 @@ public static class NIRAStyledChatText
                 continue;
             }
 
-            if (Regex.IsMatch(line, @"^\s*---+\s*$"))
+            if (Regex.IsMatch(line, @"^\s*(?:-{3,}|\*{3,}|_{3,})\s*$"))
             {
                 var separator = new Run("────────────");
                 separator.SetResourceReference(TextElement.ForegroundProperty, "NIRAMutedBrush");
@@ -121,7 +121,7 @@ public static class NIRAStyledChatText
                 // Bold text can itself contain an observed Markdown URL.
                 // Parse its child inlines rather than showing raw [label](url).
                 // Links are still HTTPS/HTTP and user-click-only in AddLink.
-                var bold = new Bold();
+                var bold = new Span { FontWeight = FontWeights.SemiBold };
                 AppendInline(bold.Inlines, match.Groups["bold"].Value);
                 inlines.Add(bold);
             }

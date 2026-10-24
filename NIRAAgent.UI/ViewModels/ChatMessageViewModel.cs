@@ -190,15 +190,26 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
 
             _content =
                 value;
+            if (VisualArtifacts.Count > 0) RefreshRichPhotoPlacement();
 
             OnPropertyChanged();
             OnPropertyChanged(
                 nameof(HasContent));
+            OnPropertyChanged(nameof(HasInlineVisuals));
+            OnPropertyChanged(nameof(InlineVisualRevision));
             OnPropertyChanged(
                 nameof(IsEmpty));
         }
     }
 
+
+    // Only verified source-backed images enter the paragraph-aware document.
+    // Nonretrieved and generated assets keep their established gallery/viewer.
+    public bool HasInlineVisuals => Content.Length >= 100 &&
+        (_richContentFrames.Count > 0 || RichElements.Count == 0) &&
+        VisualArtifacts.Count is > 0 and <= 4 &&
+        VisualArtifacts.All(v => v.HasPreview && v.HasSourceUri && !v.IsGeneratedImage);
+    public int InlineVisualRevision => VisualArtifacts.Count;
 
     public ObservableCollection<VisualArtifactViewModel> VisualArtifacts
     {
@@ -297,6 +308,132 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
     private NIRAVideoDepthDeck? _videoDepthDeck;
     public ObservableCollection<FrameworkElement> RichElements { get; } = new();
     private readonly List<(FrameworkElement View, NIRARichBlock Block)> _photoCreditFrames = new();
+    // Real rich-block views provide grounded target sections for verified photos.
+    // Track content frames separately from media frames so refreshes are idempotent.
+    private readonly List<(FrameworkElement View, IReadOnlyList<NIRARichBlock> Blocks)> _richContentFrames = new();
+    private readonly List<FrameworkElement> _richImageFrames = new();
+
+    private void RefreshRichPhotoPlacement()
+    {
+        foreach (var previous in _richImageFrames) RichElements.Remove(previous);
+        _richImageFrames.Clear();
+        if (_richContentFrames.Count == 0 || !HasInlineVisuals) return;
+        var photos = VisualArtifacts.Where(p => p.HasPreview && p.HasSourceUri && !p.IsGeneratedImage)
+            .Take(4).ToArray();
+        if (photos.Length == 0) return;
+
+        // A photo paired to several tabbed sections is more useful when the
+        // sections become separate readable cards. That lets each verified
+        // image sit under its own explanation instead of collecting at the end.
+        for (int g = 0; g < _richContentFrames.Count; g++)
+        {
+            var group = _richContentFrames[g];
+            if (group.Blocks.Count != 1 || group.Blocks[0].Type != "tabs")
+                continue;
+            var tabs = group.Blocks[0];
+            var matchedTabIndices = photos.Select(photo => tabs.Items
+                .Select((item, index) => new
+                {
+                    Index = index,
+                    Score = NIRAInlineImageAnchorPolicy.MatchSection(
+                        string.IsNullOrWhiteSpace(photo.SubjectQuery) ? photo.Title : photo.SubjectQuery,
+                        item, null,
+                        index < tabs.Panels.Count ? new[] { tabs.Panels[index] } : null,
+                        index < tabs.Panels.Count ? tabs.Panels[index] : string.Empty)
+                })
+                .Where(x => x.Score > 0)
+                .OrderByDescending(x => x.Score)
+                .FirstOrDefault())
+                .Where(x => x != null)
+                .Select(x => x!.Index)
+                .Distinct()
+                .ToArray();
+            if (matchedTabIndices.Length < 2) continue;
+            int startIndex = RichElements.IndexOf(group.View);
+            if (startIndex < 0) continue;
+            RichElements.RemoveAt(startIndex);
+            _richContentFrames.RemoveAt(g);
+            int offset = 0;
+            for (int index = 0; index < tabs.Items.Count && index < tabs.Panels.Count; index++)
+            {
+                var card = new NIRARichBlock
+                {
+                    Type = "card",
+                    Title = tabs.Items[index],
+                    Text = tabs.Panels[index]
+                };
+                FrameworkElement rendered = NIRARichBlockRenderer.Render(card);
+                RichElements.Insert(startIndex + offset, rendered);
+                _richContentFrames.Insert(g + offset, (rendered, new[] { card }));
+                offset++;
+            }
+            g += Math.Max(0, tabs.Items.Count - 1);
+        }
+
+        // Card groups are normally responsive multi-column surfaces. If photos
+        // target separate cards, split only that group into independent sections
+        // so each photo can sit directly under its own explanation.
+        for (int g = 0; g < _richContentFrames.Count; g++)
+        {
+            var group = _richContentFrames[g];
+            if (group.Blocks.Count <= 1 || group.Blocks.Any(b => b.Type != "card") ||
+                !photos.Any(p => group.Blocks.Any(b =>
+                    NIRAInlineImageAnchorPolicy.MatchSection(
+                        string.IsNullOrWhiteSpace(p.SubjectQuery) ? p.Title : p.SubjectQuery,
+                        b.Title, null, null, b.Text) > 0)))
+                continue;
+            int start = RichElements.IndexOf(group.View);
+            if (start < 0) continue;
+            RichElements.RemoveAt(start);
+            _richContentFrames.RemoveAt(g);
+            int offset = 0;
+            foreach (var block in group.Blocks)
+            {
+                FrameworkElement separate = NIRARichBlockRenderer.Render(block);
+                RichElements.Insert(start + offset, separate);
+                _richContentFrames.Insert(g + offset, (separate, new[] { block }));
+                offset++;
+            }
+            g += offset - 1;
+        }
+
+        // Anchor only when the whole verified search subject appears in a
+        // block heading/label. Unsupported or ambiguous photo titles are NOT
+        // evidence that an unrelated paragraph describes the picture.
+        var attachedCount = new Dictionary<FrameworkElement, int>();
+        foreach (var photo in photos)
+        {
+            string subject = string.IsNullOrWhiteSpace(photo.SubjectQuery)
+                ? photo.Title : photo.SubjectQuery;
+            // Prose and rich blocks are different WPF rows. Let the document
+            // own photos with a real paragraph anchor; never double-render.
+            if (NIRAInlineImageAnchorPolicy.FindLine(Content, subject) >= 0)
+                continue;
+            var ranked = _richContentFrames.Select(pair => new
+            {
+                pair.View,
+                Score = pair.Blocks.Max(b => NIRAInlineImageAnchorPolicy.MatchSection(
+                    string.IsNullOrWhiteSpace(photo.SubjectQuery) ? photo.Title : photo.SubjectQuery,
+                    b.Title,
+                    b.Type == "tabs" ? b.Items : null,
+                    b.Type == "tabs" ? b.Panels : null,
+                    b.Text))
+            }).Where(x => x.Score > 0).OrderByDescending(x => x.Score).ToArray();
+            // A rich block must actually identify the subject. Dropping an
+            // unanchored image is safer than a fake visual placed at the end.
+            if (ranked.Length == 0) continue;
+            FrameworkElement anchor = ranked[0].View;
+            int position = RichElements.IndexOf(anchor) + 1;
+            if (position <= 0) continue;
+            if (attachedCount.TryGetValue(anchor, out int previousCount))
+                position += previousCount;
+            var frame = NIRAChatDocument.MakeInlinePhoto(photo, prominent: false);
+            RichElements.Insert(Math.Min(position, RichElements.Count), frame);
+            _richImageFrames.Add(frame);
+            attachedCount[anchor] = attachedCount.GetValueOrDefault(anchor) + 1;
+        }
+    }
+
     public bool HasRichElements => RichElements.Count > 0;
     private bool HasRetrievedCreditedImage => VisualArtifacts.Any(image =>
         image.HasStructuredCredit && image.HasSourceUri);
@@ -308,6 +445,7 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         {
             if (!NIRAImageCreditLayoutPolicy.IsDuplicatePhotoCredit(entry.Block, true)) continue;
             RichElements.Remove(entry.View);
+            _richContentFrames.RemoveAll(frame => ReferenceEquals(frame.View, entry.View));
             _photoCreditFrames.Remove(entry);
         }
     }
@@ -360,6 +498,7 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
                     ? NIRARichBlockRenderer.RenderCardGroup(group)
                     : NIRARichBlockRenderer.RenderMetricGroup(group);
                 RichElements.Add(rendered);
+                _richContentFrames.Add((rendered, group.ToArray()));
                 if (group.Count == 1 && NIRAImageCreditLayoutPolicy.IsDuplicatePhotoCredit(group[0], true))
                     _photoCreditFrames.Add((rendered, group[0]));
             }
@@ -394,10 +533,12 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
                 }
                 FrameworkElement rendered = NIRARichBlockRenderer.Render(block, saved, persist, followUp);
                 RichElements.Add(rendered);
+                _richContentFrames.Add((rendered, new[] { block }));
                 if (NIRAImageCreditLayoutPolicy.IsDuplicatePhotoCredit(block, true))
                     _photoCreditFrames.Add((rendered, block));
             }
         }
+        RefreshRichPhotoPlacement();
     }
 
     public bool IsUser =>
@@ -460,16 +601,20 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         RichElements.CollectionChanged += (_, _) =>
         {
             OnPropertyChanged(nameof(HasRichElements));
+            OnPropertyChanged(nameof(HasInlineVisuals));
             OnPropertyChanged(nameof(IsEmpty));
         };
 
         VisualArtifacts.CollectionChanged +=
             (_, _) =>
             {
+                RefreshRichPhotoPlacement();
                 RebuildAssistantImageGalleryTiles();
                 SuppressDuplicatePhotoCreditFrames();
                 OnPropertyChanged(
                     nameof(HasVisualArtifacts));
+                OnPropertyChanged(nameof(HasInlineVisuals));
+                OnPropertyChanged(nameof(InlineVisualRevision));
                 OnPropertyChanged(
                     nameof(IsEmpty));
             };

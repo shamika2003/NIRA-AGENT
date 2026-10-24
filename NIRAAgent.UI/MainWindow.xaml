@@ -568,7 +568,10 @@
                             <StackPanel x:Name="AssistantContentText"
                                         Grid.Row="0" HorizontalAlignment="Stretch"
                                         present:NIRAChatDocument.Text="{Binding Content}"
-                                        present:NIRAChatDocument.EmbeddedVideoKeys="{Binding EmbeddedVideoKeys}"/>
+                                        present:NIRAChatDocument.EmbeddedVideoKeys="{Binding EmbeddedVideoKeys}"
+                                        present:NIRAChatDocument.InlineVisuals="{Binding VisualArtifacts}"
+                                        present:NIRAChatDocument.InlineVisualRevision="{Binding InlineVisualRevision}"
+                                        present:NIRAChatDocument.HasRichBlocks="{Binding HasRichElements}"/>
 
                             <ItemsControl x:Name="AssistantRichBlocks" Grid.Row="1"
                                           ItemsSource="{Binding RichElements}" Visibility="Collapsed"
@@ -597,10 +600,9 @@
                                                  focal point; metadata lives in a readable footer.
                                                  Width follows the chat column up to 760px. -->
                                             <Border x:Name="AssistantSingleImageCard"
-                                                    CornerRadius="20"
-                                                    Background="{DynamicResource NIRAGlassStrongTintBrush}"
-                                                    BorderBrush="{DynamicResource NIRAComposerEdgeBrush}"
-                                                    BorderThickness="1" Visibility="Collapsed">
+                                                    CornerRadius="0"
+                                                    Background="Transparent"
+                                                    BorderThickness="0" Visibility="Collapsed">
                                                 <Grid Width="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType={x:Type ItemsControl}}}"
                                                       MaxWidth="680">
                                                     <Grid.RowDefinitions>
@@ -609,12 +611,11 @@
                                                     </Grid.RowDefinitions>
 
                                                     <Border Grid.Row="0"
-                                                            Margin="14,14,14,0"
+                                                            Margin="0"
                                                             Padding="0"
-                                                            CornerRadius="16"
-                                                            Background="#14091A33"
-                                                            BorderBrush="#21000000"
-                                                            BorderThickness="1"
+                                                            CornerRadius="11"
+                                                            Background="Transparent"
+                                                            BorderThickness="0"
                                                             ClipToBounds="True"
                                                             Cursor="Hand"
                                                             ToolTip="Open image at full size"
@@ -622,12 +623,12 @@
                                                         <Grid>
                                                             <Image Source="{Binding PreviewImage}"
                                                                    Stretch="Uniform"
-                                                                   MaxHeight="470"
+                                                                   MaxHeight="285" MaxWidth="345"
                                                                    HorizontalAlignment="Center"
                                                                    VerticalAlignment="Center"
                                                                    RenderOptions.BitmapScalingMode="HighQuality"
                                                                    SnapsToDevicePixels="True"/>
-                                                            <Border Background="#A5081730"
+                                                            <Border Background="Transparent" Visibility="Collapsed"
                                                                     HorizontalAlignment="Left"
                                                                     VerticalAlignment="Top"
                                                                     Margin="14"
@@ -644,7 +645,7 @@
                                                                                Foreground="White"/>
                                                                 </StackPanel>
                                                             </Border>
-                                                            <Border HorizontalAlignment="Right"
+                                                            <Border HorizontalAlignment="Right" Visibility="Collapsed"
                                                                     VerticalAlignment="Bottom"
                                                                     Margin="0,0,14,14"
                                                                     Padding="10,6"
@@ -659,7 +660,7 @@
                                                         </Grid>
                                                     </Border>
 
-                                                    <StackPanel Grid.Row="1" Margin="20,16,20,18">
+                                                    <StackPanel Grid.Row="1" Margin="0,7,0,10">
                                                         <TextBlock x:Name="AssistantCreditProviderText"
                                                                    Text="{Binding CreditProvider}" FontSize="10"
                                                                    FontWeight="SemiBold" Foreground="{DynamicResource NIRACyanBrush}"
@@ -762,9 +763,8 @@
                                                             <Button.Template>
                                                                 <ControlTemplate TargetType="Button">
                                                                     <Border x:Name="SourcePill"
-                                                                            Background="{DynamicResource NIRAGlassStrongTintBrush}"
-                                                                            BorderBrush="{DynamicResource NIRAComposerEdgeBrush}"
-                                                                            BorderThickness="1" CornerRadius="9"
+                                                                            Background="Transparent"
+                                                                            BorderThickness="0" CornerRadius="0"
                                                                             Padding="{TemplateBinding Padding}">
                                                                         <ContentPresenter HorizontalAlignment="Center"
                                                                                           VerticalAlignment="Center"/>
@@ -783,9 +783,8 @@
                                             </Border>
                                             <Border x:Name="AssistantStripTile" Width="192" Height="144"
                                                     CornerRadius="11" ClipToBounds="True"
-                                                    Background="{DynamicResource NIRAComposerBadgeBrush}"
-                                                    BorderBrush="{DynamicResource NIRAComposerEdgeBrush}"
-                                                    BorderThickness="1" Cursor="Hand"
+                                                    Background="Transparent"
+                                                    BorderThickness="0" Cursor="Hand"
                                                     ToolTip="Open NIRA image gallery"
                                                     MouseLeftButtonUp="UserImageGalleryTile_MouseLeftButtonUp"
                                                     RenderTransformOrigin="0.5,0.5">
@@ -913,6 +912,11 @@
                 </DataTrigger>
                 <DataTrigger Binding="{Binding HasVisualArtifacts}" Value="True">
                     <Setter TargetName="AssistantVisualArtifacts" Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+                <!-- An inline verified image should never be duplicated in the
+                     old below-the-answer gallery. Generated images keep it. -->
+                <DataTrigger Binding="{Binding HasInlineVisuals}" Value="True">
+                    <Setter TargetName="AssistantVisualArtifacts" Property="Visibility" Value="Collapsed"/>
                 </DataTrigger>
 
                 <DataTrigger Binding="{Binding HasContent}" Value="False">

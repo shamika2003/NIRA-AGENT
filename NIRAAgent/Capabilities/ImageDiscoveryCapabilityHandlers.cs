@@ -106,7 +106,8 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
                         $"SelectionNumber={shown.Count + 1}");
                     shown.Add(new NIRACapabilityVisualArtifact {
                         LocalPath = image.LocalPath, Title = image.Title, Caption = image.Caption,
-                        SourceUri = image.SourceUri, PresentToUser = true, Surface = "InlineOnly"
+                        SubjectQuery = query, SourceUri = image.SourceUri,
+                        PresentToUser = true, Surface = "InlineOnly"
                     });
                     output.AppendLine($"VerifiedImageTitle={image.Title}");
                     output.AppendLine($"VerifiedImageSourceUri={image.SourceUri}");

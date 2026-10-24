@@ -1173,8 +1173,24 @@ public sealed class NIRAExecutive
             // authorization, tool receipts and answer completion remain intact.
             if (cycle == 1 && mindEvent.Source == NIRAMindEventSource.User)
             {
+                // When cognition chose substantive, concretely visual rich blocks but
+                // omitted optional resourceIntent, recover ONE named photo search from
+                // its own content. This adds no LLM call; it never bypasses the
+                // normal read-only capability/authorization pipeline.
+                NIRACognitionDecision enriched = NIRARichMediaOpportunityPolicy.Enrich(
+                    decision, mindEvent.Content);
+                if (!ReferenceEquals(enriched, decision))
+                    NIRADiagnosticTrace.Event("IMAGE-INTENT-RECOVERY",
+                        $"Run={runId:D} Cycle={cycle} " +
+                        "Source=ModelAuthoredRichBlocks SelectedImage=True " +
+                        $"Searches={enriched.CapabilityRequests.Count(r => r.CapabilityId == NIRACapabilityIds.ImageSearch)} " +
+                        $"ImageCount={enriched.ResourceIntent?.ImageCount ?? enriched.CapabilityRequests.Count(r => r.CapabilityId == NIRACapabilityIds.ImageSearch)} " +
+                        "ExtraLlmCalls=0");
+                decision = enriched;
                 NIRACognitionDecision planned = NIRAResourceIntentPlanner.Apply(decision, true);
-                bool dispatched = !ReferenceEquals(planned, decision);
+                bool dispatched = !ReferenceEquals(planned, decision) ||
+                    (!ReferenceEquals(enriched, decision) &&
+                     planned.CapabilityRequests.Count > 0);
                 NIRADiagnosticTrace.Event("RESOURCE-PLAN",
                     $"Run={runId:D} Cycle={cycle} " +
                     $"ModelSelected={decision.ResourceIntent is not null} " +
@@ -1253,9 +1269,9 @@ public sealed class NIRAExecutive
             // The model controls media selection; the runtime controls actual
             // fulfillment. Preserve its first chosen quantity for implicit media.
             if (cycle == 1 && imageDeliveryTarget == 0)
-                imageDeliveryTarget = decision.CapabilityRequests
-                    .Select(NIRAImageTurnDeliveryPolicy.SearchRetrieveCount)
-                    .FirstOrDefault(n => n > 0);
+                imageDeliveryTarget = Math.Clamp(decision.CapabilityRequests
+                    .Where(r => r.CapabilityId == NIRACapabilityIds.ImageSearch)
+                    .Sum(NIRAImageTurnDeliveryPolicy.SearchRetrieveCount), 0, 3);
             if (cycle == 1 && imageDeliveryTarget == 0 &&
                 decision.ResourceIntent is { ImageQuery.Length: > 0 } intent)
                 imageDeliveryTarget = Math.Clamp(intent.ImageCount, 1, 3);
@@ -5016,6 +5032,27 @@ public sealed class NIRAExecutive
                 dynamicToolCapabilityResults.Count >
                 0;
 
+            // Image-only observe results do not need a second large cognition
+            // pass when the reply is already complete. Queue the verified
+            // visuals and finish the turn; objective review may still run.
+            bool imageOnlyReplyFastPath =
+                capabilityResults.Count > 0 &&
+                dynamicToolCapabilityResults.Count == 0 &&
+                !continueForRuntimeCorrection &&
+                decision.State == NIRACognitionState.Complete &&
+                decision.EmitReply && decision.ReplyReady &&
+                capabilityResults.All(result =>
+                    result.CapabilityId == NIRACapabilityIds.ImageSearch &&
+                    result.Risk == NIRACapabilityRisk.Observe &&
+                    !result.ChangedSystemState);
+            if (imageOnlyReplyFastPath)
+            {
+                continueForCapabilityResults = false;
+                NIRADiagnosticTrace.Event("IMAGE-FASTPATH",
+                    $"Run={runId:D} Cycle={cycle} ImageResults={capabilityResults.Count} " +
+                    $"Verified={verifiedImageRetrievalCount} CognitionRoundSkipped=True");
+            }
+
             // A trusted OS failure creating the exact requested parent is a
             // terminal prerequisite blocker for this serial action batch.
             // Another cognition round cannot repair an unavailable storage
@@ -6786,8 +6823,13 @@ public sealed class NIRAExecutive
                         Debug.WriteLine(
                             $"[VisualArtifact] REJECTED | Run={runId} | " +
                             $"Reason='{TrimLog(ex.Message)}'");
+                        // A bounded diagnostic code distinguishes image-format
+                        // mismatches from authorization and missing-file failures.
+                        string reasonCode = ex is InvalidOperationException &&
+                            ex.Message.Contains("format", StringComparison.OrdinalIgnoreCase)
+                            ? "UnsupportedFormat" : ex.GetType().Name;
                         NIRADiagnosticTrace.Event("IMAGE-DELIVERY",
-                            $"Run={runId:D} Stage=PresentationRejected ReasonType={ex.GetType().Name}");
+                            $"Run={runId:D} Stage=PresentationRejected ReasonType={reasonCode}");
 
                         continue;
                     }
@@ -8103,6 +8145,7 @@ public sealed class NIRAExecutive
                         Title = normalized.Title,
                         Caption = normalized.Caption,
                         SourceUri = normalized.SourceUri,
+                        SubjectQuery = normalized.SubjectQuery,
                         Surface = surface
                     };
 

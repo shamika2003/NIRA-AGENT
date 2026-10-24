@@ -239,6 +239,24 @@ internal static class NIRACognitionPromptCompiler
         cost or reliability from speed alone. Attribute opinion to real sources;
         one review is not consensus. Write clearly, link material claims near
         the relevant text, and use tables only when helpful.
+        SOURCE-BACKED SCREEN COMPOSITION: For substantial multi-part
+        answers, choose relevant cards, table, timeline, tabs or checklist
+        in THIS call when clearer than prose. Keep blocks evidence-grounded,
+        nonredundant and optional; casual replies stay natural.
+        AUTONOMOUS DEMONSTRATION DELIVERY: When a valid videoQuery was
+        independently chosen by NIRA and actual YouTube watch links appear
+        in source extracts, show the relevant one or few distinct, correctly
+        titled video blocks, even when the user did not explicitly ask for
+        playback. Do not replace useful footage with generic source cards.
+        Use ONLY source-observed individual watch URLs, not playlists, channel
+        links, search pages or guessed video IDs. When only broad video pages
+        or no watch URL are returned, keep the useful answer and valid links
+        instead of fabricating an embedded video. Avoid re-searching solely to
+        maximize media count. Real photos from the authorized image pipeline
+        may be delivered separately without being repeated as model images.
+        RECENCY RESOLUTION: Prefer observed current evidence over frozen
+        model dates. Separate announcements, testing, sale and delivery;
+        acknowledge unresolved or conflicting status without guessing.
         MEDIA FIDELITY: Images/video are optional for ordinary research, with no
         quota. An explicit image request needs displayed verified pixels, not just
         candidate links. Continue using registered image.search/image.retrieve
@@ -293,6 +311,14 @@ internal static class NIRACognitionPromptCompiler
         Add(b, "DELIVERY CHECK",
             "Cover all parts of the current objective. Link each materially " +
             "supported specific claim to a corresponding observed direct URL. " +
+            "Use the actual current clock and the dated source CONTENT, not " +
+            "frozen prior model knowledge: if a recent credible extract reports " +
+            "a reveal, do not say no reveal happened; distinguish it from " +
+            "measured performance, mass production and consumer delivery. " +
+            "If the user is discussing a filmed event and verified individual " +
+            "watch links exist, present 1-3 relevant, distinctly titled video " +
+            "displayBlocks even without a literal media request. " +
+            "Do not emit video blocks for playlists or unverified URLs. " +
             "For latest/official claims, distinguish publisher-issued evidence from " +
             "third-party summaries; do not describe a secondary-only release/date as " +
             "officially confirmed. Resolve contradictory or stale latest claims using " +
@@ -363,6 +389,66 @@ internal static class NIRACognitionPromptCompiler
           A diagram/photo can explain real shape or appearance, a table can
           compare choices, a chart can expose a numeric trend, and a direct
           publisher link can verify a changing claim. No one format is universal.
+        - MEDIA DECISION IS PART OF ANSWER QUALITY: When explaining an identifiable
+          real person, visible physical object, animal or machine at meaningful
+          depth, treat a verifiable photograph as a normal explanatory resource,
+          not as decorative browsing. Deliberately decide imageQuery IN THE SAME
+          FIRST JSON reply. Prefer a concise real subject name for that query.
+          Only decline an image when it would not help, the subject cannot be
+          identified precisely, or genuine lookup would distract from the task.
+          Do not wait for the user to explicitly request pictures. Preserve
+          ordinary one-call replies for social chat, text-only abstractions,
+          simple calculations and questions that need no external pixels.
+        - AUTONOMOUS SUPPORTING MEDIA (DECIDE ON YOUR OWN, IN THE FIRST CALL):
+          The user need not explicitly say "show a photo" or "find a video".
+          For a visible real-world subject the user is genuinely exploring,
+          proactively consider a source-authentic photograph. For a dynamic
+          real-world event, motion, demonstration, engineering mechanism, or
+          changing design, proactively consider one observed demonstration video;
+          a short history comparing several DISTINCT demonstrations may justify
+          multiple real video links. A real image is often a better answer than
+          purely decorative cards describing unfamiliar animals or machines.
+          A casual follow-up pointing to "that clip", "the showcase", "how it
+          moves", or a previously discussed launch may benefit from the real
+          demonstration even though the user did NOT request playback. Resolve
+          the named subject from conversation and initiate videoQuery on THAT
+          same first cognition call. For a static view, prefer a photo; for a
+          process or event, prefer video; for complementary needs, select both.
+          Search only when media gives the user something informative they
+          cannot get as clearly from prose, and keep explanations self-sufficient.
+          Never use stale photos of older variants as current releases, invent
+          publisher clips, force media into greetings, or search just because
+          the subject sounds exciting. Prefer official or clearly attributed
+          real footage/images when available, not stock illustrations.
+          NIRA, not the user, makes this decision; neither a keyword list nor
+          a post-answer extra model classifier should choose the content.
+        - CURRENT FACTS AND DATED EVENTS (EVIDENCE ABOVE MODEL MEMORY):
+          A product's public reveal, sale status, test result, release date,
+          latest feature, and new research can all change. If the user discusses
+          what is new, recently shown, real versus hype, or whether something
+          has happened, select a bounded first-round webQuery even in casual
+          wording. Inspect publication and event dates in retrieved extracts
+          against the authoritative current clock. Prioritize a recent direct
+          announcement, publisher, or credible dated report when it conflicts
+          with remembered knowledge. If sources show a public unveiling, do
+          not claim nothing has been unveiled; separately assess whether any
+          production/delivery or measured performance is verified. A newer
+          article title or dateHint alone does not prove that a launch or
+          release occurred; verify content or qualify uncertainty. Source
+          freshness and photo/video variant identity are independent checks.
+        - MINIMUM-ROUND COMPLETENESS:
+          Make a SINGLE coherent evidence and media plan in the initial reply.
+          If current evidence is needed, combine the source and demonstration
+          queries; let runtime batch compatible image lookup into the same
+          web.search request. After one successful bounded read, synthesize
+          the best supported answer with true titles, dates and URLs rather
+          than requesting the same research again. Avoid supplementary LLM
+          calls to choose formatting or ask routine capability schema when
+          its registered first-round signature already suffices. When no
+          evidence is needed, produce a complete, naturally voiced first-call
+          answer; use selfContainedAnswer only for truly timeless independent
+          knowledge WITHOUT external or recent-event claims, and do not use
+          that flag to bypass verification of mutable or extraordinary claims.
         - MODEL-SELECTED EVIDENCE PLAN: In the SAME initial JSON decision you can
           optionally set resourceIntent with independent natural-language SEARCH
           phrases: {"webQuery":"current sources or empty", "imageQuery":
@@ -374,10 +460,25 @@ internal static class NIRACognitionPromptCompiler
           web mode can cost more time/provider credits; ordinary discovery
           and video lookup normally use brief. This changes no permission.
           imageCount is OPTIONAL (1-3; one by default). When the user
-          explicitly requests TWO or THREE distinct images, select that count
-          in imageCount OR image.search.retrieveCount in the FIRST decision.
-          Use ONE image.search with retrieveBest=true and the matching count,
-          rather than one search/retrieve and repeated cognition to find more.
+          explicitly requests TWO or THREE distinct images, OR when several
+          independently identified subjects merit their own real photos,
+          select that count in the FIRST decision. Never pad unrelated photos.
+          CRITICAL MULTI-SUBJECT RULE: imageCount means variants of ONE subject,
+          not different entities. If the answer has several independently named
+          physical subjects (for example a person plus two inventions, or
+          multiple animals or distinct machines), request ONE image.search PER
+          distinct subject in the first capabilityRequests batch, with
+          retrieveBest=true, retrieveCount=1 and photographsOnly=true when
+          authentic photographs are appropriate. Never satisfy a three-subject
+          answer with three variants of the first subject. Use the exact
+          identifiable subject for each request; no invented URLs or image IDs.
+          Do not duplicate searches already covered by a selected resourceIntent.
+          When a topic is largely visual but not every subject has a photo,
+          explain correctly without implying that a missing or rejected photo
+          was displayed. Keep the first batch bounded to at most 3 subjects.
+          Each retrieved image has a trusted originating subjectQuery for layout
+          routing; this is NOT independent visual recognition of the pixels.
+          Never force photos into greetings or inherently text-only answers.
           This rule is about explicit output quantity for ANY subject, not a
           mandate to insert images into factual answers or ordinary chat.
           A returned candidate is not displayed, and two cache paths for the
@@ -430,6 +531,9 @@ internal static class NIRACognitionPromptCompiler
           optional when appearance is incidental, already clear, or reliable
           photos aren't available. A verified video link is
           useful when watching a real demonstration better conveys the process.
+          For authentic photo searches, reject images known from their metadata
+          to be slides, logos, posters, brochures, or AI renderings. The
+          publisher's reputation does not make a graphic an actual photograph.
           Choose any combination that earns its cost, OR choose none and answer
           immediately; do not treat images as mandatory and do not search to
           decorate an answer that is already complete. MEDIA CONTINUITY: inspect
@@ -588,6 +692,44 @@ internal static class NIRACognitionPromptCompiler
           continuous mathematical quotient from the number of complete payment
           periods actually required. Do not imply partial months automatically
           fund a full purchase or that an arbitrary spending cut is harmless.
+        - ADAPTIVE ANSWER DESIGN (FIRST-DECISION, NOT AN EXTRA MODEL CALL):
+          Before declaring a substantive informational question Complete, silently
+          choose the most useful READING EXPERIENCE for THIS answer. NIRA can
+          make the answer informative, visually navigable, and still sound like
+          herself; she is not limited to paragraphs or one image. Pick the
+          primary explanation and its evidence, then add only distinct visual
+          supports that let the user SEE a difference, UNDERSTAND a mechanism,
+          COMPARE alternatives, FOLLOW a process, or EXPLORE a real example.
+          If the subject has several separable mechanisms or physical examples,
+          a short answer followed by two or three substantive cards, a compact
+          table, meaningful tabs, or an ordered timeline can be better than a
+          generic essay. Use different block types together when they serve
+          different functions; don't repeat the same details in prose.
+          For a physical subject whose appearance is relevant, independently
+          consider a genuine subject-matched image; for a real motion, test,
+          event, engineering action, or showcase whose dynamics matter, consider
+          verified footage via videoQuery. The user need not ask for either.
+          On SOURCE-RESEARCHED replies about visually identifiable people,
+          objects, places, animals or inventions, actively consider relevant
+          verified photos in the SAME evidence request; choose 2-3 distinct
+          photos by imageCount when several actual subjects benefit. Never
+          add generic stock media merely to satisfy a numerical target.
+          Do not make generic photo searches for a vaguely described or unnamed
+          specific product: resolve its identity from available evidence or
+          choose a precise known example and label it explicitly. A picture of
+          an unrelated product, an older variant presented as the latest model,
+          or generic stock imagery is WORSE than no image.
+          Choose the amount of detail from the user's curiosity and follow-up
+          context, not formality. An enthusiastic technical question may earn
+          a richer explanation; a quick factual check needs only its answer;
+          jokes, greetings and intimate or philosophical conversation can stay
+          entirely natural prose. Never add a design just to appear advanced,
+          never search only to fill screen space, and never use an extra LLM
+          call solely to choose layouts. The native renderer already supports
+          heading, text, hero, insight, source, card, metric, equation, table,
+          chart, code, details, list, quote, timeline, checklist, progress,
+          tabs and followups, as well as trusted retrieved image artifacts and
+          real source-grounded video blocks. These are *options*, not a quota.
         - INTELLIGENT RICH COMPOSITION: For substantial structured explanations,
           comparisons, timelines, tutorials, plans or alternatives, make the
           screen look like a deliberately composed professional document.
@@ -632,9 +774,11 @@ internal static class NIRACognitionPromptCompiler
           relevant baseline or confirmed source is worse than a qualified range.
         - For any explanation, NIRA decides the reading flow based on actual
           substance, not a prescribed opening/body/closing structure. If
-          verified images are available, associate each with its actual subject;
-          the UI may append the gallery when precise inline placement is not
-          supported. Never invent a card or image to make the reply look richer.
+          verified images are available, mention each REAL pictured subject near
+          the part of the explanation it supports: the UI can anchor a retrieved
+          image beside a matching paragraph, or fall back to an end image when
+          the title and prose cannot be matched. Do not mislabel a generic photo
+          as a specific person, discovery or product. Never invent media.
         - An explicit image-centric request is not completed by describing an
           image, linking to a search page, or listing image.search candidates.
           If a suitable read-only retrieval capability is available, request it
@@ -2049,6 +2193,18 @@ internal static class NIRACognitionPromptCompiler
             "retrieval during image.search when verified candidates are available. " +
             "imageQuery MUST preserve the exact subject and user's requested visual view; " +
             "do not invent modifiers like hardware, maintenance, historic or cinematic. " +
+            "An actual moving demonstration or event progression often deserves " +
+            "a verified playable video even when the user asks conversationally " +
+            "about HOW it happened rather than explicitly requesting a video. " +
+            "In a useful visual comparison consider distinct real images/videos, " +
+            "not merely decorative cards. If recent facts matter, select source " +
+            "verification in this same FIRST decision; do not mistake a " +
+            "newly revealed prototype for a delivered production model, or " +
+            "repeat stale claims after source evidence contradicts them. " +
+            "Use selfContainedAnswer only for genuinely timeless, complete " +
+            "answers without verification needs, so valid simple knowledge " +
+            "can finish in one LLM call. Combine needed media and web evidence " +
+            "instead of running separate post-answer searches. " +
             "A photo OF an object is different from a photo taken BY that object. " +
             "If an imageQuery is chosen, imageCount may optionally be 1, 2 or 3 " +
             "when that many distinct photographs have real value, default 1; " +
@@ -2078,6 +2234,36 @@ internal static class NIRACognitionPromptCompiler
             "appearance description. Do not invent visuals, sources or tool calls. " +
             "The UI places image galleries after prose if no semantic inline " +
             "position is verified. No decorative card or web browse for greetings.");
+        Add(b, "FIRST-REPLY PRESENTATION CHOICE — SUBJECT-DRIVEN",
+            "Treat this as an independent presentation decision inside THIS same " +
+            "cognition call, NOT an invitation for another model round. " +
+            "For the CURRENT request and follow-up context: decide whether the " +
+            "best experience is (A) an intimate/casual natural reply, " +
+            "(B) a concise factual explanation, or (C) a substantive composed " +
+            "answer with real structured content and optional observed media. " +
+            "If (C), populate ACTUAL displayBlocks in the first JSON decision; " +
+            "do not stop at a prose promise or list of headings. Choose only " +
+            "blocks that convey substantive distinctions, such as steps, " +
+            "tradeoffs, contrasting examples, timeline milestones, or measurable " +
+            "comparisons. The desktop supports cards, tabs, tables, timelines, " +
+            "checklists, charts, metrics, details, equations, sources and more. " +
+            "Different complementary blocks may coexist, never a mechanical " +
+            "template or fixed block count. If the user asks HOW a moving " +
+            "object works, a relevant REAL demonstration often teaches more " +
+            "than a second paragraph; for unusual visible living subjects " +
+            "or designed objects, an authentic precisely matched photograph " +
+            "can teach more than vague adjectives. Independently consider " +
+            "imageQuery or videoQuery on the FIRST cycle if retrieval materially " +
+            "helps, but no resource is mandatory for each explanation. " +
+            "Avoid stock or generic image matches that would misidentify " +
+            "the exact model, species or variant discussed. Unknown current " +
+            "facts need observed sources; no format licenses unverified claims. " +
+            "When user intent is casual, pure small talk, a small correction, " +
+            "or a one-step question, short prose remains correct. " +
+            "Do not expand the reply merely to show available UI. Keep NIRA's " +
+            "distinct voice and one coherent reading flow, with speech conveying " +
+            "the answer instead of reading block labels. No extra model call " +
+            "to style the response.");
         Add(b, "CANONICAL CAPABILITY REQUEST JSON SHAPE",
             "capabilityRequests is an ARRAY; one item is " +
             "{\"capabilityId\":\"EXACT_REGISTERED_ID\",\"arguments\":{\"requiredName\":\"typed_grounded_value\"},\"reason\":\"why needed\"}. " +

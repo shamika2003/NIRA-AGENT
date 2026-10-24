@@ -108,6 +108,9 @@ public sealed record NIRAVisualArtifactPresentationRequest
         string.Empty;
 
 
+    // Trusted image.search query, for layout only. Not a description of the pixels.
+    public string SubjectQuery { get; init; } = string.Empty;
+
     public NIRAVisualArtifactPresentationSurface Surface
     {
         get;
@@ -140,6 +143,7 @@ public sealed record NIRAVisualArtifactPresentationRequest
         string title = NormalizeText(Title, 180);
         string caption = NormalizeText(Caption, 1000);
         string sourceUri = NormalizeText(SourceUri, 1600);
+        string subjectQuery = NormalizeText(SubjectQuery, 160);
 
         // Canonical form always carries exactly one source. EvidenceId wins
         // when both were supplied; NIRAVisualArtifactService will still
@@ -155,6 +159,7 @@ public sealed record NIRAVisualArtifactPresentationRequest
             Title = title,
             Caption = caption,
             SourceUri = sourceUri,
+            SubjectQuery = subjectQuery,
             Annotations = annotations
         };
     }
@@ -175,6 +180,7 @@ public sealed record NIRAVisualArtifactPresentationRequest
             normalized.Title,
             normalized.Caption,
             normalized.SourceUri,
+            normalized.SubjectQuery,
             string.Join(";", normalized.Annotations.Select(a =>
                 $"{a.Kind}:{a.X:R}:{a.Y:R}:{a.Width:R}:{a.Height:R}:{a.Label}")));
     }
@@ -258,6 +264,8 @@ public sealed record NIRAVisualArtifact
         init;
     } =
         string.Empty;
+
+    public string SubjectQuery { get; init; } = string.Empty;
 
 
     public string SourceReference

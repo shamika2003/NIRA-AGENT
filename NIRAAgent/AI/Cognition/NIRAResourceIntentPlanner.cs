@@ -67,7 +67,11 @@ public static class NIRAResourceIntentPlanner
         // image, ONE Tavily response can carry both. This avoids paying for a
         // second image-search API call. If the user asks only for photos, use
         // image.search unchanged. No subject/topic keywords are hardcoded.
-        bool sharedTavily = imageQuery.Length > 0 && webQuery.Length > 0 &&
+        // Either source research OR model-selected demonstration lookup can
+        // carry relevant ranked images through the same Tavily web receipt.
+        // Avoid a second paid image.search when image + video are chosen.
+        bool sharedTavily = imageQuery.Length > 0 &&
+            (webQuery.Length > 0 || videoQuery.Length > 0) &&
             !requests.Any(r => r.CapabilityId is NIRACapabilityIds.ImageSearch or
                 NIRACapabilityIds.ImageRetrieve or NIRACapabilityIds.WebSearch);
         // Do not duplicate capability families the model has already planned.

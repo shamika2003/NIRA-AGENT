@@ -2,6 +2,9 @@ using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Input;
+using NIRAAgent.UI.ViewModels;
+using NIRAAgent.UI.Visuals;
 using NIRAAgent.Presentation;
 
 namespace NIRAAgent.UI.Presentation;
@@ -32,8 +35,41 @@ public static class NIRAChatDocument
     public static string GetEmbeddedVideoKeys(DependencyObject element) =>
         (string)element.GetValue(EmbeddedVideoKeysProperty);
 
+    // Rich blocks are rendered in a separate WPF row. Photos belonging to
+    // those blocks are inserted there by ChatMessageViewModel, never before
+    // the row simply because plain-text layout finished first.
+    public static readonly DependencyProperty HasRichBlocksProperty =
+        DependencyProperty.RegisterAttached("HasRichBlocks", typeof(bool),
+            typeof(NIRAChatDocument), new PropertyMetadata(false, OnRichChanged));
+    public static void SetHasRichBlocks(DependencyObject owner, bool value) =>
+        owner.SetValue(HasRichBlocksProperty, value);
+    public static bool GetHasRichBlocks(DependencyObject owner) =>
+        (bool)owner.GetValue(HasRichBlocksProperty);
+    private static void OnRichChanged(DependencyObject owner, DependencyPropertyChangedEventArgs _) =>
+        Build(owner, GetText(owner));
+
     private static void OnKeysChanged(DependencyObject sender, DependencyPropertyChangedEventArgs e) =>
         Build(sender, GetText(sender));
+
+    // This attached collection carries already verified local image artifacts.
+    // The revision binding updates the document when an image arrives *after*
+    // the prose, avoiding any second LLM call or remote image load at render.
+    public static readonly DependencyProperty InlineVisualsProperty =
+        DependencyProperty.RegisterAttached("InlineVisuals", typeof(object),
+            typeof(NIRAChatDocument), new PropertyMetadata(null, OnInlineChanged));
+    public static void SetInlineVisuals(DependencyObject owner, object? value) =>
+        owner.SetValue(InlineVisualsProperty, value);
+    public static object? GetInlineVisuals(DependencyObject owner) =>
+        owner.GetValue(InlineVisualsProperty);
+    public static readonly DependencyProperty InlineVisualRevisionProperty =
+        DependencyProperty.RegisterAttached("InlineVisualRevision", typeof(int),
+            typeof(NIRAChatDocument), new PropertyMetadata(0, OnInlineChanged));
+    public static void SetInlineVisualRevision(DependencyObject owner, int value) =>
+        owner.SetValue(InlineVisualRevisionProperty, value);
+    public static int GetInlineVisualRevision(DependencyObject owner) =>
+        (int)owner.GetValue(InlineVisualRevisionProperty);
+    private static void OnInlineChanged(DependencyObject owner, DependencyPropertyChangedEventArgs _) =>
+        Build(owner, GetText(owner));
 
     private static readonly Regex Heading = new(@"^\s{0,3}(#{1,4})\s+(.+)$",
         RegexOptions.CultureInvariant);
@@ -94,6 +130,39 @@ public static class NIRAChatDocument
         }
         if (string.IsNullOrWhiteSpace(source)) return;
 
+        // Preserve the original gallery for generated, local, unsupported or
+        // mixed artifact sets. Use inline cards only for 1-4 independently
+        // retrieved and decoded source-backed photographs in a substantive answer.
+        var photos = GetInlineVisuals(element) as IReadOnlyList<VisualArtifactViewModel>;
+        // Text-anchored photos also belong inside replies that have typed rich
+        // blocks. The earlier !HasRichBlocks gate forced every retrieved photo
+        // into a separate rich-elements row after the entire explanation.
+        bool inlinePhotos = photos is { Count: > 0 and <= 4 } && source.Length >= 100 &&
+            photos.All(p => p.HasPreview && p.HasSourceUri && !p.IsGeneratedImage);
+        var pendingPhotos = inlinePhotos ? photos!.Select(p => new
+        {
+            Artifact = p,
+            Anchor = NIRAInlineImageAnchorPolicy.FindLine(source,
+                string.IsNullOrWhiteSpace(p.SubjectQuery) ? p.Title : p.SubjectQuery)
+        }).ToList() : null;
+        var placedPhotos = new HashSet<Guid>();
+        int currentLine = -1;
+        void PlacePhotosThrough(int lastLine)
+        {
+            if (pendingPhotos is null) return;
+            foreach (var candidate in pendingPhotos)
+            {
+                // Never manufacture a position for an unrelated/unmatched photo.
+                // Rich-section matching handles those independently.
+                if (placedPhotos.Contains(candidate.Artifact.ArtifactId) ||
+                    candidate.Anchor < 0 || candidate.Anchor > lastLine)
+                    continue;
+                root.Children.Add(MakeInlinePhoto(candidate.Artifact,
+                    prominent: placedPhotos.Count == 0));
+                placedPhotos.Add(candidate.Artifact.ArtifactId);
+            }
+        }
+
         string[] lines = source.Split('\n');
         var paragraph = new List<string>();
         var code = new List<string>();
@@ -105,7 +174,10 @@ public static class NIRAChatDocument
             string text = string.Join("\n", paragraph).Trim();
             paragraph.Clear();
             if (text.Length > 0)
-                root.Children.Add(MakeText(text, 14, 24.5, new Thickness(0, 0, 0, 17)));
+            {
+                root.Children.Add(MakeText(text, 15, 25.5, new Thickness(0, 0, 0, 17)));
+                PlacePhotosThrough(currentLine);
+            }
         }
         void FlushCode()
         {
@@ -127,6 +199,7 @@ public static class NIRAChatDocument
 
         for (int i = 0; i < lines.Length; i++)
         {
+            currentLine = i;
             string line = lines[i].TrimEnd();
             if (line.TrimStart().StartsWith("```", StringComparison.Ordinal))
             {
@@ -291,7 +364,7 @@ public static class NIRAChatDocument
             {
                 FlushParagraph();
                 int depth = heading.Groups[1].Length;
-                double size = depth switch { 1 => 23, 2 => 19, 3 => 16, _ => 14.5 };
+                double size = depth switch { 1 => 24, 2 => 20, 3 => 17, _ => 15 };
                 var title = MakeText(heading.Groups[2].Value, size,
                     depth == 1 ? 33 : 28,
                     new Thickness(0, depth == 1 ? 19 : 15, 0, 12));
@@ -313,13 +386,13 @@ public static class NIRAChatDocument
                 var symbol = MakeText(marker, 13.5, 24, new Thickness(0));
                 symbol.FontWeight = FontWeights.SemiBold;
                 symbol.SetResourceReference(TextBlock.ForegroundProperty, "NIRACyanBrush");
-                var body = MakeText(bullet.Groups["body"].Value, 14, 24, new Thickness(0));
+                var body = MakeText(bullet.Groups["body"].Value, 15, 25, new Thickness(0));
                 Grid.SetColumn(body, 1);
                 grid.Children.Add(symbol); grid.Children.Add(body);
                 root.Children.Add(grid);
                 continue;
             }
-            if (Regex.IsMatch(line, @"^\s*---+\s*$"))
+            if (Regex.IsMatch(line, @"^\s*(?:-{3,}|\*{3,}|_{3,})\s*$"))
             {
                 FlushParagraph();
                 var rule = new Border { Height = 1, Margin = new Thickness(0, 14, 0, 20),
@@ -331,7 +404,7 @@ public static class NIRAChatDocument
             if (line.TrimStart().StartsWith('>'))
             {
                 FlushParagraph();
-                var quote = MakeText(line.TrimStart().TrimStart('>').TrimStart(), 13.5, 22,
+                var quote = MakeText(line.TrimStart().TrimStart('>').TrimStart(), 14.5, 24,
                     new Thickness(15, 9, 9, 9));
                 var panel = new Border { Child = quote, BorderThickness = new Thickness(3, 0, 0, 0),
                     Margin = new Thickness(0, 5, 0, 15) };
@@ -341,7 +414,10 @@ public static class NIRAChatDocument
             }
             paragraph.Add(line.Trim());
         }
+        currentLine = lines.Length;
         FlushParagraph(); FlushCode();
+        // Unmatched photos are NOT appended to the end of the response. The
+        // rich block presenter may attach them to a strongly matching section.
         foreach (var item in embeddedLinks)
         {
             if (!knownVideoKeys.Add(item.Video.Key)) continue;
@@ -354,20 +430,20 @@ public static class NIRAChatDocument
 
     private static Border MakeReferenceRow(NIRAResourceLinkPresentation resource)
     {
-        var panel = new StackPanel { Margin = new Thickness(13, 9, 13, 9) };
-        var heading = MakeText(resource.Kind + "  /  " + resource.Host, 10.5, 16,
+        var panel = new StackPanel { Margin = new Thickness(11, 7, 11, 7) };
+        var heading = MakeText(resource.Kind + "   ·   " + resource.Host, 10.5, 16,
             new Thickness(0, 0, 0, 5));
         heading.FontWeight = FontWeights.SemiBold;
         heading.SetResourceReference(TextBlock.ForegroundProperty, "NIRASecondaryBrush");
         panel.Children.Add(heading);
-        var link = MakeText($"[{resource.Label}  ↗]({resource.Address})", 13, 21,
+        var link = MakeText($"[{resource.Label}  ↗]({resource.Address})", 14, 22,
             new Thickness(0));
         link.FontWeight = FontWeights.SemiBold;
         panel.Children.Add(link);
         var frame = new Border { Child = panel, CornerRadius = new CornerRadius(11),
             HorizontalAlignment = HorizontalAlignment.Left,
-            MaxWidth = 540, BorderThickness = new Thickness(1),
-            Margin = new Thickness(0, 3, 0, 14) };
+            MaxWidth = 600, BorderThickness = new Thickness(1),
+            Margin = new Thickness(0, 2, 0, 5) };
         frame.SetResourceReference(Border.BackgroundProperty, "NIRAGlassStrongTintBrush");
         frame.SetResourceReference(Border.BorderBrushProperty, "NIRAGlassBorderBrush");
         return frame;
@@ -399,6 +475,70 @@ public static class NIRAChatDocument
         cells = parts.Select(cell => cell.Trim().Replace(@"\|", "|", StringComparison.Ordinal))
             .ToArray();
         return true;
+    }
+
+    public static FrameworkElement MakeInlinePhoto(VisualArtifactViewModel photo, bool prominent)
+    {
+        // Plain image + quiet photo credit. No navy letterbox, no glass card,
+        // outer border, badge or enclosing tinted panel.
+        double width = prominent ? 345 : 325;
+        var content = new StackPanel { MaxWidth = width };
+        var picture = new Image
+        {
+            Source = photo.PreviewImage,
+            Stretch = Stretch.Uniform,
+            MaxWidth = width,
+            MaxHeight = prominent ? 275 : 240,
+            HorizontalAlignment = HorizontalAlignment.Left
+        };
+        RenderOptions.SetBitmapScalingMode(picture, BitmapScalingMode.HighQuality);
+        var media = new Border
+        {
+            Child = picture,
+            CornerRadius = new CornerRadius(10),
+            ClipToBounds = true,
+            Background = Brushes.Transparent,
+            Cursor = Cursors.Hand,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            ToolTip = "Open original image"
+        };
+        media.MouseLeftButtonUp += (_, e) =>
+        {
+            e.Handled = true;
+            var viewer = new NIRAVisualArtifactViewerWindow(photo);
+            var owner = Window.GetWindow(media);
+            if (owner is { IsVisible: true }) viewer.Owner = owner;
+            viewer.Show();
+        };
+        content.Children.Add(media);
+
+        // Editorial title supplied by search engines is not necessarily a
+        // useful photograph caption; prefer the concrete search subject.
+        string label = string.IsNullOrWhiteSpace(photo.SubjectQuery)
+            ? photo.Title.Trim() : photo.SubjectQuery.Trim();
+        if (Regex.IsMatch(label, @"(?:__PID:|^[0-9a-f]{24,}(?:\.|$)|^\d+(?:st|nd|rd|th) image)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            label = "Reference photograph";
+        if (label.Length > 76) label = label[..73] + "…";
+        var title = MakeText(label, 13, 19, new Thickness(0, 6, 0, 1));
+        title.FontWeight = FontWeights.Medium;
+        content.Children.Add(title);
+        if (photo.HasSourceUri)
+        {
+            string address = photo.SourceUri;
+            string host = Uri.TryCreate(address, UriKind.Absolute, out Uri? uri) ? uri.Host : "Source";
+            content.Children.Add(MakeText($"[Photo source · {host}]({address})", 12, 18,
+                new Thickness(0, 0, 0, 0)));
+        }
+        return new Border
+        {
+            Child = content,
+            MaxWidth = width,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(0, 4, 0, 15)
+        };
     }
 
     private static TextBlock MakeText(string value, double size, double lineHeight, Thickness margin)

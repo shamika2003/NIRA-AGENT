@@ -244,6 +244,9 @@ public sealed class NIRAVisualArtifactService
                 SourceUri =
                     request.SourceUri,
 
+                SubjectQuery =
+                    request.SubjectQuery,
+
                 SourceReference =
                     sourceReference,
 

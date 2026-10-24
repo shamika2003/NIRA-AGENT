@@ -18,7 +18,7 @@ public static class NIRARichBlockRenderer
     private static void Theme(FrameworkElement element, DependencyProperty property, string key) =>
         element.SetResourceReference(property, key);
 
-    private static TextBlock Text(string value, double size = 13, bool bold = false, string brush = "NIRATextBrush")
+    private static TextBlock Text(string value, double size = 14, bool bold = false, string brush = "NIRATextBrush")
     {
         var text = new TextBlock
         {

@@ -53,6 +53,7 @@ public sealed class VisualArtifactViewModel : INotifyPropertyChanged
     // Source is optional provenance from an already verified visual artifact;
     // it does not cause a network request or manufacture an image preview.
     public string SourceUri => Artifact.SourceUri;
+    public string SubjectQuery => Artifact.SubjectQuery;
     public bool HasSourceUri => Uri.TryCreate(SourceUri, UriKind.Absolute, out var parsed)
         && (parsed.Scheme == Uri.UriSchemeHttps || parsed.Scheme == Uri.UriSchemeHttp);
 

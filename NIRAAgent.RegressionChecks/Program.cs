@@ -16,6 +16,7 @@ using NIRAAgent.Diagnostics;
 using NIRAAgent.PC.Awareness;
 using NIRAAgent.Images;
 using NIRAAgent.Gallery;
+using NIRAAgent.Artifacts;
 
 // Run with: dotnet run --project NIRAAgent.RegressionChecks
 // These are offline contract checks, not simulated live model/Bridge tests.
@@ -24,6 +25,235 @@ int failed = 0;
 Console.WriteLine($"[DeepRouting] REGRESSION | Revision={NIRAModelSelection.RoutingRevision} | " +
     $"Assembly={typeof(NIRAModelSelection).Assembly.Location}");
 Console.WriteLine("[ConcurrentMind] REGRESSION | Revision=NIRA-CONCURRENT-20261014-S4-ADAPTIVE");
+
+// V12.1: The observed production failure was NOT image retrieval. Cognition
+// returned rich explanations with a null resourceIntent; nothing was searched.
+// Recover a conservative one-photo intention only from model-authored content,
+// without a classifier model, known-name registry or forced media quota.
+Check("V12.1 named visual profile can request one authentic photo from rich content", () =>
+{
+    var typed = new NIRACognitionDecision {
+        State = NIRACognitionState.Complete, EmitReply = true,
+        Reply = "Mira Solan designed several optical instruments. Her instruments " +
+            "were widely adopted and changed how observatories operated across different regions. " +
+            "She also established a new measurement methodology for early spectrographs.",
+        DisplayBlocks = new[] {
+            new NIRARichBlock { Type = "table", Title = "Mira Solan's major instruments" },
+            new NIRARichBlock { Type = "insight", Title = "Historical influence",
+                Text = "Research teams used Solan's methods." }
+        }
+    };
+    var enriched = NIRARichMediaOpportunityPolicy.Enrich(typed,
+        "Tell me about Mira Solan and her most interesting discoveries.");
+    if (enriched.ResourceIntent?.ImageQuery != "Mira Solan" ||
+        enriched.ResourceIntent.ImageCount != 1 ||
+        NIRAResourceIntentPlanner.Apply(enriched, true).CapabilityRequests.Single().CapabilityId !=
+            NIRACapabilityIds.ImageSearch)
+        throw new Exception("A model-authored visual profile did not dispatch ordinary image.search");
+});
+Check("V12.1 body-focused rich cards select their model-authored subject", () =>
+{
+    var authored = new NIRACognitionDecision {
+        State = NIRACognitionState.Complete, EmitReply = true,
+        Reply = "These animals live in dim environments. Their unusual body structures " +
+            "let them move slowly without using much energy, and their eyes respond to " +
+            "small amounts of available light. Here are two concrete examples of how that works.",
+        DisplayBlocks = new[] {
+            new NIRARichBlock { Type = "card", Title = "The Seabright",
+                Text = "The Seabright body is transparent and its eyes face forward." },
+            new NIRARichBlock { Type = "card", Title = "The Moonfin",
+                Text = "The Moonfin body has a reflective outer membrane and long fins." }
+        }
+    };
+    var enriched = NIRARichMediaOpportunityPolicy.Enrich(authored,
+        "Those deep creatures are remarkable. Explain how their bodies function.");
+    if (enriched.State != NIRACognitionState.Continue || enriched.EmitReply ||
+        enriched.CapabilityRequests.Count != 2 ||
+        enriched.CapabilityRequests[0].Arguments.GetProperty("query").GetString() != "Seabright" ||
+        enriched.CapabilityRequests[1].Arguments.GetProperty("query").GetString() != "Moonfin" ||
+        enriched.CapabilityRequests.Any(r =>
+            r.CapabilityId != NIRACapabilityIds.ImageSearch ||
+            r.Arguments.GetProperty("retrieveCount").GetInt32() != 1 ||
+            !r.Arguments.GetProperty("photographsOnly").GetBoolean()))
+        throw new Exception("Distinct model-authored subjects were not queued as separate verified photo searches");
+});
+Check("V12.1 multi-stage physical timeline recovers named subject without topic registry", () =>
+{
+    var staged = new NIRACognitionDecision {
+        State = NIRACognitionState.Complete, EmitReply = true,
+        Reply = "Compact walkers evolved through several advances. They shifted from fixed " +
+            "patterns to real-time feedback while walking, which improved balance and " +
+            "made controlled motion possible on rough surfaces. Motors improved too.",
+        DisplayBlocks = new[] { new NIRARichBlock { Type = "timeline",
+            Title = "Development milestones", Items = new[] { "Fixed gait", "Balance", "Walking" } } }
+    };
+    var enriched = NIRARichMediaOpportunityPolicy.Enrich(staged,
+        "How did compact walkers evolve from early machines to walking systems?");
+    if (enriched.ResourceIntent?.ImageQuery != "compact walkers")
+        throw new Exception("Single rich timeline was not eligible for one supporting image");
+});
+Check("V12.1 no images for social replies, abstract cards or explicit evidence plans", () =>
+{
+    var social = new NIRACognitionDecision {
+        State = NIRACognitionState.Complete, EmitReply = true,
+        ConversationOnly = true, Reply = "Hi, I'm here. How are you doing?" };
+    if (!ReferenceEquals(social, NIRARichMediaOpportunityPolicy.Enrich(social,
+        "Hey, you there?")))
+        throw new Exception("Social replies acquired unnecessary photo searches");
+    var abstractDecision = new NIRACognitionDecision {
+        State = NIRACognitionState.Complete, EmitReply = true,
+        Reply = new string('X', 210),
+        DisplayBlocks = new[] {
+            new NIRARichBlock { Type = "card", Title = "Confidence", Text = new string('X', 85) },
+            new NIRARichBlock { Type = "card", Title = "Arrogance", Text = new string('X', 85) }
+        }
+    };
+    if (!ReferenceEquals(abstractDecision, NIRARichMediaOpportunityPolicy.Enrich(abstractDecision,
+        "Explain the difference between confidence and arrogance.")))
+        throw new Exception("Abstract relationship question generated decorative photography");
+    var already = abstractDecision with {
+        ResourceIntent = new NIRAResourceIntent { ImageQuery = "model-selected subject" }
+    };
+    if (!ReferenceEquals(already, NIRARichMediaOpportunityPolicy.Enrich(already,
+        "Explain the difference between confidence and arrogance.")))
+        throw new Exception("Model-selected media intent was overwritten");
+});
+
+Check("PHASE2 visual tabs request two independently identified authentic image searches", () =>
+{
+    var decision = new NIRACognitionDecision {
+        State = NIRACognitionState.Complete, EmitReply = true,
+        Reply = "Living at ocean depths demands extraordinary anatomical adaptation. " +
+            "These examples have very different bodies, eye structures, and feeding systems. " +
+            "Seeing each genuine specimen would be useful beside its explanation.",
+        DisplayBlocks = new[] { new NIRARichBlock {
+            Type = "tabs", Title = "Marine adaptations",
+            Items = new[] { "The Seabright", "The Moonfin" },
+            Panels = new[] {
+                "The Seabright fish has unusually transparent body structures and eyes adapted for limited light in cold seawater.",
+                "The Moonfin fish has unusually long fins and a broad head, and its body structure supports slow motion."
+            }
+        } }
+    };
+    var result = NIRARichMediaOpportunityPolicy.Enrich(decision,
+        "How do these unusual deep animals actually survive with those bodies?");
+    if (result.CapabilityRequests.Count != 2 ||
+        result.CapabilityRequests[0].Arguments.GetProperty("query").GetString() != "Seabright" ||
+        result.CapabilityRequests[1].Arguments.GetProperty("query").GetString() != "Moonfin")
+        throw new Exception("Independent tab subjects lost their visual search intention");
+});
+
+Check("PHASE2 image source titles match explicit card/tab subjects, not abstract labels", () =>
+{
+    var namedTab = new NIRARichBlock { Type = "tabs", Title = "Deep adaptations",
+        Items = new[] { "The Seabright", "The Moonfin" },
+        Panels = new[] { "first", "second" } };
+    if (!NIRAInlineImageAnchorPolicy.MatchesRichBlock("Seabright photograph.jpg", namedTab) ||
+        NIRAInlineImageAnchorPolicy.MatchesRichBlock("Orion rocket structure photo.jpg", namedTab) ||
+        NIRAInlineImageAnchorPolicy.MatchesRichBlock("Photo source.jpg", namedTab))
+        throw new Exception("Rich image anchor accepted an unrelated source or failed a named subject");
+});
+
+Check("PHASE2 Tavily diversity avoids all-CDN candidates when matching other hosts exist", () =>
+{
+    using var client = new HttpClient(new NIRAWebFakeTransport(req =>
+        throw new Exception("Offline ranking must not contact the network")));
+    using var service = new NIRATavilyImageDiscoveryService(client,
+        key => key == "NIRA_TAVILY_API_KEY" ? "offline-only" : null);
+    using var document = JsonDocument.Parse("""
+      {"images":[
+        {"url":"https://thumb.wikimedia.org/a.jpg","description":"Seabright fish field photo front"},
+        {"url":"https://thumb.wikimedia.org/b.jpg","description":"Seabright fish field photo profile"},
+        {"url":"https://thumb.wikimedia.org/c.jpg","description":"Seabright fish field photo detail"},
+        {"url":"https://www.marine-institute.org/a.jpg","description":"Seabright fish museum specimen photograph"},
+        {"url":"https://www.marine-institute.org/b.jpg","description":"Seabright fish CGI render"}
+      ]}
+      """);
+    var selected = service.AcceptTavilyResponse(document.RootElement, "Seabright fish", 3, true);
+    if (selected.Count != 3 ||
+        !selected.Any(x => x.MediaUrl.Contains("marine-institute.org", StringComparison.Ordinal)) ||
+        selected.Any(x => x.Title.Contains("render", StringComparison.OrdinalIgnoreCase)))
+        throw new Exception("Candidate ranking used only one CDN or selected concept artwork");
+});
+
+Check("P2.3 authentic photos exclude license badge and miniature icon", () =>
+{
+    if (!NIRATavilyImageDiscoveryService.LooksLikeNonPhotograph(
+            "license", "", "https://www.instructables.com/assets/img/license/by_small.png") ||
+        !NIRATavilyImageDiscoveryService.LooksLikeNonPhotograph(
+            "Creative Commons badge", "", "https://example.org/images/by-small.png") ||
+        NIRATavilyImageDiscoveryService.LooksLikeNonPhotograph(
+            "Historic electrical apparatus photograph", "", "https://example.org/coil.jpg"))
+        throw new Exception("Image result was not screened for non-photographic assets");
+});
+
+Check("P2.3 inline placement keeps named objects beside relevant prose", () =>
+{
+    const string text = "A scientist developed useful devices, including the new rotating motor.\n\n" +
+        "The Induction Motor became a breakthrough when designing efficient electric systems.\n\n" +
+        "A Tesla Coil makes high-frequency electricity visible during a demonstration.";
+    if (NIRAInlineImageAnchorPolicy.FindLine(text, "Induction Motor") != 2 ||
+        NIRAInlineImageAnchorPolicy.FindLine(text, "Tesla Coil") != 4 ||
+        NIRAInlineImageAnchorPolicy.FindLine(text, "unrelated spacecraft launch") != -1)
+        throw new Exception("Photo paragraph anchors are not subject-specific");
+});
+
+Check("V12 grounded inline image anchors exact subjects without inventing matches", () =>
+{
+    const string answer = "The Selene optical instrument was created for distant imaging studies.\n\n" +
+        "Its Selene optical mirror assembly gives the device better stability and accuracy.\n\n" +
+        "An unrelated machine was showcased in the same exhibition hall.";
+    int anchor = NIRAInlineImageAnchorPolicy.FindLine(answer,
+        "Selene optical mirror assembly official photo.jpg");
+    if (anchor != 2 ||
+        NIRAInlineImageAnchorPolicy.FindLine(answer, "Orion marine rover exterior.jpg") != -1 ||
+        NIRAInlineImageAnchorPolicy.FindLine("hi", "Selene optical mirror assembly") != -1)
+        throw new Exception("Inline image policy anchored an unrelated or unsupported image");
+});
+
+// Phase 2 media safety/placement checks are pure, offline and topic-independent.
+Check("PHASE2 distinct real-image subjects match their own rich sections", () =>
+{
+    if (NIRAInlineImageAnchorPolicy.MatchSection("Barreleye Fish", "The Barreleye Fish") <= 0 ||
+        NIRAInlineImageAnchorPolicy.MatchSection("Barreleye Fish", "The Anglerfish") != 0 ||
+        NIRAInlineImageAnchorPolicy.MatchSection("Giant Isopod", "The Giant Isopod") <= 0 ||
+        NIRAInlineImageAnchorPolicy.MatchSection("Nikola Tesla", "Overview", null,
+            new[] { "Nikola Tesla was the primary architect of AC power." }) <= 0 ||
+        NIRAInlineImageAnchorPolicy.MatchSection("Tesla Coil", "Overview", new[] { "The Man", "Tesla Coil" }) <= 0 ||
+        NIRAInlineImageAnchorPolicy.MatchSection("2nd image", "The Barreleye Fish") != 0)
+        throw new Exception("An image was associated with the wrong typed section");
+});
+Check("PHASE2 photo searches screen poster/logo/slide metadata", () =>
+{
+    if (!NIRATavilyImageDiscoveryService.LooksLikeNonPhotograph(
+            "Giant isopod - NOAA", "", "https://ocean.example.org/isopod-poster.jpg") ||
+        !NIRATavilyImageDiscoveryService.LooksLikeNonPhotograph(
+            "Science title slide", "", "https://archive.example.org/slides.png") ||
+        NIRATavilyImageDiscoveryService.LooksLikeNonPhotograph(
+            "Actual animal photograph", "", "https://archive.example.org/fish-photo.jpg"))
+        throw new Exception("Non-photographic media selection was not screened");
+});
+Check("PHASE2 photo searches penalize noisy thumbnail-style candidates", () =>
+{
+    if (NIRATavilyImageDiscoveryService.WeakPresentationPenalty(
+            "How a Tesla coil works", "", "https://i.ytimg.com/vi/example/maxresdefault.jpg", "https://youtube.com/watch?v=x") < 5 ||
+        NIRATavilyImageDiscoveryService.WeakPresentationPenalty(
+            "Reference photograph", "", "https://cdn.britannica.com/tesla.jpg", "https://britannica.com/topic") != 0)
+        throw new Exception("Thumbnail/noisy image heuristics were not applied as expected");
+});
+Check("PHASE2 image subject query survives trusted metadata normalization", () =>
+{
+    var candidate = new NIRACapabilityVisualArtifact {
+        LocalPath = @"C:\\reference.jpg", SubjectQuery = "Barreleye Fish",
+        SourceUri = "https://publisher.example.org/photo.jpg", PresentToUser = true
+    }.Normalize();
+    var request = new NIRAVisualArtifactPresentationRequest {
+        LocalPath = candidate.LocalPath, Title = candidate.Title,
+        SourceUri = candidate.SourceUri, SubjectQuery = candidate.SubjectQuery
+    }.Normalize();
+    if (candidate.SubjectQuery != "Barreleye Fish" || request.SubjectQuery != "Barreleye Fish")
+        throw new Exception("The subject mapping was dropped before the presentation stage");
+});
 
 // Optional visuals: refine only after an unsuccessful literal query, never
 // from a subject-specific registry or with a second LLM classifier.
@@ -508,10 +738,11 @@ Check("R6 optional resource intent dispatch remains model-selected and authorize
     };
     var prepared = NIRAResourceIntentPlanner.Apply(rich, true);
     if (prepared.State != NIRACognitionState.Continue || prepared.EmitReply ||
-        prepared.CapabilityRequests.Count != 2 ||
-        prepared.CapabilityRequests[0].CapabilityId != NIRACapabilityIds.ImageSearch ||
-        prepared.CapabilityRequests[1].CapabilityId != NIRACapabilityIds.WebSearch ||
-        prepared.CapabilityRequests[0].Arguments.GetProperty("query").GetString() != rich.ResourceIntent!.ImageQuery)
+        prepared.CapabilityRequests.Count != 1 ||
+        prepared.CapabilityRequests[0].CapabilityId != NIRACapabilityIds.WebSearch ||
+        !prepared.CapabilityRequests[0].Arguments.GetProperty("includeImages").GetBoolean() ||
+        prepared.CapabilityRequests[0].Arguments.GetProperty("imageQuery").GetString() != rich.ResourceIntent!.ImageQuery ||
+        prepared.CapabilityRequests[0].Arguments.GetProperty("queries").GetArrayLength() != 1)
         throw new Exception("Chosen evidence was not routed through normal tool requests");
     var outsideCycle = rich with { ConversationOnly = true };
     if (!ReferenceEquals(rich, NIRAResourceIntentPlanner.Apply(rich, false)) ||
@@ -520,7 +751,7 @@ Check("R6 optional resource intent dispatch remains model-selected and authorize
     var inconsistent = NIRAResourceIntentPlanner.Apply(natural with {
         ConversationOnly = true, ResourceIntent = rich.ResourceIntent
     }, true);
-    if (inconsistent.CapabilityRequests.Count != 2 || inconsistent.ConversationOnly ||
+    if (inconsistent.CapabilityRequests.Count != 1 || inconsistent.ConversationOnly ||
         inconsistent.State != NIRACognitionState.Continue)
         throw new Exception("A social classification flag silently cancelled model-selected evidence");
     if (NIRAResourceIntentPlanner.Apply(natural with {
@@ -536,6 +767,33 @@ Check("R6 optional resource intent dispatch remains model-selected and authorize
         throw new Exception("Model-selected multi-image request was lost");
     if (NIRAResourceIntentPlanner.Apply(already, true).CapabilityRequests.Count != 2)
         throw new Exception("Expected only additional video search, no duplicate image search");
+});
+
+// A natural demonstration conversation often benefits from BOTH an official
+// still image and an observed moving clip. Plan once; no follow-up classifier,
+// no duplicated provider call. All links and bytes remain capability evidence.
+Check("MEDIA first-round photo+demo shares one authorized search", () =>
+{
+    var conversation = new NIRACognitionDecision {
+        State = NIRACognitionState.Complete, EmitReply = true,
+        Reply = "An informal explanation awaiting real demonstrations.",
+        ResourceIntent = new NIRAResourceIntent {
+            ImageQuery = "modern engineering prototype official exterior photo",
+            VideoQuery = "publisher engineering prototype moving demonstration",
+            Purpose = "Appearance and movement are both informative",
+            ImageCount = 2
+        }
+    };
+    var selected = NIRAResourceIntentPlanner.Apply(conversation, true);
+    if (selected.CapabilityRequests.Count != 1 ||
+        selected.CapabilityRequests[0].CapabilityId != NIRACapabilityIds.WebSearch ||
+        !selected.CapabilityRequests[0].Arguments.GetProperty("includeImages").GetBoolean() ||
+        selected.CapabilityRequests[0].Arguments.GetProperty("retrieveCount").GetInt32() != 2 ||
+        selected.CapabilityRequests[0].Arguments.GetProperty("provider").GetString() != "tavily" ||
+        selected.CapabilityRequests[0].Arguments.GetProperty("queries").GetArrayLength() != 1)
+        throw new Exception("Independent first-round photo/demo intent did not share one web receipt");
+    if (!ReferenceEquals(conversation, NIRAResourceIntentPlanner.Apply(conversation, false)))
+        throw new Exception("Resource lookup was repeated after the original first cycle");
 });
 
 // Resource-intent admission is model-owned; the runtime must not silently
@@ -3494,6 +3752,34 @@ Check("R24 adaptive rich presentation stays useful without a forced template", (
         throw new Exception("Adaptive composition contract missing, or a fixed layout was imposed");
     if (NIRAPresentationPolicy.Normalize(Array.Empty<NIRARichBlock>()).Count != 0)
         throw new Exception("Short conversations were given invented visual blocks");
+});
+
+Check("V11 adaptive first-round richness is subject-driven and optional", () =>
+{
+    string directory = LocatePromptFolder() ?? throw new Exception("No production prompt folder");
+    Type compiler = typeof(NIRACognitionService).Assembly.GetType(
+        "NIRAAgent.AI.Cognition.NIRACognitionPromptCompiler", throwOnError: true)!;
+    MethodInfo bootstrap = compiler.GetMethod("BootstrapSystem",
+        BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+        ?? throw new Exception("Missing first-call compiler");
+    MethodInfo webSynthesis = compiler.GetMethod("WebResearchSynthesisSystem",
+        BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+        ?? throw new Exception("Missing source-synthesis compiler");
+    string personality = File.ReadAllText(Path.Combine(directory, "nira_personality.yaml"));
+    string first = (string?)bootstrap.Invoke(null, new object[] { personality }) ?? string.Empty;
+    string web = (string?)webSynthesis.Invoke(null, new object[] { personality }) ?? string.Empty;
+    string guide = File.ReadAllText(Path.Combine(directory, "cognition.yaml"));
+    string contract = File.ReadAllText(Path.Combine(directory, "cognition_contract.yaml"));
+    if (!first.Contains("ADAPTIVE ANSWER DESIGN (FIRST-DECISION", StringComparison.Ordinal) ||
+        !first.Contains("generic stock imagery", StringComparison.OrdinalIgnoreCase) ||
+        !web.Contains("SOURCE-BACKED SCREEN COMPOSITION", StringComparison.Ordinal) ||
+        !guide.Contains("Media subject fidelity outranks media frequency", StringComparison.Ordinal) ||
+        !contract.Contains("No media, rich-block quota", StringComparison.Ordinal) ||
+        !first.Contains("never search only to fill screen space", StringComparison.OrdinalIgnoreCase) ||
+        !first.Contains("no extra model", StringComparison.OrdinalIgnoreCase))
+        throw new Exception("Adaptive richness contract is incomplete, unsafe or calls another model for styling");
+    if (NIRAPresentationPolicy.Normalize(Array.Empty<NIRARichBlock>()).Count != 0)
+        throw new Exception("Informal chat must not receive automatic media or fake blocks");
 });
 
 Check("R24 table tabs timeline and checklist survive declarative JSON parsing", () =>

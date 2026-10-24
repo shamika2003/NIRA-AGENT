@@ -666,6 +666,9 @@ public sealed record NIRACapabilityVisualArtifact
     // Grounded attribution only. Never a fetch target in the presentation layer.
     public string SourceUri { get; init; } = string.Empty;
 
+    // Originating search subject is routing metadata, not proof of image content.
+    public string SubjectQuery { get; init; } = string.Empty;
+
     public bool PresentToUser { get; init; }
 
     public string Surface { get; init; } = "Auto";
@@ -691,6 +694,7 @@ public sealed record NIRACapabilityVisualArtifact
             EvidenceId = hasEvidence ? EvidenceId : null,
             LocalPath = hasEvidence ? string.Empty : LocalPath.Trim(),
             Title = NormalizeText(Title, 180),
+            SubjectQuery = NormalizeText(SubjectQuery, 160),
             Caption = NormalizeText(Caption, 1000),
             SourceUri = NormalizeSourceUri(SourceUri),
             Surface = surface
