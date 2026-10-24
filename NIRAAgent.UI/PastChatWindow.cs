@@ -527,6 +527,7 @@ public sealed class PastChatWindow : Window
             {
                 IReadOnlyDictionary<int, NIRARichInteractionState> states =
                     _archive.ReadInteractiveStates(turn.MessageId);
+                NIRAVideoDepthDeck? videoDeck = null;
                 for (int i = 0; i < presentation.Blocks.Count;)
                 {
                     if (presentation.Blocks[i].Type == "metric")
@@ -539,6 +540,15 @@ public sealed class PastChatWindow : Window
                     }
                     int blockIndex = i;
                     var block = presentation.Blocks[i++];
+                    if (block.Type == "video" &&
+                        NIRAVideoReferencePolicy.TryParse(block.Text, out var existingVideo) &&
+                        existingVideo is not null)
+                    {
+                        videoDeck ??= new NIRAVideoDepthDeck();
+                        if (videoDeck.TryAdd(block) && videoDeck.Count == 1)
+                            content.Children.Add(videoDeck.View);
+                        continue;
+                    }
                     states.TryGetValue(blockIndex, out var state);
                     content.Children.Add(NIRARichBlockRenderer.Render(block, state, updated =>
                     {

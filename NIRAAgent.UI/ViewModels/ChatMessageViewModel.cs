@@ -290,6 +290,11 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
     // The prose document may find the same video as a structured block.
     // These keys suppress duplicate embedded players, never the explanatory text.
     public string EmbeddedVideoKeys { get; private set; } = string.Empty;
+    // Keep typed video refs unique even when rich blocks arrive in batches.
+    private readonly HashSet<string> _renderedRichVideoKeys =
+        new(StringComparer.OrdinalIgnoreCase);
+    // Persists across structured rich-block batches for the SAME reply.
+    private NIRAVideoDepthDeck? _videoDepthDeck;
     public ObservableCollection<FrameworkElement> RichElements { get; } = new();
     private readonly List<(FrameworkElement View, NIRARichBlock Block)> _photoCreditFrames = new();
     public bool HasRichElements => RichElements.Count > 0;
@@ -312,12 +317,14 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         Action<string>? followUp = null)
     {
         var normalized = NIRAPresentationPolicy.Normalize(blocks);
-        string keys = string.Join("|", normalized.Where(b => b.Type == "video")
-            .Select(b => NIRAVideoReferencePolicy.TryParse(b.Text, out var video)
-                ? video?.Key : null)
-            .Where(k => !string.IsNullOrEmpty(k))
-            .Distinct(StringComparer.OrdinalIgnoreCase));
-        if (keys.Length > 0 && keys != EmbeddedVideoKeys)
+        // Union rather than replace when multiple typed batches contribute.
+        var known = new HashSet<string>(EmbeddedVideoKeys.Split('|',
+            StringSplitOptions.RemoveEmptyEntries), StringComparer.OrdinalIgnoreCase);
+        foreach (var block in normalized.Where(b => b.Type == "video"))
+            if (NIRAVideoReferencePolicy.TryParse(block.Text, out var video) && video != null)
+                known.Add(video.Key);
+        string keys = string.Join("|", known.OrderBy(k => k, StringComparer.OrdinalIgnoreCase));
+        if (keys != EmbeddedVideoKeys)
         {
             EmbeddedVideoKeys = keys;
             OnPropertyChanged(nameof(EmbeddedVideoKeys));
@@ -373,6 +380,18 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
                     };
                 if (NIRAImageCreditLayoutPolicy.IsDuplicatePhotoCredit(block, HasRetrievedCreditedImage))
                     continue;
+                // Dupes from model-authored displayBlocks and later batches must
+                // not generate new WebView2 processes or repeated players.
+                if (block.Type == "video" &&
+                    NIRAVideoReferencePolicy.TryParse(block.Text, out var richVideo) &&
+                    richVideo != null)
+                {
+                    if (!_renderedRichVideoKeys.Add(richVideo.Key)) continue;
+                    _videoDepthDeck ??= new NIRAVideoDepthDeck();
+                    if (_videoDepthDeck.TryAdd(block) && _videoDepthDeck.Count == 1)
+                        RichElements.Add(_videoDepthDeck.View);
+                    continue;
+                }
                 FrameworkElement rendered = NIRARichBlockRenderer.Render(block, saved, persist, followUp);
                 RichElements.Add(rendered);
                 if (NIRAImageCreditLayoutPolicy.IsDuplicatePhotoCredit(block, true))

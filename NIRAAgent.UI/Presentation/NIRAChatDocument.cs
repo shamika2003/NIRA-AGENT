@@ -3,7 +3,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using NIRAAgent.Presentation;
-using NIRAAgent.Diagnostics;
 
 namespace NIRAAgent.UI.Presentation;
 
@@ -45,6 +44,34 @@ public static class NIRAChatDocument
     private static readonly Regex TableSeparator = new(@"^:?-{3,}:?$",
         RegexOptions.CultureInvariant);
 
+    // Recovery for an LLM that mistakenly prints a video display-block object
+    // in prose. Only one-line video objects with a validated provider URL are
+    // promoted. Ordinary JSON/code blocks and unrecognized objects are untouched.
+    private static readonly Regex RawVideoRecord = new(
+        @"^\s*\{\s*['""]type['""]\s*:\s*['""]video['""]\s*,.*\}\s*$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private static readonly Regex RawVideoUrl = new(
+        @"['""]text['""]\s*:\s*(?<q>['""])(?<url>https://[^'""]{1,1900})\k<q>",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private static readonly Regex RawVideoTitle = new(
+        @"['""]title['""]\s*:\s*(?<q>['""])(?<title>.{0,150}?)\k<q>(?=\s*[,}])",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+
+    // A YouTube playlist is NOT an individual YouTube video ID. The model can
+    // accidentally emit it as a raw {type:video} object. Render a safe link,
+    // not the JSON syntax and not a fake player with a missing video ID.
+    private static bool IsYouTubePlaylist(string address)
+    {
+        if (!Uri.TryCreate(address, UriKind.Absolute, out var uri) ||
+            uri.Scheme != Uri.UriSchemeHttps || uri.UserInfo.Length != 0 ||
+            uri.Port != 443 || uri.Host is not ("youtube.com" or "www.youtube.com" or "m.youtube.com") ||
+            !uri.AbsolutePath.Equals("/playlist", StringComparison.OrdinalIgnoreCase))
+            return false;
+        return Regex.IsMatch(uri.Query, @"(?:^\?|&)list=[A-Za-z0-9_-]{8,100}(?:&|$)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    }
+
     private static void OnChanged(DependencyObject element, DependencyPropertyChangedEventArgs e) =>
         Build(element, (string?)e.NewValue ?? string.Empty);
 
@@ -53,7 +80,18 @@ public static class NIRAChatDocument
         if (element is not StackPanel root) return;
         root.Children.Clear();
         string source = raw.Replace("\r\n", "\n").Replace('\r', '\n');
-        string knownVideoKeys = GetEmbeddedVideoKeys(element);
+        var knownVideoKeys = new HashSet<string>(
+            GetEmbeddedVideoKeys(element).Split('|', StringSplitOptions.RemoveEmptyEntries),
+            StringComparer.OrdinalIgnoreCase);
+        var embeddedLinks = new List<(NIRAVideoReference Video, string Title)>();
+        var queuedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        NIRAVideoDepthDeck? videoDeck = null;
+        void AddVideo(NIRARichBlock videoBlock)
+        {
+            videoDeck ??= new NIRAVideoDepthDeck();
+            if (videoDeck.TryAdd(videoBlock) && videoDeck.Count == 1)
+                root.Children.Add(videoDeck.View);
+        }
         if (string.IsNullOrWhiteSpace(source)) return;
 
         string[] lines = source.Split('\n');
@@ -99,6 +137,75 @@ public static class NIRAChatDocument
             }
             if (inCode) { code.Add(line); continue; }
             if (string.IsNullOrWhiteSpace(line)) { FlushParagraph(); continue; }
+
+            // The model sometimes emits {'type':'video', 'title':'...',
+            // 'text':'https://youtube.com/...'} in the answer itself.
+            // Do not show raw UI metadata in the conversation, and do not
+            // duplicate an existing typed or prose video player.
+            if (line.Length <= 2200 && RawVideoRecord.IsMatch(line))
+            {
+                Match urlField = RawVideoUrl.Match(line);
+                if (urlField.Success && IsYouTubePlaylist(urlField.Groups["url"].Value))
+                {
+                    FlushParagraph();
+                    Match titleField = RawVideoTitle.Match(line);
+                    string label = titleField.Success ? titleField.Groups["title"].Value.Trim() : "YouTube playlist";
+                    if (label.Length == 0) label = "YouTube playlist";
+                    if (label.Length > 100) label = label[..100] + "…";
+                    // User/model title is display text only; do not treat it as markup.
+                    label = label.Replace("[", "").Replace("]", "").Replace("(", "").Replace(")", "");
+                    string playlistLink = $"[{label}]({urlField.Groups["url"].Value})";
+                    root.Children.Add(MakeText(playlistLink, 13.5, 23,
+                        new Thickness(1, 5, 0, 11)));
+                    continue;
+                }
+                if (urlField.Success &&
+                    NIRAVideoReferencePolicy.TryParse(urlField.Groups["url"].Value, out var rawVideo) &&
+                    rawVideo != null)
+                {
+                    FlushParagraph();
+                    Match titleField = RawVideoTitle.Match(line);
+                    string rawTitle = titleField.Success
+                        ? titleField.Groups["title"].Value.Trim() : "Watch video";
+                    if (rawTitle.Length == 0) rawTitle = "Watch video";
+                    if (rawTitle.Length > 125) rawTitle = rawTitle[..125] + "…";
+                    queuedKeys.Remove(rawVideo.Key);
+                    embeddedLinks.RemoveAll(item => item.Video.Key.Equals(rawVideo.Key,
+                        StringComparison.OrdinalIgnoreCase));
+                    if (knownVideoKeys.Add(rawVideo.Key))
+                        AddVideo(new NIRARichBlock
+                        {
+                            Type = "video", Title = rawTitle, Text = rawVideo.OriginalUrl
+                        });
+                    continue;
+                }
+            }
+
+
+            // A reply may cite several YouTube/Vimeo watch URLs INSIDE ordinary
+            // paragraphs. Keep the original prose and links intact, but present
+            // each distinct supported video once at the end of this reply.
+            // Validation goes through the same strict video-reference policy.
+            foreach (Match hit in Regex.Matches(line, @"https://[^\s<>\]\)\(]+",
+                         RegexOptions.CultureInvariant | RegexOptions.IgnoreCase))
+            {
+                string candidate = hit.Value.TrimEnd('.', ',', ';', ':', '!', '?', '*');
+                if (!NIRAVideoReferencePolicy.TryParse(candidate, out var inlineVideo) ||
+                    inlineVideo is null || knownVideoKeys.Contains(inlineVideo.Key) ||
+                    !queuedKeys.Add(inlineVideo.Key)) continue;
+                string label = "Watch " + inlineVideo.Provider + " video";
+                // Preserve an authored, concise Markdown label where available.
+                int start = hit.Index;
+                int open = line.LastIndexOf('[', Math.Max(0, start - 2));
+                // Standard [label](https://...) shape (without space).
+                if (start >= 2 && line.AsSpan(start - 2, 2).SequenceEqual("](".AsSpan()) &&
+                    open >= 0 && start - open < 155)
+                {
+                    string userLabel = line[(open + 1)..(start - 2)].Trim('*', '_', ' ');
+                    if (userLabel.Length is > 0 and <= 125) label = userLabel;
+                }
+                embeddedLinks.Add((inlineVideo, label));
+            }
 
             // Markdown table: recognize an actual header + separator before
             // converting anything. Never guess that pipe-delimited prose is data.
@@ -158,18 +265,14 @@ public static class NIRAChatDocument
                 out var video, out string videoTitle) && video != null)
             {
                 FlushParagraph();
-                bool isAlreadyRendered = knownVideoKeys.Split('|',
-                        StringSplitOptions.RemoveEmptyEntries)
-                    .Contains(video.Key, StringComparer.OrdinalIgnoreCase);
-                NIRADiagnosticTrace.Event("VIDEO-REFERENCE-PRESENTATION",
-                    "Provider=" + video.Provider +
-                    " Source=StandaloneReply" +
-                    " Outcome=" + (isAlreadyRendered ? "AlreadyInTypedBlock" : "PlayerCreated"));
-                if (!isAlreadyRendered)
-                    root.Children.Add(NIRAVideoPlayer.Render(new NIRARichBlock
+                queuedKeys.Remove(video.Key);
+                embeddedLinks.RemoveAll(item => item.Video.Key.Equals(video.Key,
+                    StringComparison.OrdinalIgnoreCase));
+                if (knownVideoKeys.Add(video.Key))
+                    AddVideo(new NIRARichBlock
                     {
                         Type = "video", Title = videoTitle, Text = video.OriginalUrl
-                    }));
+                    });
                 continue;
             }
 
@@ -239,6 +342,14 @@ public static class NIRAChatDocument
             paragraph.Add(line.Trim());
         }
         FlushParagraph(); FlushCode();
+        foreach (var item in embeddedLinks)
+        {
+            if (!knownVideoKeys.Add(item.Video.Key)) continue;
+            AddVideo(new NIRARichBlock
+            {
+                Type = "video", Title = item.Title, Text = item.Video.OriginalUrl
+            });
+        }
     }
 
     private static Border MakeReferenceRow(NIRAResourceLinkPresentation resource)

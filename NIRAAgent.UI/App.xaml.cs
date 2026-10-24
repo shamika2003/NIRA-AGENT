@@ -46,6 +46,7 @@ using NIRAAgent.Integrations.Elvara.Bridge;
 using NIRAAgent.Integrations.Elvara.Apps.TradeAI;
 using NIRAAgent.UI.Vision;
 using NIRAAgent.UI.Visuals;
+using NIRAAgent.Diagnostics;
 
 using WpfApplication = System.Windows.Application;
 using WpfMessageBox = System.Windows.MessageBox;
@@ -64,6 +65,14 @@ public partial class App : WpfApplication
     protected override async void OnStartup(
         WpfStartupEventArgs e)
     {
+        // Capture managed crashes *before* the host and UI are initialized.
+        // Do not swallow exceptions, change response logic or log private prompts.
+        DispatcherUnhandledException += (_, args) =>
+            NIRADiagnosticTrace.Event("UI-UNHANDLED-EXCEPTION",
+                "Error=" + args.Exception);
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+            NIRADiagnosticTrace.Event("PROCESS-UNHANDLED-EXCEPTION",
+                "Terminating=" + args.IsTerminating + " Error=" + args.ExceptionObject);
         base.OnStartup(
             e);
 
@@ -71,6 +80,17 @@ public partial class App : WpfApplication
         try
         {
             NIRAThemeManager.Initialize();
+
+            // UI-only lab: no agent host, cognition, searches or LLM calls.
+            if (System.Array.Exists(e.Args, arg =>
+                string.Equals(arg, "--video-deck-lab", StringComparison.OrdinalIgnoreCase)))
+            {
+                var previewWindow = NIRAAgent.UI.Presentation.NIRAVideoDepthLabWindow.Create();
+                MainWindow = previewWindow;
+                ShutdownMode = System.Windows.ShutdownMode.OnMainWindowClose;
+                previewWindow.Show();
+                return;
+            }
 
             var builder =
                 Host.CreateApplicationBuilder();

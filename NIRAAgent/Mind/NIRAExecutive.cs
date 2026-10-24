@@ -1204,6 +1204,52 @@ public sealed class NIRAExecutive
                 decision = planned;
             }
 
+            // NIRA can receive multiple valid public web.search receipts yet keep
+            // asking for fresh variations of the same search. The independent
+            // reviewer then rejects an incomplete draft, and the ten-cycle
+            // budget ends in a misleading "search failed" response even though
+            // results were returned. Limit this *read-only research* stalemate.
+            // Never apply this to branch work, commitments, user authorization,
+            // browser/desktop operations or other capability types.
+            if (cycle >= 5 &&
+                mindEvent.Source == NIRAMindEventSource.User &&
+                decision.State == NIRACognitionState.Continue &&
+                decision.CapabilityRequests.Count > 0 &&
+                decision.CapabilityRequests.All(request =>
+                    request.CapabilityId == NIRACapabilityIds.WebSearch) &&
+                decision.ContextRequests.Count == 0 &&
+                decision.ControlRequests.Count == 0 &&
+                decision.GoalProposals.Count == 0 &&
+                decision.BranchProposals.Count == 0 &&
+                decision.BranchWorkProposals.Count == 0 &&
+                decision.DynamicToolProposals.Count == 0 &&
+                decision.DynamicToolInvocations.Count == 0 &&
+                !decision.ReviewCommitment &&
+                !preReviewCommitmentSucceeded &&
+                !desktopActionNeedsObservation &&
+                capabilityResultsBySignature.Values.Count(result =>
+                    result.CapabilityId == NIRACapabilityIds.WebSearch &&
+                    result.Succeeded && result.Risk == NIRACapabilityRisk.Observe &&
+                    !result.ChangedSystemState && !result.OutcomeUncertain) >= 3)
+            {
+                NIRACognitionDecision? handoff =
+                    NIRAWebResearchReplyPolicy.BoundedSourceHandoff(
+                        capabilityResultsBySignature.Values.ToArray());
+                if (handoff is not null)
+                {
+                    decision = handoff;
+                    // All shown URLs are derived mechanically from verified
+                    // capability receipts, not from an unreviewed model claim.
+                    // A second semantic review would re-enter the same loop.
+                    completionReviewConfirmedComplete = true;
+                    NIRADiagnosticTrace.Event("WEB-SEARCH-LOOP-RECOVERY",
+                        $"Run={runId:D} Cycle={cycle} " +
+                        $"ObservedWebSearches={capabilityResultsBySignature.Values.Count(r => r.CapabilityId == NIRACapabilityIds.WebSearch && r.Succeeded)} " +
+                        $"VideoBlocks={decision.DisplayBlocks.Count} Mode=SourceOnly " +
+                        "FurtherSearchDispatched=False");
+                }
+            }
+
             // The model controls media selection; the runtime controls actual
             // fulfillment. Preserve its first chosen quantity for implicit media.
             if (cycle == 1 && imageDeliveryTarget == 0)
