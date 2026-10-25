@@ -57,6 +57,13 @@ public sealed record NIRAControlRequest
 public sealed record NIRAResourceIntent
 {
     public string ImageQuery { get; init; } = string.Empty;
+    // Optional independently identified visual subjects for a comparison.
+    // A shared broad query cannot prove that results cover each subject.
+    // Bounded to three; an empty list preserves legacy ImageQuery behavior.
+    public IReadOnlyList<string> ImageSubjects { get; init; } = Array.Empty<string>();
+    // This is a model-selected media type, NOT a trigger for image search.
+    // Photograph requests reject obvious screenshots, graphics, artwork.
+    public bool PhotographsOnly { get; init; } = false;
     // Optional model-selected number of DISTINCT real references. One is the
     // default; multiple are appropriate only when the user benefits from them.
     // Never makes media mandatory for an ordinary text or social request.

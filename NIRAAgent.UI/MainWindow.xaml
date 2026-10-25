@@ -582,7 +582,7 @@
                                  the same bounded, one-row gallery as user attachments. -->
                             <ItemsControl x:Name="AssistantVisualArtifacts"
                                           Grid.Row="2"
-                                          ItemsSource="{Binding AssistantImageGalleryTiles}"
+                                          ItemsSource="{Binding UnplacedAssistantImageGalleryTiles}"
                                           Visibility="Collapsed"
                                           Margin="0,12,0,2">
                                 <ItemsControl.ItemsPanel>
@@ -910,13 +910,8 @@
                 <DataTrigger Binding="{Binding HasRichElements}" Value="True">
                     <Setter TargetName="AssistantRichBlocks" Property="Visibility" Value="Visible"/>
                 </DataTrigger>
-                <DataTrigger Binding="{Binding HasVisualArtifacts}" Value="True">
+                <DataTrigger Binding="{Binding HasUnplacedAssistantImages}" Value="True">
                     <Setter TargetName="AssistantVisualArtifacts" Property="Visibility" Value="Visible"/>
-                </DataTrigger>
-                <!-- An inline verified image should never be duplicated in the
-                     old below-the-answer gallery. Generated images keep it. -->
-                <DataTrigger Binding="{Binding HasInlineVisuals}" Value="True">
-                    <Setter TargetName="AssistantVisualArtifacts" Property="Visibility" Value="Collapsed"/>
                 </DataTrigger>
 
                 <DataTrigger Binding="{Binding HasContent}" Value="False">

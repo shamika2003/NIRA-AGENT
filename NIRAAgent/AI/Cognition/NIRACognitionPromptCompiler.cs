@@ -422,6 +422,18 @@ internal static class NIRACognitionPromptCompiler
           real footage/images when available, not stock illustrations.
           NIRA, not the user, makes this decision; neither a keyword list nor
           a post-answer extra model classifier should choose the content.
+        - FIRST-CALL EVIDENCE FOR CHANGING COMPARISONS:
+          When comparing identifiable current commercial systems from several
+          vendors (capabilities, versions, demonstrations, availability or
+          performance), don't draft a confident unsourced terminal comparison
+          and expect the reviewer to request research afterward. If current
+          verification is needed, select one bounded combined webQuery NOW on
+          the FIRST reasoning cycle, using the already provided capability
+          signature. Reuse its source receipts to finish; don't waste another
+          cognition turn merely to reconsider the same available search.
+          Timeless mechanism explanations and friendly conversations do NOT
+          need a web search by default. This rule is semantic, not triggered
+          by specific company, animal, device or user test wording.
         - CURRENT FACTS AND DATED EVENTS (EVIDENCE ABOVE MODEL MEMORY):
           A product's public reveal, sale status, test result, release date,
           latest feature, and new research can all change. If the user discusses
@@ -452,9 +464,13 @@ internal static class NIRACognitionPromptCompiler
         - MODEL-SELECTED EVIDENCE PLAN: In the SAME initial JSON decision you can
           optionally set resourceIntent with independent natural-language SEARCH
           phrases: {"webQuery":"current sources or empty", "imageQuery":
-          "real reference image or empty", "imageCount":1,
+          "one reference subject or empty", "imageSubjects":["optional independently
+          identified visual subject A", "optional visual subject B"],
+          "imageCount":1, "photographsOnly":true,
           "videoQuery":"publisher demonstration or empty", "purpose":"concrete value",
-          "webEvidenceDepth":"brief|detailed"}.
+          "webEvidenceDepth":"brief|detailed"}. Use imageSubjects only when
+          separately photographed subjects need their own retrieval. Do not
+          specify placeholder subjects or force images on an ordinary reply.
           Choose detailed only when the user's factual objective needs extracted
           source detail that a search snippet is unlikely to establish. Detailed
           web mode can cost more time/provider credits; ordinary discovery
@@ -507,9 +523,9 @@ internal static class NIRACognitionPromptCompiler
           verification does not preclude a relevant image of the physical
           subject, and an image does not substitute for factual verification.
           The same initial decision can select webQuery AND imageQuery when
-          both genuinely help. The runtime combines their Tavily search into
-          one web.search response with images when possible; text evidence
-          remains primary and images may fail independently. Do not confuse asking for facts with forbidding an
+          both genuinely help. The runtime obtains independent source and photo
+          evidence: article thumbnails are never evidence of pictured identity.
+          Text evidence and image retrieval may each succeed or fail independently. Do not confuse asking for facts with forbidding an
           illustration. Equally, selecting a web source does not oblige an image.
           Either choice can remain empty when it would add no real value.
           Image search is an actual photo lookup, not a source of specification
@@ -1994,14 +2010,17 @@ internal static class NIRACognitionPromptCompiler
             "speech": "optional natural spoken version of reply",
             "resourceIntent": {"webQuery":"optional current source search phrase",
                 "webEvidenceDepth":"brief|detailed (optional; brief default)",
-                "imageQuery":"optional real reference image search phrase",
-                "imageCount":1,
+                "imageQuery":"optional single real reference subject",
+                "imageSubjects":["optional independent visual subject A", "subject B"],
+                "imageCount":1, "photographsOnly":false,
                 "videoQuery":"optional publisher demonstration search phrase",
                 "purpose":"why these resources materially improve THIS answer"},
             Every query is optional; use resourceIntent only for real value and
             otherwise omit or set null. A webQuery is normal source verification,
             NOT automatically a video. An imageQuery opts into one provider-ranked,
-            verified real-image retrieval; failure is NOT a displayed image.
+            verified real-image retrieval. For different visual subjects, use
+            imageSubjects (max 3) instead of a combined search phrase. The list
+            is optional, not a media quota. A missing image remains missing.
             Searches run under the normal authorized read-only tool policy. No
             media quota, forced resources, topic keyword list or fabricated URLs.
             "displayBlocks": [{"type":"hero|insight|source|video|heading|text|card|metric|equation|table|chart|code|details|list|quote|timeline|checklist|progress|tabs|followups",
@@ -2206,6 +2225,20 @@ internal static class NIRACognitionPromptCompiler
             "can finish in one LLM call. Combine needed media and web evidence " +
             "instead of running separate post-answer searches. " +
             "A photo OF an object is different from a photo taken BY that object. " +
+            "When multiple different subjects each need their own image, use " +
+            "resourceIntent.imageSubjects as an array of 1-3 exact, independently " +
+            "identified visual subjects, not one broad combined imageQuery. " +
+            "Make every subject self-contained: preserve each proper name or " +
+            "variant and the intended photographic view. The list means one " +
+            "verified image attempt per subject, not three top results from " +
+            "one search. Do not nominate images when they would not help. " +
+            "Set resourceIntent.photographsOnly=true for actual appearance " +
+            "photographs; false for requested diagrams, plots or illustrations. " +
+            "A search-result thumbnail or page hero is not proof of the " +
+            "pictured identity. When visual subjects are selected, name them " +
+            "explicitly in accompanying card/tab headings wherever natural. " +
+            "Separate web source verification from image identity rather " +
+            "than allowing an article preview to stand for a subject photo. " +
             "If an imageQuery is chosen, imageCount may optionally be 1, 2 or 3 " +
             "when that many distinct photographs have real value, default 1; " +
             "do not set an image quota based on topic or test wording. " +

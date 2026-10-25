@@ -176,6 +176,28 @@ Check("PHASE2 Tavily diversity avoids all-CDN candidates when matching other hos
         throw new Exception("Candidate ranking used only one CDN or selected concept artwork");
 });
 
+// P2.4: metadata describing the search topic must not override an actual
+// photograph title identifying a different subject. This was observed in
+// production when an anglerfish search displayed a clownfish photograph.
+Check("P2.4 images reject unrelated subject titles even if descriptions contain query", () =>
+{
+    using var client = new HttpClient(new NIRAWebFakeTransport(req =>
+        throw new Exception("Offline matching must not contact network")));
+    using var service = new NIRATavilyImageDiscoveryService(client,
+        key => key == "NIRA_TAVILY_API_KEY" ? "offline-only" : null);
+    using var document = JsonDocument.Parse("""
+        {"images":[
+            {"url":"https://example.org/photos/clownfish.jpg","description":"Discovering the vibrant world of clownfish. Anglerfish overview on linked page."},
+            {"url":"https://example.org/photos/anglerfish-specimen.jpg","description":"Anglerfish specimen photographed at sea."},
+            {"url":"https://example.org/photos/blueocean.jpg","description":"Unidentified deep sea image, anglerfish search article."}
+        ]}
+        """);
+    var matches = service.AcceptTavilyResponse(document.RootElement, "Anglerfish", 8, true);
+    if (matches.Count != 1 ||
+        !matches[0].MediaUrl.Contains("anglerfish-specimen", StringComparison.Ordinal))
+        throw new Exception("Image identity was inferred from search description instead of actual subject");
+});
+
 Check("P2.3 authentic photos exclude license badge and miniature icon", () =>
 {
     if (!NIRATavilyImageDiscoveryService.LooksLikeNonPhotograph(
@@ -725,126 +747,90 @@ Check("R6 optional resource intent dispatch remains model-selected and authorize
 {
     var natural = new NIRACognitionDecision {
         State = NIRACognitionState.Complete, EmitReply = true,
-        Reply = "An informative answer that can stand on its own.", ReplyReady = true,
-        CharacterReady = true
+        Reply = "A complete answer.", ReplyReady = true, CharacterReady = true
     };
     if (!ReferenceEquals(natural, NIRAResourceIntentPlanner.Apply(natural, true)))
-        throw new Exception("Normal answer triggered a media tool without model selection");
-    var rich = natural with {
-        ResourceIntent = new NIRAResourceIntent {
-            ImageQuery = "specific physical reference subject photograph",
-            VideoQuery = "publisher's real demonstration video", Purpose = "Visual evidence"
-        }
-    };
-    var prepared = NIRAResourceIntentPlanner.Apply(rich, true);
-    if (prepared.State != NIRACognitionState.Continue || prepared.EmitReply ||
-        prepared.CapabilityRequests.Count != 1 ||
-        prepared.CapabilityRequests[0].CapabilityId != NIRACapabilityIds.WebSearch ||
-        !prepared.CapabilityRequests[0].Arguments.GetProperty("includeImages").GetBoolean() ||
-        prepared.CapabilityRequests[0].Arguments.GetProperty("imageQuery").GetString() != rich.ResourceIntent!.ImageQuery ||
-        prepared.CapabilityRequests[0].Arguments.GetProperty("queries").GetArrayLength() != 1)
-        throw new Exception("Chosen evidence was not routed through normal tool requests");
-    var outsideCycle = rich with { ConversationOnly = true };
-    if (!ReferenceEquals(rich, NIRAResourceIntentPlanner.Apply(rich, false)) ||
-        !ReferenceEquals(outsideCycle, NIRAResourceIntentPlanner.Apply(outsideCycle, false)))
-        throw new Exception("Resource intent bypassed first-cycle boundary");
-    var inconsistent = NIRAResourceIntentPlanner.Apply(natural with {
-        ConversationOnly = true, ResourceIntent = rich.ResourceIntent
-    }, true);
-    if (inconsistent.CapabilityRequests.Count != 1 || inconsistent.ConversationOnly ||
-        inconsistent.State != NIRACognitionState.Continue)
-        throw new Exception("A social classification flag silently cancelled model-selected evidence");
-    if (NIRAResourceIntentPlanner.Apply(natural with {
-        ResourceIntent = new NIRAResourceIntent { ImageQuery = "https://ignored.invalid/\nunsafe" }
-    }, true).CapabilityRequests.Count != 0)
-        throw new Exception("Untrusted invalid query was accepted");
-    var already = natural with { ResourceIntent = rich.ResourceIntent,
-        CapabilityRequests = new [] { Request(NIRACapabilityIds.ImageSearch,
-            """{"query":"existing query"}""") } };
-    if (NIRAResourceIntentPlanner.Apply(rich with {
-        ResourceIntent = rich.ResourceIntent! with { ImageCount = 3 }
-    }, true).CapabilityRequests[0].Arguments.GetProperty("retrieveCount").GetInt32() != 3)
-        throw new Exception("Model-selected multi-image request was lost");
-    if (NIRAResourceIntentPlanner.Apply(already, true).CapabilityRequests.Count != 2)
-        throw new Exception("Expected only additional video search, no duplicate image search");
+        throw new Exception("An unrequested tool was planned");
+    var rich = natural with { ResourceIntent = new NIRAResourceIntent {
+        ImageQuery = "independently photographed mechanical subject",
+        VideoQuery = "real-world publisher demonstration",
+        ImageCount = 2, PhotographsOnly = true
+    } };
+    var planned = NIRAResourceIntentPlanner.Apply(rich, true);
+    if (planned.State != NIRACognitionState.Continue || planned.EmitReply ||
+        planned.CapabilityRequests.Count != 2 ||
+        planned.CapabilityRequests[0].CapabilityId != NIRACapabilityIds.ImageSearch ||
+        planned.CapabilityRequests[0].Arguments.GetProperty("retrieveCount").GetInt32() != 2 ||
+        !planned.CapabilityRequests[0].Arguments.GetProperty("photographsOnly").GetBoolean() ||
+        planned.CapabilityRequests[1].CapabilityId != NIRACapabilityIds.WebSearch ||
+        planned.CapabilityRequests[1].Arguments.GetProperty("includeImages").GetBoolean())
+        throw new Exception("Photos were replaced by unrelated web thumbnails or lost");
+    if (!ReferenceEquals(rich, NIRAResourceIntentPlanner.Apply(rich, false)))
+        throw new Exception("Resource plan retried outside original cycle");
+    var inconsistent = NIRAResourceIntentPlanner.Apply(rich with { ConversationOnly = true }, true);
+    if (inconsistent.ConversationOnly || inconsistent.CapabilityRequests.Count != 2)
+        throw new Exception("An inconsistent conversation flag discarded a concrete plan");
+    var existing = rich with { CapabilityRequests = new[] {
+        Request(NIRACapabilityIds.ImageSearch, """{"query":"model-owned original request"}""") } };
+    if (NIRAResourceIntentPlanner.Apply(existing, true).CapabilityRequests.Count != 2)
+        throw new Exception("An existing image request was duplicated");
 });
 
 // A natural demonstration conversation often benefits from BOTH an official
 // still image and an observed moving clip. Plan once; no follow-up classifier,
 // no duplicated provider call. All links and bytes remain capability evidence.
-Check("MEDIA first-round photo+demo shares one authorized search", () =>
+Check("MEDIA first-round photo and demo retain independent source identity", () =>
 {
-    var conversation = new NIRACognitionDecision {
-        State = NIRACognitionState.Complete, EmitReply = true,
-        Reply = "An informal explanation awaiting real demonstrations.",
+    var decision = new NIRACognitionDecision {
+        State = NIRACognitionState.Complete,
         ResourceIntent = new NIRAResourceIntent {
-            ImageQuery = "modern engineering prototype official exterior photo",
-            VideoQuery = "publisher engineering prototype moving demonstration",
-            Purpose = "Appearance and movement are both informative",
+            ImageQuery = "specific apparatus exterior photo",
+            VideoQuery = "verified apparatus operation documentary",
             ImageCount = 2
         }
     };
-    var selected = NIRAResourceIntentPlanner.Apply(conversation, true);
-    if (selected.CapabilityRequests.Count != 1 ||
-        selected.CapabilityRequests[0].CapabilityId != NIRACapabilityIds.WebSearch ||
-        !selected.CapabilityRequests[0].Arguments.GetProperty("includeImages").GetBoolean() ||
-        selected.CapabilityRequests[0].Arguments.GetProperty("retrieveCount").GetInt32() != 2 ||
-        selected.CapabilityRequests[0].Arguments.GetProperty("provider").GetString() != "tavily" ||
-        selected.CapabilityRequests[0].Arguments.GetProperty("queries").GetArrayLength() != 1)
-        throw new Exception("Independent first-round photo/demo intent did not share one web receipt");
-    if (!ReferenceEquals(conversation, NIRAResourceIntentPlanner.Apply(conversation, false)))
-        throw new Exception("Resource lookup was repeated after the original first cycle");
+    var planned = NIRAResourceIntentPlanner.Apply(decision, true);
+    if (planned.CapabilityRequests.Count != 2 ||
+        planned.CapabilityRequests[0].CapabilityId != NIRACapabilityIds.ImageSearch ||
+        planned.CapabilityRequests[0].Arguments.GetProperty("retrieveCount").GetInt32() != 2 ||
+        planned.CapabilityRequests[1].CapabilityId != NIRACapabilityIds.WebSearch ||
+        planned.CapabilityRequests[1].Arguments.GetProperty("includeImages").GetBoolean())
+        throw new Exception("A video thumbnail substituted for an independently retrieved photo");
+    if (!ReferenceEquals(decision, NIRAResourceIntentPlanner.Apply(decision, false)))
+        throw new Exception("A completed resource plan was repeated");
 });
 
 // Resource-intent admission is model-owned; the runtime must not silently
 // suppress an evidence plan merely because the same model returned a social
 // or self-contained classification flag. No topic words, LLMs or network.
-Check("R-next first-pass mixed conversational evidence keeps one coherent tool batch", () =>
+Check("R-next source/photo/video batch remains independent and bounded", () =>
 {
-    var d = new NIRACognitionDecision {
-        State = NIRACognitionState.Complete, EmitReply = true,
-        Reply = "A fluent answer that is not yet source-grounded.",
-        ReplyReady = true, CharacterReady = true,
-        ConversationOnly = true,
-        ResourceIntent = new NIRAResourceIntent {
-            ImageQuery = "specific real engineering reference photograph",
-            ImageCount = 2,
-            WebQuery = "published research about an unfamiliar technology",
-            VideoQuery = "publisher's actual demonstration of the technology",
-            WebEvidenceDepth = "detailed",
-            Purpose = "Evidence genuinely improves the user's understanding"
+    var initial = new NIRACognitionDecision { State=NIRACognitionState.Complete,
+        EmitReply=true, Reply="Pending external sources", ReplyReady=true,
+        ConversationOnly=true, ResourceIntent=new NIRAResourceIntent {
+            ImageQuery="identifiable subject specimen photograph", ImageCount=2,
+            WebQuery="original source evidence for the event",
+            VideoQuery="publisher documentary of the same event", WebEvidenceDepth="detailed"
         }
     };
-    var pending = NIRAResourceIntentPlanner.Apply(d, true);
-    if (pending.State != NIRACognitionState.Continue || pending.EmitReply ||
-        pending.ReplyReady || pending.ConversationOnly || pending.SelfContainedAnswer ||
-        pending.CapabilityRequests.Count != 1 ||
-        pending.CapabilityRequests[0].CapabilityId != NIRACapabilityIds.WebSearch ||
-        pending.CapabilityRequests[0].Arguments.GetProperty("retrieveCount").GetInt32() != 2 ||
-        !pending.CapabilityRequests[0].Arguments.GetProperty("includeImages").GetBoolean() ||
-        pending.CapabilityRequests[0].Arguments.GetProperty("imageQuery").GetString() != d.ResourceIntent!.ImageQuery ||
-        pending.CapabilityRequests[0].Arguments.GetProperty("provider").GetString() != "tavily" ||
-        pending.CapabilityRequests[0].Arguments.GetProperty("queries").GetArrayLength() != 2 ||
-        pending.CapabilityRequests[0].Arguments.GetProperty("evidenceDepth").GetString() != "detailed")
-        throw new Exception("Selected visual/source/video evidence did not stay in one original-call batch");
-    if (NIRAConversationFastPath.CanUseDirectReply(d, true, false, false, false) ||
-        NIRAConversationFastPath.CanUseDirectReply(pending, true, false, false, false))
-        throw new Exception("A direct reply bypassed an unresolved resource plan");
-    var simple = d with { ResourceIntent = null };
-    if (!NIRAConversationFastPath.CanUseDirectReply(simple, true, false, false, false) ||
-        !ReferenceEquals(simple, NIRAResourceIntentPlanner.Apply(simple, true)))
-        throw new Exception("Ordinary one-call social reply was needlessly slowed down");
-    var knowledge = simple with { ConversationOnly = false, SelfContainedAnswer = true };
-    if (!NIRAConversationFastPath.CanUseDirectReply(knowledge, true, false, false, false))
-        throw new Exception("Evidence-free self-contained knowledge gained unnecessary model calls");
-    var cheap = NIRAResourceIntentPlanner.Apply(d with {
-        ConversationOnly = false,
-        ResourceIntent = d.ResourceIntent! with { WebEvidenceDepth = "unknown" }
-    }, true);
-    if (cheap.CapabilityRequests[0].Arguments.GetProperty("evidenceDepth").GetString() != "brief")
-        throw new Exception("Unrecognized provider evidence depth did not use the cheap default");
-    if (!ReferenceEquals(d, NIRAResourceIntentPlanner.Apply(d, false)))
-        throw new Exception("Resource planning escaped the initial-turn boundary");
+    var planned = NIRAResourceIntentPlanner.Apply(initial, true);
+    if (planned.State != NIRACognitionState.Continue || planned.EmitReply ||
+        planned.ConversationOnly || planned.CapabilityRequests.Count != 2 ||
+        planned.CapabilityRequests[0].CapabilityId != NIRACapabilityIds.ImageSearch ||
+        planned.CapabilityRequests[1].CapabilityId != NIRACapabilityIds.WebSearch ||
+        planned.CapabilityRequests[1].Arguments.GetProperty("includeImages").GetBoolean() ||
+        planned.CapabilityRequests[1].Arguments.GetProperty("queries").GetArrayLength() != 2 ||
+        planned.CapabilityRequests[1].Arguments.GetProperty("evidenceDepth").GetString() != "detailed")
+        throw new Exception("Factual and photographic sources were not independently requested");
+    var noIntent = initial with { ResourceIntent=null };
+    if (!ReferenceEquals(noIntent, NIRAResourceIntentPlanner.Apply(noIntent,true)))
+        throw new Exception("No resource intent should be a fast path");
+    if (!ReferenceEquals(initial,NIRAResourceIntentPlanner.Apply(initial,false)))
+        throw new Exception("Resource plan escaped the first cycle");
+    var cheap = NIRAResourceIntentPlanner.Apply(initial with {
+        ResourceIntent=initial.ResourceIntent! with {WebEvidenceDepth="unknown"}}, true);
+    if (cheap.CapabilityRequests[1].Arguments.GetProperty("evidenceDepth").GetString() != "brief")
+        throw new Exception("Invalid depth didn't degrade to brief");
 });
 
 // The local grounding preflight is topic-independent and does not call a model,
@@ -1001,24 +987,24 @@ Check("R7 source, photo and demonstration intent is independent and optional", (
         throw new Exception("Pure source evidence intent was lost");
 
     var multi = natural with { ResourceIntent = new NIRAResourceIntent {
-        WebQuery = "verifiable publisher source of a new vehicle",
-        ImageQuery = "licensed photograph of an unfamiliar vehicle",
-        VideoQuery = "official flight demonstration of that vehicle",
-        Purpose = "Appearance, technical accuracy and demonstration" } };
+        WebQuery = "verified publisher source of a new vehicle",
+        ImageQuery = "licensed photograph of a hypothetical vehicle",
+        VideoQuery = "published demonstration of the vehicle" } };
     var planned = NIRAResourceIntentPlanner.Apply(multi with {
         ResourceIntent = multi.ResourceIntent! with { ImageCount = 2 }
     }, true);
-    if (planned.CapabilityRequests.Count != 1 ||
+    if (planned.CapabilityRequests.Count != 2 ||
+        planned.CapabilityRequests[0].CapabilityId != NIRACapabilityIds.ImageSearch ||
         planned.CapabilityRequests[0].Arguments.GetProperty("retrieveCount").GetInt32() != 2 ||
-        planned.CapabilityRequests[0].CapabilityId != NIRACapabilityIds.WebSearch ||
-        !planned.CapabilityRequests[0].Arguments.GetProperty("includeImages").GetBoolean() ||
-        planned.CapabilityRequests[0].Arguments.GetProperty("queries").GetArrayLength() != 2)
-        throw new Exception("Model-selected web and visual evidence was not combined in the same Tavily search");
+        planned.CapabilityRequests[1].CapabilityId != NIRACapabilityIds.WebSearch ||
+        planned.CapabilityRequests[1].Arguments.GetProperty("includeImages").GetBoolean() ||
+        planned.CapabilityRequests[1].Arguments.GetProperty("queries").GetArrayLength() != 2)
+        throw new Exception("Combined facts and image lost their separate subject provenance");
 
     if (!ReferenceEquals(NIRAResourceIntentPlanner.Apply(multi, false), multi) ||
         NIRAResourceIntentPlanner.Apply(natural with {
             ConversationOnly = true, ResourceIntent = multi.ResourceIntent
-        }, true).CapabilityRequests.Count != 1)
+        }, true).CapabilityRequests.Count != 2)
         throw new Exception("Resource selection ignored initial-cycle boundary or lost selected evidence");
     var duplicate = multi with { CapabilityRequests = new[] {
         Request(NIRACapabilityIds.WebSearch, """{"query":"already researching"}""") } };
@@ -1030,6 +1016,55 @@ Check("R7 source, photo and demonstration intent is independent and optional", (
         VideoQuery = "https://unverified.example.invalid/video" } };
     if (NIRAResourceIntentPlanner.Apply(unsafePlan, true).CapabilityRequests.Count != 0)
         throw new Exception("Untrusted URLs or malformed queries became tool inputs");
+});
+
+// Unseen subject labels prove this does not depend on any person, product,
+// animal or topic registry, and each independently requested image is traceable.
+Check("MEDIA multi-subject images are individually identifiable and bounded", () =>
+{
+    var decision = new NIRACognitionDecision { State=NIRACognitionState.Complete,
+        ResourceIntent = new NIRAResourceIntent {
+            ImageSubjects=new[] {"Archive subject Aurora Twenty", "Bronze field microscope",
+                "Historic timber airframe"}, ImageQuery="generic reference pictures",
+            ImageCount=3, PhotographsOnly=true, WebQuery="historical museum index"
+        }
+    };
+    var result = NIRAResourceIntentPlanner.Apply(decision, true);
+    if (result.CapabilityRequests.Count != 4 ||
+        !result.CapabilityRequests.Take(3).All(r => r.CapabilityId == NIRACapabilityIds.ImageSearch &&
+            r.Arguments.GetProperty("retrieveCount").GetInt32() == 1 &&
+            r.Arguments.GetProperty("photographsOnly").GetBoolean()) ||
+        !result.CapabilityRequests.Take(3).Select(r => r.Arguments.GetProperty("query").GetString())
+            .SequenceEqual(decision.ResourceIntent!.ImageSubjects) ||
+        result.CapabilityRequests[3].CapabilityId != NIRACapabilityIds.WebSearch)
+        throw new Exception("Multiple subjects were pooled or improperly routed");
+    var invalid = decision with {ResourceIntent=decision.ResourceIntent! with {
+        ImageSubjects=new[] {"valid subject", "\nmalicious"} }};
+    if (NIRAResourceIntentPlanner.Apply(invalid, true).CapabilityRequests.Count != 0)
+        throw new Exception("Invalid subject caused a partial untrusted dispatch");
+    var tooMany = decision with { ResourceIntent = decision.ResourceIntent! with {
+        ImageSubjects = new[] {"one subject", "two subject", "three subject", "four subject"} } };
+    if (NIRAResourceIntentPlanner.Apply(tooMany,true).CapabilityRequests.Count != 0)
+        throw new Exception("Visual subject budget was not enforced");
+});
+
+Check("MEDIA page headline cannot certify an unrelated photo", () =>
+{
+    using var http = new HttpClient(new NIRAWebFakeTransport(req =>
+        throw new Exception("Ranking should not call external servers")));
+    using var service = new NIRATavilyImageDiscoveryService(http,
+        key => key == "NIRA_TAVILY_API_KEY" ? "local-test" : null);
+    using var root = JsonDocument.Parse("""
+       {"results":[{"url":"https://museum.example.org/article",
+         "title":"Archive subject Aurora Twenty",
+         "images":[{"url":"https://media.example.org/social-preview.jpg"},
+                   {"url":"https://media.example.org/archive-subject-aurora-twenty.jpg"}]}]}
+       """);
+    var selected = service.AcceptTavilyResponse(root.RootElement,"Archive subject Aurora Twenty",5,true);
+    if (selected.Count != 1 ||
+        !selected[0].MediaUrl.EndsWith("archive-subject-aurora-twenty.jpg", StringComparison.Ordinal) ||
+        selected[0].SourceUri != "https://museum.example.org/article")
+        throw new Exception("Article title was laundered as photo caption or source was lost");
 });
 
 Check("R7 real reference-image retrieval is opt-in and read-only", () =>

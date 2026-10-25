@@ -206,7 +206,6 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
     // Only verified source-backed images enter the paragraph-aware document.
     // Nonretrieved and generated assets keep their established gallery/viewer.
     public bool HasInlineVisuals => Content.Length >= 100 &&
-        (_richContentFrames.Count > 0 || RichElements.Count == 0) &&
         VisualArtifacts.Count is > 0 and <= 4 &&
         VisualArtifacts.All(v => v.HasPreview && v.HasSourceUri && !v.IsGeneratedImage);
     public int InlineVisualRevision => VisualArtifacts.Count;
@@ -290,7 +289,7 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         {
             bool overflow = count > 3 && index == 2;
             target.Add(new NIRAUserImageGalleryTileViewModel(
-                this, images[index], index,
+                this, images[index], assistant ? VisualArtifacts.IndexOf(images[index]) : index,
                 hiddenCount: overflow ? count - 2 : 0,
                 isOverflowTile: overflow,
                 isAssistantTile: assistant,
@@ -312,15 +311,41 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
     // Track content frames separately from media frames so refreshes are idempotent.
     private readonly List<(FrameworkElement View, IReadOnlyList<NIRARichBlock> Blocks)> _richContentFrames = new();
     private readonly List<FrameworkElement> _richImageFrames = new();
+    private readonly HashSet<Guid> _richPlacedPhotoIds = new();
+    // Only unplaced photos go into the fallback row. Never hide a valid
+    // image merely because it was eligible for inline rendering.
+    public ObservableCollection<NIRAUserImageGalleryTileViewModel> UnplacedAssistantImageGalleryTiles { get; } = new();
+    public bool HasUnplacedAssistantImages => UnplacedAssistantImageGalleryTiles.Count > 0;
+
+    private void RebuildUnplacedAssistantImages()
+    {
+        var unplaced = VisualArtifacts.Where(photo =>
+            !HasInlineVisuals ||
+            !(photo.HasPreview && photo.HasSourceUri && !photo.IsGeneratedImage) ||
+            (NIRAInlineImageAnchorPolicy.FindLine(Content,
+                 string.IsNullOrWhiteSpace(photo.SubjectQuery) ? photo.Title : photo.SubjectQuery) < 0 &&
+             !_richPlacedPhotoIds.Contains(photo.ArtifactId))).ToArray();
+        BuildGalleryTiles(UnplacedAssistantImageGalleryTiles, unplaced, assistant: true);
+        OnPropertyChanged(nameof(HasUnplacedAssistantImages));
+    }
 
     private void RefreshRichPhotoPlacement()
     {
         foreach (var previous in _richImageFrames) RichElements.Remove(previous);
         _richImageFrames.Clear();
-        if (_richContentFrames.Count == 0 || !HasInlineVisuals) return;
+        _richPlacedPhotoIds.Clear();
+        if (_richContentFrames.Count == 0 || !HasInlineVisuals)
+        {
+            RebuildUnplacedAssistantImages();
+            return;
+        }
         var photos = VisualArtifacts.Where(p => p.HasPreview && p.HasSourceUri && !p.IsGeneratedImage)
             .Take(4).ToArray();
-        if (photos.Length == 0) return;
+        if (photos.Length == 0)
+        {
+            RebuildUnplacedAssistantImages();
+            return;
+        }
 
         // A photo paired to several tabbed sections is more useful when the
         // sections become separate readable cards. That lets each verified
@@ -430,8 +455,10 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
             var frame = NIRAChatDocument.MakeInlinePhoto(photo, prominent: false);
             RichElements.Insert(Math.Min(position, RichElements.Count), frame);
             _richImageFrames.Add(frame);
+            _richPlacedPhotoIds.Add(photo.ArtifactId);
             attachedCount[anchor] = attachedCount.GetValueOrDefault(anchor) + 1;
         }
+        RebuildUnplacedAssistantImages();
     }
 
     public bool HasRichElements => RichElements.Count > 0;

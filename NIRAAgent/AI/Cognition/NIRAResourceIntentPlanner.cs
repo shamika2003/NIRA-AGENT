@@ -47,53 +47,48 @@ public static class NIRAResourceIntentPlanner
         string imageQuery = ValidQuery(decision.ResourceIntent.ImageQuery, 160);
         string webQuery = ValidQuery(decision.ResourceIntent.WebQuery, 250);
         string videoQuery = ValidQuery(decision.ResourceIntent.VideoQuery, 250);
+        IReadOnlyList<string> nominated = decision.ResourceIntent.ImageSubjects ?? Array.Empty<string>();
+        if (nominated.Count > 3 || nominated.Any(q => ValidQuery(q, 160).Length == 0))
+            return decision;
+        string[] visualSubjects = nominated.Count > 0
+            ? nominated.Select(q => ValidQuery(q, 160)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
+            : (imageQuery.Length > 0 ? new[] { imageQuery } : Array.Empty<string>());
 
-        // This is one model-selected intent, not three unrelated grants. If
-        // ANY provided nonblank query is malformed, discard the entire plan;
-        // never execute a valid-looking remainder of untrusted mixed input.
+        // Reject the whole mixed proposal if any field is unsafe. Neither web
+        // research nor a plausible subject may launder an invalid sibling.
         if ((!string.IsNullOrWhiteSpace(decision.ResourceIntent.ImageQuery) && imageQuery.Length == 0) ||
             (!string.IsNullOrWhiteSpace(decision.ResourceIntent.WebQuery) && webQuery.Length == 0) ||
             (!string.IsNullOrWhiteSpace(decision.ResourceIntent.VideoQuery) && videoQuery.Length == 0) ||
-            (imageQuery.Length == 0 && webQuery.Length == 0 && videoQuery.Length == 0))
+            (visualSubjects.Length == 0 && webQuery.Length == 0 && videoQuery.Length == 0))
             return decision;
 
-        // Explicit image generation remains an entirely separate user-requested
-        // creation task. Never replace it with web image retrieval.
         if (decision.CapabilityRequests.Any(r => r.CapabilityId == NIRACapabilityIds.ImageGenerate))
             return decision;
 
         var requests = decision.CapabilityRequests.ToList();
-        // If NIRA independently chooses both research and a useful reference
-        // image, ONE Tavily response can carry both. This avoids paying for a
-        // second image-search API call. If the user asks only for photos, use
-        // image.search unchanged. No subject/topic keywords are hardcoded.
-        // Either source research OR model-selected demonstration lookup can
-        // carry relevant ranked images through the same Tavily web receipt.
-        // Avoid a second paid image.search when image + video are chosen.
-        bool sharedTavily = imageQuery.Length > 0 &&
-            (webQuery.Length > 0 || videoQuery.Length > 0) &&
-            !requests.Any(r => r.CapabilityId is NIRACapabilityIds.ImageSearch or
-                NIRACapabilityIds.ImageRetrieve or NIRACapabilityIds.WebSearch);
-        // Do not duplicate capability families the model has already planned.
-        if (imageQuery.Length > 0 && !sharedTavily && !requests.Any(r => r.CapabilityId is
-                NIRACapabilityIds.ImageSearch or NIRACapabilityIds.ImageRetrieve))
-            requests.Add(new NIRACapabilityRequest {
-                CapabilityId = NIRACapabilityIds.ImageSearch,
-                // Opted in by the SAME model decision: download one provider-ranked,
-                // allowlisted candidate within this authorized read-only operation.
-                // No extra LLM call just to copy a candidate ID into image.retrieve.
-                Arguments = JsonSerializer.SerializeToElement(new {
-                    query = imageQuery, limit = 6, retrieveBest = true,
-                    retrieveCount = Math.Clamp(decision.ResourceIntent.ImageCount, 1, 3)
-                }),
-                Reason = "Model-selected real visual evidence materially improves this answer."
-            });
-        // One web request can cover independent documentation and a published
-        // demonstration without spending a second paid provider request.
+        bool existingImages = requests.Any(r => r.CapabilityId is
+            NIRACapabilityIds.ImageSearch or NIRACapabilityIds.ImageRetrieve);
+        // The model owns image intent. One independently identified visual
+        // subject gets one independent search; several named subjects do not
+        // share a lucky top result. Search returns verified real raster bytes.
+        // Separate source/video searches cannot substitute article thumbnails
+        // for reference photos. The three-subject bound protects cost/latency.
+        if (!existingImages)
+        {
+            foreach (string subject in visualSubjects)
+                requests.Add(new NIRACapabilityRequest {
+                    CapabilityId = NIRACapabilityIds.ImageSearch,
+                    Arguments = JsonSerializer.SerializeToElement(new {
+                        query = subject, limit = 8, retrieveBest = true,
+                        retrieveCount = visualSubjects.Length > 1 ? 1 :
+                            Math.Clamp(decision.ResourceIntent.ImageCount, 1, 3),
+                        photographsOnly = decision.ResourceIntent.PhotographsOnly
+                    }),
+                    Reason = "Model-selected subject-specific verified image; independent from web article media."
+                });
+        }
         string[] webQueries = new[] { webQuery, videoQuery }
-            .Where(q => q.Length > 0)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+            .Where(q => q.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if (webQueries.Length > 0 && !requests.Any(r => r.CapabilityId == NIRACapabilityIds.WebSearch))
             requests.Add(new NIRACapabilityRequest {
                 CapabilityId = NIRACapabilityIds.WebSearch,
@@ -101,11 +96,10 @@ public static class NIRAResourceIntentPlanner
                     queries = webQueries, maxSources = 6,
                     evidenceDepth = string.Equals(decision.ResourceIntent.WebEvidenceDepth,
                         "detailed", StringComparison.OrdinalIgnoreCase) ? "detailed" : "brief",
-                    includeImages = sharedTavily, imageQuery = sharedTavily ? imageQuery : "",
-                    retrieveCount = Math.Clamp(decision.ResourceIntent.ImageCount, 1, 3),
-                    provider = sharedTavily ? "tavily" : "auto"
+                    includeImages = false, imageQuery = "", retrieveCount = 1,
+                    provider = "auto"
                 }),
-                Reason = "Model-selected published evidence would substantively improve the answer."
+                Reason = "Independently verify the facts and optional real demonstration."
             });
         if (requests.Count == decision.CapabilityRequests.Count) return decision;
 
