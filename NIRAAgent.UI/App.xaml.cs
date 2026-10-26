@@ -485,6 +485,22 @@ public partial class App : WpfApplication
                 NIRAFileMetadataCapabilityHandler>();
 
 
+            // NIRA GATE R39 Step 1B: scoped, bounded, read-only file discovery.
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRAFileSearchCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRADirectoryTreeCapabilityHandler>();
+
+            // NIRA GATE R38: independent file integrity and recovery primitives.
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRAFileHashCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRAFileCompareCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRAFileBackupCreateCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRAFileBackupVerifyCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRAFileBackupRestoreCapabilityHandler>();
+
+            // NIRA GATE R40 Step 1C: guarded atomic revisions and audited rollback.
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRAFileRevisionApplyCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRAFileRevisionInspectCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRAFileRevisionRollbackCapabilityHandler>();
+
             builder.Services.AddSingleton<
                 INIRACapabilityHandler,
                 NIRAFileWriteCapabilityHandler>();

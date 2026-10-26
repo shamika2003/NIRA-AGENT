@@ -63,6 +63,19 @@ public static class NIRACapabilityIds
         "filesystem.metadata";
 
 
+    public const string FileSearch = "filesystem.search";
+    public const string DirectoryTree = "filesystem.tree";
+
+    public const string FileHash = "filesystem.hash";
+    public const string FileCompare = "filesystem.compare";
+    public const string FileBackupCreate = "filesystem.backup.create";
+    public const string FileBackupVerify = "filesystem.backup.verify";
+    public const string FileBackupRestore = "filesystem.backup.restore";
+
+    public const string FileRevisionApply = "filesystem.revision.apply";
+    public const string FileRevisionInspect = "filesystem.revision.inspect";
+    public const string FileRevisionRollback = "filesystem.revision.rollback";
+
     public const string FileWrite =
         "filesystem.write";
 

@@ -6771,8 +6771,498 @@ Check("General answer depth separates social reactions from useful topical detai
     // its real-world factual accuracy, judgment, or rendered media availability.
 });
 
+// GATE R38: verified file intelligence + create-new backup/recovery.
+Check("R38 hash/compare handles same and different bytes without mutation", () =>
+{
+    string folder = Path.Combine(Path.GetTempPath(), "nira-integrity-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        string a = Path.Combine(folder, "a.txt"), b = Path.Combine(folder, "b.txt");
+        File.WriteAllText(a, "hello \u2605");
+        File.WriteAllText(b, "hello \u2605");
+        var hash = new NIRAFileHashCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileHash, JsonSerializer.Serialize(new { path = a }))).GetAwaiter().GetResult();
+        if (!hash.Succeeded || !hash.Output.Contains("Sha256=", StringComparison.Ordinal) ||
+            hash.ChangedSystemState) throw new Exception("Hash did not return read-only evidence");
+        var same = new NIRAFileCompareCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileCompare, JsonSerializer.Serialize(new { source = a, destination = b })))
+            .GetAwaiter().GetResult();
+        if (!same.Output.Contains("Equal=True", StringComparison.Ordinal))
+            throw new Exception("Identical files were marked different");
+        File.WriteAllText(b, "different");
+        var different = new NIRAFileCompareCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileCompare, JsonSerializer.Serialize(new { source = a, destination = b })))
+            .GetAwaiter().GetResult();
+        if (!different.Output.Contains("Equal=False", StringComparison.Ordinal))
+            throw new Exception("Different files were marked equal");
+    }
+    finally { Directory.Delete(folder, true); }
+});
+Check("R38 backup create/verify/recover produces non-overwriting verified copy", () =>
+{
+    string folder = Path.Combine(Path.GetTempPath(), "nira-backup-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        string original = Path.Combine(folder, "source.txt");
+        string backup = Path.Combine(folder, "source.safety.bak");
+        string restored = Path.Combine(folder, "recovered.txt");
+        File.WriteAllText(original, "NIRA test content");
+        var created = new NIRAFileBackupCreateCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileBackupCreate, JsonSerializer.Serialize(new { source = original, destination = backup })))
+            .GetAwaiter().GetResult();
+        if (!created.Succeeded || !created.ChangedSystemState ||
+            !File.Exists(backup) || !File.Exists(backup + ".nira-backup.json"))
+            throw new Exception("Backup or manifest was not committed");
+        var verified = new NIRAFileBackupVerifyCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileBackupVerify, JsonSerializer.Serialize(new { path = backup })))
+            .GetAwaiter().GetResult();
+        if (!verified.Output.Contains("Verified=True", StringComparison.Ordinal) || verified.ChangedSystemState)
+            throw new Exception("Read-only backup verification failed");
+        File.WriteAllText(original, "newer user's work");
+        var recovered = new NIRAFileBackupRestoreCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileBackupRestore, JsonSerializer.Serialize(new { source = backup, destination = restored })))
+            .GetAwaiter().GetResult();
+        if (!recovered.Succeeded || !recovered.ChangedSystemState ||
+            File.ReadAllText(restored) != "NIRA test content" ||
+            File.ReadAllText(original) != "newer user's work")
+            throw new Exception("Recovery did not preserve the changed original");
+        Throws<IOException>(() => new NIRAFileBackupRestoreCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileBackupRestore, JsonSerializer.Serialize(new { source = backup, destination = restored })))
+            .GetAwaiter().GetResult());
+        Throws<IOException>(() => new NIRAFileBackupCreateCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileBackupCreate, JsonSerializer.Serialize(new { source = original, destination = backup })))
+            .GetAwaiter().GetResult());
+        if (File.ReadAllText(restored) != "NIRA test content")
+            throw new Exception("A conflicting second operation replaced the first recovery");
+    }
+    finally { Directory.Delete(folder, true); }
+});
+Check("R38 tampered backup fails verification and never restores", () =>
+{
+    string folder = Path.Combine(Path.GetTempPath(), "nira-tamper-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        string original = Path.Combine(folder, "o.txt");
+        string backup = Path.Combine(folder, "backup.bak");
+        string result = Path.Combine(folder, "result.txt");
+        File.WriteAllText(original, "trusted");
+        new NIRAFileBackupCreateCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileBackupCreate, JsonSerializer.Serialize(new { source = original, destination = backup })))
+            .GetAwaiter().GetResult();
+        File.WriteAllText(backup, "tampered");
+        Throws<IOException>(() => new NIRAFileBackupVerifyCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileBackupVerify, JsonSerializer.Serialize(new { path = backup })))
+            .GetAwaiter().GetResult());
+        Throws<IOException>(() => new NIRAFileBackupRestoreCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileBackupRestore, JsonSerializer.Serialize(new { source = backup, destination = result })))
+            .GetAwaiter().GetResult());
+        if (File.Exists(result)) throw new Exception("Corrupt backup was restored");
+    }
+    finally { Directory.Delete(folder, true); }
+});
+Check("R38 restore requires complete metadata, existing parent and new target", () =>
+{
+    string folder = Path.Combine(Path.GetTempPath(), "nira-preflight-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        string source = Path.Combine(folder, "source.txt");
+        File.WriteAllText(source, "source");
+        Throws<InvalidOperationException>(() => new NIRAFileBackupVerifyCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileBackupVerify, JsonSerializer.Serialize(new { path = source })))
+            .GetAwaiter().GetResult());
+        Throws<DirectoryNotFoundException>(() => new NIRAFileBackupCreateCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileBackupCreate, JsonSerializer.Serialize(new {
+                source, destination = Path.Combine(folder, "missing", "backup.bak") })))
+            .GetAwaiter().GetResult());
+        Throws<InvalidOperationException>(() => new NIRAFileBackupCreateCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileBackupCreate, JsonSerializer.Serialize(new { source, destination = source })))
+            .GetAwaiter().GetResult());
+    }
+    finally { Directory.Delete(folder, true); }
+});
+Check("R38 descriptors maintain risk separation and require explicit grounded paths", () =>
+{
+    INIRACapabilityHandler[] handlers = [
+        new NIRAFileHashCapabilityHandler(), new NIRAFileCompareCapabilityHandler(),
+        new NIRAFileBackupCreateCapabilityHandler(), new NIRAFileBackupVerifyCapabilityHandler(),
+        new NIRAFileBackupRestoreCapabilityHandler() ];
+    var expected = new[] { "filesystem.hash", "filesystem.compare", "filesystem.backup.create",
+        "filesystem.backup.verify", "filesystem.backup.restore" };
+    if (!handlers.Select(h => h.Descriptor.Id).SequenceEqual(expected))
+        throw new Exception("Integrity descriptor ID mismatch");
+    if (handlers[0].Descriptor.DefaultRisk != NIRACapabilityRisk.Observe ||
+        handlers[1].Descriptor.DefaultRisk != NIRACapabilityRisk.Observe ||
+        handlers[3].Descriptor.DefaultRisk != NIRACapabilityRisk.Observe ||
+        handlers[2].Descriptor.DefaultRisk != NIRACapabilityRisk.Modify ||
+        handlers[4].Descriptor.DefaultRisk != NIRACapabilityRisk.Modify ||
+        handlers.Any(h => h.Descriptor.Parameters.Any(p => !p.Required)))
+        throw new Exception("Integrity capability permission risk/parameter contract is too broad");
+});
+
+// GATE R39 Step 1B: real handler execution, bounded search coverage and tree.
+Check("R39 recursive filename/metadata search finds exact child and respects suffix", () =>
+{
+    string root = Path.Combine(Path.GetTempPath(), "nira-r39-search-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(Path.Combine(root, "nested"));
+    try
+    {
+        string direct = Path.Combine(root, "sample.txt");
+        string child = Path.Combine(root, "nested", "report.txt");
+        File.WriteAllText(direct, "a");
+        File.WriteAllText(child, "detailed report");
+        File.WriteAllText(Path.Combine(root, "nested", "report.md"), "different type");
+        var handler = new NIRAFileSearchCapabilityHandler();
+        var result = handler.ExecuteAsync(Request(NIRACapabilityIds.FileSearch,
+            JsonSerializer.Serialize(new { path = root, nameContains = "REPORT",
+                extension = ".txt", maxDepth = 2, maxScanned = 100, maxMatches = 20 })))
+            .GetAwaiter().GetResult();
+        if (!result.Succeeded || result.ChangedSystemState ||
+            !result.Output.Contains(child, StringComparison.Ordinal) ||
+            result.Output.Contains("report.md", StringComparison.Ordinal) ||
+            result.Output.Contains(direct, StringComparison.Ordinal) ||
+            !result.Summary.Contains("MatchesObserved=1", StringComparison.Ordinal) ||
+            !result.Summary.Contains("ScanComplete=True", StringComparison.Ordinal))
+            throw new Exception("Bounded file search returned unrelated names or ungrounded completion");
+        var shallow = handler.ExecuteAsync(Request(NIRACapabilityIds.FileSearch,
+            JsonSerializer.Serialize(new { path = root, nameContains = "report", maxDepth = 0 })))
+            .GetAwaiter().GetResult();
+        if (shallow.Output.Contains(child, StringComparison.Ordinal) ||
+            !shallow.Summary.Contains("DepthLimitReached=True", StringComparison.Ordinal))
+            throw new Exception("Shallow search traversed past the caller's depth boundary");
+    }
+    finally { Directory.Delete(root, recursive: true); }
+});
+Check("R39 bounded scan tells truth about incomplete search", () =>
+{
+    string root = Path.Combine(Path.GetTempPath(), "nira-r39-budget-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(root);
+    try
+    {
+        for (int i = 0; i < 6; i++) File.WriteAllText(Path.Combine(root, $"n{i}.txt"), "data");
+        var result = new NIRAFileSearchCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileSearch, JsonSerializer.Serialize(new {
+                path = root, nameContains = "unmatched", maxScanned = 1, maxDepth = 2 })))
+            .GetAwaiter().GetResult();
+        if (!result.Summary.Contains("ScanComplete=False", StringComparison.Ordinal) ||
+            !result.Summary.Contains("EntryLimitReached=True", StringComparison.Ordinal) ||
+            !result.Summary.Contains("MatchesObserved=0", StringComparison.Ordinal))
+            throw new Exception("Limited search falsely proved there were no matching files");
+    }
+    finally { Directory.Delete(root, recursive: true); }
+});
+Check("R39 folder tree only exposes actual grounded children", () =>
+{
+    string root = Path.Combine(Path.GetTempPath(), "nira-r39-tree-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(Path.Combine(root, "ok"));
+    Directory.CreateDirectory(Path.Combine(root, "skip"));
+    try
+    {
+        File.WriteAllText(Path.Combine(root, "ok", "visible.txt"), "ok");
+        File.WriteAllText(Path.Combine(root, "skip", "hidden.txt"), "hidden");
+        var tree = new NIRADirectoryTreeCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.DirectoryTree, JsonSerializer.Serialize(new {
+                path = root, maxDepth = 2, maxScanned = 100,
+                excludeNames = "skip", includeFiles = true })))
+            .GetAwaiter().GetResult();
+        if (!tree.Succeeded || tree.ChangedSystemState ||
+            !tree.Output.Contains("[DIR] ok", StringComparison.Ordinal) ||
+            !tree.Output.Contains("[FILE] visible.txt", StringComparison.Ordinal) ||
+            tree.Output.Contains("hidden.txt", StringComparison.Ordinal) ||
+            tree.Output.Contains("[DIR] skip", StringComparison.Ordinal) ||
+            !tree.Summary.Contains("ScanComplete=True", StringComparison.Ordinal))
+            throw new Exception("Folder tree ignored exclusions or omitted real entries");
+        var folders = new NIRADirectoryTreeCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.DirectoryTree, JsonSerializer.Serialize(new {
+                path = root, maxDepth = 2, includeFiles = false })))
+            .GetAwaiter().GetResult();
+        if (folders.Output.Contains("[FILE]", StringComparison.Ordinal))
+            throw new Exception("Folder-only tree exposed file names");
+    }
+    finally { Directory.Delete(root, recursive: true); }
+});
+Check("R39 discovery paths and untrusted filters are rejected before scanning", () =>
+{
+    var search = new NIRAFileSearchCapabilityHandler();
+    var tree = new NIRADirectoryTreeCapabilityHandler();
+    if (search.Descriptor.Id != "filesystem.search" ||
+        tree.Descriptor.Id != "filesystem.tree" ||
+        search.Descriptor.DefaultRisk != NIRACapabilityRisk.Observe ||
+        tree.Descriptor.DefaultRisk != NIRACapabilityRisk.Observe ||
+        search.Descriptor.Parameters.First().Name != "path" ||
+        !search.Descriptor.Parameters.First().Required ||
+        tree.Descriptor.Parameters.First().Name != "path" ||
+        !tree.Descriptor.Parameters.First().Required)
+        throw new Exception("New discovery tools must remain scoped read-only tools");
+    Throws<InvalidOperationException>(() => search.ExecuteAsync(Request(
+        NIRACapabilityIds.FileSearch, "{}" )).GetAwaiter().GetResult());
+    string root = Path.GetTempPath();
+    Throws<ArgumentException>(() => search.ExecuteAsync(Request(
+        NIRACapabilityIds.FileSearch, JsonSerializer.Serialize(new {
+            path = root, nameContains = "..\\private", maxDepth = 2 })))
+        .GetAwaiter().GetResult());
+    Throws<ArgumentException>(() => tree.ExecuteAsync(Request(
+        NIRACapabilityIds.DirectoryTree, JsonSerializer.Serialize(new {
+            path = root, excludeNames = "..", maxDepth = 2 })))
+        .GetAwaiter().GetResult());
+});
+
+// R40.1: A post-rollback hash must not be suppressed as a duplicate of the
+// pre-rollback hash. Preserve the prior evidence but invalidate its cache entry.
+Check("R40.1 revision invalidates the stale hash of exactly its destination", () =>
+{
+    var destination = @"C:\Users\ADMIN\Desktop\NIRA-R40-TEST\original.txt";
+    var another = @"C:\Users\ADMIN\Desktop\NIRA-R40-TEST\replacement.txt";
+    var oldHash = Request(NIRACapabilityIds.FileHash,
+        JsonSerializer.Serialize(new { path = destination }));
+    var unrelatedHash = Request(NIRACapabilityIds.FileHash,
+        JsonSerializer.Serialize(new { path = another }));
+    var inspect = Request(NIRACapabilityIds.FileRevisionInspect,
+        JsonSerializer.Serialize(new { destination, backup = destination + ".bak" }));
+    var compare = Request(NIRACapabilityIds.FileCompare,
+        JsonSerializer.Serialize(new { source = another, destination }));
+    var rollback = Request(NIRACapabilityIds.FileRevisionRollback,
+        JsonSerializer.Serialize(new { destination, backup = destination + ".bak",
+            expectedCurrentSha256 = new string('A', 64) }));
+    var observed = new[] { oldHash, unrelatedHash, inspect, compare, rollback };
+    var executed = new HashSet<string>(observed.Select(x => x.BuildSignature()),
+        StringComparer.OrdinalIgnoreCase);
+    var duplicates = new HashSet<string>(executed, StringComparer.OrdinalIgnoreCase);
+    var requests = observed.ToDictionary(x => x.BuildSignature(), x => x,
+        StringComparer.OrdinalIgnoreCase);
+    var results = observed.ToDictionary(x => x.BuildSignature(), x =>
+        new NIRACapabilityResult { CapabilityId = x.CapabilityId,
+            Risk = x.CapabilityId == NIRACapabilityIds.FileRevisionRollback
+                ? NIRACapabilityRisk.Modify : NIRACapabilityRisk.Observe,
+            Status = NIRACapabilityResultStatus.Succeeded },
+        StringComparer.OrdinalIgnoreCase);
+    var finished = new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.FileRevisionRollback,
+        Risk = NIRACapabilityRisk.Modify,
+        Status = NIRACapabilityResultStatus.Succeeded,
+        ChangedSystemState = true
+    };
+    int removed = NIRAFileRevisionObservationContinuityPolicy.InvalidateAfterRevision(
+        rollback, finished, executed, duplicates, requests, results);
+    if (removed != 3 || executed.Contains(oldHash.BuildSignature()) ||
+        executed.Contains(inspect.BuildSignature()) ||
+        executed.Contains(compare.BuildSignature()) ||
+        !executed.Contains(unrelatedHash.BuildSignature()) ||
+        !executed.Contains(rollback.BuildSignature()) ||
+        results.ContainsKey(oldHash.BuildSignature()) ||
+        !results.ContainsKey(unrelatedHash.BuildSignature()))
+        throw new Exception("Post-revision freshness did not preserve unrelated reads and guarded writes");
+    // The same hash can now be executed once, then is suppressed again until
+    // a different authorized mutation actually changes that file.
+    if (!executed.Add(oldHash.BuildSignature()) || executed.Add(oldHash.BuildSignature()))
+        throw new Exception("Fresh hash is not once-per-file-version");
+});
+
+Check("R40.1 rejected or uncertain revisions preserve the observation cache", () =>
+{
+    var destination = @"C:\Users\ADMIN\Desktop\NIRA-R40-TEST\original.txt";
+    var hash = Request(NIRACapabilityIds.FileHash,
+        JsonSerializer.Serialize(new { path = destination }));
+    var mutation = Request(NIRACapabilityIds.FileRevisionApply,
+        JsonSerializer.Serialize(new { source = destination + ".new",
+            destination, backup = destination + ".bak",
+            expectedSha256 = new string('A', 64) }));
+    var requests = new Dictionary<string, NIRACapabilityRequest>(StringComparer.OrdinalIgnoreCase)
+    { [hash.BuildSignature()] = hash };
+    var results = new Dictionary<string, NIRACapabilityResult>(StringComparer.OrdinalIgnoreCase)
+    { [hash.BuildSignature()] = new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.FileHash, Risk = NIRACapabilityRisk.Observe,
+        Status = NIRACapabilityResultStatus.Succeeded } };
+    var executed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    { hash.BuildSignature(), mutation.BuildSignature() };
+    var duplicates = new HashSet<string>(executed, StringComparer.OrdinalIgnoreCase);
+    int Invalidate(NIRACapabilityResult response) =>
+        NIRAFileRevisionObservationContinuityPolicy.InvalidateAfterRevision(
+            mutation, response, executed, duplicates, requests, results);
+    if (Invalidate(new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.FileRevisionApply,
+        Status = NIRACapabilityResultStatus.Failed, ChangedSystemState = false }) != 0 ||
+        Invalidate(new NIRACapabilityResult {
+            CapabilityId = NIRACapabilityIds.FileRevisionApply,
+            Status = NIRACapabilityResultStatus.Succeeded,
+            ChangedSystemState = true, OutcomeUncertain = true }) != 0 ||
+        !executed.Contains(hash.BuildSignature()) || !results.ContainsKey(hash.BuildSignature()))
+        throw new Exception("Unverified file modifications removed authoritative read evidence");
+});
+
+// GATE R40 Step 1C: SHA-guarded atomic revision with a retained rollback snapshot.
+Check("R40 atomic revision, independent inspection and rollback restore original", () =>
+{
+    string root = Path.Combine(Path.GetTempPath(), "nira-r40-cycle-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(root);
+    try
+    {
+        string original = Path.Combine(root, "document.txt");
+        string proposed = Path.Combine(root, "revision.txt");
+        string backup = Path.Combine(root, "document.r40.bak");
+        File.WriteAllText(original, "Revision zero: safe content");
+        File.WriteAllText(proposed, "Revision one: updated content");
+        string before = Sha(original);
+        var applied = new NIRAFileRevisionApplyCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileRevisionApply,
+            JsonSerializer.Serialize(new { source=proposed, destination=original,
+                backup, expectedSha256=before }))).GetAwaiter().GetResult();
+        if (!applied.Succeeded || !applied.ChangedSystemState ||
+            !File.ReadAllText(original).Equals(File.ReadAllText(proposed), StringComparison.Ordinal) ||
+            !File.Exists(backup) || !File.Exists(backup + ".nira-revision.json") ||
+            Sha(backup) != before || !applied.Output.Contains("Verified=True", StringComparison.Ordinal))
+            throw new Exception("Atomic revision did not preserve verifiable rollback material");
+        var inspected = new NIRAFileRevisionInspectCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileRevisionInspect,
+            JsonSerializer.Serialize(new { destination=original, backup }))).GetAwaiter().GetResult();
+        if (!inspected.Succeeded || inspected.ChangedSystemState ||
+            !inspected.Output.Contains("State=Applied", StringComparison.Ordinal))
+            throw new Exception("Journal inspection did not establish applied state");
+        var rollback = new NIRAFileRevisionRollbackCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileRevisionRollback,
+            JsonSerializer.Serialize(new { destination=original, backup,
+                expectedCurrentSha256=Sha(original) }))).GetAwaiter().GetResult();
+        if (!rollback.Succeeded || !rollback.ChangedSystemState ||
+            Sha(original) != before || !File.Exists(backup) ||
+            !rollback.Output.Contains("OriginalRestored=True", StringComparison.Ordinal))
+            throw new Exception("Rollback did not recover exact original bytes");
+        var restored = new NIRAFileRevisionInspectCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileRevisionInspect,
+            JsonSerializer.Serialize(new { destination=original, backup }))).GetAwaiter().GetResult();
+        if (!restored.Output.Contains("State=OriginalPresent", StringComparison.Ordinal))
+            throw new Exception("Rolled-back revision was not reported as original present");
+        Throws<IOException>(() => new NIRAFileRevisionRollbackCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileRevisionRollback,
+            JsonSerializer.Serialize(new { destination=original, backup,
+                expectedCurrentSha256=Sha(proposed) }))).GetAwaiter().GetResult());
+    }
+    finally { Directory.Delete(root, recursive: true); }
+});
+Check("R40 stale destination refuses unsafe revision before snapshot creation", () =>
+{
+    string root = Path.Combine(Path.GetTempPath(), "nira-r40-stale-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(root);
+    try
+    {
+        string original = Path.Combine(root, "original.txt");
+        string source = Path.Combine(root, "source.txt");
+        string backup = Path.Combine(root, "stale.bak");
+        File.WriteAllText(original, "old"); File.WriteAllText(source, "new");
+        string old = Sha(original);
+        File.WriteAllText(original, "someone else edited it");
+        Throws<IOException>(() => new NIRAFileRevisionApplyCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileRevisionApply,
+            JsonSerializer.Serialize(new { source, destination=original, backup,
+                expectedSha256=old }))).GetAwaiter().GetResult());
+        if (File.Exists(backup) || File.Exists(backup + ".nira-revision.json") ||
+            File.ReadAllText(original) != "someone else edited it")
+            throw new Exception("A stale compare-and-swap modified or journaled the original");
+    }
+    finally { Directory.Delete(root, recursive: true); }
+});
+Check("R40 rollback refuses to clobber independent edits", () =>
+{
+    string root = Path.Combine(Path.GetTempPath(), "nira-r40-diverged-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(root);
+    try
+    {
+        string original = Path.Combine(root, "original.txt");
+        string source = Path.Combine(root, "source.txt");
+        string backup = Path.Combine(root, "safe.bak");
+        File.WriteAllText(original, "old"); File.WriteAllText(source, "new");
+        string before = Sha(original);
+        new NIRAFileRevisionApplyCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileRevisionApply,
+            JsonSerializer.Serialize(new { source, destination=original, backup,
+                expectedSha256=before }))).GetAwaiter().GetResult();
+        string appliedHash = Sha(original);
+        File.WriteAllText(original, "newer independent version");
+        Throws<IOException>(() => new NIRAFileRevisionRollbackCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileRevisionRollback,
+            JsonSerializer.Serialize(new { destination=original, backup,
+                expectedCurrentSha256=appliedHash }))).GetAwaiter().GetResult());
+        var inspect = new NIRAFileRevisionInspectCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileRevisionInspect,
+            JsonSerializer.Serialize(new { destination=original, backup }))).GetAwaiter().GetResult();
+        if (File.ReadAllText(original) != "newer independent version" ||
+            !inspect.Output.Contains("State=Diverged", StringComparison.Ordinal))
+            throw new Exception("External edits were overwritten or disguised as an applied revision");
+    }
+    finally { Directory.Delete(root, recursive: true); }
+});
+Check("R40 tampered snapshot never authorizes rollback", () =>
+{
+    string root = Path.Combine(Path.GetTempPath(), "nira-r40-tamper-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(root);
+    try
+    {
+        string original = Path.Combine(root, "original.txt");
+        string source = Path.Combine(root, "source.txt");
+        string backup = Path.Combine(root, "safe.bak");
+        File.WriteAllText(original, "old"); File.WriteAllText(source, "new");
+        new NIRAFileRevisionApplyCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileRevisionApply,
+            JsonSerializer.Serialize(new { source, destination=original, backup,
+                expectedSha256=Sha(original) }))).GetAwaiter().GetResult();
+        string after = Sha(original);
+        File.WriteAllText(backup, "tampered");
+        Throws<IOException>(() => new NIRAFileRevisionRollbackCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileRevisionRollback,
+            JsonSerializer.Serialize(new { destination=original, backup,
+                expectedCurrentSha256=after }))).GetAwaiter().GetResult());
+        if (Sha(original) != after)
+            throw new Exception("Tampered snapshot replaced destination despite verification failure");
+    }
+    finally { Directory.Delete(root, recursive: true); }
+});
+Check("R40 pre-existing snapshot and improper hashes cause no overwrite", () =>
+{
+    string root = Path.Combine(Path.GetTempPath(), "nira-r40-guard-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(root);
+    try
+    {
+        string original = Path.Combine(root, "original.txt");
+        string source = Path.Combine(root, "source.txt");
+        string backup = Path.Combine(root, "already.bak");
+        File.WriteAllText(original, "old"); File.WriteAllText(source, "new");
+        File.WriteAllText(backup, "backup user data");
+        Throws<IOException>(() => new NIRAFileRevisionApplyCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileRevisionApply,
+            JsonSerializer.Serialize(new { source, destination=original, backup,
+                expectedSha256=Sha(original) }))).GetAwaiter().GetResult());
+        if (File.ReadAllText(backup) != "backup user data" || File.ReadAllText(original) != "old")
+            throw new Exception("Pre-existing backup bytes were overwritten");
+        Throws<ArgumentException>(() => new NIRAFileRevisionApplyCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.FileRevisionApply,
+            JsonSerializer.Serialize(new { source, destination=original,
+                backup=Path.Combine(root,"unused.bak"), expectedSha256="invalid" })))
+            .GetAwaiter().GetResult());
+    }
+    finally { Directory.Delete(root, recursive: true); }
+});
+Check("R40 revision descriptors declare explicit paths and modify risk", () =>
+{
+    INIRACapabilityHandler[] handlers = [
+        new NIRAFileRevisionApplyCapabilityHandler(),
+        new NIRAFileRevisionInspectCapabilityHandler(),
+        new NIRAFileRevisionRollbackCapabilityHandler() ];
+    if (handlers[0].Descriptor.Id != "filesystem.revision.apply" ||
+        handlers[1].Descriptor.Id != "filesystem.revision.inspect" ||
+        handlers[2].Descriptor.Id != "filesystem.revision.rollback" ||
+        handlers[0].Descriptor.DefaultRisk != NIRACapabilityRisk.Modify ||
+        handlers[1].Descriptor.DefaultRisk != NIRACapabilityRisk.Observe ||
+        handlers[2].Descriptor.DefaultRisk != NIRACapabilityRisk.Modify ||
+        handlers.Any(h => h.Descriptor.Parameters.Any(p => !p.Required)))
+        throw new Exception("Revision capability risk or parameter contract changed");
+});
+
 Console.WriteLine($"REGRESSION CHECKS: {passed} passed, {failed} failed");
 return failed == 0 ? 0 : 1;
+
+static string Sha(string path) => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path))).ToLowerInvariant();
 
 static NIRACapabilityRequest Request(string id, string json) => new()
 {

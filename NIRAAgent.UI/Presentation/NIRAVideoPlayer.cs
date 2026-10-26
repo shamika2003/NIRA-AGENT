@@ -93,6 +93,8 @@ public static class NIRAVideoPlayer
             heading = NIRAVideoTitleService.DisplayTitle(heading, video);
         if (string.IsNullOrWhiteSpace(heading)) heading = "Watch video";
         bool expanded = false;
+        bool miniDocked = false;
+        NIRAAgent.UI.MainWindow? miniOwner = null;
         var card = new Border
         {
             CornerRadius = new CornerRadius(12),
@@ -140,7 +142,8 @@ public static class NIRAVideoPlayer
         stageFrame.SizeChanged += (_, args) =>
         {
             if (expanded || args.NewSize.Width < 1) return;
-            double wanted = Math.Clamp((args.NewSize.Width - 2) * 9 / 16, 180, 390);
+            double wanted = Math.Clamp((args.NewSize.Width - 2) * 9 / 16,
+                miniDocked ? 108 : 180, miniDocked ? 220 : 390);
             if (Math.Abs(stage.Height - wanted) > 1) stage.Height = wanted;
         };
         root.Children.Add(stageFrame);
@@ -288,6 +291,31 @@ public static class NIRAVideoPlayer
         theater.Padding = new Thickness(8, 5, 8, 5);
         theater.MinHeight = 28;
         actions.Children.Add(theater);
+        var miniButton = ActionButton("↙  Mini");
+        miniButton.Visibility = Visibility.Collapsed;
+        miniButton.Padding = new Thickness(8, 5, 8, 5);
+        miniButton.MinHeight = 28;
+        miniButton.Margin = new Thickness(5, 0, 0, 0);
+        miniButton.ToolTip = "Move this live player to the left sidebar without restarting the video";
+        actions.Children.Add(miniButton);
+        var miniPlaceholder = new Border
+        {
+            Height = 88,
+            Background = new SolidColorBrush(Night),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(90, 89, 202, 255)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(10),
+            Child = new TextBlock
+            {
+                Text = "Playing in the left mini-player  ·  ↗ Chat to return",
+                Foreground = new SolidColorBrush(Color.FromRgb(175, 220, 247)),
+                FontSize = 12,
+                TextWrapping = TextWrapping.Wrap,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(14)
+            }
+        };
 
         void ApplyNativeWindow()
         {
@@ -337,14 +365,17 @@ public static class NIRAVideoPlayer
             if (overlayShell != null && fullscreenOverlay != null)
                 overlayShell.Children.Remove(fullscreenOverlay);
             if (inlineSpacer != null) root.Children.Remove(inlineSpacer);
-            if (!root.Children.Contains(stageFrame))
+            if (miniDocked && miniOwner != null)
+                miniOwner.ResumeMiniPlayerSurface(stageFrame);
+            else if (!root.Children.Contains(stageFrame))
                 root.Children.Insert(Math.Clamp(initialIndex, 0, root.Children.Count), stageFrame);
             if (ownerWindow != null && keyHandler != null)
                 ownerWindow.PreviewKeyDown -= keyHandler;
             RestoreWindow();
             stageFrame.CornerRadius = new CornerRadius(10);
             stageFrame.BorderThickness = new Thickness(1);
-            stage.Height = Math.Clamp((stageFrame.ActualWidth - 2) * 9 / 16, 180, 390);
+            stage.Height = Math.Clamp((stageFrame.ActualWidth - 2) * 9 / 16,
+                miniDocked ? 108 : 180, miniDocked ? 220 : 390);
             fullscreenSlot = null;
             fullscreenOverlay = null;
             overlayShell = null;
@@ -364,15 +395,19 @@ public static class NIRAVideoPlayer
                 if (native && !nativeFullScreen) ApplyNativeWindow();
                 return;
             }
-            ownerWindow = Window.GetWindow(card);
+            ownerWindow = miniDocked ? miniOwner : Window.GetWindow(card);
             overlayShell = ownerWindow?.FindName("RootShell") as Grid;
             if (ownerWindow == null || overlayShell == null)
             {
                 status.Text = "FULLSCREEN UNAVAILABLE  ·  STAY INLINE";
                 return;
             }
-            initialIndex = root.Children.IndexOf(stageFrame);
-            if (initialIndex < 0) return;
+            // Keep the chat insertion index intact when entering fullscreen
+            // from an already-docked mini-player (its chat frame is absent).
+            if (!miniDocked) initialIndex = root.Children.IndexOf(stageFrame);
+            if (!miniDocked && initialIndex < 0) return;
+            if (miniDocked && (miniOwner == null ||
+                !miniOwner.HasMiniPlayerSurface(stageFrame))) return;
             originalState = ownerWindow.WindowState;
             originalStyle = ownerWindow.WindowStyle;
             originalResizeMode = ownerWindow.ResizeMode;
@@ -395,8 +430,13 @@ public static class NIRAVideoPlayer
             Panel.SetZIndex(fullscreenOverlay, 100000);
             fullscreenSlot = new Grid { ClipToBounds = true, Margin = new Thickness(0), Background = Brushes.Black };
             fullscreenOverlay.Children.Add(fullscreenSlot);
-            root.Children.RemoveAt(initialIndex);
-            root.Children.Insert(initialIndex, inlineSpacer);
+            if (miniDocked)
+                miniOwner!.SuspendMiniPlayerSurface(stageFrame);
+            else
+            {
+                root.Children.RemoveAt(initialIndex);
+                root.Children.Insert(initialIndex, inlineSpacer);
+            }
             // In viewer mode the actual image fills its viewport. No title bar,
             // arbitrary padding, button row, or decorative frame is rendered.
             stageFrame.CornerRadius = new CornerRadius(0);
@@ -435,6 +475,73 @@ public static class NIRAVideoPlayer
         int playbackVersion = 0;
         bool resetInProgress = false;
 
+        bool RestoreFromMini()
+        {
+            if (!miniDocked || miniOwner == null) return false;
+            // A rebuilt / switched chat carousel cannot safely reparent its old
+            // card. Leave playback visible in the sidebar until explicitly closed.
+            if (!card.IsLoaded || root.Children.IndexOf(miniPlaceholder) < 0)
+                return false;
+            if (expanded) ExitFullscreen();
+            _rehostGraceUntilUtc = DateTime.UtcNow.AddMilliseconds(900);
+            miniOwner.DetachMiniPlayer(stageFrame);
+            root.Children.Remove(miniPlaceholder);
+            root.Children.Insert(Math.Clamp(initialIndex, 0, root.Children.Count), stageFrame);
+            stage.Height = Math.Clamp((stageFrame.ActualWidth - 2) * 9 / 16, 180, 390);
+            miniDocked = false;
+            miniOwner = null;
+            _expandedPresentations = Math.Max(0, _expandedPresentations - 1);
+            miniButton.Visibility = Visibility.Visible;
+            status.Text = "PLAYING  ·  INLINE";
+            return true;
+        }
+
+        // The left panel never owns a separate player instance. It owns the
+        // exact Border that already contains the live WebView2 iframe.
+        miniButton.Click += (_, _) =>
+        {
+            if (miniDocked || expanded || browser?.CoreWebView2 == null) return;
+            var window = Window.GetWindow(card) as NIRAAgent.UI.MainWindow;
+            if (window == null || !card.IsLoaded) return;
+            int stageIndex = root.Children.IndexOf(stageFrame);
+            if (stageIndex < 0) return;
+            _rehostGraceUntilUtc = DateTime.UtcNow.AddMilliseconds(900);
+            root.Children.RemoveAt(stageIndex);
+            root.Children.Insert(stageIndex, miniPlaceholder);
+            initialIndex = stageIndex;
+            // Set before attaching: WPF may synchronously raise SizeChanged.
+            miniDocked = true;
+            miniOwner = window;
+            bool attached = false;
+            try
+            {
+                attached = window.TryAttachMiniPlayer(stageFrame, title.Text,
+                    RestoreFromMini, Reset);
+            }
+            catch (Exception ex)
+            {
+                NIRADiagnosticTrace.Event("VIDEO-MINI", "Stage=DockFailed Kind=" + ex.GetType().Name);
+            }
+            if (!attached)
+            {
+                // If adoption partly succeeded, release the new host before
+                // giving the WPF Border back to its original chat container.
+                if (window.HasMiniPlayerSurface(stageFrame))
+                    window.DetachMiniPlayer(stageFrame);
+                miniOwner = null;
+                miniDocked = false;
+                root.Children.Remove(miniPlaceholder);
+                if (stageFrame.Parent is Panel previousPanel)
+                    previousPanel.Children.Remove(stageFrame);
+                root.Children.Insert(stageIndex, stageFrame);
+                status.Text = "MINI-PLAYER UNAVAILABLE";
+                return;
+            }
+            _expandedPresentations++;
+            miniButton.Visibility = Visibility.Collapsed;
+            status.Text = "PLAYING  ·  LEFT MINI-PLAYER";
+        };
+
         // A browser initialization may still be awaiting WebView2 when chat is
         // refreshed, a view is removed, or Reset is clicked. Invalidate that
         // continuation BEFORE detaching its native composition surface.
@@ -448,8 +555,21 @@ public static class NIRAVideoPlayer
                 var oldBrowser = browser;
                 browser = null;
                 if (expanded) ExitFullscreen();
+                if (miniDocked && miniOwner != null)
+                {
+                    _rehostGraceUntilUtc = DateTime.UtcNow.AddMilliseconds(900);
+                    miniOwner.DetachMiniPlayer(stageFrame);
+                    root.Children.Remove(miniPlaceholder);
+                    if (!root.Children.Contains(stageFrame))
+                        root.Children.Insert(Math.Clamp(initialIndex, 0, root.Children.Count), stageFrame);
+                    miniDocked = false;
+                    miniOwner = null;
+                    _expandedPresentations = Math.Max(0, _expandedPresentations - 1);
+                    stage.Height = 338;
+                }
                 stage.Children.Clear();
                 stage.Children.Add(preview);
+                miniButton.Visibility = Visibility.Collapsed;
                 play.IsEnabled = true;
                 status.Text = "READY  ·  INLINE";
 
@@ -493,7 +613,7 @@ public static class NIRAVideoPlayer
             grace.Tick += (_, _) =>
             {
                 grace.Stop();
-                if (expanded || card.IsLoaded || browser == null ||
+                if (expanded || miniDocked || card.IsLoaded || browser == null ||
                     playbackVersion != seenVersion) return;
                 NIRADiagnosticTrace.Event("VIDEO-PLAYER-LIFECYCLE",
                     "Stage=OwnerUnloaded Action=DeferredReset");
@@ -603,6 +723,7 @@ public static class NIRAVideoPlayer
                             var fade = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(180));
                             playerSurface.BeginAnimation(UIElement.OpacityProperty, fade);
                             status.Text = "READY  ·  " + video.Provider.ToUpperInvariant();
+                            miniButton.Visibility = Visibility.Visible;
                         }));
                     }
                     else
@@ -652,7 +773,8 @@ public static class NIRAVideoPlayer
                         "Stage=ProviderNativeSignal Active=" + youtubeFullscreen);
                     card.Dispatcher.BeginInvoke(DispatcherPriority.Normal, new Action(() =>
                     {
-                        if (browser != view || thisPlayback != playbackVersion || !card.IsLoaded) return;
+                        if (browser != view || thisPlayback != playbackVersion ||
+                            (!card.IsLoaded && !miniDocked)) return;
                         try
                         {
                             if (youtubeFullscreen) EnterFullscreen(true);

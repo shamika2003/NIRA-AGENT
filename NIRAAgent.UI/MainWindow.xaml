@@ -2067,7 +2067,9 @@
                 <Grid Margin="16,14,16,14">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="210"/>
+                        <!-- Auto allows the entire dock row to disappear when visual presence is off. -->
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
@@ -2078,11 +2080,11 @@
                         <StackPanel>
                         <StackPanel Orientation="Horizontal">
                             <Ellipse x:Name="OnlinePulseDot" Width="6" Height="6" Fill="{DynamicResource NIRAGreenBrush}" VerticalAlignment="Center" Margin="0,0,7,0"/>
-                            <TextBlock Text="PRESENCE" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource NIRACyanBrush}"/>
+                            <TextBlock x:Name="PresenceSectionLabel" Text="PRESENCE" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource NIRACyanBrush}"/>
                             
                         </StackPanel>
-                        <TextBlock Text="NIRA is here" Margin="0,7,0,0" FontSize="21" FontWeight="SemiBold"/>
-                        <TextBlock Text="Calm mind. Deeper insight. Further together."
+                        <TextBlock x:Name="PresenceHeadingText" Text="NIRA is here" Margin="0,7,0,0" FontSize="21" FontWeight="SemiBold"/>
+                        <TextBlock x:Name="PresenceSubtitleText" Text="Calm mind. Deeper insight. Further together."
                                    Margin="0,4,0,0" FontSize="11.5" LineHeight="16"
                                    Foreground="{DynamicResource NIRASecondaryBrush}" TextWrapping="Wrap"/>
                         </StackPanel>
@@ -2099,7 +2101,7 @@
                         </Button>
                     </Grid>
 
-                    <Grid Grid.Row="1" x:Name="NIRADockHost" Width="190" Height="190" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <Grid Grid.Row="1" x:Name="NIRADockHost" Width="190" Height="190" Margin="0,10,0,10" HorizontalAlignment="Center" VerticalAlignment="Center">
                         <!--
                             The live CompanionWindow particle body docks here.
                             Old concentric rings stay named for compatibility with
@@ -2124,8 +2126,8 @@
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="1"/>
-                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition x:Name="BodyStateSeparatorColumn" Width="1"/>
+                                <ColumnDefinition x:Name="BodyStateColumn" Width="*"/>
                             </Grid.ColumnDefinitions>
                             <StackPanel>
                                 <StackPanel Orientation="Horizontal">
@@ -2134,8 +2136,8 @@
                                 </StackPanel>
                                 <TextBlock x:Name="MindStateText" Text="IDLE" Margin="0,4,0,0" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NIRABlueBrush}"/>
                             </StackPanel>
-                            <Border Grid.Column="1" Background="{DynamicResource NIRAGlassBorderBrush}"/>
-                            <StackPanel Grid.Column="2" HorizontalAlignment="Right">
+                            <Border x:Name="BodyStateSeparator" Grid.Column="1" Background="{DynamicResource NIRAGlassBorderBrush}"/>
+                            <StackPanel x:Name="BodyStatePanel" Grid.Column="2" HorizontalAlignment="Right">
                                 <TextBlock Text="BODY" FontSize="9.5" Foreground="{DynamicResource NIRASecondaryBrush}" HorizontalAlignment="Right"/>
                                 <TextBlock x:Name="BodyStateText" Text="RESTING" Margin="0,4,0,0" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NIRABlueBrush}" HorizontalAlignment="Right"/>
                             </StackPanel>
@@ -2167,7 +2169,72 @@
 
                     <Border Grid.Row="4" Height="1" Background="{DynamicResource NIRAGlassBorderBrush}" Opacity="0.65"/>
 
-                    <ScrollViewer Grid.Row="5" Margin="0,10,0,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <!-- The video host is collapsed until a started chat player is
+                         explicitly moved here. The SAME WebView2 surface is reused. -->
+                    <Border x:Name="MiniPlayerPanel" Grid.Row="5" Visibility="Collapsed"
+                            Margin="0,12,0,5" Padding="8,9"
+                            Background="{DynamicResource NIRAGlassTintBrush}"
+                            BorderBrush="{DynamicResource NIRAGlassBorderBrush}"
+                            BorderThickness="1" CornerRadius="12">
+                        <StackPanel>
+                            <Grid Margin="2,0,2,7">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="NOW PLAYING" FontSize="9.5" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource NIRACyanBrush}"/>
+                                    <TextBlock x:Name="MiniPlayerTitle" FontSize="11" FontWeight="SemiBold"
+                                               TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                                               Margin="0,4,0,0" ToolTip="Media playing from chat"/>
+                                </StackPanel>
+                                <Button Grid.Column="1" Click="MiniPlayerClose_Click"
+                                        Content="✕" ToolTip="Stop playback and close mini-player"
+                                        Height="26" Width="27" FontSize="12" Margin="5,0,0,0"
+                                        Foreground="{DynamicResource NIRASecondaryBrush}"
+                                        Background="Transparent" BorderThickness="0" Cursor="Hand"/>
+                            </Grid>
+                            <Grid x:Name="MiniPlayerViewport" ClipToBounds="True"
+                                  Background="#08142A" MinHeight="124">
+                                <Grid x:Name="MiniPlayerVideoSlot"/>
+                                <!-- The player remains mounted below this overlay,
+                                     so the audio-focused view does not restart it. -->
+                                <Border x:Name="MiniPlayerAudioShade" Visibility="Collapsed"
+                                        IsHitTestVisible="False" Background="#F408142A">
+                                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                                        <TextBlock Text="♫" FontSize="35" TextAlignment="Center"
+                                                   Foreground="{DynamicResource NIRACyanBrush}"/>
+                                        <TextBlock Text="AUDIO FOCUS" FontSize="10" FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource NIRASecondaryBrush}"
+                                                   TextAlignment="Center"/>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                            <Grid Margin="0,8,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Button x:Name="MiniPlayerModeButton" Content="♫ Audio focus"
+                                        Click="MiniPlayerMode_Click" HorizontalAlignment="Left"
+                                        Padding="6,5" FontSize="10" Cursor="Hand"
+                                        Foreground="{DynamicResource NIRATextBrush}"
+                                        Background="{DynamicResource NIRAGlassStrongTintBrush}"
+                                        BorderBrush="{DynamicResource NIRAGlassBorderBrush}"/>
+                                <Button Grid.Column="1" Content="↗ Chat" Click="MiniPlayerRestore_Click"
+                                        Padding="6,5" FontSize="10" Cursor="Hand"
+                                        Foreground="{DynamicResource NIRATextBrush}"
+                                        Background="{DynamicResource NIRAGlassStrongTintBrush}"
+                                        BorderBrush="{DynamicResource NIRAGlassBorderBrush}"/>
+                            </Grid>
+                            <TextBlock x:Name="MiniPlayerNotice" Text="Controls remain in the provider's video frame."
+                                       Margin="2,7,2,0" FontSize="9.5" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource NIRAMutedBrush}"/>
+                        </StackPanel>
+                    </Border>
+
+                    <ScrollViewer Grid.Row="6" Margin="0,10,0,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <StackPanel>
                             <StackPanel x:Name="BranchActivitySection">
                                 <TextBlock x:Name="BranchActivityTitleText" Text="ACTIVE BRANCHES" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource NIRACyanBrush}"/>

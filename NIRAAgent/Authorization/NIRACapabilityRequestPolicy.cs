@@ -30,7 +30,7 @@ public sealed class NIRACapabilityRequestPolicy
     public NIRACapabilityRequest Prepare(NIRACapabilityRequest request)
     {
         Dictionary<string, JsonElement> args = ReadObject(request.Arguments);
-        foreach (string key in new[] { "path", "source", "destination", "workingdirectory" })
+        foreach (string key in new[] { "path", "source", "destination", "backup", "workingdirectory" })
         {
             if (!args.TryGetValue(key, out JsonElement value) ||
                 value.ValueKind == JsonValueKind.Null)
@@ -269,11 +269,37 @@ public sealed class NIRACapabilityRequestPolicy
     public NIRAAuthorityOperation Describe(NIRACapabilityRequest request, NIRACapabilityRisk risk)
     {
         List<string> paths = [];
-        foreach (string name in new[] { "path", "source", "destination" })
+        foreach (string name in new[] { "path", "source", "destination", "backup" })
         {
             string? path = NIRACapabilityArguments.GetOptionalString(request, name, 32760);
             if (path != null) paths.Add(path);
         }
+        // The backup manifest is a second real filesystem path touched by
+        // backup.create / backup.verify / backup.restore. Bind it to the
+        // same authority checks as the primary file, not just to a UI label.
+        string? backupForManifest = request.CapabilityId switch
+        {
+            NIRACapabilityIds.FileBackupCreate =>
+                NIRACapabilityArguments.GetOptionalString(request, "destination", 32760),
+            NIRACapabilityIds.FileBackupVerify =>
+                NIRACapabilityArguments.GetOptionalString(request, "path", 32760),
+            NIRACapabilityIds.FileBackupRestore =>
+                NIRACapabilityArguments.GetOptionalString(request, "source", 32760),
+            _ => null
+        };
+        if (!string.IsNullOrWhiteSpace(backupForManifest))
+            paths.Add(backupForManifest + ".nira-backup.json");
+
+        // R40 revision actions also create/read an exact journal companion to
+        // the caller's explicit backup path. Include it in authority scope.
+        if (request.CapabilityId is NIRACapabilityIds.FileRevisionApply or
+            NIRACapabilityIds.FileRevisionInspect or NIRACapabilityIds.FileRevisionRollback)
+        {
+            string? revisionBackup = NIRACapabilityArguments.GetOptionalString(request, "backup", 32760);
+            if (!string.IsNullOrWhiteSpace(revisionBackup))
+                paths.Add(revisionBackup + ".nira-revision.json");
+        }
+
         // filesystem.locate may either use one explicit grounded root or,
         // when root is omitted, perform one bounded whole-PC observation across
         // all ready fixed local drives. Expand that implicit scope HERE so the

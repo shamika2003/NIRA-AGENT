@@ -14,6 +14,10 @@ public sealed class NIRAScopedCapabilityAuthorizer : INIRACapabilityAuthorizer
         NIRACapabilityIds.FileWrite,
         NIRACapabilityIds.FileCopy,
         NIRACapabilityIds.FileMove,
+        NIRACapabilityIds.FileBackupCreate,
+        NIRACapabilityIds.FileBackupRestore,
+        NIRACapabilityIds.FileRevisionApply,
+        NIRACapabilityIds.FileRevisionRollback,
         NIRACapabilityIds.DirectoryCreate
     ];
 

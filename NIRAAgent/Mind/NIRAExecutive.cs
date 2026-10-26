@@ -4305,6 +4305,30 @@ public sealed class NIRAExecutive
 
                 capabilityResultsBySignature[signature] =
                     result;
+                // R40.1: An observed hash/inspection of a file is no longer
+                // current after a verified revision of THAT file. Permit a
+                // fresh read without replaying either modifying capability.
+                // Previous receipts remain in capabilityEvidence for audit.
+                int refreshedFileObservations =
+                    NIRAFileRevisionObservationContinuityPolicy.InvalidateAfterRevision(
+                        newCapabilityRequests[index], result,
+                        executedCapabilityRequests, reportedDuplicateCapabilityRequests,
+                        capabilityRequestsBySignature, capabilityResultsBySignature);
+                if (refreshedFileObservations > 0)
+                {
+                    capabilityEvidence.AppendLine();
+                    capabilityEvidence.AppendLine(
+                        "POST-REVISION FILE STATE: The file changed successfully " +
+                        "since earlier file reads. Previous hashes, content reads, " +
+                        "and revision inspections of that destination are now " +
+                        "STALE; they cannot verify its current state. Request a " +
+                        "fresh filesystem.hash or filesystem.revision.inspect " +
+                        "for the exact file to confirm the new state. The " +
+                        "modifying operation must NOT be repeated.");
+                    NIRADiagnosticTrace.Event("FILE-REVISION-OBSERVATIONS-INVALIDATED",
+                        $"Run={runId:D} Cycle={cycle} Count={refreshedFileObservations} " +
+                        $"Revision={newCapabilityRequests[index].CapabilityId}");
+                }
                 if (newCapabilityRequests[index].CapabilityId == NIRACapabilityIds.ProcessStart)
                 {
                     processStarts.Record(newCapabilityRequests[index], result);

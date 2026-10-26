@@ -113,6 +113,8 @@ public partial class MainWindow : Window
     // or another full-page workspace, even when the main window is active.
     public bool CanHostCompanionBody =>
         IsPresenceSidebarExpanded &&
+        (_settingsService?.Current.DesktopPresenceEnabled ?? true) &&
+        NIRADockHost.Visibility == Visibility.Visible &&
         MainWorkspace.Visibility == Visibility.Visible &&
         GalleryPage.Visibility != Visibility.Visible;
 
@@ -201,8 +203,14 @@ public partial class MainWindow : Window
 
         if (!Dispatcher.CheckAccess())
         {
+            // Read the latest preference on the UI thread: an older queued
+            // toggle must never restore a dock that the user just hid.
             Dispatcher.BeginInvoke(
-                new Action(() => ApplyRuntimeSettings(after)));
+                new Action(() =>
+                {
+                    if (_settingsService != null)
+                        ApplyRuntimeSettings(_settingsService.Current);
+                }));
             return;
         }
 
@@ -212,6 +220,52 @@ public partial class MainWindow : Window
     private void ApplyRuntimeSettings(
         NIRARuntimeSettings settings)
     {
+        bool showVisualPresence = settings.DesktopPresenceEnabled;
+        Visibility desiredDockVisibility = showVisualPresence
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        bool dockVisibilityChanged =
+            NIRADockHost.Visibility != desiredDockVisibility;
+
+        // Collapsed (not Hidden) + an Auto-height Grid row: no 210 px
+        // reservation remains when the companion is disabled.
+        NIRADockHost.Visibility = desiredDockVisibility;
+
+        // The left rail remains useful for live mind/work information even
+        // without the floating body, so don't collapse the entire sidebar.
+        PresenceSectionLabel.Text = showVisualPresence ? "PRESENCE" : "ACTIVITY";
+        PresenceHeadingText.Text = showVisualPresence ? "NIRA is here" : "NIRA is ready";
+        PresenceSubtitleText.Text = showVisualPresence
+            ? "Calm mind. Deeper insight. Further together."
+            : "Visual presence is off. Chat and work stay active.";
+
+        // A BODY badge for a deliberately hidden body is misleading. Use
+        // the complete status-card width for NIRA's still-active mind.
+        BodyStatePanel.Visibility = showVisualPresence
+            ? Visibility.Visible : Visibility.Collapsed;
+        BodyStateSeparator.Visibility = showVisualPresence
+            ? Visibility.Visible : Visibility.Collapsed;
+        BodyStateSeparatorColumn.Width = new GridLength(showVisualPresence ? 1 : 0);
+        BodyStateColumn.Width = showVisualPresence
+            ? new GridLength(1, GridUnitType.Star)
+            : new GridLength(0);
+
+        if (dockVisibilityChanged)
+        {
+            if (showVisualPresence)
+            {
+                // The companion needs fresh measured dock coordinates.
+                Dispatcher.BeginInvoke(
+                    new Action(() => SidebarLayoutChanged?.Invoke(this, EventArgs.Empty)),
+                    System.Windows.Threading.DispatcherPriority.Loaded);
+            }
+            else
+            {
+                // Invalidates docking immediately on disable.
+                SidebarLayoutChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+
         NIRAUiParticleTransition.Enabled =
             settings.WorkCardParticleTransitionsEnabled;
 
@@ -627,6 +681,10 @@ public partial class MainWindow : Window
 
     private void OpenGallery_Click(object sender, RoutedEventArgs e)
     {
+        // Gallery does not host the left rail. Stop rather than leaving an
+        // invisible playing iframe in a collapsed workspace.
+        try { _miniStop?.Invoke(); }
+        catch (Exception ex) { NIRADiagnosticTrace.Event("VIDEO-MINI", "Stage=Gallery Kind=" + ex.GetType().Name); }
         MainWorkspace.Visibility = Visibility.Collapsed;
         GalleryPage.Visibility = Visibility.Visible;
         ChatNavButton.Tag = null;
@@ -2524,11 +2582,14 @@ public partial class MainWindow : Window
                     }
             });
 
-        NIRAMotion.AnimateEntrance(
-            NIRADockHost,
-            distance: 10.0,
-            durationMs: 320,
-            delayMs: 40);
+        if (NIRADockHost.Visibility == Visibility.Visible)
+        {
+            NIRAMotion.AnimateEntrance(
+                NIRADockHost,
+                distance: 10.0,
+                durationMs: 320,
+                delayMs: 40);
+        }
 
         NIRAMotion.AnimateEntrance(
             ComposerPanel,
@@ -2972,6 +3033,8 @@ public partial class MainWindow : Window
         _leftSidebarTransitioning = true;
         try
         {
+            // Hiding the left rail must not leave an invisible playing iframe.
+            if (collapsed) ReturnOrStopMiniPlayerBeforeSidebarCollapse();
             FrameworkElement leaving = collapsed ? LeftSidebarExpandedHost : LeftSidebarCompactHost;
             await FadeSidebarOutAsync(leaving);
             _leftSidebarCollapsed = collapsed;
@@ -3482,6 +3545,9 @@ public partial class MainWindow : Window
         object? sender,
         EventArgs e)
     {
+        // Stop the native media session before the sidebar/window disappears.
+        try { _miniStop?.Invoke(); }
+        catch (Exception ex) { NIRADiagnosticTrace.Event("VIDEO-MINI", "Stage=WindowClose Kind=" + ex.GetType().Name); }
         _authorizationClosed = true;
 
         if (_permissionToast != null)
