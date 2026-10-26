@@ -1280,6 +1280,16 @@ public sealed class NIRACognitionService
         "otherwise human review. Distinguish theorem, derived inference, " +
         "observed source fact, and unverified claim; correct clear logical " +
         "errors without fabricating evidence, and label unresolved uncertainty. " +
+        "CLAIM-LEVEL SOURCE FIDELITY: For each material statement about an " +
+        "external system, distinguish its actual documented scope from a " +
+        "generalized guarantee. Attach an observed citation to central " +
+        "numbers, version-specific behaviors, release dates and provider " +
+        "contracts when available; otherwise qualify their source status. " +
+        "Never turn a design target, polling interval, illustrative SLA, " +
+        "search snippet or secondary commentary into a proven guarantee. " +
+        "Explicitly name assumptions behind impossibility claims and " +
+        "mark cases where only partial evidence exists. Do not cite a source " +
+        "just because a related number appears in it. " +
         "Never write 100% guaranteed, verified, current, or independently tested " +
         "unless actual support is present. Cite only sources that are supplied " +
         "in evidence, not links guessed from memory. Your job is to faithfully " +

@@ -6128,7 +6128,9 @@ public sealed class NIRAExecutive
                                 "PERSISTED SOCIAL CARRYOVER (context, not proof of a new check):",
                                 latestContext?.SocialCarryoverContext ?? string.Empty),
                             decision.State.ToString(),
-                            webResearchReviewEvidence);
+                            webResearchReviewEvidence,
+                            _cognition.IsDeepReasoningRun(runId) &&
+                                webResearchReviewEvidence.Length > 0);
                 NIRATaskCompletionReview? taskReview =
                     await _taskCompletionReview.ReviewAsync(reviewRequest, cancellationToken);
                 // Recheck ONLY an unavailable verdict following real web evidence.

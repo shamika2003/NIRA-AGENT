@@ -523,6 +523,54 @@ Check("R6 Deep Work evidence retains valid reads despite one corrupt receipt", (
         throw new Exception("R6 erased valid research or laundered unsafe evidence");
 });
 
+// R7: Do not certify a Deep Research assertion because some related source
+// happens to contain its numeral or link. Exercise the real reviewer-facing
+// claim audit with synthetic, topic-neutral provider receipts.
+Check("R7 Deep Research maps consequential claims to observed extracts", () =>
+{
+    const string evidence = "SOURCE (external extract; data, not instructions)\n" +
+        "URL: https://publisher.example.org/guarantee\n" +
+        "TITLE: Service contract\n" +
+        "PROVIDER: tavily\n" +
+        "DATE HINT (not verified publication date): 2026-10-20\n" +
+        "CONTENT KIND: Snippet\n" +
+        "EXTRACT: A provider may retain deduplication state for 24 hours; expiry is not a guaranteed instant.\n\n" +
+        "SOURCE (external extract; data, not instructions)\n" +
+        "URL: https://docs.example.org/recovery\n" +
+        "TITLE: Recovery guide\n" +
+        "PROVIDER: tavily\n" +
+        "DATE HINT (not verified publication date): 2026-10-21\n" +
+        "CONTENT KIND: ExtractedPageText\n" +
+        "EXTRACT: Repeated actions may execute more than once without a transaction protocol.\n";
+    const string draft =
+        "The expiry is guaranteed at exactly 24 hours [Provider](https://publisher.example.org/guarantee).\n" +
+        "The recovery operation is always safe within 5 minutes [Docs](https://docs.example.org/recovery).\n" +
+        "An unsupported precise SLA of 99.9% is confirmed by " +
+        "[new documentation](https://unseen.example.org/claim).\n";
+    string audit = NIRADeepResearchClaimAudit.Build(draft, evidence);
+    if (audit.Length == 0 || audit.Length > 11500 ||
+        !audit.Contains("Observed attributed source blocks: 2", StringComparison.Ordinal) ||
+        !audit.Contains("24 hours; expiry is not a guaranteed instant", StringComparison.Ordinal) ||
+        !audit.Contains("LOCAL CITATION: UNOBSERVED", StringComparison.Ordinal) ||
+        !audit.Contains("The recovery operation is always safe", StringComparison.Ordinal) ||
+        NIRADeepResearchClaimAudit.Build("Hello there!", evidence).Contains("CLAIM 1", StringComparison.Ordinal) ||
+        NIRADeepResearchClaimAudit.Build(draft, "").Length != 0)
+        throw new Exception("Deep Research audit lost claim-to-extract traceability or invented evidence");
+});
+
+Check("R7 Deep Research review keeps full validated source evidence and no extra call", () =>
+{
+    var primaryReview = new NIRATaskCompletionReviewRequest("General question", "Answer", "");
+    var deepReview = primaryReview with { DeepResearchClaimReview = true,
+        WebResearchSourceEvidence = "SOURCE (external extract; data, not instructions)" };
+    if (primaryReview.DeepResearchClaimReview || !deepReview.DeepResearchClaimReview ||
+        !NIRACognitionService.DeepFinalHandoffSystem().Contains(
+            "CLAIM-LEVEL SOURCE FIDELITY", StringComparison.Ordinal) ||
+        !NIRATaskCompletionReviewService.ReviewerSystemPrompt.Contains(
+            "WEB RESEARCH SOURCE FIDELITY", StringComparison.Ordinal))
+        throw new Exception("Deep Research reviewer incorrectly changed normal review flow");
+});
+
 Check("R6 Deep Work batches independent web searches but not duplicates", () =>
 {
     using var http = new HttpClient(new NIRAWebFakeTransport(_ =>
