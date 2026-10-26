@@ -460,6 +460,88 @@ Check("WEB mixed image/source batch preserves provider extracts for independent 
 // An exhausted objective review may have made several successful read-only
 // searches. Those results still exist; no blanket refusal should discard them.
 // These are offline synthetic receipts, never a hardcoded production answer.
+Check("WEB Deep Work multiple source receipts reach independent review without losing URLs", () =>
+{
+    NIRACapabilityResult Receipt(string id) => new() {
+        CapabilityId = NIRACapabilityIds.WebSearch,
+        Status = NIRACapabilityResultStatus.Succeeded,
+        Risk = NIRACapabilityRisk.Observe,
+        Output = JsonSerializer.Serialize(new {
+            evidenceType = "UntrustedPublicWebSearchExtracts", completed = true,
+            sourceCount = 1, sources = new[] { new {
+                url = "https://publisher.example.org/" + id,
+                title = "Document " + id,
+                extract = "Publisher explicitly documents system behavior " + id,
+                provider = "tavily", dateHint = "2026-10-25"
+            } }
+        })
+    };
+    var reads = new[] { Receipt("alpha"), Receipt("beta"), Receipt("gamma") };
+    string all = NIRACognitionPromptCompiler.WebResearchReviewEvidence(reads);
+    if (all.Length == 0 || all.Length > 32000 ||
+        reads.Select((_, i) => "https://publisher.example.org/" +
+            new[] { "alpha", "beta", "gamma" }[i]).Any(url =>
+                !all.Contains(url, StringComparison.Ordinal)) ||
+        !all.Contains("RECEIPT 3 OF 3", StringComparison.Ordinal) ||
+        NIRACognitionPromptCompiler.WebResearchReviewEvidence(new[] {
+            reads[0], reads[1] with { Status = NIRACapabilityResultStatus.Failed }
+        }).Length != 0 ||
+        NIRACognitionPromptCompiler.WebResearchReviewEvidence(new[] {
+            reads[0], reads[1] with { Risk = NIRACapabilityRisk.Modify }
+        }).Length != 0)
+        throw new Exception("Multiple web receipts were dropped or unauthorized evidence was accepted");
+});
+
+Check("R6 Deep Work evidence retains valid reads despite one corrupt receipt", () =>
+{
+    NIRACapabilityResult Receipt(string id) => new() {
+        CapabilityId = NIRACapabilityIds.WebSearch,
+        Risk = NIRACapabilityRisk.Observe,
+        Status = NIRACapabilityResultStatus.Succeeded,
+        Output = JsonSerializer.Serialize(new {
+            evidenceType = "UntrustedPublicWebSearchExtracts", completed = true,
+            sourceCount = 1, sources = new[] { new {
+                url = "https://publisher.example.org/" + id,
+                title = "Documentation " + id,
+                extract = "Evidence from independent documentation " + id,
+                provider = "tavily" } }
+        })
+    };
+    var safe = new[] { Receipt("first"), Receipt("second"),
+        Receipt("broken") with { Output = "{not valid JSON" }, Receipt("third") };
+    var source = NIRACognitionPromptCompiler.DeepResearchSynthesisEvidence(safe);
+    if (source.Used != 3 || source.Omitted != 1 ||
+        !source.Evidence.Contains("publisher.example.org/first", StringComparison.Ordinal) ||
+        !source.Evidence.Contains("publisher.example.org/third", StringComparison.Ordinal) ||
+        !source.Evidence.Contains("EVIDENCE COVERAGE WARNING", StringComparison.Ordinal) ||
+        source.Evidence.Contains("{not valid JSON", StringComparison.Ordinal) ||
+        source.Evidence.Length > 30000 ||
+        NIRACognitionPromptCompiler.DeepResearchSynthesisEvidence(
+            new[] { safe[0], safe[1] with { ChangedSystemState = true } }).Used != 0 ||
+        NIRACognitionPromptCompiler.DeepResearchSynthesisEvidence(
+            new[] { safe[0], safe[1] with { OutcomeUncertain = true } }).Used != 0)
+        throw new Exception("R6 erased valid research or laundered unsafe evidence");
+});
+
+Check("R6 Deep Work batches independent web searches but not duplicates", () =>
+{
+    using var http = new HttpClient(new NIRAWebFakeTransport(_ =>
+        throw new Exception("Read-only batch preflight must never contact the network")));
+    using var handler = new NIRAWebSearchCapabilityHandler(http, _ => "offline-only");
+    var service = new NIRACapabilityService(
+        new NIRACapabilityRegistry(new[] { handler }), null!, null!, null!);
+    var one = Request(NIRACapabilityIds.WebSearch,
+        """{"query":"original technical specification","provider":"auto"}""");
+    var two = Request(NIRACapabilityIds.WebSearch,
+        """{"query":"independent protocol reference","provider":"auto"}""");
+    if (!service.CanParallelizeIndependentResourceReads(new[] { one, two }) ||
+        service.CanParallelizeIndependentResourceReads(new[] { one, one }) ||
+        service.CanParallelizeIndependentResourceReads(new[] { one, two, two }) ||
+        !NIRACognitionPromptCompiler.DeepWorkSystem().Contains(
+            "RESEARCH IN ONE PASS", StringComparison.Ordinal))
+        throw new Exception("R6 failed to batch distinct safe research or accepted duplicate requests");
+});
+
 Check("WEB multiple valid read-only receipts retain source-only partial after reviewer exhaustion", () =>
 {
     string Receipt(string label) => JsonSerializer.Serialize(new {
@@ -1233,6 +1315,36 @@ Check("WEB research provider adapters preserve attributed extracts and reject un
         NIRAWebSearchParsing.SafeSourceUrl("https://public.example.com@localhost/private") ||
         !NIRAWebSearchParsing.SafeSourceUrl("https://public.example.com/page"))
         throw new Exception("Source URL origin controls changed");
+});
+
+Check("R6 detailed search delivers complete JSON under capability size limit", () =>
+{
+    var pages = Enumerable.Range(0, 8).Select(index => new {
+        url = "https://documentation.example.org/paper/" + index,
+        title = "Documentation " + index,
+        content = "A published technical reference.",
+        raw_content = "Verified technical extract " + index + " " + new string('X', 3300)
+    });
+    string providerPayload = JsonSerializer.Serialize(new { results = pages });
+    using var transport = new NIRAWebFakeTransport(_ =>
+        new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
+            Content = new StringContent(providerPayload)
+        });
+    using var client = new HttpClient(transport);
+    using var handler = new NIRAWebSearchCapabilityHandler(client,
+        key => key == "NIRA_TAVILY_API_KEY" ? "offline-only" : null);
+    var receipt = handler.ExecuteAsync(Request(NIRACapabilityIds.WebSearch,
+        """{"query":"technical reference study","provider":"tavily","evidenceDepth":"detailed","maxSources":8}"""))
+        .GetAwaiter().GetResult();
+    if (!receipt.Succeeded || receipt.Output.Length >= 24000)
+        throw new Exception("Web evidence exceeded the generic result output cap");
+    using var parsed = JsonDocument.Parse(receipt.Output);
+    var root = parsed.RootElement;
+    if (root.GetProperty("sourceCount").GetInt32() !=
+        root.GetProperty("sources").GetArrayLength() ||
+        root.GetProperty("sourceCount").GetInt32() < 2 ||
+        !root.GetProperty("excerptsShortened").GetBoolean())
+        throw new Exception("Detailed research JSON was cut or lost provenance/size warning");
 });
 
 Check("WEB one API call returns attributed sources; memory cache prevents duplicate paid requests", () =>
@@ -4007,6 +4119,56 @@ Check("Opt-in named user-folder discovery remains bounded and legacy whole-PC se
     catch (ArgumentException) { }
 });
 
+// Deep reliability is model-neutral and cross-domain: no test-question text,
+// canned technical answer, source list, forced search or extra LLM round.
+Check("DEEP R4 evidence and technical reliability policy covers both Ultra and Gemma", () =>
+{
+    Type compiler = typeof(NIRACognitionService).Assembly.GetType(
+        "NIRAAgent.AI.Cognition.NIRACognitionPromptCompiler", throwOnError: true)!;
+    MethodInfo system = compiler.GetMethod("DeepWorkSystem",
+        BindingFlags.Static | BindingFlags.NonPublic) ??
+        throw new Exception("Ultra's task system contract is missing");
+    string ultra = (string)system.Invoke(null, null)!;
+    string gemma = NIRACognitionService.DeepFinalHandoffSystem();
+    string policy = (string)(compiler.GetField("DeepWorkReliabilityContract",
+        BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)?.GetRawConstantValue()
+        ?? throw new Exception("Missing shared deep reliability policy"));
+    string[] mandatory = {
+        "FRESHNESS", "TECHNICAL AUDIT", "FINAL SELF-CHECK",
+        "IRREVERSIBLE AND NON-IDEMPOTENT OPERATIONS", "SOURCES AND TRACEABILITY"
+    };
+    if (!mandatory.All(part => ultra.Contains(part, StringComparison.Ordinal)) ||
+        !ultra.Contains("web.search", StringComparison.Ordinal) ||
+        !ultra.Contains("UNKNOWN", StringComparison.Ordinal) ||
+        !ultra.Contains("human", StringComparison.OrdinalIgnoreCase) ||
+        ultra.Contains("NIRA CHARACTER KERNEL", StringComparison.Ordinal) ||
+        !policy.Contains("idempotency", StringComparison.OrdinalIgnoreCase) ||
+        !policy.Contains("source publication/event dates", StringComparison.Ordinal) ||
+        !gemma.Contains("DEEP RELIABILITY AUDIT", StringComparison.Ordinal) ||
+        !gemma.Contains("reconciliation", StringComparison.Ordinal) ||
+        !gemma.Contains("Never write 100% guaranteed", StringComparison.Ordinal) ||
+        !gemma.Contains("Cite only sources", StringComparison.Ordinal))
+        throw new Exception("Deep output can bypass evidence, freshness or technical audit rules");
+    if (ultra.Length > 14000 || gemma.Length > 6000)
+        throw new Exception("Reliability policy unexpectedly bloated the model context");
+});
+
+Check("DEEP R4 source handoff preserves first and recent receipts and flags omissions", () =>
+{
+    string early = "EARLY_TRUSTED_RECEIPT_" + new string('A', 11000);
+    string middle = "MIDDLE_RECEIPT_" + new string('B', 40000);
+    string recent = "RECENT_TRUSTED_RECEIPT_" + new string('C', 22000);
+    string result = NIRACognitionService.DeepHandoffEvidence(early + middle + recent);
+    if (!result.Contains("EARLY_TRUSTED_RECEIPT_", StringComparison.Ordinal) ||
+        !result.Contains("RECENT_TRUSTED_RECEIPT_", StringComparison.Ordinal) ||
+        !result.Contains("INTERMEDIATE EXECUTIVE EVIDENCE OMITTED", StringComparison.Ordinal) ||
+        !result.Contains("Do NOT treat", StringComparison.Ordinal) ||
+        result.Length > 32000 ||
+        NIRACognitionService.DeepHandoffEvidence("short receipt") != "short receipt" ||
+        NIRACognitionService.DeepHandoffEvidence(null).Length != 0)
+        throw new Exception("Deep technical synthesis silently dropped sources or hid evidence truncation");
+});
+
 Check("Deep analysis synthesis is limited to first-turn evidence-free work", () =>
 {
     string raw = """{"analysis":"There are several plausible business strategies; each has different liquidity risk and uncertainty.","deepReasoningRequest":{"focus":"delegate again"}}""";
@@ -4082,7 +4244,7 @@ Check("Browser heading evidence distinguishes observed absence from present H1",
 
 Check("Runtime model assembly reports the synchronized routing revision", () =>
 {
-    Equal("NIRA-DEEP-EXEC-20261014-R5", NIRAModelSelection.RoutingRevision);
+    Equal("NIRA-DEEP-WORK-V2-20261026", NIRAModelSelection.RoutingRevision);
 });
 
 Check("NIRA's primary and deep models have distinct default roles", () =>
@@ -4187,17 +4349,138 @@ Check("Structured deep request is recognized without extra classifier", () =>
         throw new Exception("Grounded deep request not recognized");
 });
 
-Check("Malformed or unbounded deep requests do not trigger a call", () =>
+Check("Malformed deep requests do not trigger a call", () =>
 {
     string[] bad = {
         "not json",
         """{"deepReasoningRequest":{"focus":""}}""",
         """{"deepReasoningRequest":{"focus":55}}""",
-        """{"deepReasoningRequest":true}""",
-        "{\"deepReasoningRequest\":{\"focus\":\"" + new string('x', 601) + "\"}}"
+        """{"deepReasoningRequest":true}"""
     };
     if (bad.Any(x => NIRAModelSelection.TryReadDelegation(x, out _)))
         throw new Exception("Invalid request escalated");
+});
+
+Check("DEEP V2 long focus delegates without wasting a Gemma round", () =>
+{
+    string focus = new string('x', 610);
+    string json = "{\"deepReasoningRequest\":{\"focus\":\"" + focus + "\"}}";
+    if (!NIRAModelSelection.TryReadDelegation(json, out string accepted) ||
+        accepted != focus)
+        throw new Exception("A substantive 610-character delegation focus was rejected");
+    string enormous = new string('y', 5000);
+    json = "{\"deepReasoningRequest\":{\"focus\":\"" + enormous + "\"}}";
+    if (!NIRAModelSelection.TryReadDelegation(json, out accepted) ||
+        accepted.Length != 4096)
+        throw new Exception("Long delegation focus was not safely bounded");
+});
+
+// The real V2 failure: Ultra completed 23K of reasoning, then a reviewer
+// received only its first 12K characters and sent the whole task back to Ultra.
+// Deep completion now needs a distinct read-only Gemma presentation stage.
+// Regression from live event 752b...: Ultra produced a small JSON response,
+// no DEEP-WORK-HANDOFF occurred, and the user received a generic Blocked stub.
+// General terminal recovery must not turn unexecuted tool plans into receipts.
+Check("DEEP R3 unproductive terminal is recoverable without capability bypass", () =>
+{
+    foreach (string raw in new[] {
+        """{"state":"Blocked","emitReply":true,"reply":"I could not finish the specialist analysis."}""",
+        """{"state":"Continue","emitReply":false,"reply":""}""",
+        """{"deepReasoningRequest":{"focus":"try again"}}""",
+        """{"state":"Complete","emitReply":true,"reply":""}"""
+    })
+        if (!NIRAModelSelection.IsUnproductiveDeepTerminal(raw))
+            throw new Exception("An inert model response was treated as final task completion");
+    foreach (string raw in new[] {
+        """{"state":"Complete","emitReply":true,"reply":"Full technical answer."}""",
+        """{"state":"Continue","capabilityRequests":[{"capabilityId":"web.search","arguments":{}}]}""",
+        """{"state":"Blocked","controlRequests":[{"type":"stop"}]}"""
+    })
+        if (NIRAModelSelection.IsUnproductiveDeepTerminal(raw))
+            throw new Exception("A genuine decision or proposed action bypassed Executive validation");
+    if (NIRACognitionService.MaximumDeepFinalDraftCharacters < 24000 ||
+        !NIRACognitionService.DeepFinalHandoffSystem().Contains("26,000", StringComparison.Ordinal))
+        throw new Exception("Extended Ultra-to-Gemma answer budget was reduced");
+});
+
+Check("DEEP V2 complete findings require primary handoff before review", () =>
+{
+    var completed = new NIRACognitionDecision {
+        State = NIRACognitionState.Complete, EmitReply = true,
+        Reply = new string('X', 23092), ReplyReady = true,
+        CharacterReady = false
+    };
+    if (!NIRACognitionService.EligibleDeepFinalHandoff(completed, true) ||
+        NIRACognitionService.EligibleDeepFinalHandoff(completed, false) ||
+        NIRACognitionService.MaximumDeepFinalDraftCharacters <= 12000 ||
+        !NIRACognitionService.DeepFinalHandoffSystem().Contains(
+            "ordinary readable Markdown", StringComparison.Ordinal) ||
+        !NIRACognitionService.DeepFinalHandoffSystem().Contains(
+            "original user's complete objective", StringComparison.Ordinal))
+        throw new Exception("Completed Ultra report is not eligible for bounded Gemma finalization");
+    if (NIRACognitionService.EligibleDeepFinalHandoff(completed with {
+            State = NIRACognitionState.Continue }, true) ||
+        NIRACognitionService.EligibleDeepFinalHandoff(completed with {
+            CapabilityRequests = new[] { Request(NIRACapabilityIds.WebSearch,
+                """{"query":"unseen fact"}""") } }, true) ||
+        NIRACognitionService.EligibleDeepFinalHandoff(completed with {
+            ReviewCommitment = true }, true))
+        throw new Exception("Pending operations passed the read-only final handoff gate");
+});
+
+
+Check("DEEP R3 long expert analysis remains data, not a small output cap", () =>
+{
+    string large = JsonSerializer.Serialize(new {analysis = new string('A', 24000)});
+    if (!NIRAModelSelection.TryReadDeepAnalysis(large, out string extracted) ||
+        extracted.Length != 24000)
+        throw new Exception("Ultra technical findings were rejected by the old 16K cap");
+    string system = NIRACognitionService.DeepFinalHandoffSystem();
+    if (!system.Contains("without JSON", StringComparison.Ordinal) ||
+        !system.Contains("26,000", StringComparison.Ordinal))
+        throw new Exception("Gemma presentation still requires a fragile JSON envelope");
+});
+
+Check("DEEP V2 substantial malformed Ultra JSON is eligible for bounded repair", () =>
+{
+    string invalid = "{\"state\":\"Complete\",\"reply\":\"" +
+        new string('x', 17000) + "\",,\"emitReply\":true}";
+    if (!NIRACognitionService.ShouldAttemptDeepSyntaxRepair(invalid) ||
+        NIRACognitionService.ShouldAttemptDeepSyntaxRepair(
+            "{\"state\":\"Complete\",\"emitReply\":true,\"reply\":\"valid\"}") ||
+        NIRACognitionService.ShouldAttemptDeepSyntaxRepair(new string('x', 120001)))
+        throw new Exception("Ultra JSON repair bounds are incorrect");
+});
+
+Check("DEEP V2 Ultra prompt excludes persona but retains objective and capabilities", () =>
+{
+    Type compiler = typeof(NIRACognitionService).Assembly.GetType(
+        "NIRAAgent.AI.Cognition.NIRACognitionPromptCompiler", true)!;
+    MethodInfo system = compiler.GetMethod("DeepWorkSystem",
+        BindingFlags.Static | BindingFlags.NonPublic)!;
+    MethodInfo user = compiler.GetMethod("DeepWorkUser",
+        BindingFlags.Static | BindingFlags.NonPublic)!;
+    string policy = (string)system.Invoke(null, null)!;
+    var context = new NIRACognitionContext {
+        RunId = Guid.NewGuid(), Cycle = 3,
+        Event = NIRAMindEvent.UserMessage("Analyze this architecture fully", Guid.NewGuid(), "regression:deep"),
+        CharacterContext = "SECRET_CHARACTER_DO_NOT_PASS",
+        CharacterDeliveryContext = "SECRET_PERSONALITY_DO_NOT_PASS",
+        CapabilityContext = "Capabilities\n", 
+        CapabilityEvidence = "AUTHORITATIVE CAPABILITY RESULT\nCapabilityId: web.search\nStatus: Succeeded\nOutput:\nObserved facts",
+        ExecutiveEvidence = "EXECUTIVE decision accepted",
+        OwnedTaskContext = "Original multi-step objective"
+    };
+    string working = (string)user.Invoke(null, new object?[] {context, null, null})!;
+    if (!policy.Contains("NIRA DEEP WORK V2", StringComparison.Ordinal) ||
+        !policy.Contains("capabilityRequests", StringComparison.Ordinal) ||
+        policy.Contains("NIRA CHARACTER KERNEL", StringComparison.Ordinal) ||
+        working.Contains("SECRET_CHARACTER_DO_NOT_PASS", StringComparison.Ordinal) ||
+        working.Contains("SECRET_PERSONALITY_DO_NOT_PASS", StringComparison.Ordinal) ||
+        !working.Contains("Original multi-step objective", StringComparison.Ordinal) ||
+        !working.Contains("CapabilityId: web.search", StringComparison.Ordinal) ||
+        !working.Contains("Analyze this architecture fully", StringComparison.Ordinal))
+        throw new Exception("Ultra did not receive focused task and evidence context");
 });
 
 Check("Deep specialist's complete answer survives redundant delegation field", () =>
@@ -4254,7 +4537,7 @@ Check("Empty and oversized specialist analyses are rejected locally", () =>
     string[] invalid = {
         """{"analysis":""}""",
         """{"analysis":42}""",
-        JsonSerializer.Serialize(new { analysis = new string('x', 16001) })
+        JsonSerializer.Serialize(new { analysis = new string('x', 90001) })
     };
     if (invalid.Any(v => NIRAModelSelection.TryReadDeepAnalysis(v, out _)))
         throw new Exception("Non-substantive specialist analysis was accepted");

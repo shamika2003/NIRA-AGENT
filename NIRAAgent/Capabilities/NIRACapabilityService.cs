@@ -358,7 +358,14 @@ public sealed class NIRACapabilityService
             if (request.CapabilityId is not (NIRACapabilityIds.ImageSearch or
                 NIRACapabilityIds.WebSearch or NIRACapabilityIds.MathCalculate))
                 return false;
-            if (!identities.Add(request.CapabilityId) ||
+            // Independent web.search requests may have the SAME capability ID
+            // but different validated arguments. They are separate read-only
+            // provider operations and can safely share the concurrent batch.
+            // Other capability types retain their previous one-per-kind bound.
+            string identity = request.CapabilityId == NIRACapabilityIds.WebSearch
+                ? request.BuildSignature()
+                : request.CapabilityId;
+            if (!identities.Add(identity) ||
                 !TryValidateReadOnlyRequest(request, out _))
                 return false;
         }

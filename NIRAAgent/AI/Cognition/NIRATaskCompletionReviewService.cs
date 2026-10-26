@@ -503,7 +503,7 @@ public sealed class NIRATaskCompletionReviewService
             """;
     private static string DefaultModel => NIRAModelSelection.Primary;
     private const int MaxObjective = 5000;
-    private const int MaxDraft = 12000;
+    private const int MaxDraft = 29000;
     private const int MaxEvidence = 18000;
     private const int MaxHistoricalContext = 13000;
     private readonly OllamaClient _ollama;

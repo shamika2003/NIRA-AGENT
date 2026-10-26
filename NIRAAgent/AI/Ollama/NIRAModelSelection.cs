@@ -19,7 +19,7 @@ public static class NIRAModelSelection
     public const string DeepDefault = "nemotron-3-ultra:cloud";
 
     // Used only for identifying source/runtime alignment in diagnostics and tests.
-    public const string RoutingRevision = "NIRA-DEEP-EXEC-20261014-R5";
+    public const string RoutingRevision = "NIRA-DEEP-WORK-V2-20261026";
 
     public static string Primary => Resolve("NIRA_OLLAMA_PRIMARY_MODEL", PrimaryDefault);
     public static string Deep => Resolve("NIRA_OLLAMA_DEEP_MODEL", DeepDefault);
@@ -83,9 +83,14 @@ public static class NIRAModelSelection
                 return false;
 
             string? proposed = value.GetString()?.Trim();
-            if (string.IsNullOrWhiteSpace(proposed) || proposed.Length > 600)
-                return false;
-            focus = proposed;
+            // The focus is routing context, not the full user objective. A
+            // substantive request must never be silently downgraded because
+            // Gemma supplied 610 instead of 600 characters. Preserve the
+            // complete original objective separately in the Ultra context.
+            if (string.IsNullOrWhiteSpace(proposed)) return false;
+            const int maximumFocusCharacters = 4096;
+            focus = proposed.Length <= maximumFocusCharacters
+                ? proposed : proposed[..maximumFocusCharacters].TrimEnd();
             return true;
         }
         catch (JsonException)
@@ -144,7 +149,7 @@ public static class NIRAModelSelection
 
             string? proposed = result.GetString()?.Trim();
             if (string.IsNullOrWhiteSpace(proposed) || proposed.Length < 25 ||
-                proposed.Length > 16000)
+                proposed.Length > 90000)
                 return false;
             analysis = proposed;
             return true;
@@ -207,6 +212,50 @@ public static class NIRAModelSelection
             };
             return arrays.Any(key => root.TryGetProperty(key, out JsonElement requests) &&
                 requests.ValueKind == JsonValueKind.Array && requests.GetArrayLength() > 0);
+        }
+        catch (JsonException) { return false; }
+    }
+
+    // Only a first-cycle, tool-free protocol failure is eligible for the
+    // read-only retry. This is a structural distinction, never a keyword list
+    // or exception for a particular test question. Completed answers and
+    // genuine capability proposals must keep the ordinary Executive route.
+    public static bool IsUnproductiveDeepTerminal(string response)
+    {
+        if (!HasValidJsonObjectSyntax(response)) return false;
+        try
+        {
+            string json = response.Trim();
+            if (json.StartsWith("```", StringComparison.Ordinal))
+            {
+                int newline = json.IndexOf('\n');
+                int end = json.LastIndexOf("```", StringComparison.Ordinal);
+                if (newline < 0 || end <= newline) return false;
+                json = json[(newline + 1)..end].Trim();
+            }
+            using JsonDocument doc = JsonDocument.Parse(json);
+            JsonElement root = doc.RootElement;
+            string[] workFields = {
+                "capabilityRequests", "capabilityIds", "contextRequests",
+                "memorySearches", "conversationSearches", "controlRequests",
+                "goalProposals", "branchProposals", "branchWorkProposals",
+                "dynamicToolProposals", "dynamicToolInvocations", "commitmentProposals"
+            };
+            if (workFields.Any(field => root.TryGetProperty(field, out JsonElement value) &&
+                    value.ValueKind == JsonValueKind.Array && value.GetArrayLength() > 0))
+                return false;
+            if (root.TryGetProperty("state", out JsonElement state) &&
+                state.ValueKind == JsonValueKind.String)
+            {
+                string? name = state.GetString();
+                if (name == "Blocked") return true;
+                if (name is "Complete" or "NeedUser" or "Wait")
+                    return !IsUsableDeepDecision(response);
+                if (name == "Continue") return true; // Without any genuine next step.
+                return false;
+            }
+            // A bare nested delegation has no work and is not a terminal result.
+            return root.TryGetProperty("deepReasoningRequest", out _);
         }
         catch (JsonException) { return false; }
     }

@@ -1227,7 +1227,7 @@ public sealed class NIRAExecutive
             // results were returned. Limit this *read-only research* stalemate.
             // Never apply this to branch work, commitments, user authorization,
             // browser/desktop operations or other capability types.
-            if (cycle >= 5 &&
+            if (cycle >= 3 &&
                 mindEvent.Source == NIRAMindEventSource.User &&
                 decision.State == NIRACognitionState.Continue &&
                 decision.CapabilityRequests.Count > 0 &&
@@ -1248,21 +1248,47 @@ public sealed class NIRAExecutive
                     result.Succeeded && result.Risk == NIRACapabilityRisk.Observe &&
                     !result.ChangedSystemState && !result.OutcomeUncertain) >= 3)
             {
-                NIRACognitionDecision? handoff =
-                    NIRAWebResearchReplyPolicy.BoundedSourceHandoff(
-                        capabilityResultsBySignature.Values.ToArray());
-                if (handoff is not null)
+                // Ultra's final structured tool decision can fail even after
+                // several successful Tavily requests. Give it ONE constrained
+                // source-grounded technical synthesis, then let the *normal*
+                // independent review validate the produced answer. This is
+                // not a tool or permission bypass. A failed synthesis still
+                // falls back to mechanically attributed source links.
+                NIRADiagnosticTrace.Event("DEEP-RESEARCH-ESCALATE",
+                    $"Run={runId:D} Cycle={cycle} " +
+                    $"ObservedWebSearches={capabilityResultsBySignature.Values.Count(r => r.CapabilityId == NIRACapabilityIds.WebSearch && r.Succeeded)} " +
+                    $"DeepActive={_cognition.IsDeepReasoningRun(runId)} " +
+                    "Action=StopFurtherSearchAndRequestSynthesis");
+                NIRACognitionDecision? completedResearch =
+                    _cognition.IsDeepReasoningRun(runId)
+                        ? await _cognition.TryFinalizeDeepWebResearchAsync(
+                            context, capabilityResultsBySignature.Values.ToArray(),
+                            cancellationToken)
+                        : null;
+                if (completedResearch is not null)
                 {
-                    decision = handoff;
-                    // All shown URLs are derived mechanically from verified
-                    // capability receipts, not from an unreviewed model claim.
-                    // A second semantic review would re-enter the same loop.
-                    completionReviewConfirmedComplete = true;
+                    decision = completedResearch;
                     NIRADiagnosticTrace.Event("WEB-SEARCH-LOOP-RECOVERY",
                         $"Run={runId:D} Cycle={cycle} " +
-                        $"ObservedWebSearches={capabilityResultsBySignature.Values.Count(r => r.CapabilityId == NIRACapabilityIds.WebSearch && r.Succeeded)} " +
-                        $"VideoBlocks={decision.DisplayBlocks.Count} Mode=SourceOnly " +
+                        "Mode=DeepResearchDraft IndependentReview=Required " +
                         "FurtherSearchDispatched=False");
+                }
+                else
+                {
+                    NIRACognitionDecision? handoff =
+                        NIRAWebResearchReplyPolicy.BoundedSourceHandoff(
+                            capabilityResultsBySignature.Values.ToArray());
+                    if (handoff is not null)
+                    {
+                        decision = handoff;
+                        // Source-only evidence contains no claims from a model.
+                        completionReviewConfirmedComplete = true;
+                        NIRADiagnosticTrace.Event("WEB-SEARCH-LOOP-RECOVERY",
+                            $"Run={runId:D} Cycle={cycle} " +
+                            $"ObservedWebSearches={capabilityResultsBySignature.Values.Count(r => r.CapabilityId == NIRACapabilityIds.WebSearch && r.Succeeded)} " +
+                            $"VideoBlocks={decision.DisplayBlocks.Count} Mode=SourceOnly " +
+                            "FurtherSearchDispatched=False");
+                    }
                 }
             }
 
@@ -5926,12 +5952,29 @@ public sealed class NIRAExecutive
                     NIRACognitionPromptCompiler.WebResearchReviewEvidence(latestContext);
                 if (webResearchReviewEvidence.Length == 0)
                 {
+                    NIRACapabilityResult[] observed =
+                        capabilityResultsBySignature.Values.ToArray();
                     webResearchReviewEvidence =
-                        NIRACognitionPromptCompiler.WebResearchReviewEvidence(
-                            capabilityResultsBySignature.Values.ToArray());
+                        NIRACognitionPromptCompiler.WebResearchReviewEvidence(observed);
                     if (webResearchReviewEvidence.Length > 0)
                         NIRADiagnosticTrace.Event("WEB-RESEARCH-EVIDENCE-REVIEW",
                             $"Run={runId:D} Cycle={cycle} Source=MixedReadOnlyBatch");
+                    else if (observed.Length > 1 &&
+                        observed.All(r => r.CapabilityId == NIRACapabilityIds.WebSearch &&
+                            r.Risk == NIRACapabilityRisk.Observe &&
+                            !r.ChangedSystemState && !r.OutcomeUncertain))
+                    {
+                        var safeSources =
+                            NIRACognitionPromptCompiler.DeepResearchSynthesisEvidence(observed);
+                        if (safeSources.Used >= 1)
+                        {
+                            webResearchReviewEvidence = safeSources.Evidence;
+                            NIRADiagnosticTrace.Event("WEB-RESEARCH-EVIDENCE-REVIEW",
+                                $"Run={runId:D} Cycle={cycle} " +
+                                $"Source=IndividuallyValidated Valid={safeSources.Used} " +
+                                $"Omitted={safeSources.Omitted}");
+                        }
+                    }
                 }
                 if (webResearchReviewEvidence.Length > 0)
                     NIRADiagnosticTrace.Event("WEB-RESEARCH-EVIDENCE-REVIEW",
@@ -6016,6 +6059,39 @@ public sealed class NIRAExecutive
                     }
                 }
 
+                // A finished Ultra technical report which Gemma has already
+                // presented is NOT a claim that an external operation succeeded.
+                // Do not run the independent tool-completion reviewer against
+                // a reasoning-only run with a completely empty trusted action
+                // ledger: that reviewer is for factual/tool completion, and
+                // historically caused completed reports to be discarded.
+                // This never applies when any external tool, branch mutation,
+                // commitment, or control action was part of the run.
+                bool deepReadOnlyAnalysis =
+                    _cognition.HasCompletedDeepFindings(runId) &&
+                    decision.State == NIRACognitionState.Complete &&
+                    decision.EmitReply &&
+                    capabilityResultsBySignature.Count == 0 &&
+                    !preReviewCommitmentSucceeded &&
+                    !desktopActionNeedsObservation &&
+                    decision.CapabilityRequests.Count == 0 &&
+                    decision.ControlRequests.Count == 0 &&
+                    decision.GoalProposals.Count == 0 &&
+                    decision.BranchProposals.Count == 0 &&
+                    decision.BranchWorkProposals.Count == 0 &&
+                    decision.DynamicToolProposals.Count == 0 &&
+                    decision.DynamicToolInvocations.Count == 0 &&
+                    !decision.ReviewCommitment &&
+                    webResearchReviewEvidence.Length == 0;
+                if (deepReadOnlyAnalysis)
+                {
+                    completionReviewConfirmedComplete = true;
+                    NIRADiagnosticTrace.Event("DEEP-READONLY-DELIVERY",
+                        $"Run={runId:D} Cycle={cycle} " +
+                        $"ReplyChars={decision.Reply.Length} " +
+                        "IndependentToolReview=NotApplicable NoObservedOperations=True");
+                }
+
                 // Source-only digest is already mechanically validated: do not
                 // ask the semantic reviewer to turn safe excerpts into invented
                 // figures, then reject its own replacement again.
@@ -6074,6 +6150,55 @@ public sealed class NIRAExecutive
                     $"Run={runId:D} Cycle={cycle} " +
                     $"Verdict={taskReview?.Verdict ?? "Unavailable"} " +
                     $"Reconsideration={taskReview?.NeedsReconsideration == true}");
+
+                // Deep Work's completed expert report is not the same thing as
+                // its final presentation. If only the USER-FACING draft was
+                // rejected, give Gemma exactly one bounded chance to correct
+                // coverage using the retained Ultra findings. Re-review the
+                // result independently; do not bypass the objective gate or
+                // treat reviewer suggestions as tool authority. Ultra resumes
+                // only if substantive execution remains genuinely incomplete.
+                if (taskReview is { Verdict: "NeedsWork" } &&
+                    _cognition.IsDeepReasoningRun(runId) &&
+                    latestContext is not null &&
+                    decision.State == NIRACognitionState.Complete &&
+                    decision.EmitReply &&
+                    !preReviewCommitmentSucceeded &&
+                    !desktopActionNeedsObservation &&
+                    decision.CapabilityRequests.Count == 0 &&
+                    decision.ControlRequests.Count == 0 &&
+                    taskCompletionReviewCount == 0)
+                {
+                    string? revisedDraft = await _cognition.RefineDeepFinalDraftAsync(
+                        runId, latestContext, decision.Reply,
+                        taskReview.Gap, taskReview.NextStep, cancellationToken);
+                    if (!string.IsNullOrWhiteSpace(revisedDraft))
+                    {
+                        var revisedDecision = decision with {
+                            Reply = revisedDraft,
+                            Speech = string.Empty,
+                            ReplyReady = false,
+                            CharacterReady = false
+                        };
+                        completionReviewCalls++;
+                        NIRATaskCompletionReview? revisedReview =
+                            await _taskCompletionReview.ReviewAsync(
+                                reviewRequest with {
+                                    DraftReply = NIRAPresentationPolicy.ForObjectiveReview(
+                                        revisedDraft, decision.DisplayBlocks)
+                                }, cancellationToken);
+                        NIRADiagnosticTrace.Event("DEEP-FINAL-REVIEW",
+                            $"Run={runId:D} Cycle={cycle} " +
+                            $"Verdict={revisedReview?.Verdict ?? "Unavailable"} " +
+                            "Route=PrimaryPresentationCorrection NoUltraRetry=True");
+                        if (NIRAProductionContinuityPolicy.AcceptsObjectiveReview(
+                                revisedDecision, revisedReview))
+                        {
+                            decision = revisedDecision;
+                            taskReview = revisedReview;
+                        }
+                    }
+                }
 
                 if (NIRAProductionContinuityPolicy.AcceptsObjectiveReview(
                         decision, taskReview))

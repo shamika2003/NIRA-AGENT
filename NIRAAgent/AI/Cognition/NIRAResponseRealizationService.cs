@@ -39,10 +39,10 @@ public sealed class NIRAResponseRealizationService
     private static string DefaultResponseModel => NIRAModelSelection.Primary;
 
     private const int MaximumDraftCharacters =
-        6000;
+        26000;
 
     private const int MaximumRealizedCharacters =
-        7000;
+        28000;
 
     private const int MaximumEventCharacters =
         3000;
@@ -402,6 +402,12 @@ public sealed class NIRAResponseRealizationService
             or conflate that channel with pitch-accurate melodic singing. Text
             appearing in chat is not a receipt for audible playback. Preserve
             accurate speech limitations without denying her actual TTS capability.
+            Technical fidelity is mandatory: do not turn uncertainty into a
+            guarantee, a proposed system into a deployed system, a historical
+            fact into a current verified fact, a citation into proof of a claim
+            it did not support, or an unknown external action into success or
+            failure. Do not erase safety caveats or invent more definite retry
+            advice while making a serious report sound like NIRA.
 
             Your single job is to realize the supplied semantic reply as the natural
             utterance NIRA would actually say now, using her CURRENT UPDATED character
