@@ -481,7 +481,11 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         NIRAConversationArchiveStore? archive = null, Guid? messageId = null,
         Action<string>? followUp = null)
     {
-        var normalized = NIRAPresentationPolicy.Normalize(blocks);
+        // Promote standalone, supported watch links in recommendation cards
+        // to NIRA's existing native player. No topic/phrase-specific branching;
+        // the trusted video URL parser controls admissibility.
+        var normalized = NIRANativeVideoPresentationPolicy.ExpandCards(
+            NIRAPresentationPolicy.Normalize(blocks));
         // Union rather than replace when multiple typed batches contribute.
         var known = new HashSet<string>(EmbeddedVideoKeys.Split('|',
             StringSplitOptions.RemoveEmptyEntries), StringComparer.OrdinalIgnoreCase);

@@ -724,12 +724,16 @@ Check("RESEARCH video and scientific confidence preserve existing declarative me
     string first = NIRACognitionPromptCompiler.BootstrapSystem("");
     string synthesis = NIRACognitionPromptCompiler.WebResearchSynthesisSystem("");
     string reviewer = NIRATaskCompletionReviewService.ReviewerSystemPrompt;
-    if (!first.Contains("MEDIA CONTINUITY:", StringComparison.Ordinal) ||
-        !first.Contains("text field must contain ONLY", StringComparison.Ordinal) ||
-        !synthesis.Contains("SCIENTIFIC CLAIM CALIBRATION:", StringComparison.Ordinal) ||
-        !synthesis.Contains("future native player", StringComparison.Ordinal) ||
-        !reviewer.Contains("A theoretical technology is not a commercial product", StringComparison.OrdinalIgnoreCase))
-        throw new Exception("Context-sensitive media handling or source-calibrated technical reasoning regressed");
+    if (!first.Contains("MEDIA CONTINUITY:", StringComparison.Ordinal))
+        throw new Exception("Bootstrap missing media continuity (first-call guidance)");
+    if (!first.Contains("text field must contain ONLY", StringComparison.Ordinal))
+        throw new Exception("Bootstrap missing video-URL-only contract");
+    if (!synthesis.Contains("SCIENTIFIC CLAIM CALIBRATION:", StringComparison.Ordinal))
+        throw new Exception("Web research synthesis missing scientific claim calibration");
+    if (!synthesis.Contains("existing native player", StringComparison.Ordinal))
+        throw new Exception("Web research synthesis missing available native-player guidance");
+    if (!reviewer.Contains("A theoretical technology is not a commercial product", StringComparison.OrdinalIgnoreCase))
+        throw new Exception("Independent reviewer missing theory-vs-commercial-status rule");
     using var response = JsonDocument.Parse("""
       {"displayBlocks":[{"type":"video","title":"Verified demonstration",
       "text":"https://publisher.example.org/watch/recording"}]}
@@ -1080,6 +1084,51 @@ Check("R7 real reference-image retrieval is opt-in and read-only", () =>
     if (!instructions.Contains("webQuery", StringComparison.Ordinal) ||
         !instructions.Contains("ONE real verified image", StringComparison.OrdinalIgnoreCase))
         throw new Exception("Production first-round image/source selection instructions missing");
+});
+
+// General native-first video presentation: standalone individual watch links
+// in cards use NIRA's already-registered player; unsupported links remain cards.
+// Synthetic fixture URLs are not production routing rules or source verification.
+Check("VIDEO native-first cards retain descriptions and create one player per URL", () =>
+{
+    var input = new[] {
+        new NIRARichBlock { Type="card", Title="Ambient option A",
+            Text="Low-distraction soundtrack.\n[View recording](https://www.youtube.com/watch?v=AaBbCcDdE1F)" },
+        new NIRARichBlock { Type="card", Title="Ambient option B",
+            Text="Quiet atmospheric mix.\n[View second](https://vimeo.com/123456789)" }
+    };
+    var result = NIRANativeVideoPresentationPolicy.ExpandCards(
+        NIRAPresentationPolicy.Normalize(input));
+    if (result.Count != 4 || result[0].Type != "card" ||
+        result[1].Type != "card" || result[2].Type != "video" ||
+        result[3].Type != "video" ||
+        result[0].Text.Contains("youtube.com", StringComparison.OrdinalIgnoreCase) ||
+        !result[0].Text.Contains("Low-distraction soundtrack", StringComparison.Ordinal) ||
+        !result[2].Text.Contains("youtube.com", StringComparison.OrdinalIgnoreCase) ||
+        result[2].Title != "Ambient option A")
+        throw new Exception("Native player intent or descriptive card content was lost");
+});
+
+Check("VIDEO unsupported links, multiple links and duplicates never invent a player", () =>
+{
+    var cards = new[] {
+        new NIRARichBlock { Type="card", Title="Playlist",
+            Text="[Playlist](https://www.youtube.com/playlist?list=PL1234567890ABCDE)" },
+        new NIRARichBlock { Type="card", Title="Website",
+            Text="[Reference](https://example.org/watch/123)" },
+        new NIRARichBlock { Type="card", Title="Multiple links",
+            Text="[Clip](https://youtu.be/AaBbCcDdE1F) and [source](https://example.org/doc)" },
+        new NIRARichBlock { Type="video", Title="Already embedded",
+            Text="https://youtu.be/AaBbCcDdE1F" },
+        new NIRARichBlock { Type="card", Title="Repeat",
+            Text="[Watch](https://www.youtube.com/watch?v=AaBbCcDdE1F)" }
+    };
+    var result = NIRANativeVideoPresentationPolicy.ExpandCards(
+        NIRAPresentationPolicy.Normalize(cards));
+    if (result.Count != 5 || result.Count(b => b.Type == "video") != 1 ||
+        result[0].Type != "card" || result[1].Type != "card" ||
+        result[2].Type != "card" || result[4].Type != "card")
+        throw new Exception("Unsafe, ambiguous or already-present video was promoted");
 });
 
 Check("R6 observed video link renders as an optional grounded rich block", () =>
@@ -1434,7 +1483,8 @@ Check("WEB focused synthesis requires exactly one complete read-only attributed 
         !user.Contains("https://journal.example.com/update", StringComparison.Ordinal) ||
         user.Contains("Runtime user API key", StringComparison.Ordinal) ||
         user.Length > 24000 || system.Length > 7000)
-        throw new Exception("Focused synthesis lost sources, authority rules or prompt budget");
+        throw new Exception($"Focused synthesis lost sources, authority rules or prompt budget: " +
+            $"systemChars={system.Length}, userChars={user.Length}");
 });
 
 // R-web-quality: verify that the ACTUAL search receipt, rather than a truncated
