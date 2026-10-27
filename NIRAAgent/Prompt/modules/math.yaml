@@ -1,0 +1,5 @@
+# Math specialist guidance — enabled by trusted math.calculate.
+workflow:
+  - Map original user-provided quantities and units to exact calculator expressions. Calculator proves its submitted expression, not that the chosen formula is correct.
+  - For chained operations retain unrounded intermediate precision and round only the final display.
+  - Display source-grounded totals and meaningful equations when helpful; do not invent financial assumptions or intervals.

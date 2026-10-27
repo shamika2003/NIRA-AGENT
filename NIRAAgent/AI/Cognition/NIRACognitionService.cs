@@ -385,6 +385,15 @@ public sealed class NIRACognitionService
             (expandedSections == null || expandedSections.Count == 0) &&
             (expandedCapabilityIds == null || expandedCapabilityIds.Count == 0);
         bool deepWorkAlreadyActive = _deepReasoningRuns.ContainsKey(context.RunId);
+        // Normal first-turn reasoning uses a compact invariant core. R41 DOCX
+        // continuations stay compact after trusted DOCX tool observations.
+        // Contract-repair/deep/specialized paths retain the original prompts.
+        bool modularPrompt = !legacy && NIRAModularCognitionPrompt.Enabled &&
+            !needsCapabilityContractRepair && !deepWorkAlreadyActive &&
+            !calculatorSynthesis && !webResearchSynthesis &&
+            (informationOnly || evidenceSynthesisOnly ||
+             context.ObservedCapabilityIds.Any(id =>
+                 id.StartsWith("filesystem.docx.", StringComparison.OrdinalIgnoreCase)));
         string systemPrompt = deepWorkAlreadyActive
             ? NIRACognitionPromptCompiler.DeepWorkSystem()
             : legacy
@@ -393,9 +402,11 @@ public sealed class NIRACognitionService
                 ? NIRACognitionPromptCompiler.CalculatorSynthesisSystem(_personality)
                 : webResearchSynthesis
                     ? NIRACognitionPromptCompiler.WebResearchSynthesisSystem(_personality)
-                : informationOnly || evidenceSynthesisOnly
-                    ? NIRACognitionPromptCompiler.BootstrapSystem(_personality)
-                    : NIRACognitionPromptCompiler.System(_compactContract, _personality);
+                : modularPrompt
+                    ? NIRAModularCognitionPrompt.CoreSystem(_personality)
+                    : informationOnly || evidenceSynthesisOnly
+                        ? NIRACognitionPromptCompiler.BootstrapSystem(_personality)
+                        : NIRACognitionPromptCompiler.System(_compactContract, _personality);
         if (calculatorSynthesis)
             systemPrompt += "\n\nVERIFIED CALCULATOR SYNTHESIS: The received math.calculate " +
                 "receipt proves only the value of the submitted expression. " +
@@ -440,6 +451,25 @@ public sealed class NIRACognitionService
             Debug.WriteLine($"[ScopedPrompt] INCLUDED | Run={context.RunId:D} | " +
                 $"Cycle={context.Cycle} | Apps={scoped.AppIds} | Chars={scoped.Guidance.Length}");
         }
+
+        // Trusted capability IDs activate narrow specialist guidance only
+        // AFTER the Executive has selected/observed the domain (or approved
+        // explicit schema expansion). Raw user/tool text cannot impersonate IDs.
+        if (!legacy && NIRAModularCognitionPrompt.Enabled)
+        {
+            var module = NIRAModularCognitionPrompt.Select(
+                context.ObservedCapabilityIds, expandedCapabilityIds);
+            if (!string.IsNullOrWhiteSpace(module.Guidance))
+            {
+                systemPrompt += "\n\nTRUSTED TASK-SCOPED INSTRUCTIONS\n" + module.Guidance;
+                Debug.WriteLine($"[ModularPrompt] INCLUDED | Run={context.RunId:D} | " +
+                    $"Cycle={context.Cycle} | Modules={module.Modules} | " +
+                    $"Chars={module.Guidance.Length}");
+            }
+        }
+        if (modularPrompt)
+            Debug.WriteLine($"[ModularPrompt] CORE | Run={context.RunId:D} | " +
+                $"Cycle={context.Cycle} | SystemChars={systemPrompt.Length}");
 
         // Character and tool authority stay in NIRA's existing Executive. Gemma
         // gets the optional escalation request only while it owns normal work.

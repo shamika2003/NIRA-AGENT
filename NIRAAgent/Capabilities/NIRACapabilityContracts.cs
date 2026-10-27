@@ -76,6 +76,16 @@ public static class NIRACapabilityIds
     public const string FileRevisionInspect = "filesystem.revision.inspect";
     public const string FileRevisionRollback = "filesystem.revision.rollback";
 
+    // GATE R41: native Word Open XML document primitives.
+    public const string DocxCreate = "filesystem.docx.create";
+    public const string DocxInspect = "filesystem.docx.inspect";
+    public const string DocxAppend = "filesystem.docx.append";
+    public const string DocxReplace = "filesystem.docx.replace";
+    public const string DocxTableAdd = "filesystem.docx.table.add";
+    public const string DocxParagraphFormat = "filesystem.docx.paragraph.format";
+    public const string DocxPageLayout = "filesystem.docx.page.layout";
+    public const string DocxTableStyle = "filesystem.docx.table.style";
+
     public const string FileWrite =
         "filesystem.write";
 

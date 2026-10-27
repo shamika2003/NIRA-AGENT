@@ -501,6 +501,16 @@ public partial class App : WpfApplication
             builder.Services.AddSingleton<INIRACapabilityHandler, NIRAFileRevisionInspectCapabilityHandler>();
             builder.Services.AddSingleton<INIRACapabilityHandler, NIRAFileRevisionRollbackCapabilityHandler>();
 
+            // GATE R41: DOCX creation, read-only inspection and safe new-copy append.
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxCreateCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxInspectCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxAppendCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxReplaceCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxTableAddCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxParagraphFormatCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxPageLayoutCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxTableStyleCapabilityHandler>();
+
             builder.Services.AddSingleton<
                 INIRACapabilityHandler,
                 NIRAFileWriteCapabilityHandler>();

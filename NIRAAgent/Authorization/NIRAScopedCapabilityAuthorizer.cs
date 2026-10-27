@@ -18,6 +18,13 @@ public sealed class NIRAScopedCapabilityAuthorizer : INIRACapabilityAuthorizer
         NIRACapabilityIds.FileBackupRestore,
         NIRACapabilityIds.FileRevisionApply,
         NIRACapabilityIds.FileRevisionRollback,
+        NIRACapabilityIds.DocxCreate,
+        NIRACapabilityIds.DocxAppend,
+        NIRACapabilityIds.DocxReplace,
+        NIRACapabilityIds.DocxTableAdd,
+        NIRACapabilityIds.DocxParagraphFormat,
+        NIRACapabilityIds.DocxPageLayout,
+        NIRACapabilityIds.DocxTableStyle,
         NIRACapabilityIds.DirectoryCreate
     ];
 

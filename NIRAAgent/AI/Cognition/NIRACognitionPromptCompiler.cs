@@ -2346,6 +2346,13 @@ internal static class NIRACognitionPromptCompiler
                 context, out string trustedAppId)
                 ? trustedAppId : null;
         string catalog = CapabilityIndex(context.CapabilityContext, embeddedAppId);
+        // Keep all capability names visible, but after a trusted DOCX result
+        // transmit detailed signatures only for the currently active domain.
+        // Explicit schema expansion restores full information on demand.
+        if (NIRAModularCognitionPrompt.Enabled && embeddedAppId == null &&
+            context.Cycle > 1 && expanded.Count == 0 && capabilityIds.Count == 0)
+            catalog = NIRAModularCognitionPrompt.FocusDocxToolDirectory(
+                catalog, context.ObservedCapabilityIds);
         // Once an exclusive calculator receipt exists, the current turn has
         // no reason to retransmit the entire tool catalog. The model can
         // still request a fresh capability schema via contextRequests if
@@ -2586,6 +2593,9 @@ internal static class NIRACognitionPromptCompiler
                 "Ordinary conversation needs no tool; answer naturally.");
         }
         Add(b, "LIVE CAPABILITY QUICK SIGNATURES (! required, ? optional; CALL DIRECTLY WHEN GROUNDED)", catalog);
+        if (embeddedAppId == null)
+            Add(b, "EXACT USER-NAMED REGISTERED PRIMITIVES — CALL THESE DIRECTLY WHEN READY",
+                ExplicitUserCapabilityDetails(context.Event.Content, context.CapabilityContext));
         Add(b, "OPTIONAL CONTEXT SECTIONS", "memory, conversation, self, character, goals, branches, work, pc, capabilities, tools, artifacts, evidence. Request by contextRequests; use exact capabilityIds for a subset of registered primitives.");
 
         if (expanded.Contains("conversation")) Add(b, "RECENT CONVERSATION", Limit(context.ConversationContext, 5200, true));
@@ -3104,6 +3114,50 @@ internal static class NIRACognitionPromptCompiler
         return compact.Length <= maximumCharacters
             ? compact
             : compact[..maximumCharacters];
+    }
+
+    // R42D: an EXACT primitive ID explicitly written by the current user may
+    // receive its registered schema immediately. The catalog is authoritative;
+    // the user text is only a selector, not an authorization or a descriptor.
+    // No substring/prefix guessing, no unregistered tool creation and no
+    // privileged app-scoped schema leakage for embedded product surfaces.
+    internal static string ExplicitUserCapabilityDetails(
+        string? userRequest, string? registeredCatalog)
+    {
+        if (string.IsNullOrWhiteSpace(userRequest) ||
+            string.IsNullOrWhiteSpace(registeredCatalog)) return string.Empty;
+        HashSet<string> selected = new(StringComparer.OrdinalIgnoreCase);
+        foreach (string line in registeredCatalog.Split('\n'))
+        {
+            string candidate = line.Trim();
+            if (!candidate.StartsWith("- ", StringComparison.Ordinal) ||
+                !candidate.Contains(" | defaultRisk=", StringComparison.Ordinal))
+                continue;
+            string id = candidate.Substring(2,
+                candidate.IndexOf(" | defaultRisk=", StringComparison.Ordinal) - 2);
+            if (id.Length < 5 || id.Length > 120 || !id.Contains('.')) continue;
+            int start = 0;
+            while ((start = userRequest.IndexOf(id, start,
+                StringComparison.OrdinalIgnoreCase)) >= 0)
+            {
+                int end = start + id.Length;
+                bool preceding = start > 0 &&
+                    (char.IsLetterOrDigit(userRequest[start - 1]) ||
+                     userRequest[start - 1] is '_' or '.' or '-');
+                bool following = end < userRequest.Length &&
+                    (char.IsLetterOrDigit(userRequest[end]) ||
+                     userRequest[end] is '_' or '.' or '-');
+                if (!preceding && !following)
+                {
+                    selected.Add(id);
+                    break;
+                }
+                start = end;
+            }
+            if (selected.Count == 6) break;
+        }
+        return selected.Count == 0 ? string.Empty :
+            CapabilityDetails(registeredCatalog, selected, embeddedAppId: null);
     }
 
     private static string CapabilityDetails(

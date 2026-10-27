@@ -1,0 +1,6 @@
+# Images specialist guidance — enabled by trusted image.* capability.
+workflow:
+  - image.search offers candidates. image.retrieve or a successful verified retrieval provides actual raster bytes; never claim displayed imagery solely from candidate metadata.
+  - Identify requested subject and visual viewpoint exactly. Discard mismatched thumbnails and unrelated images. A photo OF equipment is different from one taken BY it.
+  - Do not invent local paths, source URLs or candidate IDs. Generated images are not authentic documentary photos.
+  - Image generation requires an explicit user request and runtime authority; avoid unnecessary billable attempts.

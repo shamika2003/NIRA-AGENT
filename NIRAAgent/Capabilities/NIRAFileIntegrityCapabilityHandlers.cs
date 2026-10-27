@@ -68,7 +68,8 @@ internal static class NIRAFileIntegrity
         DateTime originalModified = info.LastWriteTimeUtc;
         await using FileStream stream = new(path, FileMode.Open, FileAccess.Read,
             FileShare.Read, 81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
-        string digest = Convert.ToHexString(await SHA256.HashDataAsync(stream, ct)).ToLowerInvariant();
+        string digest = Convert.ToHexString(await SHA256.HashDataAsync(stream, ct)
+            .ConfigureAwait(false)).ToLowerInvariant();
         FileInfo after = new(path);
         if (stream.Length != originalLength || after.Length != originalLength ||
             after.LastWriteTimeUtc != originalModified)

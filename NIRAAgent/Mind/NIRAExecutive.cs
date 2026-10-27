@@ -1801,8 +1801,9 @@ public sealed class NIRAExecutive
                     $"{decision.VocalIntent.Tenderness:F2}");
             }
 
-            if (decision.ContextRequests.Count > 0 || decision.CapabilityIds.Count > 0 ||
-                decision.ConversationSearches.Count > 0)
+            if (NIRAContextRetrievalPolicy.ShouldExpandContextBeforeWork(
+                decision.ContextRequests.Count, decision.CapabilityIds.Count,
+                decision.ConversationSearches.Count, decision.CapabilityRequests.Count))
             {
                 bool added = false;
                 // Untrusted strings: allow only the advertised section names.
@@ -6350,6 +6351,48 @@ public sealed class NIRAExecutive
                     // several source reads, even though the trusted result
                     // ledger still contains valid web.search receipts. The
                     // fallback itself validates those receipts independently.
+                    // If the reviewer repeatedly fails after an actual DOCX
+                    // append and fresh inspection of both exact files, retain
+                    // those proven outcomes as a PARTIAL report. Never certify
+                    // unobserved formatting, objectives, or other side effects.
+                    string? docxReceipt = taskReview.Verdict == "NeedsWork" &&
+                        decision.State == NIRACognitionState.Complete &&
+                        !preReviewCommitmentSucceeded && !desktopActionNeedsObservation &&
+                        !decision.ReviewCommitment &&
+                        decision.CapabilityRequests.Count == 0 &&
+                        decision.ContextRequests.Count == 0 &&
+                        decision.MemorySearches.Count == 0 &&
+                        decision.ConversationSearches.Count == 0 &&
+                        decision.ControlRequests.Count == 0 &&
+                        decision.DynamicToolInvocations.Count == 0 &&
+                        decision.DynamicToolProposals.Count == 0 &&
+                        decision.GoalProposals.Count == 0 &&
+                        decision.BranchProposals.Count == 0 &&
+                        decision.BranchWorkProposals.Count == 0 &&
+                        reviewDeferredUserGoalCompletions.Length == 0 &&
+                        string.IsNullOrWhiteSpace(dynamicToolEvidence.ToString()) &&
+                        GetPendingTaskForEvent(mindEvent) == null
+                            ? NIRADocxObservedCompletionPolicy.FromResults(
+                                capabilityRequestsBySignature, capabilityResultsBySignature)
+                            : null;
+                    if (docxReceipt is not null)
+                    {
+                        decision = decision with
+                        {
+                            State = NIRACognitionState.Complete,
+                            EmitReply = true, Reply = docxReceipt,
+                            Speech = string.Empty, ReplyReady = true,
+                            CharacterReady = true,
+                            DisplayBlocks = Array.Empty<NIRARichBlock>(),
+                            DecisionSummary = "Verified DOCX append+two inspections; partial receipt after reviewer exhaustion."
+                        };
+                        completionReviewConfirmedComplete = true;
+                        NIRADiagnosticTrace.Event("DOCX-RECEIPT-PARTIAL-DELIVERY",
+                            $"Run={runId:D} Cycle={cycle} Scope=AppendAndTwoInspections " +
+                            "FinalNarrativeReview=Unresolved");
+                    }
+                    else
+                    {
                     string? researchDigest = taskReview.Verdict == "NeedsWork" &&
                         !preReviewCommitmentSucceeded && !desktopActionNeedsObservation &&
                         NIRAWebResearchReplyPolicy.IsGroundedAnswerShape(decision)
@@ -6397,6 +6440,7 @@ public sealed class NIRAExecutive
                         DecisionSummary = "Repeated independent objective review rejected the draft."
                         };
                     }
+                    } // no verified DOCX handoff
                     Debug.WriteLine(
                         $"[ObjectiveGate] BOUNDED_STOP | Run={runId:D} | Cycle={cycle}");
                 }
@@ -6498,6 +6542,37 @@ public sealed class NIRAExecutive
                 decision = decision with { EmitReply = true, Reply = waitingMessage };
                 Debug.WriteLine($"[Executive] BRANCH USER WAIT | Branch={waitingBranchId:D} | " +
                     $"Changed={waited.Any(r => r.Changed)}");
+            }
+
+            // R42C: A successful audited DOCX formatting tool verifies its own
+            // saved output. If cognition later runs out of rounds, preserve that
+            // bounded observed result instead of falsely reporting that the
+            // layout/formatting failed. Never promote it to full objective completion.
+            if (mindEvent.Source == NIRAMindEventSource.User &&
+                decision.State == NIRACognitionState.Blocked &&
+                decision.CapabilityRequests.Count == 0 &&
+                decision.ContextRequests.Count == 0 &&
+                decision.DynamicToolInvocations.Count == 0 &&
+                decision.ControlRequests.Count == 0 &&
+                !preReviewCommitmentSucceeded &&
+                !desktopActionNeedsObservation)
+            {
+                string? verifiedDocxPartial = NIRADocxObservedCompletionPolicy
+                    .FromVerifiedFormattingResults(
+                        capabilityRequestsBySignature, capabilityResultsBySignature);
+                if (verifiedDocxPartial is not null)
+                {
+                    decision = decision with
+                    {
+                        EmitReply = true, Reply = verifiedDocxPartial,
+                        Speech = string.Empty, ReplyReady = true,
+                        CharacterReady = true,
+                        DisplayBlocks = Array.Empty<NIRARichBlock>(),
+                        DecisionSummary = "R42C trusted DOCX post-write receipt; partial reporting after blocked cognition."
+                    };
+                    NIRADiagnosticTrace.Event("DOCX-FORMAT-VERIFIED-PARTIAL",
+                        $"Run={runId:D} Cycle={cycle} Reason=ModelBlocked VerifiedSavedCopy=True");
+                }
             }
 
             // Model/reviewer Blocked after an internal result must also be

@@ -6,6 +6,17 @@ namespace NIRAAgent.Mind;
 // unrelated memory work, or model-selected tool execution.
 internal static class NIRAContextRetrievalPolicy
 {
+    // Context expansion cannot preempt an executable capability in a mixed
+    // model decision. A call to a real tool is checked by the standard
+    // authorizer/schema preflight, and further context may follow its receipt.
+    internal static bool ShouldExpandContextBeforeWork(
+        int contextCount, int capabilityIdCount, int conversationSearchCount,
+        int proposedCapabilityCount)
+    {
+        return proposedCapabilityCount == 0 &&
+            (contextCount > 0 || capabilityIdCount > 0 || conversationSearchCount > 0);
+    }
+
     internal static bool IsHistoryOnlyAfterFileObservation(
         bool observedFileSource,
         bool expandedNewSection,
