@@ -5869,6 +5869,105 @@ public sealed class NIRAExecutive
                 }
             }
 
+            // R43A.1: for the explicitly named native header/footer operation,
+            // the audited write + a separate inspection of both exact files +
+            // source hash constitute an independent, mechanically checked
+            // certificate. Do not let a free-form reviewer negate actual saved
+            // file evidence or spend another round on that same verified task.
+            // This narrow fast path is restricted to the explicit capability
+            // test and refuses any mixed or otherwise pending work.
+            if (userTerminalDraft && !completionReviewConfirmedComplete &&
+                taskCompletionReviewCount == 0 &&
+                mindEvent.Source == NIRAMindEventSource.User &&
+                mindEvent.Content.Contains(NIRACapabilityIds.DocxHeaderFooter,
+                    StringComparison.OrdinalIgnoreCase) &&
+                decision.State == NIRACognitionState.Complete && decision.EmitReply &&
+                !preReviewCommitmentSucceeded && !desktopActionNeedsObservation &&
+                GetPendingTaskForEvent(mindEvent) == null &&
+                !mindEvent.Metadata.ContainsKey("externalAppId") &&
+                string.IsNullOrWhiteSpace(dynamicToolEvidence.ToString()) &&
+                decision.CapabilityIds.Count == 0 &&
+                decision.CapabilityRequests.Count == 0 &&
+                decision.ContextRequests.Count == 0 &&
+                decision.MemorySearches.Count == 0 &&
+                decision.ConversationSearches.Count == 0 &&
+                decision.ControlRequests.Count == 0 &&
+                decision.GoalProposals.Count == 0 &&
+                decision.BranchProposals.Count == 0 &&
+                decision.BranchWorkProposals.Count == 0 &&
+                decision.DynamicToolProposals.Count == 0 &&
+                decision.DynamicToolInvocations.Count == 0 &&
+                !decision.ReviewCommitment)
+            {
+                string? certificate = NIRADocxObservedCompletionPolicy
+                    .FromVerifiedHeaderFooterResults(
+                        capabilityRequestsBySignature, capabilityResultsBySignature);
+                if (certificate != null)
+                {
+                    decision = decision with
+                    {
+                        Reply = certificate,
+                        Speech = string.Empty,
+                        ReplyReady = true,
+                        CharacterReady = true,
+                        DisplayBlocks = Array.Empty<NIRARichBlock>(),
+                        DecisionSummary = "R43A verified saved DOCX header/footer and PAGE field from audited receipts."
+                    };
+                    completionReviewConfirmedComplete = true;
+                    NIRADiagnosticTrace.Event("DOCX-HEADER-FOOTER-RECEIPT",
+                        $"Run={runId:D} Cycle={cycle} Scope=ExplicitSingleOperation " +
+                        "SavedPackage=Verified BothInspections=True ReviewerCallsSaved=1");
+                }
+            }
+
+            // R43B: like the verified R43A header/footer path, never discard a
+            // genuinely saved, audited inline-image DOCX result merely because
+            // a free-form narrative reviewer is uncertain. Exact same-run
+            // source/hash/output receipts are required; no unrelated work.
+            if (userTerminalDraft && !completionReviewConfirmedComplete &&
+                taskCompletionReviewCount == 0 &&
+                mindEvent.Source == NIRAMindEventSource.User &&
+                mindEvent.Content.Contains(NIRACapabilityIds.DocxImageInsert,
+                    StringComparison.OrdinalIgnoreCase) &&
+                decision.State == NIRACognitionState.Complete && decision.EmitReply &&
+                !preReviewCommitmentSucceeded && !desktopActionNeedsObservation &&
+                GetPendingTaskForEvent(mindEvent) == null &&
+                !mindEvent.Metadata.ContainsKey("externalAppId") &&
+                string.IsNullOrWhiteSpace(dynamicToolEvidence.ToString()) &&
+                decision.CapabilityIds.Count == 0 &&
+                decision.CapabilityRequests.Count == 0 &&
+                decision.ContextRequests.Count == 0 &&
+                decision.MemorySearches.Count == 0 &&
+                decision.ConversationSearches.Count == 0 &&
+                decision.ControlRequests.Count == 0 &&
+                decision.GoalProposals.Count == 0 &&
+                decision.BranchProposals.Count == 0 &&
+                decision.BranchWorkProposals.Count == 0 &&
+                decision.DynamicToolProposals.Count == 0 &&
+                decision.DynamicToolInvocations.Count == 0 &&
+                !decision.ReviewCommitment)
+            {
+                string? certificate = NIRADocxObservedCompletionPolicy
+                    .FromVerifiedImageInsertionResults(
+                        capabilityRequestsBySignature, capabilityResultsBySignature);
+                if (certificate != null)
+                {
+                    decision = decision with
+                    {
+                        Reply = certificate,
+                        Speech = string.Empty,
+                        ReplyReady = true,
+                        CharacterReady = true,
+                        DisplayBlocks = Array.Empty<NIRARichBlock>(),
+                        DecisionSummary = "R43B saved inline image verified from audited DOCX receipts."
+                    };
+                    completionReviewConfirmedComplete = true;
+                    NIRADiagnosticTrace.Event("DOCX-IMAGE-RECEIPT",
+                        $"Run={runId:D} Cycle={cycle} Scope=ExplicitImageInsertion " +
+                        "SavedMediaVerified=True BothInspections=True ReviewerCallsSaved=1");
+                }
+            }
+
             // Image-only evidence certificate: when the user's ENTIRE request is
             // a bounded photograph request, one registered image.search has
             // already emitted exactly the requested number of distinct files,
@@ -6559,6 +6658,10 @@ public sealed class NIRAExecutive
             {
                 string? verifiedDocxPartial = NIRADocxObservedCompletionPolicy
                     .FromVerifiedFormattingResults(
+                        capabilityRequestsBySignature, capabilityResultsBySignature)
+                    ?? NIRADocxObservedCompletionPolicy.FromVerifiedHeaderFooterResults(
+                        capabilityRequestsBySignature, capabilityResultsBySignature)
+                    ?? NIRADocxObservedCompletionPolicy.FromVerifiedImageInsertionResults(
                         capabilityRequestsBySignature, capabilityResultsBySignature);
                 if (verifiedDocxPartial is not null)
                 {
@@ -6568,7 +6671,7 @@ public sealed class NIRAExecutive
                         Speech = string.Empty, ReplyReady = true,
                         CharacterReady = true,
                         DisplayBlocks = Array.Empty<NIRARichBlock>(),
-                        DecisionSummary = "R42C trusted DOCX post-write receipt; partial reporting after blocked cognition."
+                        DecisionSummary = "Trusted native DOCX post-write receipt; reporting verified facts after blocked cognition."
                     };
                     NIRADiagnosticTrace.Event("DOCX-FORMAT-VERIFIED-PARTIAL",
                         $"Run={runId:D} Cycle={cycle} Reason=ModelBlocked VerifiedSavedCopy=True");

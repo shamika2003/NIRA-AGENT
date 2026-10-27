@@ -25,6 +25,8 @@ public sealed class NIRAScopedCapabilityAuthorizer : INIRACapabilityAuthorizer
         NIRACapabilityIds.DocxParagraphFormat,
         NIRACapabilityIds.DocxPageLayout,
         NIRACapabilityIds.DocxTableStyle,
+        NIRACapabilityIds.DocxHeaderFooter,
+        NIRACapabilityIds.DocxImageInsert,
         NIRACapabilityIds.DirectoryCreate
     ];
 

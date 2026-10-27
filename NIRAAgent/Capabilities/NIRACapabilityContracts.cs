@@ -85,6 +85,8 @@ public static class NIRACapabilityIds
     public const string DocxParagraphFormat = "filesystem.docx.paragraph.format";
     public const string DocxPageLayout = "filesystem.docx.page.layout";
     public const string DocxTableStyle = "filesystem.docx.table.style";
+    public const string DocxHeaderFooter = "filesystem.docx.header.footer";
+    public const string DocxImageInsert = "filesystem.docx.image.insert";
 
     public const string FileWrite =
         "filesystem.write";

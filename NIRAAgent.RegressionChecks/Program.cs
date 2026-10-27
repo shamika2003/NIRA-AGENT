@@ -7948,6 +7948,323 @@ Check("R42D valid capability work wins over redundant context lookup", () =>
         throw new Exception("A context request preempted executable work or missed pure expansion");
 });
 
+// R43A header/footer native package parts, field instruction and copy-only safety.
+Check("R43A create header footer PAGE field and inspect verified package", () =>
+{
+    string directory = Path.Combine(Path.GetTempPath(), "nira-r43a-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(directory);
+    try
+    {
+        string source = Path.Combine(directory, "source.docx");
+        string output = Path.Combine(directory, "header-footer.docx");
+        new NIRADocxCreateCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxCreate,
+            JsonSerializer.Serialize(new { path=source, title="R43", content="# Test\nHello." }))).GetAwaiter().GetResult();
+        string oldHash = Sha(source);
+        var result = new NIRADocxHeaderFooterCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.DocxHeaderFooter, JsonSerializer.Serialize(new {
+                source, destination=output, headerText="NIRA by ELVARA",
+                footerText="Confidential", pageNumbers="true", expectedSourceSha256=oldHash
+            }))).GetAwaiter().GetResult();
+        if (!result.ChangedSystemState || !result.Output.Contains("PostWriteVerified=True") ||
+            Sha(source) != oldHash || !File.Exists(output))
+            throw new Exception("R43A failed publication or modified the source");
+        string inspect = new NIRADocxInspectCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.DocxInspect, JsonSerializer.Serialize(new {path=output})))
+            .GetAwaiter().GetResult().Output;
+        if (!inspect.Contains("HeaderPresent=True") || !inspect.Contains("FooterPresent=True") ||
+            !inspect.Contains("PageNumberField=True") || !inspect.Contains("NIRA by ELVARA") ||
+            !inspect.Contains("Confidential"))
+            throw new Exception("R43A native relationship/field verification failed");
+        using var archive = System.IO.Compression.ZipFile.OpenRead(output);
+        if (archive.GetEntry("word/headerNIRA43.xml") is null ||
+            archive.GetEntry("word/footerNIRA43.xml") is null)
+            throw new Exception("Header/footer ZIP parts not created");
+    }
+    finally { Directory.Delete(directory, recursive:true); }
+});
+Check("R43A refuses stale hash, collision and pre-existing header", () =>
+{
+    string directory = Path.Combine(Path.GetTempPath(), "nira-r43b-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(directory);
+    try
+    {
+        string source=Path.Combine(directory,"input.docx");
+        string good=Path.Combine(directory,"first.docx");
+        string stale=Path.Combine(directory,"stale.docx");
+        new NIRADocxCreateCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxCreate,
+            JsonSerializer.Serialize(new {path=source,content="hello"}))).GetAwaiter().GetResult();
+        var handler=new NIRADocxHeaderFooterCapabilityHandler();
+        Throws<IOException>(()=>handler.ExecuteAsync(Request(NIRACapabilityIds.DocxHeaderFooter,
+            JsonSerializer.Serialize(new {source,destination=stale,footerText="footer",
+                expectedSourceSha256=new string('0',64)}))).GetAwaiter().GetResult());
+        if (File.Exists(stale)) throw new Exception("Stale hash created output");
+        handler.ExecuteAsync(Request(NIRACapabilityIds.DocxHeaderFooter,
+            JsonSerializer.Serialize(new {source,destination=good,headerText="header",
+                expectedSourceSha256=Sha(source)}))).GetAwaiter().GetResult();
+        Throws<IOException>(()=>handler.ExecuteAsync(Request(NIRACapabilityIds.DocxHeaderFooter,
+            JsonSerializer.Serialize(new {source,destination=good,footerText="new footer",
+                expectedSourceSha256=Sha(source)}))).GetAwaiter().GetResult());
+        Throws<InvalidOperationException>(()=>handler.ExecuteAsync(Request(NIRACapabilityIds.DocxHeaderFooter,
+            JsonSerializer.Serialize(new {source=good,destination=Path.Combine(directory,"second.docx"),
+                footerText="new footer",expectedSourceSha256=Sha(good)}))).GetAwaiter().GetResult());
+        if (Directory.EnumerateFiles(directory,"*.docx").Count()!=2)
+            throw new Exception("Refusal created unexpected DOCX");
+    }
+    finally { Directory.Delete(directory, recursive:true); }
+});
+
+// R43A.1: actual saved DOCX, hash and BOTH independent inspections must
+// certify the header/footer and PAGE field before a model-review fallback can
+// present the operation as successful. These are offline native tests.
+Check("R43A.1 actual header/footer receipts restore verified user reporting", () =>
+{
+    string directory = Path.Combine(Path.GetTempPath(), "nira-r43a1-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(directory);
+    try
+    {
+        string seed = Path.Combine(directory, "seed.docx");
+        string source = Path.Combine(directory, "source.docx");
+        string output = Path.Combine(directory, "destination.docx");
+        new NIRADocxCreateCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxCreate,
+            JsonSerializer.Serialize(new { path=seed, title="NIRA Test", content="# Overview\nA test paragraph." })))
+            .GetAwaiter().GetResult();
+        new NIRADocxPageLayoutCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxPageLayout,
+            JsonSerializer.Serialize(new { source=seed,destination=source,expectedSourceSha256=Sha(seed),
+                paper="A4",orientation="landscape",marginMm="20" })))
+            .GetAwaiter().GetResult();
+        string oldHash = Sha(source);
+        var editRequest = Request(NIRACapabilityIds.DocxHeaderFooter,
+            JsonSerializer.Serialize(new { source,destination=output,expectedSourceSha256=oldHash,
+                headerText="NIRA BY ELVARA",footerText="NIRA Document System | Confidential",
+                pageNumbers="true" }));
+        var editResult = new NIRADocxHeaderFooterCapabilityHandler().ExecuteAsync(editRequest)
+            .GetAwaiter().GetResult();
+        var inspectRequest1 = Request(NIRACapabilityIds.DocxInspect,
+            JsonSerializer.Serialize(new { path=source }));
+        var inspectRequest2 = Request(NIRACapabilityIds.DocxInspect,
+            JsonSerializer.Serialize(new { path=output }));
+        var hashRequest = Request(NIRACapabilityIds.FileHash,
+            JsonSerializer.Serialize(new { path=source }));
+        var inspectHandler = new NIRADocxInspectCapabilityHandler();
+        var inspect1 = inspectHandler.ExecuteAsync(inspectRequest1).GetAwaiter().GetResult();
+        var inspect2 = inspectHandler.ExecuteAsync(inspectRequest2).GetAwaiter().GetResult();
+        var hash = new NIRAFileHashCapabilityHandler().ExecuteAsync(hashRequest)
+            .GetAwaiter().GetResult();
+        var requests = new Dictionary<string,NIRACapabilityRequest> {
+            ["source"] = inspectRequest1, ["hash"] = hashRequest,
+            ["write"] = editRequest, ["destination"] = inspectRequest2 };
+        NIRACapabilityResult Observe(string id, string data) => new() {
+            CapabilityId=id, Risk=NIRACapabilityRisk.Observe,
+            Status=NIRACapabilityResultStatus.Succeeded, Output=data };
+        var results = new Dictionary<string,NIRACapabilityResult> {
+            ["source"] = Observe(NIRACapabilityIds.DocxInspect, inspect1.Output),
+            ["hash"] = Observe(NIRACapabilityIds.FileHash, hash.Output),
+            ["write"] = new NIRACapabilityResult {
+                CapabilityId=NIRACapabilityIds.DocxHeaderFooter,
+                Status=NIRACapabilityResultStatus.Succeeded,
+                Risk=NIRACapabilityRisk.Modify,
+                ChangedSystemState=true,AuditRecorded=true,Output=editResult.Output },
+            ["destination"] = Observe(NIRACapabilityIds.DocxInspect, inspect2.Output) };
+        string? verified = NIRADocxObservedCompletionPolicy
+            .FromVerifiedHeaderFooterResults(requests,results);
+        if (verified is null || !verified.Contains(oldHash,StringComparison.OrdinalIgnoreCase) ||
+            !verified.Contains(Sha(output),StringComparison.OrdinalIgnoreCase) ||
+            !verified.Contains("Automatic Word PAGE field:** True",StringComparison.Ordinal) ||
+            !verified.Contains("A4 landscape",StringComparison.Ordinal) ||
+            !verified.Contains("NIRA BY ELVARA",StringComparison.Ordinal) ||
+            !verified.Contains("Confidential",StringComparison.Ordinal) ||
+            Sha(source) != oldHash)
+            throw new Exception("Saved header/footer was not certified from matching native receipts");
+
+        // Failed or forged independent evidence must never certify a write.
+        var untouched = results["destination"];
+        results["destination"] = untouched with { Output = untouched.Output.Replace(
+            "PageNumberField=True", "PageNumberField=False") };
+        if (NIRADocxObservedCompletionPolicy.FromVerifiedHeaderFooterResults(requests,results) != null)
+            throw new Exception("Forged absent PAGE field was certified");
+        results["destination"] = untouched with { Output = untouched.Output.Replace(
+            Sha(output), new string('0',64),StringComparison.OrdinalIgnoreCase) };
+        if (NIRADocxObservedCompletionPolicy.FromVerifiedHeaderFooterResults(requests,results) != null)
+            throw new Exception("Wrong final SHA-256 was certified");
+        results["destination"] = untouched;
+        results["write"] = results["write"] with { AuditRecorded=false };
+        if (NIRADocxObservedCompletionPolicy.FromVerifiedHeaderFooterResults(requests,results) != null)
+            throw new Exception("Unaudited DOCX mutation was certified");
+        results["write"] = results["write"] with { AuditRecorded=true, OutcomeUncertain=true };
+        if (NIRADocxObservedCompletionPolicy.FromVerifiedHeaderFooterResults(requests,results) != null)
+            throw new Exception("Uncertain DOCX mutation was certified");
+        results["write"] = results["write"] with { OutcomeUncertain=false };
+        results["source"] = results["source"] with { Status=NIRACapabilityResultStatus.Failed };
+        if (NIRADocxObservedCompletionPolicy.FromVerifiedHeaderFooterResults(requests,results) != null)
+            throw new Exception("Missing source inspection was certified");
+        results["source"] = Observe(NIRACapabilityIds.DocxInspect,inspect1.Output);
+        requests["extra"] = Request(NIRACapabilityIds.ShellExecute, "{}");
+        results["extra"] = new NIRACapabilityResult {
+            CapabilityId=NIRACapabilityIds.ShellExecute,
+            Risk=NIRACapabilityRisk.Execute,Status=NIRACapabilityResultStatus.Succeeded };
+        if (NIRADocxObservedCompletionPolicy.FromVerifiedHeaderFooterResults(requests,results) != null)
+            throw new Exception("Unrelated shell work was hidden in Word receipt");
+    }
+    finally { Directory.Delete(directory, recursive:true); }
+});
+
+
+// R43B: native DrawingML image insertion, non-overwrite, source SHA and media verification.
+Check("R43B embeds a genuine PNG after an exact paragraph while preserving headers and tables", () =>
+{
+    string directory = Path.Combine(Path.GetTempPath(), "nira-r43b-real-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(directory);
+    try
+    {
+        string seed = Path.Combine(directory, "seed.docx");
+        string withTable = Path.Combine(directory, "table.docx");
+        string source = Path.Combine(directory, "source.docx");
+        string output = Path.Combine(directory, "with-image.docx");
+        string image = Path.Combine(directory, "small-logo.png");
+        File.WriteAllBytes(image, Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFElEQVR4nGOUTDnMgA0wYRUdtBIA/d4BUKK4lNoAAAAASUVORK5CYII="));
+        new NIRADocxCreateCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxCreate,
+            JsonSerializer.Serialize(new { path=seed, title="NIRA R43B test", content="# Results\nImage goes after Results.\n" })))
+            .GetAwaiter().GetResult();
+        new NIRADocxTableAddCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxTableAdd,
+            JsonSerializer.Serialize(new { source=seed, destination=withTable, expectedSourceSha256=Sha(seed),
+                tsv="Feature\tStatus\nLogo\tTesting" }))).GetAwaiter().GetResult();
+        new NIRADocxHeaderFooterCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxHeaderFooter,
+            JsonSerializer.Serialize(new { source=withTable, destination=source, expectedSourceSha256=Sha(withTable),
+                headerText="NIRA BY ELVARA", footerText="Confidential", pageNumbers="true" })))
+            .GetAwaiter().GetResult();
+        string oldHash = Sha(source);
+        var result = new NIRADocxImageInsertCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.DocxImageInsert, JsonSerializer.Serialize(new { source, destination=output,
+                imagePath=image, afterParagraph="Results", altText="NIRA test logo",
+                expectedSourceSha256=oldHash, widthMm="42", alignment="center" })))
+            .GetAwaiter().GetResult();
+        if (!result.ChangedSystemState || !result.Output.Contains("PostWriteVerified=True") ||
+            Sha(source) != oldHash || !File.Exists(output))
+            throw new Exception("R43B failed native image insertion or source preservation");
+        string inspected = new NIRADocxInspectCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.DocxInspect, JsonSerializer.Serialize(new { path=output })))
+            .GetAwaiter().GetResult().Output;
+        if (!inspected.Contains("EmbeddedMediaParts=1") ||
+            !inspected.Contains("HeaderPresent=True") || !inspected.Contains("FooterPresent=True") ||
+            !inspected.Contains("PageNumberField=True") || !inspected.Contains("Tables=1") ||
+            !inspected.Contains("Headings=2"))
+            throw new Exception("The output dropped source Word package structure");
+        using var archive = System.IO.Compression.ZipFile.OpenRead(output);
+        var xml = System.Xml.Linq.XDocument.Load(archive.GetEntry("word/document.xml")!.Open());
+        XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+        XNamespace a = "http://schemas.openxmlformats.org/drawingml/2006/main";
+        if (xml.Descendants(w + "drawing").Count() != 1 ||
+            xml.Descendants(a + "blip").Count() != 1 ||
+            !archive.Entries.Any(e => e.FullName.StartsWith("word/media/nira-r43b-image-")))
+            throw new Exception("Output is not a native embedded Word DrawingML image");
+    }
+    finally { Directory.Delete(directory, recursive:true); }
+});
+Check("R43B independent DOCX receipts verify insertion without inventing evidence", () =>
+{
+    string directory = Path.Combine(Path.GetTempPath(), "nira-r43b-receipt-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(directory);
+    try
+    {
+        string source = Path.Combine(directory,"source.docx");
+        string output = Path.Combine(directory,"output.docx");
+        string logo = Path.Combine(directory,"photo.png");
+        File.WriteAllBytes(logo,Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFElEQVR4nGOUTDnMgA0wYRUdtBIA/d4BUKK4lNoAAAAASUVORK5CYII="));
+        new NIRADocxCreateCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxCreate,
+            JsonSerializer.Serialize(new {path=source,content="# Results\nSomething important."})))
+            .GetAwaiter().GetResult();
+        string expected = Sha(source);
+        var editReq=Request(NIRACapabilityIds.DocxImageInsert,JsonSerializer.Serialize(new {
+            source,destination=output,imagePath=logo,afterParagraph="Results",altText="NIRA symbol",
+            expectedSourceSha256=expected,widthMm="35" }));
+        var edit = new NIRADocxImageInsertCapabilityHandler().ExecuteAsync(editReq)
+            .GetAwaiter().GetResult();
+        var inReq=Request(NIRACapabilityIds.DocxInspect,JsonSerializer.Serialize(new {path=source}));
+        var outReq=Request(NIRACapabilityIds.DocxInspect,JsonSerializer.Serialize(new {path=output}));
+        var hashReq=Request(NIRACapabilityIds.FileHash,JsonSerializer.Serialize(new {path=source}));
+        var inspectHandler = new NIRADocxInspectCapabilityHandler();
+        var input = inspectHandler.ExecuteAsync(inReq).GetAwaiter().GetResult();
+        var destination = inspectHandler.ExecuteAsync(outReq).GetAwaiter().GetResult();
+        var fileHash = new NIRAFileHashCapabilityHandler().ExecuteAsync(hashReq).GetAwaiter().GetResult();
+        NIRACapabilityResult Observe(string id,string data) => new() {
+            CapabilityId=id,Risk=NIRACapabilityRisk.Observe,
+            Status=NIRACapabilityResultStatus.Succeeded,Output=data };
+        var requests=new Dictionary<string,NIRACapabilityRequest> { ["source"]=inReq,
+            ["hash"]=hashReq,["write"]=editReq,["destination"]=outReq };
+        var results=new Dictionary<string,NIRACapabilityResult> {
+            ["source"]=Observe(NIRACapabilityIds.DocxInspect,input.Output),
+            ["hash"]=Observe(NIRACapabilityIds.FileHash,fileHash.Output),
+            ["write"]=new NIRACapabilityResult { CapabilityId=NIRACapabilityIds.DocxImageInsert,
+                Risk=NIRACapabilityRisk.Modify,Status=NIRACapabilityResultStatus.Succeeded,
+                ChangedSystemState=true,AuditRecorded=true,Output=edit.Output },
+            ["destination"]=Observe(NIRACapabilityIds.DocxInspect,destination.Output) };
+        string? good=NIRADocxObservedCompletionPolicy.FromVerifiedImageInsertionResults(requests,results);
+        if (good is null || !good.Contains(Sha(output),StringComparison.OrdinalIgnoreCase) ||
+            !good.Contains("NIRA symbol",StringComparison.Ordinal) || Sha(source)!=expected)
+            throw new Exception("Valid saved Word image evidence was discarded");
+        var originalOut=results["destination"];
+        results["destination"]=originalOut with {Output=originalOut.Output.Replace(
+            "EmbeddedMediaParts=1","EmbeddedMediaParts=0")};
+        if (NIRADocxObservedCompletionPolicy.FromVerifiedImageInsertionResults(requests,results)!=null)
+            throw new Exception("Wrong image count was certified");
+        results["destination"]=originalOut;
+        results["write"]=results["write"] with {AuditRecorded=false};
+        if (NIRADocxObservedCompletionPolicy.FromVerifiedImageInsertionResults(requests,results)!=null)
+            throw new Exception("Unaudited image write was certified");
+        results["write"]=results["write"] with {AuditRecorded=true,OutcomeUncertain=true};
+        if (NIRADocxObservedCompletionPolicy.FromVerifiedImageInsertionResults(requests,results)!=null)
+            throw new Exception("Uncertain image write was certified");
+    }
+    finally {Directory.Delete(directory,recursive:true);}
+});
+
+Check("R43B rejects stale hash, ambiguous anchors, non-images and collisions", () =>
+{
+    string directory = Path.Combine(Path.GetTempPath(), "nira-r43b-unsafe-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(directory);
+    try
+    {
+        string source = Path.Combine(directory, "source.docx");
+        string logo = Path.Combine(directory, "logo.png");
+        string fake = Path.Combine(directory, "fake.png");
+        string output = Path.Combine(directory, "out.docx");
+        new NIRADocxCreateCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxCreate,
+            JsonSerializer.Serialize(new { path=source, content="Results\nResults" })))
+            .GetAwaiter().GetResult();
+        File.WriteAllBytes(logo, Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFElEQVR4nGOUTDnMgA0wYRUdtBIA/d4BUKK4lNoAAAAASUVORK5CYII="));
+        File.WriteAllText(fake, "not an actual PNG despite its extension");
+        var handler = new NIRADocxImageInsertCapabilityHandler();
+        string digest = Sha(source);
+        string JsonFor(string dest, string image, string sha, string anchor) =>
+            JsonSerializer.Serialize(new { source, destination=dest, imagePath=image,
+                afterParagraph=anchor, altText="Test photo", expectedSourceSha256=sha });
+        Throws<IOException>(()=>handler.ExecuteAsync(Request(NIRACapabilityIds.DocxImageInsert,
+            JsonFor(output,logo,new string('0',64),"Results"))).GetAwaiter().GetResult());
+        Throws<InvalidDataException>(()=>handler.ExecuteAsync(Request(NIRACapabilityIds.DocxImageInsert,
+            JsonFor(output,fake,digest,"Results"))).GetAwaiter().GetResult());
+        Throws<InvalidOperationException>(()=>handler.ExecuteAsync(Request(NIRACapabilityIds.DocxImageInsert,
+            JsonFor(output,logo,digest,"Results"))).GetAwaiter().GetResult());
+        if (File.Exists(output)) throw new Exception("R43B published a prohibited output");
+        // A unique anchor is allowed, but a second invocation cannot overwrite it.
+        string separate = Path.Combine(directory, "only-one.docx");
+        new NIRADocxCreateCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxCreate,
+            JsonSerializer.Serialize(new {path=separate,content="Unique paragraph"})))
+            .GetAwaiter().GetResult();
+        string uniqueHash = Sha(separate);
+        string goodJson = JsonSerializer.Serialize(new { source=separate,destination=output,
+            imagePath=logo,afterParagraph="Unique paragraph",altText="Test photo",expectedSourceSha256=uniqueHash });
+        handler.ExecuteAsync(Request(NIRACapabilityIds.DocxImageInsert,goodJson))
+            .GetAwaiter().GetResult();
+        Throws<IOException>(()=>handler.ExecuteAsync(Request(NIRACapabilityIds.DocxImageInsert,goodJson))
+            .GetAwaiter().GetResult());
+        if (Sha(separate) != uniqueHash) throw new Exception("R43B altered the original");
+    }
+    finally { Directory.Delete(directory, recursive:true); }
+});
+
 Console.WriteLine($"REGRESSION CHECKS: {passed} passed, {failed} failed");
 return failed == 0 ? 0 : 1;
 

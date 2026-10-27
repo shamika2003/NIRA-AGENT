@@ -30,7 +30,7 @@ public sealed class NIRACapabilityRequestPolicy
     public NIRACapabilityRequest Prepare(NIRACapabilityRequest request)
     {
         Dictionary<string, JsonElement> args = ReadObject(request.Arguments);
-        foreach (string key in new[] { "path", "source", "destination", "backup", "workingdirectory" })
+        foreach (string key in new[] { "path", "source", "destination", "backup", "imagepath", "workingdirectory" })
         {
             if (!args.TryGetValue(key, out JsonElement value) ||
                 value.ValueKind == JsonValueKind.Null)

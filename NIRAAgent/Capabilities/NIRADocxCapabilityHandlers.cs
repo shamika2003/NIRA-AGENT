@@ -10,7 +10,7 @@ namespace NIRAAgent.Capabilities;
 
 // R41 (stage 14.9): pure .NET Open XML DOCX support, no Word/COM/third-party tools.
 // Only NEW outputs are written. Existing source packages are never modified.
-internal static class NIRADocx
+internal static partial class NIRADocx
 {
     internal static readonly XNamespace W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
     private static readonly XNamespace R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -370,9 +370,10 @@ internal static class NIRADocx
                     $"\nMarginBottomMm={ToMm(bottom)}\nMarginLeftMm={ToMm(left)}";
             }
         }
+        string headerFooterEvidence = InspectHeaderFooterParts(zip, document);
         return new NIRACapabilityHandlerResult { ChangedSystemState = false,
             Summary = "DOCX inspected read-only; verified file contents, section layout and bounded text preview returned.",
-            Output = $"Path={path}\nSHA256={fingerprint.Sha256}\nBytes={fingerprint.Bytes}\nParagraphs={paragraphs.Count}\nHeadings={headings}\nTables={tables}\n{headerEvidence}{pageEvidence}\nEmbeddedMediaParts={images}\nWordsApprox={words}\nPreviewLimited=True\nPreview:\n{preview}" };
+            Output = $"Path={path}\nSHA256={fingerprint.Sha256}\nBytes={fingerprint.Bytes}\nParagraphs={paragraphs.Count}\nHeadings={headings}\nTables={tables}\n{headerEvidence}{pageEvidence}\n{headerFooterEvidence}\nEmbeddedMediaParts={images}\nWordsApprox={words}\nPreviewLimited=True\nPreview:\n{preview}" };
     }
 
     internal static async Task<NIRACapabilityHandlerResult> AppendAsync(

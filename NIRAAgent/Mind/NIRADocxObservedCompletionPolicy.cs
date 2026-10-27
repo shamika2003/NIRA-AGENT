@@ -177,6 +177,257 @@ public static class NIRADocxObservedCompletionPolicy
         return reply.ToString();
     }
 
+    // R43A.1: certificate for the actual native header/footer/page-number write.
+    // This is derived entirely from same-run audited tool receipts plus fresh
+    // read-only inspection of BOTH documents. No user-text inference, no disk
+    // reads, and no claim of visual pagination in Microsoft Word.
+    public static string? FromVerifiedHeaderFooterResults(
+        IReadOnlyDictionary<string, NIRACapabilityRequest> requests,
+        IReadOnlyDictionary<string, NIRACapabilityResult> results)
+    {
+        if (requests.Count < 4 || requests.Count != results.Count) return null;
+        NIRACapabilityRequest? editRequest = null;
+        Dictionary<string, string>? edit = null;
+        var inspections = new Dictionary<string, Dictionary<string, string>>(
+            StringComparer.OrdinalIgnoreCase);
+        var hashes = new Dictionary<string, Dictionary<string, string>>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in requests)
+        {
+            if (!results.TryGetValue(pair.Key, out NIRACapabilityResult? result) ||
+                result.CapabilityId != pair.Value.CapabilityId ||
+                result.Status != NIRACapabilityResultStatus.Succeeded ||
+                result.OutcomeUncertain) return null;
+            if (result.CapabilityId == NIRACapabilityIds.DocxHeaderFooter)
+            {
+                if (editRequest != null || result.Risk != NIRACapabilityRisk.Modify ||
+                    !result.ChangedSystemState || !result.AuditRecorded) return null;
+                editRequest = pair.Value;
+                edit = Fields(result.Output);
+            }
+            else if (result.CapabilityId is NIRACapabilityIds.DocxInspect or
+                NIRACapabilityIds.FileHash)
+            {
+                if (result.Risk != NIRACapabilityRisk.Observe || result.ChangedSystemState ||
+                    !TryString(pair.Value.Arguments, "path", out string observedPath) ||
+                    !IsDocxPath(observedPath)) return null;
+                Dictionary<string, string> data = Fields(result.Output);
+                if (!data.TryGetValue("Path", out string? actualPath) ||
+                    !string.Equals(observedPath, actualPath, StringComparison.OrdinalIgnoreCase)) return null;
+                var target = result.CapabilityId == NIRACapabilityIds.DocxInspect
+                    ? inspections : hashes;
+                if (!target.TryAdd(actualPath, data)) return null;
+            }
+            else return null; // Do not conceal unrelated work or mutations.
+        }
+        if (editRequest == null || edit == null ||
+            !TryString(editRequest.Arguments, "source", out string source) ||
+            !TryString(editRequest.Arguments, "destination", out string destination) ||
+            !TryString(editRequest.Arguments, "expectedSourceSha256", out string expected) ||
+            !IsDocxPath(source) || !IsDocxPath(destination) ||
+            source.Equals(destination, StringComparison.OrdinalIgnoreCase) ||
+            !inspections.TryGetValue(source, out var original) ||
+            !inspections.TryGetValue(destination, out var saved) ||
+            inspections.Count != 2 || hashes.Count is < 1 or > 2 ||
+            !hashes.TryGetValue(source, out var observedHash) ||
+            hashes.Keys.Any(path => !path.Equals(source, StringComparison.OrdinalIgnoreCase) &&
+                                    !path.Equals(destination, StringComparison.OrdinalIgnoreCase)) ||
+            !ValidHash(expected) ||
+            !string.Equals(edit.GetValueOrDefault("Source"), source, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(edit.GetValueOrDefault("Destination"), destination, StringComparison.OrdinalIgnoreCase) ||
+            !ValidHash(edit.GetValueOrDefault("SourceSHA256")) ||
+            !ValidHash(edit.GetValueOrDefault("DestinationSHA256")) ||
+            !string.Equals(edit.GetValueOrDefault("SourceSHA256"), expected, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(original.GetValueOrDefault("SHA256"), expected, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(observedHash.GetValueOrDefault("Sha256"), expected, StringComparison.OrdinalIgnoreCase) ||
+            observedHash.GetValueOrDefault("ReadComplete") != "True" ||
+            (hashes.TryGetValue(destination, out var outputHash) &&
+                (outputHash.GetValueOrDefault("ReadComplete") != "True" ||
+                 !string.Equals(outputHash.GetValueOrDefault("Sha256"),
+                     edit.GetValueOrDefault("DestinationSHA256"), StringComparison.OrdinalIgnoreCase))) ||
+            !string.Equals(saved.GetValueOrDefault("SHA256"), edit.GetValueOrDefault("DestinationSHA256"), StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(expected, saved.GetValueOrDefault("SHA256"), StringComparison.OrdinalIgnoreCase) ||
+            edit.GetValueOrDefault("PostWriteVerified") != "True" ||
+            edit.GetValueOrDefault("SourceUnchanged") != "True" ||
+            edit.GetValueOrDefault("OverwroteExisting") != "False" ||
+            saved.GetValueOrDefault("SectionCount") != "1" ||
+            original.GetValueOrDefault("SectionCount") != "1" ||
+            !SameNumber("Paragraphs") || !SameNumber("Headings") ||
+            !SameNumber("Tables") || !SameValue("Paper") ||
+            !SameValue("Orientation") ||
+            !SameValue("MarginTopMm") || !SameValue("MarginBottomMm") ||
+            !SameValue("MarginLeftMm") || !SameValue("MarginRightMm")) return null;
+
+        bool SameNumber(string field) =>
+            int.TryParse(original.GetValueOrDefault(field), out int a) && a >= 0 &&
+            int.TryParse(saved.GetValueOrDefault(field), out int b) && a == b;
+        bool SameValue(string field) =>
+            !string.IsNullOrWhiteSpace(original.GetValueOrDefault(field)) &&
+            string.Equals(original.GetValueOrDefault(field), saved.GetValueOrDefault(field), StringComparison.Ordinal);
+
+        string? requestHeader = OptionalString(editRequest.Arguments, "headerText");
+        string? requestFooter = OptionalString(editRequest.Arguments, "footerText");
+        string? requestedPages = OptionalString(editRequest.Arguments, "pageNumbers");
+        if (requestedPages is not (null or "true" or "false")) return null;
+        bool pageNumbers = requestedPages == "true";
+        if (requestHeader is null && requestFooter is null && !pageNumbers) return null;
+        if (original.GetValueOrDefault("HeaderPresent") != "False" ||
+            original.GetValueOrDefault("FooterPresent") != "False" ||
+            original.GetValueOrDefault("PageNumberField") != "False" ||
+            saved.GetValueOrDefault("HeaderPresent") != (requestHeader is null ? "False" : "True") ||
+            saved.GetValueOrDefault("FooterPresent") != (requestFooter is null && !pageNumbers ? "False" : "True") ||
+            saved.GetValueOrDefault("PageNumberField") != (pageNumbers ? "True" : "False")) return null;
+        if (requestHeader is not null &&
+            !StringFieldMatches(saved.GetValueOrDefault("HeaderTextJson"), requestHeader, false)) return null;
+        if (requestFooter is not null &&
+            !StringFieldMatches(saved.GetValueOrDefault("FooterTextJson"), requestFooter, pageNumbers)) return null;
+        if (pageNumbers && requestFooter is null &&
+            !StringFieldMatches(saved.GetValueOrDefault("FooterTextJson"), "Page ", true, false)) return null;
+
+        var report = new StringBuilder();
+        report.AppendLine("The Word header/footer operation created a NEW DOCX. The tool confirmed the saved OpenXML, and a separate inspection confirmed the exact output hash and document fields:");
+        report.AppendLine($"- **Original:** `{source}`");
+        report.AppendLine($"- **New document:** `{destination}`");
+        report.AppendLine($"- **Original SHA-256:** `{expected}`");
+        report.AppendLine($"- **New SHA-256:** `{saved["SHA256"]}`");
+        report.AppendLine($"- **Header:** {(requestHeader ?? "none")}; present={saved["HeaderPresent"]}.");
+        report.AppendLine($"- **Footer:** {(requestFooter ?? "none")}; present={saved["FooterPresent"]}.");
+        report.AppendLine($"- **Automatic Word PAGE field:** {saved["PageNumberField"]}.");
+        report.AppendLine($"- **Saved document:** {saved["Paragraphs"]} paragraphs, {saved["Headings"]} headings, {saved["Tables"]} table(s), {saved["Paper"]} {saved["Orientation"]}.");
+        report.AppendLine($"- **Margins (mm):** top {saved["MarginTopMm"]}, right {saved["MarginRightMm"]}, bottom {saved["MarginBottomMm"]}, left {saved["MarginLeftMm"]}.");
+        report.Append("The source SHA-256 was unchanged and no existing file was overwritten. The structure and field presence were verified in the saved DOCX; actual page rendering was not inspected in Microsoft Word.");
+        return report.ToString();
+    }
+
+
+    // R43B: independently verified inline-image completion, restricted to one
+    // audited modification and exact matching source/destination observations.
+    // A successful mutation alone is never a completion certificate.
+    public static string? FromVerifiedImageInsertionResults(
+        IReadOnlyDictionary<string, NIRACapabilityRequest> requests,
+        IReadOnlyDictionary<string, NIRACapabilityResult> results)
+    {
+        if (requests.Count < 4 || requests.Count != results.Count) return null;
+        NIRACapabilityRequest? write = null;
+        Dictionary<string,string>? edit = null;
+        var inspections = new Dictionary<string,Dictionary<string,string>>(StringComparer.OrdinalIgnoreCase);
+        var hashes = new Dictionary<string,Dictionary<string,string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in requests)
+        {
+            if (!results.TryGetValue(pair.Key, out var result) ||
+                result.CapabilityId != pair.Value.CapabilityId ||
+                result.Status != NIRACapabilityResultStatus.Succeeded || result.OutcomeUncertain)
+                return null;
+            if (result.CapabilityId == NIRACapabilityIds.DocxImageInsert)
+            {
+                if (write != null || result.Risk != NIRACapabilityRisk.Modify ||
+                    !result.ChangedSystemState || !result.AuditRecorded) return null;
+                write = pair.Value;
+                edit = Fields(result.Output);
+            }
+            else if (result.CapabilityId is NIRACapabilityIds.DocxInspect or NIRACapabilityIds.FileHash)
+            {
+                if (result.Risk != NIRACapabilityRisk.Observe || result.ChangedSystemState ||
+                    !TryString(pair.Value.Arguments, "path", out string path) ||
+                    !IsDocxPath(path)) return null;
+                var observed = Fields(result.Output);
+                if (!string.Equals(path, observed.GetValueOrDefault("Path"), StringComparison.OrdinalIgnoreCase))
+                    return null;
+                var collection = result.CapabilityId == NIRACapabilityIds.DocxInspect
+                    ? inspections : hashes;
+                if (!collection.TryAdd(path, observed)) return null;
+            }
+            else return null;
+        }
+        if (write == null || edit == null ||
+            !TryString(write.Arguments,"source",out string source) ||
+            !TryString(write.Arguments,"destination",out string destination) ||
+            !TryString(write.Arguments,"imagePath",out string imagePath) ||
+            !TryString(write.Arguments,"afterParagraph",out string anchor) ||
+            !TryString(write.Arguments,"altText",out string alt) ||
+            !TryString(write.Arguments,"expectedSourceSha256",out string expected) ||
+            !IsDocxPath(source) || !IsDocxPath(destination) ||
+            source.Equals(destination,StringComparison.OrdinalIgnoreCase) ||
+            !inspections.TryGetValue(source,out var original) ||
+            !inspections.TryGetValue(destination,out var saved) ||
+            inspections.Count != 2 || hashes.Count is < 1 or > 2 ||
+            !hashes.TryGetValue(source,out var observedHash) ||
+            hashes.Keys.Any(path=> !path.Equals(source,StringComparison.OrdinalIgnoreCase) &&
+                                   !path.Equals(destination,StringComparison.OrdinalIgnoreCase)) ||
+            !ValidHash(expected) ||
+            !string.Equals(original.GetValueOrDefault("SHA256"),expected,StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(observedHash.GetValueOrDefault("Sha256"),expected,StringComparison.OrdinalIgnoreCase) ||
+            observedHash.GetValueOrDefault("ReadComplete") != "True" ||
+            !string.Equals(edit.GetValueOrDefault("Source"),source,StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(edit.GetValueOrDefault("Destination"),destination,StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(edit.GetValueOrDefault("SourceSHA256"),expected,StringComparison.OrdinalIgnoreCase) ||
+            !ValidHash(edit.GetValueOrDefault("DestinationSHA256")) ||
+            !string.Equals(saved.GetValueOrDefault("SHA256"),edit.GetValueOrDefault("DestinationSHA256"),StringComparison.OrdinalIgnoreCase) ||
+            !ValidHash(edit.GetValueOrDefault("ImageSHA256")) ||
+            !string.Equals(edit.GetValueOrDefault("ImagePath"),imagePath,StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(edit.GetValueOrDefault("ImageAltText"),alt,StringComparison.Ordinal) ||
+            !string.Equals(edit.GetValueOrDefault("AnchorParagraph"),anchor,StringComparison.Ordinal) ||
+            edit.GetValueOrDefault("PostWriteVerified") != "True" ||
+            edit.GetValueOrDefault("SourceUnchanged") != "True" ||
+            edit.GetValueOrDefault("OverwroteExisting") != "False") return null;
+        if (hashes.TryGetValue(destination,out var outputHash) &&
+            (outputHash.GetValueOrDefault("ReadComplete") != "True" ||
+             !string.Equals(outputHash.GetValueOrDefault("Sha256"),saved.GetValueOrDefault("SHA256"),StringComparison.OrdinalIgnoreCase)))
+            return null;
+        bool Identical(string field) =>
+            !string.IsNullOrEmpty(original.GetValueOrDefault(field)) &&
+            string.Equals(original.GetValueOrDefault(field),saved.GetValueOrDefault(field),StringComparison.Ordinal);
+        if (new[] { "Paragraphs","Headings","Tables","SectionCount","Paper","Orientation",
+                    "MarginTopMm","MarginRightMm","MarginBottomMm","MarginLeftMm",
+                    "HeaderPresent","FooterPresent","PageNumberField","HeaderTextJson","FooterTextJson" }
+                .Where(field=> original.ContainsKey(field) || saved.ContainsKey(field))
+                .Any(field=> !Identical(field)) ||
+            !int.TryParse(original.GetValueOrDefault("EmbeddedMediaParts"),out int beforeImages) ||
+            !int.TryParse(saved.GetValueOrDefault("EmbeddedMediaParts"),out int afterImages) ||
+            !int.TryParse(edit.GetValueOrDefault("EmbeddedMediaParts"),out int reportedImages) ||
+            beforeImages < 0 || afterImages != beforeImages + 1 || reportedImages != afterImages)
+            return null;
+        var reply = new StringBuilder();
+        reply.AppendLine("The native Word image was embedded in a NEW DOCX copy and verified from the actual saved image bytes and DrawingML relationship:");
+        reply.AppendLine($"- **Original:** `{source}`");
+        reply.AppendLine($"- **New document:** `{destination}`");
+        reply.AppendLine($"- **Original SHA-256:** `{expected}`");
+        reply.AppendLine($"- **Output SHA-256:** `{saved["SHA256"]}`");
+        reply.AppendLine($"- **Image:** `{imagePath}`, {edit.GetValueOrDefault("ImageType")}, {edit.GetValueOrDefault("ImagePixels")} pixels, {edit.GetValueOrDefault("ImageWidthMm")} mm wide.");
+        reply.AppendLine($"- **Inserted after:** {anchor}; **alternative text:** {alt}.");
+        reply.AppendLine($"- **Embedded image parts:** {beforeImages} → {afterImages}.");
+        reply.AppendLine($"- **Preserved content:** {saved["Paragraphs"]} nonempty paragraphs, {saved["Headings"]} headings, {saved["Tables"]} table(s); {saved.GetValueOrDefault("Paper")} {saved.GetValueOrDefault("Orientation")}.");
+        reply.Append("The original SHA-256 stayed unchanged. The new DOCX media and structure are verified; the visual page rendering must still be checked in Word.");
+        return reply.ToString();
+    }
+
+    private static string? OptionalString(JsonElement args, string name)
+    {
+        if (args.ValueKind != JsonValueKind.Object ||
+            !args.TryGetProperty(name, out var item) || item.ValueKind != JsonValueKind.String)
+            return null;
+        string? text = item.GetString()?.Trim();
+        return string.IsNullOrEmpty(text) ? null : text;
+    }
+
+    private static bool StringFieldMatches(string? jsonValue, string expected,
+        bool withPage, bool exactPrefix = true)
+    {
+        if (string.IsNullOrWhiteSpace(jsonValue)) return false;
+        try
+        {
+            string? actual = JsonSerializer.Deserialize<string>(jsonValue);
+            if (actual is null) return false;
+            if (!withPage) return string.Equals(actual, expected, StringComparison.Ordinal);
+            if (!actual.StartsWith(expected, StringComparison.Ordinal)) return false;
+            string suffix = actual[expected.Length..];
+            if (exactPrefix && !suffix.StartsWith(" | Page ", StringComparison.Ordinal)) return false;
+            return (exactPrefix ? suffix[8..] : suffix).Length > 0 &&
+                (exactPrefix ? suffix[8..] : suffix).All(char.IsDigit);
+        }
+        catch (JsonException) { return false; }
+    }
+
     private static Dictionary<string, string> Fields(string raw)
     {
         var fields = new Dictionary<string, string>(StringComparer.Ordinal);

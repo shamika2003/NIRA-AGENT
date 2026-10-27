@@ -510,6 +510,8 @@ public partial class App : WpfApplication
             builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxParagraphFormatCapabilityHandler>();
             builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxPageLayoutCapabilityHandler>();
             builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxTableStyleCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxHeaderFooterCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxImageInsertCapabilityHandler>();
 
             builder.Services.AddSingleton<
                 INIRACapabilityHandler,
