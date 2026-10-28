@@ -21,7 +21,7 @@ public sealed class NIRAFileReadCapabilityHandler
                 NIRACapabilityIds.FileRead,
 
             Description =
-                "Read a bounded text window from a file with line numbers and metadata; a complete CSV/TSV read additionally reports exact audited numeric-column totals when unambiguous.",
+                "Read TEXT files only (not binary .docx/.pdf/.xlsx). For Word .docx use filesystem.docx.inspect; for SHA-256 use filesystem.hash. Reads bounded lines and audited numeric CSV/TSV totals.",
 
             DefaultRisk =
                 NIRACapabilityRisk.Observe,
@@ -51,6 +51,11 @@ public sealed class NIRAFileReadCapabilityHandler
         string requestedPath = NIRACapabilityArguments.RequireString(
             request, "path", 32760);
         string path = NIRACapabilityArguments.NormalizePath(requestedPath);
+        // A DOCX is an OpenXML ZIP. Reject before opening a text stream and
+        // point cognition at the registered structured reader on FIRST attempt.
+        if (string.Equals(Path.GetExtension(path), ".docx", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                "DOCX is a binary OpenXML package. Use filesystem.docx.inspect for paragraphs, headings and tables; use filesystem.hash for SHA-256. Do not retry filesystem.read on this file.");
 
 
         int startLine =
@@ -174,7 +179,7 @@ public sealed class NIRAFileReadCapabilityHandler
                 0)
             {
                 throw new InvalidOperationException(
-                    "The requested file appears to be binary. Use filesystem.metadata instead of text read.");
+                    "This is a binary file, not plain text. For .docx use filesystem.docx.inspect; for file size use filesystem.metadata; for SHA-256 use filesystem.hash. Do not retry filesystem.read.");
             }
 
 

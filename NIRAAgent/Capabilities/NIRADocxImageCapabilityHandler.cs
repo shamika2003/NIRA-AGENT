@@ -67,8 +67,41 @@ internal static partial class NIRADocx
         throw new InvalidDataException("Could not decode supported JPEG dimensions.");
     }
 
+    // Namespace declarations introduced by the XML serializer are not document
+    // content changes. Bind DrawingML prefixes at the root without replacing
+    // an existing, different prefix declaration in an arbitrary input DOCX.
+    private static void EnsureImageNamespace(XElement root, string prefix, XNamespace value)
+    {
+        XName name = XNamespace.Xmlns + prefix;
+        XAttribute? existing = root.Attribute(name);
+        if (existing is not null && existing.Value != value.NamespaceName)
+            throw new InvalidDataException($"The source document binds '{prefix}' to another XML namespace.");
+        if (existing is null)
+            root.Add(new XAttribute(name, value.NamespaceName));
+    }
+
+    // The document part must be compared byte-for-byte with exactly the bytes
+    // that are placed in the DOCX. An XNode.DeepEquals check can disagree on
+    // serializer-created prefix/namespace declarations even when no content was
+    // changed. Keep one immutable serialized copy for publication and validation.
+    private static byte[] SerializedImageXml(XDocument document)
+    {
+        using MemoryStream buffer = new();
+        using (System.Xml.XmlWriter writer = System.Xml.XmlWriter.Create(buffer,
+            new System.Xml.XmlWriterSettings
+            {
+                Encoding = new UTF8Encoding(false),
+                OmitXmlDeclaration = false,
+                CloseOutput = false
+            }))
+        {
+            document.Save(writer);
+        }
+        return buffer.ToArray();
+    }
+
     private static XElement DrawingParagraph(string embedId, string alt, int drawingId,
-        string filename, long cx, long cy, string align)
+        string filename, long cx, long cy, string align, int spaceBefore, int spaceAfter, bool withCaption)
     {
         var pic = new XElement(PIC43B + "pic",
             new XElement(PIC43B + "nvPicPr",
@@ -98,25 +131,61 @@ internal static partial class NIRADocx
                 new XElement(A43B + "graphicFrameLocks", new XAttribute("noChangeAspect", 1))),
             new XElement(A43B + "graphic", new XElement(A43B + "graphicData",
                 new XAttribute("uri", PIC43B.NamespaceName), pic)));
-        return new XElement(W + "p",
-            new XElement(W + "pPr", new XElement(W + "jc", new XAttribute(W + "val", align))),
+        var properties = new XElement(W + "pPr",
+            new XElement(W + "jc", new XAttribute(W + "val", align)));
+        if (spaceBefore != 0 || spaceAfter != 0)
+            properties.Add(new XElement(W + "spacing",
+                new XAttribute(W + "before", spaceBefore),
+                new XAttribute(W + "after", spaceAfter)));
+        if (withCaption) properties.Add(new XElement(W + "keepNext"));
+        return new XElement(W + "p", properties,
             new XElement(W + "r", new XElement(W + "drawing", inline)));
     }
 
-    private static void ImagePackageCopy(string source, string destination, XDocument document,
-        byte[] image, string mediaPart, string mime, string imageRelId)
+    // R43C: a real, independent Word paragraph following the inline image.
+    // It is styled without relying on the source document having a Caption style.
+    private static XElement CaptionParagraph(string caption, string alignment, int gapTwips) =>
+        new(W + "p",
+            new XElement(W + "pPr",
+                new XElement(W + "jc", new XAttribute(W + "val", alignment)),
+                new XElement(W + "keepLines"),
+                new XElement(W + "spacing", new XAttribute(W + "before", gapTwips),
+                    new XAttribute(W + "after", 120))),
+            new XElement(W + "r",
+                new XElement(W + "rPr", new XElement(W + "i"),
+                    new XElement(W + "sz", new XAttribute(W + "val", 18)),
+                    new XElement(W + "color", new XAttribute(W + "val", "44566C"))),
+                new XElement(W + "t", new XAttribute(XNamespace.Xml + "space", "preserve"), caption)));
+
+    private static int PtTwips(NIRACapabilityRequest req, string name, int max, int fallback = 0)
+    {
+        string value = NIRACapabilityArguments.GetOptionalRawString(req, name, 6) ??
+            fallback.ToString(CultureInfo.InvariantCulture);
+        if (!int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out int pt) ||
+            pt < 0 || pt > max)
+            throw new ArgumentException($"{name} must be an integer between 0 and {max} pt.");
+        return checked(pt * 20);
+    }
+
+    private static void ImagePackageCopy(string source, string destination, byte[] documentXml,
+        byte[] image, string mediaPart, string mime, string imageRelId,
+        string imageAltText, string anchorText, int previousMediaCount,
+        string? captionText, string captionAlignment, int beforeTwips, int afterTwips, int gapTwips)
     {
         using FileStream input = new(source, FileMode.Open, FileAccess.Read, FileShare.Read);
         using ZipArchive oldZip = new(input, ZipArchiveMode.Read);
         ValidatePackage(oldZip);
-        using FileStream output = new(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-        using (ZipArchive newZip = new(output, ZipArchiveMode.Create, leaveOpen: true))
+        using (FileStream output = new(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None))
         {
+          using (ZipArchive newZip = new(output, ZipArchiveMode.Create, leaveOpen: true))
+          {
             foreach (ZipArchiveEntry entry in oldZip.Entries)
             {
                 if (entry.FullName == DocumentPart)
                 {
-                    WriteXml(newZip, DocumentPart, document);
+                    ZipArchiveEntry mainPart = newZip.CreateEntry(DocumentPart, CompressionLevel.Optimal);
+                    using (Stream mainStream = mainPart.Open())
+                        mainStream.Write(documentXml);
                     continue;
                 }
                 if (entry.FullName == DocumentRels || entry.FullName == ContentTypePart)
@@ -152,12 +221,32 @@ internal static partial class NIRADocx
             ZipArchiveEntry media = newZip.CreateEntry(mediaPart, CompressionLevel.Optimal);
             using Stream mediaStream = media.Open();
             mediaStream.Write(image);
+          }
+          output.Flush(true);
         }
-        output.Flush(true);
+
+        // Verify the STAGED package before PublishNew moves it to the user's
+        // destination. The checks below are actual package/relationship/image
+        // verification, not a model assertion or an XML-prefix comparison.
+        using FileStream stagedFile = new(destination, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using ZipArchive stagedZip = new(stagedFile, ZipArchiveMode.Read);
+        XDocument stagedDocument = OpenDocument(stagedZip);
+        using (Stream storedPart = stagedZip.GetEntry(DocumentPart)!.Open())
+        using (MemoryStream storedBytes = new())
+        {
+            storedPart.CopyTo(storedBytes);
+            if (!storedBytes.ToArray().AsSpan().SequenceEqual(documentXml))
+                throw new InvalidDataException("Staged DOCX main XML bytes differ from the verified serialization; nothing was published.");
+        }
+        if (!VerifyPublishedImage(stagedZip, stagedDocument, imageRelId, mediaPart,
+                image, imageAltText, anchorText, previousMediaCount, captionText,
+                captionAlignment, beforeTwips, afterTwips, gapTwips))
+            throw new InvalidDataException("Staged DOCX DrawingML or image relationship failed verification; nothing was published.");
     }
 
     private static bool VerifyPublishedImage(ZipArchive archive, XDocument document, string relId,
-        string mediaPart, byte[] image, string alt, string anchor, int priorImages)
+        string mediaPart, byte[] image, string alt, string anchor, int priorImages,
+        string? caption, string captionAlignment, int beforeTwips, int afterTwips, int gapTwips)
     {
         var embeds = document.Descendants(A43B + "blip").Where(x =>
             (string?)x.Attribute(R + "embed") == relId).ToArray();
@@ -166,8 +255,25 @@ internal static partial class NIRADocx
         if (embeds.Length != 1 || drawings.Length != 1) return false;
         XElement? anchorP = document.Root?.Element(W + "body")?.Elements(W + "p")
             .SingleOrDefault(x => string.Concat(x.Descendants(W + "t").Select(t => t.Value)) == anchor);
-        if (anchorP?.ElementsAfterSelf(W + "p").FirstOrDefault()?.Descendants(A43B + "blip")
+        XElement? picture = anchorP?.ElementsAfterSelf(W + "p").FirstOrDefault();
+        if (picture?.Descendants(A43B + "blip")
             .Count(x => (string?)x.Attribute(R + "embed") == relId) != 1) return false;
+        XElement? spacing = picture.Element(W + "pPr")?.Element(W + "spacing");
+        if ((string?)picture.Element(W + "pPr")?.Element(W + "jc")?.Attribute(W + "val") is not
+            ("left" or "center" or "right")) return false;
+        if ((beforeTwips != 0 || afterTwips != 0) &&
+            ((string?)spacing?.Attribute(W + "before") != beforeTwips.ToString(CultureInfo.InvariantCulture) ||
+             (string?)spacing?.Attribute(W + "after") != afterTwips.ToString(CultureInfo.InvariantCulture))) return false;
+        XElement? next = picture.ElementsAfterSelf(W + "p").FirstOrDefault();
+        if (caption != null)
+        {
+            if (next == null || string.Concat(next.Descendants(W + "t").Select(t => t.Value)) != caption ||
+                (string?)next.Element(W + "pPr")?.Element(W + "jc")?.Attribute(W + "val") != captionAlignment ||
+                (string?)next.Element(W + "pPr")?.Element(W + "spacing")?.Attribute(W + "before") !=
+                    gapTwips.ToString(CultureInfo.InvariantCulture) ||
+                picture.Element(W + "pPr")?.Element(W + "keepNext") == null ||
+                next.Descendants(W + "drawing").Any()) return false;
+        }
         ZipArchiveEntry? relEntry = archive.GetEntry(DocumentRels);
         if (relEntry is null) return false;
         XDocument rels;
@@ -210,6 +316,20 @@ internal static partial class NIRADocx
         string alignment = NIRACapabilityArguments.GetOptionalRawString(request, "alignment", 10) ?? "center";
         if (alignment is not ("left" or "center" or "right"))
             throw new ArgumentException("alignment must be left, center, or right.");
+        string? caption = NIRACapabilityArguments.GetOptionalRawString(request, "captionText", 200);
+        if (caption != null)
+        {
+            caption = caption.Trim();
+            if (caption.Length == 0 || caption.Contains('\n') || caption.Contains('\r'))
+                throw new ArgumentException("captionText must be one nonempty line (max 200 characters).");
+            System.Xml.XmlConvert.VerifyXmlChars(caption);
+        }
+        string captionAlignment = NIRACapabilityArguments.GetOptionalRawString(request, "captionAlignment", 10) ?? "center";
+        if (captionAlignment is not ("left" or "center" or "right"))
+            throw new ArgumentException("captionAlignment must be left, center, or right.");
+        int spaceBefore = PtTwips(request, "spaceBeforePt", 36);
+        int spaceAfter = PtTwips(request, "spaceAfterPt", 36);
+        int captionGap = PtTwips(request, "captionGapPt", 24, 3);
         RequireValidSource(source);
         var localImage = new FileInfo(imagePath);
         if (!localImage.Exists || localImage.Length is < 24 or > MaximumLogoBytes)
@@ -256,23 +376,32 @@ internal static partial class NIRADocx
             long cy = checked((long)Math.Round(cx * (double)format.Height / format.Width, MidpointRounding.AwayFromZero));
             if (cy > 160L * 36000L)
                 throw new ArgumentException("The image would be taller than 160 mm; reduce widthMm.");
-            // Explicit relationship prefix keeps the staged XML stable after serialization.
-            document.Root!.SetAttributeValue(XNamespace.Xmlns + "r", R);
-            matches[0].AddAfterSelf(DrawingParagraph(relId, alt, maxId + 1,
-                Path.GetFileName(imagePath), cx, cy, alignment));
+            // Bind every namespace used by the new DrawingML subtree so the
+            // staged XML is stable and cannot silently remap another prefix.
+            EnsureImageNamespace(document.Root!, "r", R);
+            EnsureImageNamespace(document.Root!, "wp", WP43B);
+            EnsureImageNamespace(document.Root!, "a", A43B);
+            EnsureImageNamespace(document.Root!, "pic", PIC43B);
+            XElement picture = DrawingParagraph(relId, alt, maxId + 1,
+                Path.GetFileName(imagePath), cx, cy, alignment, spaceBefore, spaceAfter, caption != null);
+            matches[0].AddAfterSelf(picture);
+            if (caption != null) picture.AddAfterSelf(CaptionParagraph(caption, captionAlignment, captionGap));
         }
         var ready = await NIRAFileIntegrity.HashAsync(source, ct).ConfigureAwait(false);
         if (!string.Equals(ready.Sha256, expected, StringComparison.OrdinalIgnoreCase))
             throw new IOException("Source changed during preparation; no image document created.");
         ct.ThrowIfCancellationRequested();
-        PublishNew(destination, path => ImagePackageCopy(source, path, document, bytes,
-            mediaPart, format.Mime, relId), document);
+        byte[] serializedMainXml = SerializedImageXml(document);
+        PublishNew(destination, path => ImagePackageCopy(source, path, serializedMainXml, bytes,
+            mediaPart, format.Mime, relId, alt, anchor, beforeMediaCount,
+            caption, captionAlignment, spaceBefore, spaceAfter, captionGap));
         using (FileStream file = new(destination, FileMode.Open, FileAccess.Read, FileShare.Read))
         using (ZipArchive zip = new(file, ZipArchiveMode.Read))
         {
             XDocument saved = OpenDocument(zip);
             if (!VerifyPublishedImage(zip, saved, relId, mediaPart, bytes,
-                    alt, anchor, beforeMediaCount))
+                    alt, anchor, beforeMediaCount, caption, captionAlignment,
+                    spaceBefore, spaceAfter, captionGap))
                 throw new InvalidDataException("The saved Word drawing or image bytes failed post-write verification.");
         }
         var sourceAfter = await NIRAFileIntegrity.HashAsync(source, CancellationToken.None).ConfigureAwait(false);
@@ -287,6 +416,8 @@ internal static partial class NIRADocx
                      $"ImagePath={imagePath}\nImageSHA256={Convert.ToHexString(SHA256.HashData(bytes))}\nImageType={format.Mime}\n" +
                      $"ImagePixels={format.Width}x{format.Height}\nImageWidthMm={widthMm.ToString("0.##", CultureInfo.InvariantCulture)}\n" +
                      $"ImageAltText={alt}\nAnchorParagraph={anchor}\nEmbeddedMediaParts={beforeMediaCount + 1}\n" +
+                     $"CaptionPresent={(caption == null ? "False" : "True")}\nCaptionText={caption ?? ""}\n" +
+                     $"CaptionAlignment={captionAlignment}\nSpaceBeforePt={spaceBefore / 20}\nSpaceAfterPt={spaceAfter / 20}\nCaptionGapPt={captionGap / 20}\n" +
                      "PostWriteVerified=True\nSourceUnchanged=True\nOverwroteExisting=False"
         };
     }
@@ -307,7 +438,12 @@ public sealed class NIRADocxImageInsertCapabilityHandler : INIRACapabilityHandle
             NIRADocx.Param("altText", true, "Brief meaningful description of the embedded image."),
             NIRADocx.Param("expectedSourceSha256", true, "Fresh observed SHA-256 of the DOCX source."),
             NIRADocx.Param("widthMm", false, "Image display width 10-140 mm, e.g. '42'. Proportional height."),
-            NIRADocx.Param("alignment", false, "Image paragraph alignment: left, center (default), right.")
+            NIRADocx.Param("alignment", false, "Image paragraph alignment: left, center (default), right."),
+            NIRADocx.Param("captionText", false, "R43C optional single-line text placed in a real italic 9 pt Word caption paragraph after the image (1-200 characters)."),
+            NIRADocx.Param("captionAlignment", false, "Optional caption alignment: left, center (default), right."),
+            NIRADocx.Param("spaceBeforePt", false, "Optional space before image paragraph, integer 0-36 pt."),
+            NIRADocx.Param("spaceAfterPt", false, "Optional space after image paragraph, integer 0-36 pt."),
+            NIRADocx.Param("captionGapPt", false, "Optional space before caption paragraph, integer 0-24 pt; default 3.")
         ]
     };
     public NIRACapabilityRisk ResolveRisk(NIRACapabilityRequest request) => NIRACapabilityRisk.Modify;

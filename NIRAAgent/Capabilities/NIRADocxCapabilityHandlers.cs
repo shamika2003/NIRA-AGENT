@@ -305,6 +305,8 @@ internal static partial class NIRADocx
             .Select(p => string.Concat(p.Descendants(W + "t").Select(t => t.Value)))
             .Where(text => !string.IsNullOrWhiteSpace(text)).ToList();
         int tables = document.Descendants(W + "tbl").Count();
+        int manualPageBreaks = document.Descendants(W + "br")
+            .Count(br => string.Equals((string?)br.Attribute(W + "type"), "page", StringComparison.Ordinal));
         int headings = document.Descendants(W + "pStyle").Count(x =>
             ((string?)x.Attribute(W + "val"))?.StartsWith("Heading", StringComparison.OrdinalIgnoreCase) == true);
         int images = zip.Entries.Count(x => x.FullName.StartsWith("word/media/", StringComparison.OrdinalIgnoreCase) && !x.FullName.EndsWith('/'));
@@ -335,6 +337,20 @@ internal static partial class NIRADocx
             headerEvidence.Append("TableHeaderCellsJson[")
                 .Append(tableNumber).Append("]=")
                 .AppendLine(JsonSerializer.Serialize(contents));
+            // R44A: bounded independent row count and last-row evidence.
+            // Values come from the saved document, not the write receipt.
+            XElement[] actualRows = table.Elements(W + "tr").ToArray();
+            headerEvidence.Append("TableRows[").Append(tableNumber).Append("]=")
+                .AppendLine(actualRows.Length.ToString());
+            if (actualRows.Length > 1 && actualRows.Length <= 200)
+            {
+                string[] lastCells = actualRows[^1].Elements(W + "tc")
+                    .Select(cell => string.Concat(cell.Descendants(W + "t")
+                        .Select(t => t.Value))).ToArray();
+                if (lastCells.Length == contents.Length && lastCells.All(x => x.Length <= 800))
+                    headerEvidence.Append("TableLastRowCellsJson[").Append(tableNumber).Append("]=")
+                        .AppendLine(JsonSerializer.Serialize(lastCells));
+            }
         }
         // R42C: section metadata is obtained from the saved OpenXML, not inferred
         // from the operating system, model output, or visual layout.
@@ -373,7 +389,7 @@ internal static partial class NIRADocx
         string headerFooterEvidence = InspectHeaderFooterParts(zip, document);
         return new NIRACapabilityHandlerResult { ChangedSystemState = false,
             Summary = "DOCX inspected read-only; verified file contents, section layout and bounded text preview returned.",
-            Output = $"Path={path}\nSHA256={fingerprint.Sha256}\nBytes={fingerprint.Bytes}\nParagraphs={paragraphs.Count}\nHeadings={headings}\nTables={tables}\n{headerEvidence}{pageEvidence}\n{headerFooterEvidence}\nEmbeddedMediaParts={images}\nWordsApprox={words}\nPreviewLimited=True\nPreview:\n{preview}" };
+            Output = $"Path={path}\nSHA256={fingerprint.Sha256}\nBytes={fingerprint.Bytes}\nParagraphs={paragraphs.Count}\nHeadings={headings}\nTables={tables}\nManualPageBreaks={manualPageBreaks}\n{headerEvidence}{pageEvidence}\n{headerFooterEvidence}\nEmbeddedMediaParts={images}\nWordsApprox={words}\nPreviewLimited=True\nPreview:\n{preview}" };
     }
 
     internal static async Task<NIRACapabilityHandlerResult> AppendAsync(

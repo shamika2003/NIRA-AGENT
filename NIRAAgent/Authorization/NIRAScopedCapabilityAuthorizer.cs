@@ -27,6 +27,17 @@ public sealed class NIRAScopedCapabilityAuthorizer : INIRACapabilityAuthorizer
         NIRACapabilityIds.DocxTableStyle,
         NIRACapabilityIds.DocxHeaderFooter,
         NIRACapabilityIds.DocxImageInsert,
+        NIRACapabilityIds.DocxPageBreakInsert,
+        NIRACapabilityIds.DocxTableRowsAppend,
+        NIRACapabilityIds.DocxTableCellUpdate,
+        NIRACapabilityIds.DocxTableCellsBatch,
+        NIRACapabilityIds.DocxTableRowsDelete,
+        NIRACapabilityIds.DocxTableTransaction,
+        NIRACapabilityIds.DocxProfessionalFormat,
+        NIRACapabilityIds.DocxTemplateFill,
+        NIRACapabilityIds.DocxTemplateBatch,
+        NIRACapabilityIds.DocxReportCreate,
+        NIRACapabilityIds.DocxStudioCreate,
         NIRACapabilityIds.DirectoryCreate
     ];
 

@@ -87,6 +87,19 @@ public static class NIRACapabilityIds
     public const string DocxTableStyle = "filesystem.docx.table.style";
     public const string DocxHeaderFooter = "filesystem.docx.header.footer";
     public const string DocxImageInsert = "filesystem.docx.image.insert";
+    public const string DocxPageBreakInsert = "filesystem.docx.pagebreak.insert";
+    public const string DocxTableRowsAppend = "filesystem.docx.table.rows.append";
+    public const string DocxTableCellUpdate = "filesystem.docx.table.cell.update";
+    public const string DocxTableCellsBatch = "filesystem.docx.table.cells.batch";
+    public const string DocxTableRowsDelete = "filesystem.docx.table.rows.delete";
+    public const string DocxTableTransaction = "filesystem.docx.table.transaction";
+    public const string DocxProfessionalFormat = "filesystem.docx.professional.format";
+    public const string DocxContentCompare = "filesystem.docx.content.compare";
+    public const string DocxTemplateInspect = "filesystem.docx.template.inspect";
+    public const string DocxTemplateFill = "filesystem.docx.template.fill";
+    public const string DocxTemplateBatch = "filesystem.docx.template.batch";
+    public const string DocxReportCreate = "filesystem.docx.report.create";
+    public const string DocxStudioCreate = "filesystem.docx.studio.create";
 
     public const string FileWrite =
         "filesystem.write";

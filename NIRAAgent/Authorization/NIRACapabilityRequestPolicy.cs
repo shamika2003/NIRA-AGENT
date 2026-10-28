@@ -30,7 +30,7 @@ public sealed class NIRACapabilityRequestPolicy
     public NIRACapabilityRequest Prepare(NIRACapabilityRequest request)
     {
         Dictionary<string, JsonElement> args = ReadObject(request.Arguments);
-        foreach (string key in new[] { "path", "source", "destination", "backup", "imagepath", "workingdirectory" })
+        foreach (string key in new[] { "path", "source", "destination", "destinationdirectory", "backup", "imagepath", "workingdirectory" })
         {
             if (!args.TryGetValue(key, out JsonElement value) ||
                 value.ValueKind == JsonValueKind.Null)
@@ -269,7 +269,7 @@ public sealed class NIRACapabilityRequestPolicy
     public NIRAAuthorityOperation Describe(NIRACapabilityRequest request, NIRACapabilityRisk risk)
     {
         List<string> paths = [];
-        foreach (string name in new[] { "path", "source", "destination", "backup" })
+        foreach (string name in new[] { "path", "source", "destination", "destinationdirectory", "backup" })
         {
             string? path = NIRACapabilityArguments.GetOptionalString(request, name, 32760);
             if (path != null) paths.Add(path);

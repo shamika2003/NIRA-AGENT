@@ -43,6 +43,61 @@ internal static class NIRAFileRevisionObservationContinuityPolicy
         return stale.Length;
     }
 
+    // R43D.2: a failed inspect/hash of a NEW DOCX destination, observed BEFORE
+    // its verified creation, is not a post-write inspection. Once the audited
+    // DOCX writer has safely published that exact new path, allow that failed
+    // read to be reissued. This does not permit another write, remove a
+    // successful read, or alter any different file's observation cache.
+    internal static int InvalidatePrematureDocxDestinationReads(
+        NIRACapabilityRequest mutation,
+        NIRACapabilityResult result,
+        HashSet<string> executed,
+        HashSet<string> duplicateReports,
+        Dictionary<string, NIRACapabilityRequest> requests,
+        Dictionary<string, NIRACapabilityResult> results)
+    {
+        if (mutation.CapabilityId != NIRACapabilityIds.DocxPageBreakInsert ||
+            result.CapabilityId != mutation.CapabilityId ||
+            !result.Succeeded || result.OutcomeUncertain ||
+            !result.ChangedSystemState || !result.AuditRecorded ||
+            result.Risk != NIRACapabilityRisk.Modify ||
+            !TryPath(mutation, "destination", out string destination) ||
+            !destination.EndsWith(".docx", StringComparison.OrdinalIgnoreCase))
+            return 0;
+
+        // The verified write receipt, not the LLM request, proves a NEW
+        // file was published and that the original remained unchanged.
+        string output = result.Output ?? string.Empty;
+        if (!HasExactReceiptLine(output, "Destination", destination) ||
+            !HasExactReceiptLine(output, "PostWriteVerified", "True") ||
+            !HasExactReceiptLine(output, "SourceUnchanged", "True") ||
+            !HasExactReceiptLine(output, "OverwroteExisting", "False"))
+            return 0;
+
+        string[] premature = requests
+            .Where(pair =>
+                (pair.Value.CapabilityId is NIRACapabilityIds.DocxInspect or NIRACapabilityIds.FileHash) &&
+                Matches(pair.Value, "path", destination) &&
+                results.TryGetValue(pair.Key, out var earlier) &&
+                earlier.CapabilityId == pair.Value.CapabilityId &&
+                earlier.Risk == NIRACapabilityRisk.Observe &&
+                earlier.Status == NIRACapabilityResultStatus.Failed &&
+                !earlier.ChangedSystemState && !earlier.OutcomeUncertain)
+            .Select(pair => pair.Key).ToArray();
+        foreach (string signature in premature)
+        {
+            executed.Remove(signature);
+            duplicateReports.Remove(signature);
+            requests.Remove(signature);
+            results.Remove(signature);
+        }
+        return premature.Length;
+    }
+
+    private static bool HasExactReceiptLine(string receipt, string key, string value) =>
+        receipt.Split('\n').Any(line => string.Equals(line.TrimEnd('\r'),
+            key + "=" + value, StringComparison.OrdinalIgnoreCase));
+
     private static bool IsObservationOf(NIRACapabilityRequest read, string destination) =>
         read.CapabilityId switch
         {

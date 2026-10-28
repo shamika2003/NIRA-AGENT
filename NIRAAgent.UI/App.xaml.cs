@@ -512,6 +512,19 @@ public partial class App : WpfApplication
             builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxTableStyleCapabilityHandler>();
             builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxHeaderFooterCapabilityHandler>();
             builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxImageInsertCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxPageBreakInsertCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxTableRowsAppendCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxTableCellUpdateCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxTableCellsBatchCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxTableRowsDeleteCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxTableTransactionCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxProfessionalFormatCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxContentCompareCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxTemplateInspectCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxTemplateFillCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxTemplateBatchCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxReportCreateCapabilityHandler>();
+            builder.Services.AddSingleton<INIRACapabilityHandler, NIRADocxStudioCapabilityHandler>();
 
             builder.Services.AddSingleton<
                 INIRACapabilityHandler,

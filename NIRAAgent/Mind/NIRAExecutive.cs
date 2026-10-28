@@ -1026,6 +1026,7 @@ public sealed class NIRAExecutive
         NIRADesktopWriteContinuityGuard desktopWrites = new();
         NIRAProcessStopContinuityGuard processStops = new();
         NIRAProcessStartContinuityGuard processStarts = new();
+        NIRADocxStudioPathRetryGuard studioPaths = new();
         string? pendingBlankDocumentText = null;
         bool desktopTextMismatchObserved = false;
 
@@ -3997,6 +3998,20 @@ public sealed class NIRAExecutive
                 string signature =
                     request.BuildSignature();
 
+                if (studioPaths.Blocks(request))
+                {
+                    executedCapabilityRequests.Add(signature);
+                    capabilityEvidence.AppendLine(
+                        "WORD STUDIO CREATE-ONLY PATH ALREADY RESOLVED: This exact destination " +
+                        "was already created or found occupied in this run. No second write was " +
+                        "dispatched, even if the model changed its document blocks. Inspect/hash " +
+                        "the existing file or request a DIFFERENT unused destination; do not " +
+                        "claim a new document was created by this suppressed operation.");
+                    NIRADiagnosticTrace.Event("R48-STUDIO-PATH-RETRY-BLOCKED",
+                        $"Run={runId:D} Cycle={cycle} SameDestination=True");
+                    continue;
+                }
+
                 if (postLoginReentrySuppressedSignatures.Contains(
                         signature))
                 {
@@ -4303,6 +4318,7 @@ public sealed class NIRAExecutive
                 NIRACapabilityResult result =
                     capabilityResults[index];
 
+                studioPaths.Observe(newCapabilityRequests[index], result);
 
                 capabilityResultsBySignature[signature] =
                     result;
@@ -4315,6 +4331,28 @@ public sealed class NIRAExecutive
                         newCapabilityRequests[index], result,
                         executedCapabilityRequests, reportedDuplicateCapabilityRequests,
                         capabilityRequestsBySignature, capabilityResultsBySignature);
+                // R43D.2: a destination inspect attempted before a new DOCX
+                // existed failed legitimately. After the verified creation,
+                // release ONLY that failed read for a fresh post-write inspect.
+                int releasedDocxReads = NIRAFileRevisionObservationContinuityPolicy
+                    .InvalidatePrematureDocxDestinationReads(
+                        newCapabilityRequests[index], result,
+                        executedCapabilityRequests, reportedDuplicateCapabilityRequests,
+                        capabilityRequestsBySignature, capabilityResultsBySignature);
+                if (releasedDocxReads > 0)
+                {
+                    capabilityEvidence.AppendLine();
+                    capabilityEvidence.AppendLine(
+                        "DOCX POST-WRITE VERIFICATION STILL REQUIRED: An earlier " +
+                        "inspection of the destination failed before the new " +
+                        "document existed. That failed read is now eligible for " +
+                        "ONE fresh filesystem.docx.inspect of the exact new " +
+                        "destination path. Do not repeat the modifying action. " +
+                        "The earlier failed inspection is not verification.");
+                    NIRADiagnosticTrace.Event("DOCX-PREMATURE-INSPECT-RELEASED",
+                        $"Run={runId:D} Cycle={cycle} Count={releasedDocxReads} " +
+                        $"Write={newCapabilityRequests[index].CapabilityId}");
+                }
                 if (refreshedFileObservations > 0)
                 {
                     capabilityEvidence.AppendLine();
@@ -5862,6 +5900,105 @@ public sealed class NIRAExecutive
                     decision.DynamicToolInvocations.Count == 0 &&
                     !decision.ReviewCommitment;
 
+                // R46: optional no-review fast path for an explicit single-tool
+                // professional DOCX formatting request. Saved OpenXML,
+                // complete source-preservation and hashes are already checked
+                // by the audited write receipt; no other tool can have modified
+                // state in this run. Generic document requests still go through
+                // the normal independent objective reviewer.
+                if (!completionReviewConfirmedComplete && hasNoOutstandingWork &&
+                    mindEvent.Source == NIRAMindEventSource.User &&
+                    mindEvent.Content.Contains(NIRACapabilityIds.DocxProfessionalFormat,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    !preReviewCommitmentSucceeded && !desktopActionNeedsObservation &&
+                    GetPendingTaskForEvent(mindEvent) == null &&
+                    !mindEvent.Metadata.ContainsKey("externalAppId") &&
+                    string.IsNullOrWhiteSpace(dynamicToolEvidence.ToString()) &&
+                    decision.GoalProposals.Count == 0 &&
+                    decision.BranchProposals.Count == 0 &&
+                    decision.ControlRequests.Count == 0)
+                {
+                    string? verifiedProfessional = NIRADocxObservedCompletionPolicy
+                        .FromVerifiedProfessionalResults(
+                            capabilityRequestsBySignature, capabilityResultsBySignature);
+                    if (verifiedProfessional != null)
+                    {
+                        decision = decision with
+                        {
+                            Reply = verifiedProfessional, Speech = string.Empty,
+                            ReplyReady = true, CharacterReady = true,
+                            DisplayBlocks = Array.Empty<NIRARichBlock>(),
+                            DecisionSummary = "R46 single audited DOCX formatting receipt: verified content and publication."
+                        };
+                        completionReviewConfirmedComplete = true;
+                        NIRADiagnosticTrace.Event("R46-DOCX-FAST-PATH",
+                            $"Run={runId:D} Cycle={cycle} VerifiedNewFile=True ReviewCallsSaved=1");
+                    }
+                }
+
+                // R47.2: Complete four-stage native Word workflow can be
+                // certified by audited results without cycling through a
+                // narrative reviewer that has no additional filesystem access.
+                // This is not enabled for mixed actions or pending objectives.
+                if (!completionReviewConfirmedComplete && hasNoOutstandingWork &&
+                    mindEvent.Source == NIRAMindEventSource.User &&
+                    !preReviewCommitmentSucceeded && !desktopActionNeedsObservation &&
+                    GetPendingTaskForEvent(mindEvent) == null &&
+                    !mindEvent.Metadata.ContainsKey("externalAppId") &&
+                    string.IsNullOrWhiteSpace(dynamicToolEvidence.ToString()) &&
+                    decision.GoalProposals.Count == 0 &&
+                    decision.BranchProposals.Count == 0 &&
+                    decision.ControlRequests.Count == 0)
+                {
+                    string? verifiedR47 = NIRADocxObservedCompletionPolicy
+                        .FromVerifiedR47WorkflowResults(
+                            capabilityRequestsBySignature, capabilityResultsBySignature);
+                    if (verifiedR47 != null)
+                    {
+                        decision = decision with
+                        {
+                            State = NIRACognitionState.Complete,
+                            EmitReply = true,
+                            Reply = verifiedR47, Speech = string.Empty,
+                            ReplyReady = true, CharacterReady = true,
+                            DisplayBlocks = Array.Empty<NIRARichBlock>(),
+                            DecisionSummary = "R47 four-stage audited Word workflow verified."
+                        };
+                        completionReviewConfirmedComplete = true;
+                        NIRADiagnosticTrace.Event("R47-WORD-VERIFIED-COMPLETION",
+                            $"Run={runId:D} Cycle={cycle} VerifiedOperations=4 ReviewerCallsSaved=1");
+                    }
+                }
+
+                // R48 Word Studio: a single audited atomic composer receipt
+                // already proves its saved structure and no-overwrite semantics.
+                if (!completionReviewConfirmedComplete && hasNoOutstandingWork &&
+                    mindEvent.Source == NIRAMindEventSource.User &&
+                    !preReviewCommitmentSucceeded && !desktopActionNeedsObservation &&
+                    GetPendingTaskForEvent(mindEvent) == null &&
+                    !mindEvent.Metadata.ContainsKey("externalAppId") &&
+                    string.IsNullOrWhiteSpace(dynamicToolEvidence.ToString()) &&
+                    decision.GoalProposals.Count == 0 && decision.BranchProposals.Count == 0 &&
+                    decision.ControlRequests.Count == 0)
+                {
+                    string? studio = NIRADocxObservedCompletionPolicy.FromVerifiedStudioResults(
+                        capabilityRequestsBySignature, capabilityResultsBySignature);
+                    if (studio != null)
+                    {
+                        decision = decision with
+                        {
+                            State = NIRACognitionState.Complete, EmitReply = true,
+                            Reply = studio, Speech = string.Empty,
+                            ReplyReady = true, CharacterReady = true,
+                            DisplayBlocks = Array.Empty<NIRARichBlock>(),
+                            DecisionSummary = "R48 atomic Word Studio document verified."
+                        };
+                        completionReviewConfirmedComplete = true;
+                        NIRADiagnosticTrace.Event("R48-STUDIO-VERIFIED-COMPLETION",
+                            $"Run={runId:D} Cycle={cycle} VerifiedNewFile=True ReviewerCallsSaved=1");
+                    }
+                }
+
                 if (hasSingleSuccessfulImageGeneration && hasNoOutstandingWork)
                 {
                     completionReviewConfirmedComplete = true;
@@ -5965,6 +6102,73 @@ public sealed class NIRAExecutive
                     NIRADiagnosticTrace.Event("DOCX-IMAGE-RECEIPT",
                         $"Run={runId:D} Cycle={cycle} Scope=ExplicitImageInsertion " +
                         "SavedMediaVerified=True BothInspections=True ReviewerCallsSaved=1");
+                }
+            }
+
+            // R43D.3: verified execution has its OWN independently checked
+            // completion boundary. It must not depend on whether a narrative
+            // model drafted Complete, an older review rejected wording, or a
+            // pending conversation record happens to exist. The certificate
+            // itself rejects unverified or unrelated tool work and asserts
+            // unchanged source, exact destination hash, inspected properties,
+            // and precisely one saved page break. Never infer visual layout.
+            if (mindEvent.Source == NIRAMindEventSource.User &&
+                !completionReviewConfirmedComplete)
+            {
+                bool unrelatedPageBreakWork =
+                    preReviewCommitmentSucceeded || desktopActionNeedsObservation ||
+                    mindEvent.Metadata.ContainsKey("externalAppId") ||
+                    !string.IsNullOrWhiteSpace(dynamicToolEvidence.ToString()) ||
+                    reviewDeferredUserGoalCompletions.Length > 0 ||
+                    decision.CapabilityIds.Count > 0 ||
+                    decision.CapabilityRequests.Count > 0 ||
+                    decision.ContextRequests.Count > 0 ||
+                    decision.MemorySearches.Count > 0 ||
+                    decision.ConversationSearches.Count > 0 ||
+                    decision.ControlRequests.Count > 0 ||
+                    decision.GoalProposals.Count > 0 ||
+                    decision.BranchProposals.Count > 0 ||
+                    decision.BranchWorkProposals.Count > 0 ||
+                    decision.DynamicToolProposals.Count > 0 ||
+                    decision.DynamicToolInvocations.Count > 0 ||
+                    decision.ReviewCommitment;
+
+                string? certificate = NIRADocxObservedCompletionPolicy
+                    .FromExplicitVerifiedPageBreakTask(mindEvent.Content,
+                        capabilityRequestsBySignature, capabilityResultsBySignature,
+                        unrelatedPageBreakWork);
+
+                if (mindEvent.Content.Contains(NIRACapabilityIds.DocxPageBreakInsert,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    capabilityResultsBySignature.Values.Any(result =>
+                        result.CapabilityId == NIRACapabilityIds.DocxPageBreakInsert &&
+                        result.Succeeded))
+                {
+                    NIRADiagnosticTrace.Event("DOCX-PAGEBREAK-VERIFICATION-GATE",
+                        $"Run={runId:D} Cycle={cycle} Certificate={certificate is not null} " +
+                        $"OtherWork={unrelatedPageBreakWork} " +
+                        $"ReviewerObjections={taskCompletionReviewCount} " +
+                        $"Receipts={capabilityResultsBySignature.Count}");
+                }
+                if (certificate is not null)
+                {
+                    decision = decision with
+                    {
+                        State = NIRACognitionState.Complete,
+                        EmitReply = true,
+                        Reply = certificate,
+                        Speech = string.Empty,
+                        ReplyReady = true,
+                        CharacterReady = true,
+                        DisplayBlocks = Array.Empty<NIRARichBlock>(),
+                        DecisionSummary = "R43D.3 verified native page break from audited same-run receipts."
+                    };
+                    completionReviewConfirmedComplete = true;
+                    NIRADiagnosticTrace.Event("DOCX-PAGEBREAK-RECEIPT",
+                        $"Run={runId:D} Cycle={cycle} " +
+                        $"SavedPackage=Verified IndependentInspections=True " +
+                        $"ReviewerObjections={taskCompletionReviewCount} " +
+                        "VisualPagination=Unverified");
                 }
             }
 
@@ -6473,6 +6677,8 @@ public sealed class NIRAExecutive
                         GetPendingTaskForEvent(mindEvent) == null
                             ? NIRADocxObservedCompletionPolicy.FromResults(
                                 capabilityRequestsBySignature, capabilityResultsBySignature)
+                                ?? NIRADocxObservedCompletionPolicy.FromVerifiedPageBreakResults(
+                                    capabilityRequestsBySignature, capabilityResultsBySignature)
                             : null;
                     if (docxReceipt is not null)
                     {
@@ -6657,11 +6863,18 @@ public sealed class NIRAExecutive
                 !desktopActionNeedsObservation)
             {
                 string? verifiedDocxPartial = NIRADocxObservedCompletionPolicy
-                    .FromVerifiedFormattingResults(
+                    .FromVerifiedStudioResults(capabilityRequestsBySignature, capabilityResultsBySignature)
+                    ?? NIRADocxObservedCompletionPolicy.FromVerifiedR47WorkflowResults(
+                        capabilityRequestsBySignature, capabilityResultsBySignature)
+                    ?? NIRADocxObservedCompletionPolicy.FromVerifiedProfessionalResults(
+                        capabilityRequestsBySignature, capabilityResultsBySignature)
+                    ?? NIRADocxObservedCompletionPolicy.FromVerifiedFormattingResults(
                         capabilityRequestsBySignature, capabilityResultsBySignature)
                     ?? NIRADocxObservedCompletionPolicy.FromVerifiedHeaderFooterResults(
                         capabilityRequestsBySignature, capabilityResultsBySignature)
                     ?? NIRADocxObservedCompletionPolicy.FromVerifiedImageInsertionResults(
+                        capabilityRequestsBySignature, capabilityResultsBySignature)
+                    ?? NIRADocxObservedCompletionPolicy.FromVerifiedPageBreakResults(
                         capabilityRequestsBySignature, capabilityResultsBySignature);
                 if (verifiedDocxPartial is not null)
                 {

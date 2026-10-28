@@ -16,8 +16,10 @@ public sealed class NIRACapabilityService
         exception is NIRABrowserOptionUnavailableException;
 
     private static bool IsCertainNoEffectFilesystemPreflight(string capabilityId, Exception exception) =>
-        capabilityId == NIRACapabilityIds.FileWrite &&
-        exception is DirectoryNotFoundException;
+        (capabilityId == NIRACapabilityIds.FileWrite &&
+         exception is DirectoryNotFoundException) ||
+        (capabilityId == NIRACapabilityIds.DocxStudioCreate &&
+         exception is NIRADocxStudioDestinationExistsException);
 
     private readonly NIRACapabilityRegistry _registry;
     private readonly INIRACapabilityAuthorizer _authorizer;

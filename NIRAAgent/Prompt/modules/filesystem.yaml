@@ -1,6 +1,7 @@
 # Filesystem specialist guidance — enabled by trusted filesystem tool use.
 workflow:
   - Work from exact observed absolute paths. Keep user-selected file identities and extensions unchanged.
+  - filesystem.read is for TEXT only, never .docx. Use filesystem.docx.inspect for Word structure and SHA-256; do not retry binary text reads.
   - Use read-only locate/list/tree/metadata/hash/compare first for uncertain targets. A bounded scan's ScanComplete and RankingComplete must be interpreted accurately.
   - For state changes, preserve authorization checks and operation order. Non-overwriting copy/backup and verification must occur before modifying originals when requested.
   - Do not claim file restoration, backup, revision or deletion without relevant successful independent receipts. Do not hide failure/partiality.

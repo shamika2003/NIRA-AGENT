@@ -1,24 +1,47 @@
-# Word DOCX specialist guidance — loaded ONLY after a trusted DOCX capability is selected/observed.
-# Supplemental to NIRA core and runtime authorization, not permission to write.
+# NIRA DOCX specialist: guidance only, no new permissions. DOCX is ZIP, not plain text.
 workflow:
-  - Use actual registered filesystem.docx.* capability signatures and trusted receipts.
-  - A .docx is an OpenXML ZIP, not text and not a .doc, PDF, or RTF. Never replace format silently.
-  - For create: target folder must already exist; output is a NEW absolute .docx path and must NOT exist already. Use content as plain paragraphs with #/## markers for headings; optional title is a separate first heading. Max 20,000 content characters / 300 paragraphs according to registered descriptor. Don't promise unsupported page layout or advanced formatting.
-  - For inspect: read the existing file using filesystem.docx.inspect. It returns actual SHA-256, paragraph/heading counts and bounded text preview; it doesn't visually inspect embedded images or deeply interpret tables.
-  - For append: FIRST observe source and get a fresh SHA-256 from filesystem.hash; use filesystem.docx.append with the existing source, NEW nonexisting destination, content and expectedSourceSha256. Do not modify the original document. Refuse unsupported signed, macro, encrypted or tracked-edits packages where indicated by receipts.
-  - Creation, then inspection, then truthful comparison are ordered dependencies. If create fails, do not claim inspect or create succeeded. A create+inspect batch only demonstrates correctness when BOTH trusted receipts succeed in order.
-  - Report actual output path, SHA-256 and counts from verified receipts, not assumed paragraphs or model-calculated checksum. A file appearing in Explorer isn't proof of its content; an inspect receipt is.
-  - If user requests rich formatting or editing outside registered Word primitives, describe the precise unsupported formatting operation. Do not secretly fall back to plain text or execute a wide shell command merely to imitate DOCX editing.
-  - Never overwrite a protected or existing file just to satisfy the requested name; request an alternative name when truly necessary.
-  - R42A structured editing: filesystem.docx.replace changes exactly one unambiguous plain paragraph into a NEW DOCX, with exact oldText/newText and fresh expectedSourceSha256. It refuses tracked edits, split/mixed runs, and unknown complex paragraph structures; never invent a successful replacement.
-  - R42A Word table: filesystem.docx.table.add takes TSV (tabs for columns, newlines for rows) and writes a real bordered table with a bold header into a NEW DOCX copy. It accepts 2-10 columns, 2-30 rows, nonempty cells. Preserve source by construction.
-  - Structured edits are sequential copy-on-write operations: to replace THEN add a table, use a distinct new destination for each and freshly hash the intermediate document. Do not overwrite or reuse the first destination. Verify resulting paragraphs/tables with filesystem.docx.inspect; do not assume a visual layout from a text inspection.
-  - R42B: filesystem.docx.paragraph.format edits exactly one unique simple paragraph in a new copy. Supply exactText, alignment (left/center/right/justify), fontSizePt (8-36), bold (true/false), expectedSourceSha256, source and nonexisting destination. Heading style remains intact; mixed/complex runs are rejected.
-  - R42B: filesystem.docx.page.layout updates single-section page setup on a NEW copy. Supply paper (A4/LETTER), orientation (portrait/landscape), marginMm (10-35), expectedSourceSha256. For multiple sections, decline instead of guessing. Use a fresh hash on the result for subsequent steps.
-  - R42B is a focused formatting primitive, NOT complete document design. Validate the produced DOCX and recommend visual inspection in Word for pagination/appearance. Never imply native DOCX inspection sees exact visual layout.
-  - R42C: A successful paragraph-format, page-layout or table-style write receipt now reports PostWriteVerified=True and counts from the reopened output. Do not discard this verification because an earlier read-only inspect of a not-yet-created destination failed. Never treat a pre-write read as a post-write inspection.
-  - R42C: filesystem.docx.inspect now reports actual section count, paper, orientation and exact four margin measurements read from the DOCX OpenXML. This is document structure verification, not visual pagination.
-  - R42C: filesystem.docx.table.style needs the exact unique first header row as headerTsv plus headerFillHex and stripeFillHex (6-digit RGB without #). Source SHA-256 and new destination required. It preserves contents, sets white bold header text and alternating row fills, rejecting merged/complex tables. Style a newly created table as a separate copy-on-write operation, first hashing the intermediate source.
-  - R42D: filesystem.docx.inspect exposes TableHeaderCellsJson[index] for bounded first-row cells. Use those observed exact strings in headerTsv joined with genuine tab characters (JSON string escape \t), not spaces or an inferred combined paragraph. An explicitly named registered capability may have its exact schema loaded on the first round; after obtaining the SHA and header evidence, invoke the style write rather than repeatedly requesting the same capability context.
-  - R43A: filesystem.docx.header.footer adds optional headerText, footerText, pageNumbers='true' in a NEW single-section DOCX copy. First obtain source SHA-256. Existing headers/footers, advanced sections, or document signatures are rejected. It writes native Word header/footer parts and a PAGE field; filesystem.docx.inspect reads back HeaderPresent, FooterPresent, PageNumberField and bounded text, not the actual rendered page count. Never promise page rendering without opening the document in Word.
-  - R43B: filesystem.docx.image.insert accepts source (existing DOCX), destination (NEW DOCX), imagePath (local PNG/JPEG file), afterParagraph (exact unique text), altText, expectedSourceSha256, optional widthMm (10-140 as string), alignment (left/center/right). First inspect and hash the DOCX; verify the image file exists. The editor inserts an actual inline DrawingML relationship and image bytes, not a filename or hyperlink. It preserves existing headers, footer/page fields, tables and section layout, rejects ambiguous anchors, stale hashes, non-image bytes and output collisions. Inspect the new copy; Word visual pagination is distinct from OpenXML structural verification.
+  - Inspect once with filesystem.docx.inspect for SHA256, table headers and counts; for templates use filesystem.docx.template.inspect for {{KEY}} and hash. filesystem.hash is optional when SHA is fresh.
+  - Use registered ID/schema; inspect, write once, reuse audited PostWriteVerified receipt. Reinspect only for missing details or when user requests independent verification.
+  - Modifying tools always create NEW files with an existing authorized folder. Never overwrite, guess an old cell value, retry a successful mutation, or use Word/COM for native operations. Refuse ambiguous targets, signed/macro/tracked documents and stale hashes.
+  - A trusted PostWriteVerified=True + SourceUnchanged=True + OverwroteExisting=False receipt with hashes proves saved ZIP/OpenXML integrity, NOT page appearance in Microsoft Word. A failed optional read does not cancel a verified write.
+
+basic:
+  - filesystem.docx.create: NEW path, content (1-300 nonempty lines, <=20k chars, # or ## native Word headings), optional title.
+  - filesystem.docx.inspect: path; SHA256, paragraphs, headings, preview, tables/HeaderCellsJson, media and sections.
+  - filesystem.docx.append: source, NEW destination, content, expectedSourceSha256; appends paragraphs.
+  - filesystem.docx.replace: oldText, newText unique exact simple paragraph, source/new destination/fresh SHA.
+  - filesystem.docx.content.compare: optional independent read-only structural comparison of two existing DOCX files.
+
+page_design:
+  - filesystem.docx.paragraph.format: unique exactText, fontSizePt 8-36, bold, alignment, new copy, fresh source SHA.
+  - filesystem.docx.page.layout: A4/LETTER, portrait/landscape, marginMm 10-35, new copy; multi-section ambiguous documents rejected.
+  - filesystem.docx.header.footer: optional headerText, footerText, pageNumbers=true, copy-only + fresh SHA; PAGE is a real Word field but rendered page count is not known.
+  - filesystem.docx.image.insert: existing real PNG/JPEG imagePath, exact afterParagraph, altText, widthMm, alignment; optional captionText/captionAlignment/spaceBeforePt/spaceAfterPt/captionGapPt. Reopens and checks saved image bytes, DrawingML and caption.
+  - filesystem.docx.pagebreak.insert: exact unique afterParagraph, fresh source SHA, NEW output, adds one native hard page break. Inspect ManualPageBreaks, never infer visual page count.
+  - R46 PREFERRED FOR WHOLE-DOCUMENT STYLE: filesystem.docx.professional.format source/new destination, expectedSourceSha256, optional business/academic/compact profile and accentHex (six RGB). Preserves text, tables, images, headers, fields and layout. Some complex paragraphs are skipped and must be reported.
+
+tables:
+  - filesystem.docx.table.add: TSV 2-10 columns, 2-30 rows, copy-only.
+  - filesystem.docx.table.style: headerTsv exact observed cells joined by TAB; headerFillHex/stripeFillHex six-digit RGB; fresh SHA; copy-only.
+  - filesystem.docx.table.rows.append: rowsTsv 1-20, headerTsv and SHA; copy-only.
+  - filesystem.docx.table.cell.update: rowKey, columnHeader, expectedOldValue, newValue, exact header and SHA.
+  - filesystem.docx.table.cells.batch: updatesTsv 1-25 lines (rowKey TAB column TAB old TAB new), compare-and-swap all values.
+  - filesystem.docx.table.rows.delete: rowKeys 1-20, refuse deleting all data rows.
+  - R45 PREFERRED FOR COMBINED OPERATIONS: filesystem.docx.table.transaction with updatesTsv, deleteRowKeys, appendRowsTsv, observed headerTsv, source/new destination/fresh SHA. All prevalidated then one atomic document publication. Use focused tools for one change.
+
+finishing_r47:
+  - filesystem.docx.template.inspect: read template placeholders {{KEY}} from main body, tables, headers/footers, return fresh SHA. Keys must be single-run ordinary Word text; no split-run placeholders.
+  - filesystem.docx.template.fill: source, NEW destination, expectedSourceSha256, valuesJson object containing EXACT observed keys and single-line values. Substitutes all uses, preserves style/other package parts and reports hashes. Prefer for ONE customized copy.
+  - filesystem.docx.template.batch: source, authorized existing destinationDirectory, fresh SHA, jobsJson 1-12 {fileName,values}. Exact keys, simple .docx names; stage+verify before create-only batch publication; rollback failures. Prefer for many copies.
+  - filesystem.docx.report.create: NEW path, title, sectionsJson array of 1-12 {heading,body, optional tableTsv}; creates native A4 portrait report with styled title, headings and tables. For richer existing Word layouts use template.fill instead.
+  - Batch and reports are native saved-package operations, NOT visual rendering/PDF conversion. Never say an untested template style is supported.
+
+reporting:
+  - Report paths, SHA256, counts, preserved parts, skips/errors from trusted receipts. XML verification is not Word rendering. Avoid redundant inspection after verified write.
+word_studio_r48:
+  - PREFERRED for creating a COMPLETE polished Word document in one audited operation: filesystem.docx.studio.create. It creates one new DOCX; do not chain report.create/paragraph.format/table.add just to make one new report.
+  - Required path, title, blocksJson array of 1-80 objects. Types: paragraph, heading(level 1-3), bullet, number, table(rows array 2-40 x 2-8), quote, divider, toc (Word-updatable field), pagebreak, link(text,url), image(altText,widthMm,optional caption). Paragraph/heading/list accept text OR runs:[{text,bold,italic,underline,optional colorHex}], optional alignment/fontSizePt.
+  - Optional paper A4/LETTER, orientation portrait/landscape, marginMm 10-35, accentHex RGB, headerText, footerText, pageNumbers true/false. One optional source PNG/JPEG requires imagePath at top-level and exactly one image block; do not fabricate an image path. For multiple images, use the existing image.insert copy workflow or a designed template.
+  - Creates native headings/lists, striped tables, links, breaks, image/caption, header/footer/PAGE. Word fields may need refresh; not a PDF renderer.
+  - One bounded write, automatic package/media verification and destination SHA-256. Never reopen merely to verify what the successful audited receipt already verified. Never claim rendered page count or visual fidelity.
+  - R48.3 existing destination is a DEFINITE collision, not an uncertain write. Never delete/overwrite or retry same path with changed blocksJson. Use an unused name for new creation, or inspect/hash existing file when asked; existence alone is NOT proof of requested content.

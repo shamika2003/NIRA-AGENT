@@ -1,3 +1,4 @@
+using System.Xml.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Reflection;
@@ -25,6 +26,111 @@ int failed = 0;
 Console.WriteLine($"[DeepRouting] REGRESSION | Revision={NIRAModelSelection.RoutingRevision} | " +
     $"Assembly={typeof(NIRAModelSelection).Assembly.Location}");
 Console.WriteLine("[ConcurrentMind] REGRESSION | Revision=NIRA-CONCURRENT-20261014-S4-ADAPTIVE");
+
+// R48: exercise the actual native Word Studio handler (not a mocked success).
+Check("R48 studio one-shot document structure, media, no overwrite", () =>
+{
+    string folder = Path.Combine(Path.GetTempPath(), "nira-r48-studio-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        string imagePath = Path.Combine(folder, "pixel.png");
+        File.WriteAllBytes(imagePath, Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/avcAAAAASUVORK5CYII="));
+        string path = Path.Combine(folder, "report.docx");
+        var blocks = new object[] {
+            new { type = "heading", level = 1, text = "Executive overview" },
+            new { type = "paragraph", runs = new object[] {
+                new { text = "Verified ", bold = true }, new { text = "Word Studio", italic = true } } },
+            new { type = "bullet", text = "Bullet one" },
+            new { type = "toc" },
+            new { type = "quote", text = "Quoted observation" },
+            new { type = "divider" },
+            new { type = "number", text = "Number one" },
+            new { type = "table", rows = new[] { new[] { "Feature", "Status" }, new[] { "Composer", "Passed" } } },
+            new { type = "link", text = "OpenAI", url = "https://www.openai.com" },
+            new { type = "image", altText = "Sample", widthMm = 30, caption = "Figure 1 - Sample" },
+            new { type = "pagebreak" }
+        };
+        var request = new NIRACapabilityRequest {
+            CapabilityId = NIRACapabilityIds.DocxStudioCreate,
+            Arguments = JsonSerializer.SerializeToElement(new {
+                path, title = "NIRA Studio", blocksJson = JsonSerializer.Serialize(blocks),
+                headerText = "NIRA BY ELVARA", footerText = "Internal", pageNumbers = "true",
+                paper = "A4", orientation = "landscape", marginMm = "20", imagePath
+            })
+        };
+        NIRACapabilityHandlerResult saved = new NIRADocxStudioCapabilityHandler()
+            .ExecuteAsync(request).GetAwaiter().GetResult();
+        if (!saved.Output.Contains("PostWriteVerified=True", StringComparison.Ordinal) ||
+            !saved.Output.Contains("StudioTables=1", StringComparison.Ordinal) ||
+            !saved.Output.Contains("StudioImages=1", StringComparison.Ordinal) ||
+            !saved.Output.Contains("PageNumberField=True", StringComparison.Ordinal))
+            throw new Exception("Studio created no verifiable content receipt.");
+        using (var zip = System.IO.Compression.ZipFile.OpenRead(path)) {
+            string[] required = { "word/document.xml", "word/numbering.xml", "word/headerR48.xml",
+                "word/footerR48.xml", "word/media/nira-r48.png" };
+            if (required.Any(p => zip.GetEntry(p) == null)) throw new Exception("Missing OpenXML studio part.");
+            using (var documentStream = zip.GetEntry("word/document.xml")!.Open()) {
+                var savedDocument = XDocument.Load(documentStream);
+                XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+                var tbl = savedDocument.Descendants(w + "tbl").Single();
+                int width = (int)tbl.Descendants(w + "tblW").Single().Attribute(w + "w")!;
+                int[] grid = tbl.Descendants(w + "gridCol")
+                    .Select(e => (int)e.Attribute(w + "w")!).ToArray();
+                int layoutWidth = 16838 - 2 * (int)Math.Round(20 * 1440.0 / 25.4);
+                if (width != layoutWidth || grid.Sum() != layoutWidth || grid.Any(v => v <= 0))
+                    throw new Exception("Word table grid is not the full usable landscape page width.");
+            }
+            using var reader = new StreamReader(zip.GetEntry("word/document.xml")!.Open());
+            string xml = reader.ReadToEnd();
+            if (!xml.Contains("Executive overview", StringComparison.Ordinal) ||
+                !xml.Contains("HYPERLINK", StringComparison.Ordinal) ||
+                !xml.Contains("Figure 1 - Sample", StringComparison.Ordinal) ||
+                !xml.Contains("TOC", StringComparison.Ordinal) ||
+                !xml.Contains("landscape", StringComparison.Ordinal))
+                throw new Exception("Studio body did not retain all requested blocks.");
+        }
+        byte[] before = File.ReadAllBytes(path);
+        try { new NIRADocxStudioCapabilityHandler().ExecuteAsync(request).GetAwaiter().GetResult();
+            throw new Exception("Studio overwrote a previously created file."); }
+        catch (NIRADocxStudioDestinationExistsException) { /* Definite no-effect collision. */ }
+        if (!File.ReadAllBytes(path).SequenceEqual(before)) throw new Exception("Existing DOCX changed.");
+    }
+    finally { try { Directory.Delete(folder, recursive: true); } catch (IOException) { } }
+});
+
+
+// R48.3: a different model payload for the SAME occupied destination is
+// still the same terminal output path. Different paths remain independent.
+Check("R48.3 definite collision and same-path retry guard", () =>
+{
+    var request = new NIRACapabilityRequest {
+        CapabilityId = NIRACapabilityIds.DocxStudioCreate,
+        Arguments = JsonSerializer.SerializeToElement(new { path = Path.Combine(Path.GetTempPath(), "r48-unique.docx"),
+            title = "first", blocksJson = "[]" })
+    };
+    var corrected = request with { Arguments = JsonSerializer.SerializeToElement(new {
+        path = Path.Combine(Path.GetTempPath(), "r48-unique.docx"), title = "different title", blocksJson = "[]" }) };
+    var other = request with { Arguments = JsonSerializer.SerializeToElement(new {
+        path = Path.Combine(Path.GetTempPath(), "r48-other.docx"), title = "first", blocksJson = "[]" }) };
+    var guard = new NIRADocxStudioPathRetryGuard();
+    var collision = new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.DocxStudioCreate,
+        Status = NIRACapabilityResultStatus.Failed,
+        Risk = NIRACapabilityRisk.Modify,
+        OutcomeUncertain = false,
+        Summary = "R48_STUDIO_DESTINATION_EXISTS: existing file; no mutation"
+    };
+    if (guard.Blocks(request)) throw new Exception("Guard blocked initial create.");
+    guard.Observe(request, collision);
+    if (!guard.Blocks(corrected) || guard.Blocks(other))
+        throw new Exception("Guard did not bind occupied path independently of edited payload.");
+    var uncertain = new NIRADocxStudioPathRetryGuard();
+    uncertain.Observe(request, collision with { OutcomeUncertain = true });
+    if (uncertain.Blocks(request))
+        throw new Exception("Unknown partial outcome was classified as a definite path collision.");
+});
 
 // V12.1: The observed production failure was NOT image retrieval. Cognition
 // returned rich explanations with a null resourceIntent; nothing was searched.
@@ -8263,6 +8369,1276 @@ Check("R43B rejects stale hash, ambiguous anchors, non-images and collisions", (
         if (Sha(separate) != uniqueHash) throw new Exception("R43B altered the original");
     }
     finally { Directory.Delete(directory, recursive:true); }
+});
+
+// R43C: optional native caption and controlled image spacing; no duplicate media or source mutation.
+Check("R43C embeds caption with image spacing while preserving source and media", () =>
+{
+    string directory = Path.Combine(Path.GetTempPath(), "nira-r43c-caption-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(directory);
+    try
+    {
+        string source = Path.Combine(directory,"source.docx");
+        string destination = Path.Combine(directory,"captioned.docx");
+        string logo = Path.Combine(directory,"logo.png");
+        File.WriteAllBytes(logo, Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFElEQVR4nGOUTDnMgA0wYRUdtBIA/d4BUKK4lNoAAAAASUVORK5CYII="));
+        var create = new NIRADocxCreateCapabilityHandler();
+        create.ExecuteAsync(Request(NIRACapabilityIds.DocxCreate,
+            JsonSerializer.Serialize(new {path=source,content="# Results\nA paragraph after results."}))).GetAwaiter().GetResult();
+        string digest = Sha(source);
+        var editRequest = Request(NIRACapabilityIds.DocxImageInsert,JsonSerializer.Serialize(new {
+            source,destination,imagePath=logo,afterParagraph="Results",altText="NIRA brand",
+            captionText="Figure 1 - NIRA by ELVARA",captionAlignment="center",
+            spaceBeforePt="8",spaceAfterPt="4",captionGapPt="3",widthMm="55",
+            expectedSourceSha256=digest,alignment="center" }));
+        var edit = new NIRADocxImageInsertCapabilityHandler().ExecuteAsync(editRequest).GetAwaiter().GetResult();
+        if (Sha(source)!=digest || !edit.Output.Contains("CaptionPresent=True") ||
+            !edit.Output.Contains("PostWriteVerified=True")) throw new Exception("Captioned image receipt unverified");
+        using var zip = System.IO.Compression.ZipFile.OpenRead(destination);
+        XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+        XNamespace wp = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
+        var doc = System.Xml.Linq.XDocument.Load(zip.GetEntry("word/document.xml")!.Open());
+        var paras = doc.Root!.Element(w+"body")!.Elements(w+"p").ToArray();
+        int imageIndex = Array.FindIndex(paras,p=>p.Descendants(w+"drawing").Any());
+        if (imageIndex<1 || imageIndex + 1 >= paras.Length) throw new Exception("Image/caption order missing");
+        var imagePara=paras[imageIndex]; var captionPara=paras[imageIndex+1];
+        if (string.Concat(captionPara.Descendants(w+"t").Select(x=>x.Value)) != "Figure 1 - NIRA by ELVARA" ||
+            (string?)imagePara.Element(w+"pPr")?.Element(w+"spacing")?.Attribute(w+"before")!="160" ||
+            (string?)imagePara.Element(w+"pPr")?.Element(w+"spacing")?.Attribute(w+"after")!="80" ||
+            (string?)captionPara.Element(w+"pPr")?.Element(w+"spacing")?.Attribute(w+"before")!="60" ||
+            (string?)captionPara.Element(w+"pPr")?.Element(w+"jc")?.Attribute(w+"val")!="center" ||
+            imagePara.Element(w+"pPr")?.Element(w+"keepNext")==null ||
+            !captionPara.Descendants(w+"i").Any() ||
+            (string?)doc.Descendants(wp+"extent").Single().Attribute("cx") != (55*36000).ToString() ||
+            zip.Entries.Count(e=>e.FullName.StartsWith("word/media/")) != 1)
+            throw new Exception("Saved native caption layout does not match requested spacing");
+        var inspect = new NIRADocxInspectCapabilityHandler();
+        var sourceReq=Request(NIRACapabilityIds.DocxInspect,JsonSerializer.Serialize(new {path=source}));
+        var savedReq=Request(NIRACapabilityIds.DocxInspect,JsonSerializer.Serialize(new {path=destination}));
+        var hashReq=Request(NIRACapabilityIds.FileHash,JsonSerializer.Serialize(new {path=source}));
+        var src = inspect.ExecuteAsync(sourceReq).GetAwaiter().GetResult().Output;
+        var dst = inspect.ExecuteAsync(savedReq).GetAwaiter().GetResult().Output;
+        var hash = new NIRAFileHashCapabilityHandler().ExecuteAsync(hashReq).GetAwaiter().GetResult().Output;
+        NIRACapabilityResult Observed(string id,string output) => new() {
+            CapabilityId=id,Risk=NIRACapabilityRisk.Observe,
+            Status=NIRACapabilityResultStatus.Succeeded,Output=output };
+        var reqs=new Dictionary<string,NIRACapabilityRequest> {
+            ["s"]=sourceReq,["h"]=hashReq,["e"]=editRequest,["d"]=savedReq };
+        var results=new Dictionary<string,NIRACapabilityResult> {
+            ["s"]=Observed(NIRACapabilityIds.DocxInspect,src),
+            ["h"]=Observed(NIRACapabilityIds.FileHash,hash),
+            ["e"]=new NIRACapabilityResult { CapabilityId=NIRACapabilityIds.DocxImageInsert,
+                Risk=NIRACapabilityRisk.Modify,Status=NIRACapabilityResultStatus.Succeeded,
+                ChangedSystemState=true,AuditRecorded=true,Output=edit.Output },
+            ["d"]=Observed(NIRACapabilityIds.DocxInspect,dst) };
+        string? report=NIRADocxObservedCompletionPolicy.FromVerifiedImageInsertionResults(reqs,results);
+        if (report == null || !report.Contains("Figure 1 - NIRA by ELVARA"))
+            throw new Exception("Verified caption receipt was discarded by reporting policy");
+        results["e"]=results["e"] with { Output=edit.Output.Replace("CaptionPresent=True","CaptionPresent=False") };
+        if (NIRADocxObservedCompletionPolicy.FromVerifiedImageInsertionResults(reqs,results)!=null)
+            throw new Exception("Fabricated caption certificate was accepted");
+    }
+    finally {Directory.Delete(directory,recursive:true);}
+});
+
+Check("R43C refuses invalid captions and unsafe spacing before publishing", () =>
+{
+    string directory=Path.Combine(Path.GetTempPath(),"nira-r43c-invalid-"+Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(directory);
+    try
+    {
+        string source=Path.Combine(directory,"source.docx"), destination=Path.Combine(directory,"out.docx");
+        string logo=Path.Combine(directory,"logo.png");
+        File.WriteAllBytes(logo,Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFElEQVR4nGOUTDnMgA0wYRUdtBIA/d4BUKK4lNoAAAAASUVORK5CYII="));
+        new NIRADocxCreateCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxCreate,
+            JsonSerializer.Serialize(new {path=source,content="Results"}))).GetAwaiter().GetResult();
+        string hash=Sha(source);
+        var handler = new NIRADocxImageInsertCapabilityHandler();
+        string Args(string caption,string space,string align) => JsonSerializer.Serialize(new {
+            source,destination,imagePath=logo,afterParagraph="Results",altText="NIRA",
+            captionText=caption,spaceBeforePt=space,captionAlignment=align,expectedSourceSha256=hash });
+        Throws<ArgumentException>(()=>handler.ExecuteAsync(Request(NIRACapabilityIds.DocxImageInsert,
+            Args("bad\ncaption","0","center"))).GetAwaiter().GetResult());
+        Throws<ArgumentException>(()=>handler.ExecuteAsync(Request(NIRACapabilityIds.DocxImageInsert,
+            Args("A normal caption","37","center"))).GetAwaiter().GetResult());
+        Throws<ArgumentException>(()=>handler.ExecuteAsync(Request(NIRACapabilityIds.DocxImageInsert,
+            Args("A normal caption","0","justify"))).GetAwaiter().GetResult());
+        if (File.Exists(destination) || Sha(source)!=hash)
+            throw new Exception("Invalid R43C request changed files");
+    }
+    finally {Directory.Delete(directory,recursive:true);}
+});
+
+// R43D: native page-break assembly and DOCX-specific read guidance.
+Check("R43D inserts real page break after caption and preserves Word structure", () =>
+{
+    string folder = Path.Combine(Path.GetTempPath(), "nira-r43d-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        string original = Path.Combine(folder,"original.docx");
+        string table = Path.Combine(folder,"table.docx");
+        string withHeader = Path.Combine(folder,"headers.docx");
+        string source = Path.Combine(folder,"captioned.docx");
+        string output = Path.Combine(folder,"with-pagebreak.docx");
+        string image = Path.Combine(folder,"logo.png");
+        File.WriteAllBytes(image, Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFElEQVR4nGOUTDnMgA0wYRUdtBIA/d4BUKK4lNoAAAAASUVORK5CYII="));
+        new NIRADocxCreateCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxCreate,
+            JsonSerializer.Serialize(new { path=original,title="NIRA title",
+                content="## Results\nThis must start on the next page." })))
+            .GetAwaiter().GetResult();
+        new NIRADocxTableAddCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxTableAdd,
+            JsonSerializer.Serialize(new { source=original,destination=table,
+                expectedSourceSha256=Sha(original),tsv="Feature\tStatus\nPageBreak\tPassed" })))
+            .GetAwaiter().GetResult();
+        new NIRADocxHeaderFooterCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxHeaderFooter,
+            JsonSerializer.Serialize(new { source=table,destination=withHeader,
+                expectedSourceSha256=Sha(table),headerText="NIRA by ELVARA",
+                footerText="Confidential",pageNumbers="true" })))
+            .GetAwaiter().GetResult();
+        new NIRADocxImageInsertCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxImageInsert,
+            JsonSerializer.Serialize(new { source=withHeader,destination=source,imagePath=image,
+                afterParagraph="Results",altText="Logo",captionText="Figure 1 - NIRA by ELVARA",
+                expectedSourceSha256=Sha(withHeader),widthMm="32",alignment="center" })))
+            .GetAwaiter().GetResult();
+        string before=Sha(source);
+        var result = new NIRADocxPageBreakInsertCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.DocxPageBreakInsert, JsonSerializer.Serialize(new { source,
+            destination=output,afterParagraph="Figure 1 - NIRA by ELVARA",expectedSourceSha256=before })))
+            .GetAwaiter().GetResult();
+        if (!result.ChangedSystemState || !result.Output.Contains("PostWriteVerified=True") ||
+            Sha(source) != before || !File.Exists(output) ||
+            !result.Output.Contains("SourceUnchanged=True"))
+            throw new Exception("R43D did not publish a verified, preserving output");
+        string sourceRead=new NIRADocxInspectCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.DocxInspect,JsonSerializer.Serialize(new {path=source})))
+            .GetAwaiter().GetResult().Output;
+        string inspected=new NIRADocxInspectCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.DocxInspect,JsonSerializer.Serialize(new {path=output})))
+            .GetAwaiter().GetResult().Output;
+        if (!sourceRead.Contains("ManualPageBreaks=0") ||
+            !inspected.Contains("ManualPageBreaks=1") ||
+            !inspected.Contains("Tables=1") ||
+            !inspected.Contains("EmbeddedMediaParts=1") ||
+            !inspected.Contains("HeaderPresent=True") ||
+            !inspected.Contains("FooterPresent=True") ||
+            !inspected.Contains("PageNumberField=True") ||
+            !inspected.Contains("Headings=2") ||
+            !inspected.Contains("Figure 1 - NIRA by ELVARA"))
+            throw new Exception("R43D postwrite inspection lost source contents or page break");
+        using var zip=System.IO.Compression.ZipFile.OpenRead(output);
+        var x=System.Xml.Linq.XDocument.Load(zip.GetEntry("word/document.xml")!.Open());
+        XNamespace w="http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+        var body=x.Root!.Element(w+"body")!;
+        XElement[] nodes=body.Elements().ToArray();
+        int anchor=Array.FindIndex(nodes, n=>n.Name==w+"p" &&
+            string.Concat(n.Descendants(w+"t").Select(t=>t.Value))=="Figure 1 - NIRA by ELVARA");
+        if (anchor < 0 || anchor+1>=nodes.Length || nodes[anchor+1].Name != w+"p" ||
+            nodes[anchor+1].Descendants(w+"br").Count(br=>(string?)br.Attribute(w+"type")=="page") != 1)
+            throw new Exception("R43D break missing immediately after selected anchor");
+    }
+    finally { Directory.Delete(folder,recursive:true); }
+});
+Check("R43D refuses stale, ambiguous, missing anchor and existing output", () =>
+{
+    string folder=Path.Combine(Path.GetTempPath(),"nira-r43d-unsafe-"+Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        string source=Path.Combine(folder,"source.docx");
+        string outPath=Path.Combine(folder,"output.docx");
+        new NIRADocxCreateCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxCreate,
+            JsonSerializer.Serialize(new {path=source,content="Repeat\nRepeat\nEnd"})))
+            .GetAwaiter().GetResult();
+        string hash=Sha(source);
+        var handler=new NIRADocxPageBreakInsertCapabilityHandler();
+        void Call(string anchor,string expected) => handler.ExecuteAsync(Request(
+            NIRACapabilityIds.DocxPageBreakInsert, JsonSerializer.Serialize(new {source,
+                destination=outPath,afterParagraph=anchor,expectedSourceSha256=expected})))
+            .GetAwaiter().GetResult();
+        Throws<System.IO.IOException>(()=>Call("End",new string('0',64)));
+        Throws<System.InvalidOperationException>(()=>Call("Repeat",hash));
+        Throws<System.InvalidOperationException>(()=>Call("Missing",hash));
+        if (File.Exists(outPath)) throw new Exception("An unsafe R43D request created an output");
+        File.WriteAllText(outPath,"protected");
+        Throws<System.IO.IOException>(()=>Call("End",hash));
+        if (File.ReadAllText(outPath)!="protected" || Sha(source)!=hash)
+            throw new Exception("R43D overwrote a protected file or modified source");
+    }
+    finally { Directory.Delete(folder,recursive:true); }
+});
+Check("R43D DOCX read guidance prevents binary text parsing", () =>
+{
+    string folder=Path.Combine(Path.GetTempPath(),"nira-r43d-read-"+Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        string source=Path.Combine(folder,"word.docx");
+        new NIRADocxCreateCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxCreate,
+            JsonSerializer.Serialize(new {path=source,content="## Overview\nHello"})))
+            .GetAwaiter().GetResult();
+        var reader=new NIRAFileReadCapabilityHandler();
+        if (!reader.Descriptor.Description.Contains("filesystem.docx.inspect"))
+            throw new Exception("Core text reader does not expose correct Word reader");
+        try
+        {
+            reader.ExecuteAsync(Request(NIRACapabilityIds.FileRead,
+                JsonSerializer.Serialize(new {path=source}))).GetAwaiter().GetResult();
+            throw new Exception("Binary Word file was treated as text");
+        }
+        catch (InvalidOperationException ex)
+        {
+            if (!ex.Message.Contains("filesystem.docx.inspect")) throw;
+        }
+    }
+    finally {Directory.Delete(folder,recursive:true);}
+});
+
+// R43D.1: a completed page-break operation must never be erased by an
+// inconclusive model review. Require the write receipt and both document
+// inspections; rejected evidence must not be upgraded to verified success.
+Check("R43D.1 audited page-break receipts survive reviewer uncertainty", () =>
+{
+    string folder = Path.Combine(Path.GetTempPath(), "nira-r43d1-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        string source = Path.Combine(folder, "source.docx");
+        string output = Path.Combine(folder, "output.docx");
+        new NIRADocxCreateCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxCreate,
+            JsonSerializer.Serialize(new { path = source, content = "# Results\nFigure 1 - NIRA by ELVARA\nEvidence" })))
+            .GetAwaiter().GetResult();
+        string sha = Sha(source);
+        var sourceReq = Request(NIRACapabilityIds.DocxInspect, JsonSerializer.Serialize(new { path = source }));
+        var destReq = Request(NIRACapabilityIds.DocxInspect, JsonSerializer.Serialize(new { path = output }));
+        var writeReq = Request(NIRACapabilityIds.DocxPageBreakInsert, JsonSerializer.Serialize(new {
+            source, destination = output, afterParagraph = "Figure 1 - NIRA by ELVARA", expectedSourceSha256 = sha
+        }));
+        var inspect = new NIRADocxInspectCapabilityHandler();
+        string before = inspect.ExecuteAsync(sourceReq).GetAwaiter().GetResult().Output;
+        var saved = new NIRADocxPageBreakInsertCapabilityHandler().ExecuteAsync(writeReq)
+            .GetAwaiter().GetResult();
+        string after = inspect.ExecuteAsync(destReq).GetAwaiter().GetResult().Output;
+        NIRACapabilityResult Read(string value) => new() {
+            CapabilityId = NIRACapabilityIds.DocxInspect,
+            Risk = NIRACapabilityRisk.Observe, Status = NIRACapabilityResultStatus.Succeeded,
+            Output = value
+        };
+        var reqs = new Dictionary<string, NIRACapabilityRequest> {
+            ["source"] = sourceReq, ["write"] = writeReq, ["dest"] = destReq
+        };
+        var receipts = new Dictionary<string, NIRACapabilityResult> {
+            ["source"] = Read(before), ["dest"] = Read(after),
+            ["write"] = new NIRACapabilityResult {
+                CapabilityId = NIRACapabilityIds.DocxPageBreakInsert,
+                Risk = NIRACapabilityRisk.Modify,
+                Status = NIRACapabilityResultStatus.Succeeded, ChangedSystemState = true,
+                AuditRecorded = true, Output = saved.Output
+            }
+        };
+        string? report = NIRADocxObservedCompletionPolicy.FromVerifiedPageBreakResults(reqs, receipts);
+        if (report is null || !report.Contains("0 → 1", StringComparison.Ordinal) ||
+            !report.Contains(Sha(output), StringComparison.OrdinalIgnoreCase) ||
+            !report.Contains("visual pagination", StringComparison.OrdinalIgnoreCase) ||
+            Sha(source) != sha) throw new Exception("Verified R43D output was discarded");
+
+        // R43D.3 regression: a trusted page-break certificate remains valid
+        // even when the narrative model or its reviewer failed to word a final
+        // response. The operation itself is proven by the audited receipts.
+        const string explicitRequest =
+            "NIRA call filesystem.docx.pagebreak.insert and verify the result.";
+        string? direct = NIRADocxObservedCompletionPolicy
+            .FromExplicitVerifiedPageBreakTask(explicitRequest, reqs, receipts, false);
+        if (direct is null || !direct.Contains(Sha(output), StringComparison.OrdinalIgnoreCase) ||
+            !direct.Contains("Verified margins (mm)", StringComparison.Ordinal) ||
+            NIRADocxObservedCompletionPolicy.FromExplicitVerifiedPageBreakTask(
+                "Just inspect a file.", reqs, receipts, false) != null ||
+            NIRADocxObservedCompletionPolicy.FromExplicitVerifiedPageBreakTask(
+                explicitRequest, reqs, receipts, true) != null)
+            throw new Exception("R43D.3 verified result was wrongly rejected or escaped its scope");
+
+        var write = receipts["write"];
+        receipts["write"] = write with { AuditRecorded = false };
+        if (NIRADocxObservedCompletionPolicy.FromVerifiedPageBreakResults(reqs, receipts) != null)
+            throw new Exception("Unaudited page-break modification certified");
+        receipts["write"] = write with { OutcomeUncertain = true };
+        if (NIRADocxObservedCompletionPolicy.FromVerifiedPageBreakResults(reqs, receipts) != null)
+            throw new Exception("Uncertain page-break modification certified");
+        receipts["write"] = write with { Output = write.Output.Replace("PostWriteVerified=True", "PostWriteVerified=False") };
+        if (NIRADocxObservedCompletionPolicy.FromVerifiedPageBreakResults(reqs, receipts) != null)
+            throw new Exception("Failed post-write check certified");
+        receipts["write"] = write;
+        var dest = receipts["dest"];
+        receipts["dest"] = dest with { Output = dest.Output.Replace("ManualPageBreaks=1", "ManualPageBreaks=0") };
+        if (NIRADocxObservedCompletionPolicy.FromVerifiedPageBreakResults(reqs, receipts) != null)
+            throw new Exception("False break count certified");
+        receipts["dest"] = dest with { Output = dest.Output.Replace("Tables=0", "Tables=1") };
+        if (NIRADocxObservedCompletionPolicy.FromVerifiedPageBreakResults(reqs, receipts) != null)
+            throw new Exception("Changed table count certified");
+        receipts["dest"] = dest;
+        receipts.Remove("source");
+        if (NIRADocxObservedCompletionPolicy.FromVerifiedPageBreakResults(reqs, receipts) != null)
+            throw new Exception("Missing source inspection certified");
+    }
+    finally { Directory.Delete(folder, recursive: true); }
+});
+
+// R43D.2: after a verified new-DOCX creation, a premature failed
+// destination read can be retried. Never replay writes, erase successful
+// observations, or hide unrelated failures.
+Check("R43D.2 verified new DOCX releases only premature failed destination reads", () =>
+{
+    string source = @"C:\Users\ADMIN\Desktop\NIRA-R43D2\original.docx";
+    string destination = @"C:\Users\ADMIN\Desktop\NIRA-R43D2\new.docx";
+    string unrelated = @"C:\Users\ADMIN\Desktop\NIRA-R43D2\unrelated.docx";
+    var hash = Request(NIRACapabilityIds.FileHash,
+        JsonSerializer.Serialize(new { path = source }));
+    var earlyInspect = Request(NIRACapabilityIds.DocxInspect,
+        JsonSerializer.Serialize(new { path = destination }));
+    var earlyHash = Request(NIRACapabilityIds.FileHash,
+        JsonSerializer.Serialize(new { path = destination }));
+    var otherRead = Request(NIRACapabilityIds.DocxInspect,
+        JsonSerializer.Serialize(new { path = unrelated }));
+    var write = Request(NIRACapabilityIds.DocxPageBreakInsert,
+        JsonSerializer.Serialize(new { source, destination, afterParagraph = "Caption",
+            expectedSourceSha256 = new string('A',64) }));
+    var observations = new[] { hash, earlyInspect, earlyHash, otherRead };
+    var requests = observations.ToDictionary(x => x.BuildSignature(), x => x,
+        StringComparer.OrdinalIgnoreCase);
+    var results = observations.ToDictionary(x => x.BuildSignature(), x => new NIRACapabilityResult {
+        CapabilityId = x.CapabilityId, Risk = NIRACapabilityRisk.Observe,
+        Status = x == hash ? NIRACapabilityResultStatus.Succeeded : NIRACapabilityResultStatus.Failed
+    }, StringComparer.OrdinalIgnoreCase);
+    var executed = new HashSet<string>(requests.Keys, StringComparer.OrdinalIgnoreCase)
+        { write.BuildSignature() };
+    var duplicates = new HashSet<string>(executed, StringComparer.OrdinalIgnoreCase);
+    var complete = new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.DocxPageBreakInsert,
+        Risk = NIRACapabilityRisk.Modify,
+        Status = NIRACapabilityResultStatus.Succeeded,
+        ChangedSystemState = true, AuditRecorded = true,
+        Output = "Destination=" + destination + "\nPostWriteVerified=True\nSourceUnchanged=True\nOverwroteExisting=False"
+    };
+    int Invalidate(NIRACapabilityResult result) =>
+        NIRAFileRevisionObservationContinuityPolicy.InvalidatePrematureDocxDestinationReads(
+            write, result, executed, duplicates, requests, results);
+    if (Invalidate(complete with { AuditRecorded = false }) != 0 ||
+        Invalidate(complete with { OutcomeUncertain = true }) != 0 ||
+        Invalidate(complete with { Status = NIRACapabilityResultStatus.Failed }) != 0 ||
+        Invalidate(complete with { Output = complete.Output.Replace("PostWriteVerified=True", "PostWriteVerified=False") }) != 0 ||
+        !executed.Contains(earlyInspect.BuildSignature()))
+        throw new Exception("Unverified write cleared an earlier read");
+    if (Invalidate(complete) != 2 ||
+        executed.Contains(earlyInspect.BuildSignature()) ||
+        executed.Contains(earlyHash.BuildSignature()) ||
+        !executed.Contains(write.BuildSignature()) ||
+        !results.ContainsKey(hash.BuildSignature()) ||
+        !results.ContainsKey(otherRead.BuildSignature()) ||
+        requests.ContainsKey(earlyInspect.BuildSignature()) ||
+        Invalidate(complete) != 0 ||
+        !executed.Add(earlyInspect.BuildSignature()) ||
+        executed.Add(earlyInspect.BuildSignature()))
+        throw new Exception("New DOCX did not release just the stale destination observations");
+});
+
+Check("R43D.2 successful or uncertain destination reads remain guarded", () =>
+{
+    string source = @"C:\Users\ADMIN\Desktop\NIRA-R43D2\original.docx";
+    string destination = @"C:\Users\ADMIN\Desktop\NIRA-R43D2\output.docx";
+    var inspect = Request(NIRACapabilityIds.DocxInspect,
+        JsonSerializer.Serialize(new { path = destination }));
+    var write = Request(NIRACapabilityIds.DocxPageBreakInsert,
+        JsonSerializer.Serialize(new { source, destination, afterParagraph = "Caption",
+            expectedSourceSha256 = new string('A',64) }));
+    var requests = new Dictionary<string, NIRACapabilityRequest>(StringComparer.OrdinalIgnoreCase)
+        { [inspect.BuildSignature()] = inspect };
+    var observed = new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.DocxInspect,
+        Risk = NIRACapabilityRisk.Observe,
+        Status = NIRACapabilityResultStatus.Succeeded
+    };
+    var results = new Dictionary<string, NIRACapabilityResult>(StringComparer.OrdinalIgnoreCase)
+        { [inspect.BuildSignature()] = observed };
+    var executed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        { inspect.BuildSignature(), write.BuildSignature() };
+    var duplicate = new HashSet<string>(executed, StringComparer.OrdinalIgnoreCase);
+    var complete = new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.DocxPageBreakInsert,
+        Risk = NIRACapabilityRisk.Modify,
+        Status = NIRACapabilityResultStatus.Succeeded,
+        ChangedSystemState = true, AuditRecorded = true,
+        Output = "Destination=" + destination + "\nPostWriteVerified=True\nSourceUnchanged=True\nOverwroteExisting=False"
+    };
+    int Invalidate() => NIRAFileRevisionObservationContinuityPolicy
+        .InvalidatePrematureDocxDestinationReads(write, complete, executed, duplicate, requests, results);
+    if (Invalidate() != 0 || !executed.Contains(inspect.BuildSignature()))
+        throw new Exception("Successful destination inspection was wrongly invalidated");
+    results[inspect.BuildSignature()] = observed with {
+        Status = NIRACapabilityResultStatus.Failed, OutcomeUncertain = true
+    };
+    if (Invalidate() != 0 || !executed.Contains(inspect.BuildSignature()))
+        throw new Exception("Uncertain failed observation was wrongly invalidated");
+    results[inspect.BuildSignature()] = observed with {
+        Status = NIRACapabilityResultStatus.Failed, ChangedSystemState = true
+    };
+    if (Invalidate() != 0 || !executed.Contains(inspect.BuildSignature()))
+        throw new Exception("Mutating observation was wrongly invalidated");
+});
+
+Check("R43D.2 one failed first attempt does not erase a subsequently verified new DOCX", () =>
+{
+    string folder = Path.Combine(Path.GetTempPath(), "nira-r43d2-retry-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        string source = Path.Combine(folder, "before.docx");
+        string destination = Path.Combine(folder, "after.docx");
+        new NIRADocxCreateCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxCreate,
+            JsonSerializer.Serialize(new { path = source, content = "# Results\nCaption\nBody" })))
+            .GetAwaiter().GetResult();
+        string sourceHash = Sha(source);
+        var originalRead = Request(NIRACapabilityIds.DocxInspect,
+            JsonSerializer.Serialize(new { path = source }));
+        var savedRead = Request(NIRACapabilityIds.DocxInspect,
+            JsonSerializer.Serialize(new { path = destination }));
+        var rejectedWrite = Request(NIRACapabilityIds.DocxPageBreakInsert,
+            JsonSerializer.Serialize(new { source, destination, afterParagraph = "Caption",
+                expectedSourceSha256 = new string('0', 64) }));
+        var acceptedWrite = Request(NIRACapabilityIds.DocxPageBreakInsert,
+            JsonSerializer.Serialize(new { source, destination, afterParagraph = "Caption",
+                expectedSourceSha256 = sourceHash }));
+        var inspector = new NIRADocxInspectCapabilityHandler();
+        string before = inspector.ExecuteAsync(originalRead).GetAwaiter().GetResult().Output;
+        var saved = new NIRADocxPageBreakInsertCapabilityHandler().ExecuteAsync(acceptedWrite)
+            .GetAwaiter().GetResult();
+        string after = inspector.ExecuteAsync(savedRead).GetAwaiter().GetResult().Output;
+        var requests = new Dictionary<string, NIRACapabilityRequest> {
+            ["before"] = originalRead, ["failed"] = rejectedWrite,
+            ["saved"] = savedRead, ["write"] = acceptedWrite
+        };
+        var successfulRead = new Func<string, NIRACapabilityResult>(text => new() {
+            CapabilityId = NIRACapabilityIds.DocxInspect,
+            Status = NIRACapabilityResultStatus.Succeeded,
+            Risk = NIRACapabilityRisk.Observe, Output = text
+        });
+        var results = new Dictionary<string, NIRACapabilityResult> {
+            ["before"] = successfulRead(before), ["saved"] = successfulRead(after),
+            ["failed"] = new NIRACapabilityResult {
+                CapabilityId = NIRACapabilityIds.DocxPageBreakInsert,
+                Status = NIRACapabilityResultStatus.Failed,
+                Risk = NIRACapabilityRisk.Modify, ChangedSystemState = false,
+                OutcomeUncertain = true },
+            ["write"] = new NIRACapabilityResult {
+                CapabilityId = NIRACapabilityIds.DocxPageBreakInsert,
+                Status = NIRACapabilityResultStatus.Succeeded,
+                Risk = NIRACapabilityRisk.Modify, ChangedSystemState = true,
+                AuditRecorded = true, Output = saved.Output }
+        };
+        if (NIRADocxObservedCompletionPolicy.FromVerifiedPageBreakResults(requests, results) is null)
+            throw new Exception("Verified new copy was discarded after a harmless failed first attempt");
+        results["failed"] = results["failed"] with { ChangedSystemState = true };
+        if (NIRADocxObservedCompletionPolicy.FromVerifiedPageBreakResults(requests, results) != null)
+            throw new Exception("Potential earlier write effect was falsely certified");
+        results["failed"] = results["failed"] with { ChangedSystemState = false };
+        requests["failed"] = Request(NIRACapabilityIds.DocxPageBreakInsert,
+            JsonSerializer.Serialize(new { source, destination = Path.Combine(folder, "different.docx"),
+                afterParagraph = "Caption", expectedSourceSha256 = sourceHash }));
+        if (NIRADocxObservedCompletionPolicy.FromVerifiedPageBreakResults(requests, results) != null)
+            throw new Exception("Prior failed action on another target was falsely certified");
+    }
+    finally { Directory.Delete(folder, recursive:true); }
+});
+
+Check("R44A append preserves styled table and correctly extends alternating rows", () =>
+{
+    string folder = Path.Combine(Path.GetTempPath(), "nira-r44a-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        string document = Path.Combine(folder, "base.docx");
+        string table = Path.Combine(folder, "table.docx");
+        string styled = Path.Combine(folder, "styled.docx");
+        string output = Path.Combine(folder, "appended.docx");
+        var create = new NIRADocxCreateCapabilityHandler();
+        var add = new NIRADocxTableAddCapabilityHandler();
+        var style = new NIRADocxTableStyleCapabilityHandler();
+        var append = new NIRADocxTableRowsAppendCapabilityHandler();
+        create.ExecuteAsync(Request(NIRACapabilityIds.DocxCreate,
+            JsonSerializer.Serialize(new { path = document,
+                title = "R44A", content = "## Results\nRegression fixture" })))
+            .GetAwaiter().GetResult();
+        add.ExecuteAsync(Request(NIRACapabilityIds.DocxTableAdd,
+            JsonSerializer.Serialize(new { source = document, destination = table,
+                tsv = "Feature\tStatus\tDescription\nOne\tPassed\tFirst\nTwo\tPassed\tSecond\nThree\tTesting\tThird",
+                expectedSourceSha256 = Sha(document) })))
+            .GetAwaiter().GetResult();
+        style.ExecuteAsync(Request(NIRACapabilityIds.DocxTableStyle,
+            JsonSerializer.Serialize(new { source = table, destination = styled,
+                headerTsv = "Feature\tStatus\tDescription",
+                headerFillHex = "17365D", stripeFillHex = "EAF2F8",
+                expectedSourceSha256 = Sha(table) })))
+            .GetAwaiter().GetResult();
+        string before = Sha(styled);
+        var result = append.ExecuteAsync(Request(NIRACapabilityIds.DocxTableRowsAppend,
+            JsonSerializer.Serialize(new { source = styled, destination = output,
+                headerTsv = "Feature\tStatus\tDescription",
+                rowsTsv = "Four\tPassed\tFourth\nFive\tPassed\tFifth",
+                expectedSourceSha256 = before })))
+            .GetAwaiter().GetResult();
+        if (Sha(styled) != before || !File.Exists(output) ||
+            !result.Output.Contains("PostWriteVerified=True", StringComparison.Ordinal) ||
+            !result.Output.Contains("TableRowsBefore=4", StringComparison.Ordinal) ||
+            !result.Output.Contains("TableRowsAfter=6", StringComparison.Ordinal) ||
+            !result.Output.Contains("SourceUnchanged=True", StringComparison.Ordinal))
+            throw new Exception("Appending rows lost verified completion or changed source");
+        using var sourceArchive = System.IO.Compression.ZipFile.OpenRead(styled);
+        using var newArchive = System.IO.Compression.ZipFile.OpenRead(output);
+        var originalXml = System.Xml.Linq.XDocument.Load(sourceArchive.GetEntry("word/document.xml")!.Open());
+        var newXml = System.Xml.Linq.XDocument.Load(newArchive.GetEntry("word/document.xml")!.Open());
+        XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+        var originalRows = originalXml.Descendants(w + "tbl").Single().Elements(w + "tr").ToArray();
+        var newRows = newXml.Descendants(w + "tbl").Single().Elements(w + "tr").ToArray();
+        if (newRows.Length != 6 || Enumerable.Range(0, 4).Any(i =>
+                !System.Xml.Linq.XNode.DeepEquals(originalRows[i], newRows[i])))
+            throw new Exception("Pre-existing table cells or formatting were changed");
+        string[] fourth = newRows[4].Elements(w + "tc").Select(c =>
+            string.Concat(c.Descendants(w + "t").Select(t => t.Value))).ToArray();
+        string[] fifth = newRows[5].Elements(w + "tc").Select(c =>
+            string.Concat(c.Descendants(w + "t").Select(t => t.Value))).ToArray();
+        if (!fourth.SequenceEqual(new [] { "Four", "Passed", "Fourth" }) ||
+            !fifth.SequenceEqual(new [] { "Five", "Passed", "Fifth" }))
+            throw new Exception("New table data did not persist as exact cells");
+        string? Shading(System.Xml.Linq.XElement row) =>
+            (string?)row.Elements(w + "tc").First().Element(w + "tcPr")?
+                .Element(w + "shd")?.Attribute(w + "fill");
+        if (Shading(newRows[4]) != Shading(originalRows[2]) ||
+            Shading(newRows[5]) != Shading(originalRows[3]))
+            throw new Exception("New rows did not inherit alternating style");
+        var inspect = new NIRADocxInspectCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.DocxInspect, JsonSerializer.Serialize(new { path = output })))
+            .GetAwaiter().GetResult();
+        if (!inspect.Output.Contains("TableRows[1]=6", StringComparison.Ordinal) ||
+            !inspect.Output.Contains("TableLastRowCellsJson[1]=[\"Five\",\"Passed\",\"Fifth\"]",
+                StringComparison.Ordinal))
+            throw new Exception("Independent read-only inspection did not expose saved table rows");
+        Throws<IOException>(() => append.ExecuteAsync(Request(NIRACapabilityIds.DocxTableRowsAppend,
+            JsonSerializer.Serialize(new { source = styled, destination = Path.Combine(folder,"stale.docx"),
+                headerTsv = "Feature\tStatus\tDescription", rowsTsv = "Six\tPassed\tSixth",
+                expectedSourceSha256 = new string('0', 64) }))).GetAwaiter().GetResult());
+        Throws<IOException>(() => append.ExecuteAsync(Request(NIRACapabilityIds.DocxTableRowsAppend,
+            JsonSerializer.Serialize(new { source = styled, destination = output,
+                headerTsv = "Feature\tStatus\tDescription", rowsTsv = "Six\tPassed\tSixth",
+                expectedSourceSha256 = before }))).GetAwaiter().GetResult());
+        Throws<ArgumentException>(() => append.ExecuteAsync(Request(NIRACapabilityIds.DocxTableRowsAppend,
+            JsonSerializer.Serialize(new { source = styled, destination = Path.Combine(folder,"invalid.docx"),
+                headerTsv = "Feature\tStatus\tDescription", rowsTsv = "Only two\tBad",
+                expectedSourceSha256 = before }))).GetAwaiter().GetResult());
+    }
+    finally { Directory.Delete(folder, recursive: true); }
+});
+
+Check("R44B updates one keyed Word table cell preserving formatting and all other content", () =>
+{
+    string folder = Path.Combine(Path.GetTempPath(), "nira-r44b-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        string created = Path.Combine(folder, "created.docx");
+        string table = Path.Combine(folder, "table.docx");
+        string styled = Path.Combine(folder, "styled.docx");
+        string source = Path.Combine(folder, "source.docx");
+        string destination = Path.Combine(folder, "updated.docx");
+        var create = new NIRADocxCreateCapabilityHandler();
+        var add = new NIRADocxTableAddCapabilityHandler();
+        var style = new NIRADocxTableStyleCapabilityHandler();
+        var append = new NIRADocxTableRowsAppendCapabilityHandler();
+        var update = new NIRADocxTableCellUpdateCapabilityHandler();
+        create.ExecuteAsync(Request(NIRACapabilityIds.DocxCreate,
+            JsonSerializer.Serialize(new { path = created, title = "R44B", content = "## Results\nPreservation case" })))
+            .GetAwaiter().GetResult();
+        add.ExecuteAsync(Request(NIRACapabilityIds.DocxTableAdd,
+            JsonSerializer.Serialize(new { source = created, destination = table,
+                tsv = "Feature\tStatus\tDescription\nFirst\tPassed\tOriginal\nSecond\tTesting\tSecond value",
+                expectedSourceSha256 = Sha(created) })))
+            .GetAwaiter().GetResult();
+        style.ExecuteAsync(Request(NIRACapabilityIds.DocxTableStyle,
+            JsonSerializer.Serialize(new { source = table, destination = styled,
+                headerTsv = "Feature\tStatus\tDescription",
+                headerFillHex = "17365D", stripeFillHex = "EAF2F8",
+                expectedSourceSha256 = Sha(table) })))
+            .GetAwaiter().GetResult();
+        append.ExecuteAsync(Request(NIRACapabilityIds.DocxTableRowsAppend,
+            JsonSerializer.Serialize(new { source = styled, destination = source,
+                headerTsv = "Feature\tStatus\tDescription",
+                rowsTsv = "Table row append\tTesting\tNative styled row update",
+                expectedSourceSha256 = Sha(styled) })))
+            .GetAwaiter().GetResult();
+        string originalHash = Sha(source);
+        string Payload(string from, string to, string key = "Table row append",
+            string col = "Status", string expectedOld = "Testing", string next = "Passed",
+            string? expectedSha = null) => JsonSerializer.Serialize(new {
+                source = from, destination = to, headerTsv = "Feature\tStatus\tDescription",
+                rowKey = key, columnHeader = col, expectedOldValue = expectedOld,
+                newValue = next, expectedSourceSha256 = expectedSha ?? originalHash
+            });
+        var result = update.ExecuteAsync(Request(NIRACapabilityIds.DocxTableCellUpdate,
+            Payload(source, destination))).GetAwaiter().GetResult();
+        if (!result.Succeeded || Sha(source) != originalHash || !File.Exists(destination) ||
+            !result.Output.Contains("UpdatedCellJson=\"Passed\"", StringComparison.Ordinal) ||
+            !result.Output.Contains("OtherPackagePartsPreserved=True", StringComparison.Ordinal) ||
+            !result.Output.Contains("PostWriteVerified=True", StringComparison.Ordinal) ||
+            !result.Output.Contains("SourceUnchanged=True", StringComparison.Ordinal))
+            throw new Exception("R44B did not publish a verified, source-preserving table-cell update");
+        using var beforeZip = System.IO.Compression.ZipFile.OpenRead(source);
+        using var afterZip = System.IO.Compression.ZipFile.OpenRead(destination);
+        XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+        var beforeDoc = System.Xml.Linq.XDocument.Load(beforeZip.GetEntry("word/document.xml")!.Open());
+        var afterDoc = System.Xml.Linq.XDocument.Load(afterZip.GetEntry("word/document.xml")!.Open());
+        var rowsBefore = beforeDoc.Descendants(w + "tbl").Single().Elements(w + "tr").ToArray();
+        var rowsAfter = afterDoc.Descendants(w + "tbl").Single().Elements(w + "tr").ToArray();
+        if (rowsBefore.Length != rowsAfter.Length || rowsAfter.Length != 4 ||
+            Enumerable.Range(0, rowsBefore.Length - 1).Any(i =>
+                !System.Xml.Linq.XNode.DeepEquals(rowsBefore[i], rowsAfter[i])))
+            throw new Exception("R44B unexpectedly changed other table rows");
+        var previousCells = rowsBefore[^1].Elements(w + "tc").ToArray();
+        var changedCells = rowsAfter[^1].Elements(w + "tc").ToArray();
+        if (!System.Xml.Linq.XNode.DeepEquals(previousCells[0], changedCells[0]) ||
+            !System.Xml.Linq.XNode.DeepEquals(previousCells[2], changedCells[2]) ||
+            string.Concat(changedCells[1].Descendants(w + "t").Select(t => t.Value)) != "Passed")
+            throw new Exception("R44B changed a neighbor cell or did not update the target");
+        // Reversing only the intended text must recover the exact original cell XML.
+        var revert = new System.Xml.Linq.XElement(changedCells[1]);
+        revert.Descendants(w + "t").Single().Value = "Testing";
+        if (!System.Xml.Linq.XNode.DeepEquals(previousCells[1], revert))
+            throw new Exception("R44B did not preserve target cell formatting");
+        if (beforeZip.Entries.Count != afterZip.Entries.Count || beforeZip.Entries
+            .Where(e => e.FullName != "word/document.xml")
+            .Any(entry => {
+                var matching = afterZip.GetEntry(entry.FullName);
+                if (matching == null) return true;
+                using var from = entry.Open(); using var to = matching.Open();
+                return !System.Security.Cryptography.SHA256.HashData(from).AsSpan()
+                    .SequenceEqual(System.Security.Cryptography.SHA256.HashData(to));
+            }))
+            throw new Exception("R44B changed unrelated DOCX package content");
+        var inspect = new NIRADocxInspectCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.DocxInspect, JsonSerializer.Serialize(new { path = destination })))
+            .GetAwaiter().GetResult();
+        if (!inspect.Output.Contains("TableRows[1]=4", StringComparison.Ordinal) ||
+            !inspect.Output.Contains("TableLastRowCellsJson[1]=[\"Table row append\",\"Passed\",\"Native styled row update\"]", StringComparison.Ordinal))
+            throw new Exception("R44B independent inspection did not read changed table cell");
+        Throws<IOException>(() => update.ExecuteAsync(Request(NIRACapabilityIds.DocxTableCellUpdate,
+            Payload(source, Path.Combine(folder, "stale.docx"), expectedSha: new string('0', 64))))
+            .GetAwaiter().GetResult());
+        Throws<IOException>(() => update.ExecuteAsync(Request(NIRACapabilityIds.DocxTableCellUpdate,
+            Payload(source, Path.Combine(folder, "old-value.docx"), expectedOld: "Passed", next: "Verified")))
+            .GetAwaiter().GetResult());
+        Throws<IOException>(() => update.ExecuteAsync(Request(NIRACapabilityIds.DocxTableCellUpdate,
+            Payload(source, destination))).GetAwaiter().GetResult());
+        Throws<InvalidOperationException>(() => update.ExecuteAsync(Request(NIRACapabilityIds.DocxTableCellUpdate,
+            Payload(source, Path.Combine(folder, "missing-row.docx"), key: "Not found")))
+            .GetAwaiter().GetResult());
+        Throws<ArgumentException>(() => update.ExecuteAsync(Request(NIRACapabilityIds.DocxTableCellUpdate,
+            Payload(source, Path.Combine(folder, "bad-column.docx"), col: "Feature")))
+            .GetAwaiter().GetResult());
+        if (Directory.GetFiles(folder, "*.docx").Length != 5) // created, table, styled, source, destination
+            throw new Exception("Rejected R44B operations left an unexpected output document");
+    }
+    finally { Directory.Delete(folder, recursive: true); }
+});
+
+Check("R44C multi-cell updates are atomic and retain all unrelated DOCX content", () =>
+{
+    string folder = Path.Combine(Path.GetTempPath(), "nira-r44c-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        string created = Path.Combine(folder, "created.docx");
+        string table = Path.Combine(folder, "table.docx");
+        string source = Path.Combine(folder, "source.docx");
+        string destination = Path.Combine(folder, "batch.docx");
+        new NIRADocxCreateCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxCreate,
+            JsonSerializer.Serialize(new { path = created, title = "R44C", content = "## Overview\nKeep layout" })))
+            .GetAwaiter().GetResult();
+        new NIRADocxTableAddCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxTableAdd,
+            JsonSerializer.Serialize(new { source = created, destination = table,
+                tsv = "Feature\tStatus\tDescription\nRow A\tTesting\tA old\nRow B\tTesting\tB old",
+                expectedSourceSha256 = Sha(created) }))).GetAwaiter().GetResult();
+        new NIRADocxTableStyleCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxTableStyle,
+            JsonSerializer.Serialize(new { source = table, destination = source,
+                headerTsv = "Feature\tStatus\tDescription", headerFillHex = "17365D",
+                stripeFillHex = "EAF2F8", expectedSourceSha256 = Sha(table) })))
+            .GetAwaiter().GetResult();
+        string sha = Sha(source);
+        string payload(string target, string changes, string? expectedSha = null) => JsonSerializer.Serialize(new {
+            source, destination = target, headerTsv = "Feature\tStatus\tDescription",
+            updatesTsv = changes, expectedSourceSha256 = expectedSha ?? sha
+        });
+        var handler = new NIRADocxTableCellsBatchCapabilityHandler();
+        const string updates = "Row A\tStatus\tTesting\tPassed\nRow B\tDescription\tB old\tB revised";
+        var result = handler.ExecuteAsync(Request(NIRACapabilityIds.DocxTableCellsBatch,
+            payload(destination, updates))).GetAwaiter().GetResult();
+        if (!result.Succeeded || Sha(source) != sha || !File.Exists(destination) ||
+            !result.Output.Contains("UpdatedCellsCount=2", StringComparison.Ordinal) ||
+            !result.Output.Contains("OtherPackagePartsPreserved=True", StringComparison.Ordinal) ||
+            !result.Output.Contains("PostWriteVerified=True", StringComparison.Ordinal) ||
+            !result.Output.Contains("SourceUnchanged=True", StringComparison.Ordinal))
+            throw new Exception("R44C update did not produce a verified batch receipt");
+        using (var originalZip = System.IO.Compression.ZipFile.OpenRead(source))
+        using (var updatedZip = System.IO.Compression.ZipFile.OpenRead(destination))
+        {
+            XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+            var oldDoc = System.Xml.Linq.XDocument.Load(originalZip.GetEntry("word/document.xml")!.Open());
+            var newDoc = System.Xml.Linq.XDocument.Load(updatedZip.GetEntry("word/document.xml")!.Open());
+            var oldRows = oldDoc.Descendants(w + "tbl").Single().Elements(w + "tr").ToArray();
+            var newRows = newDoc.Descendants(w + "tbl").Single().Elements(w + "tr").ToArray();
+            string[] cells(System.Xml.Linq.XElement row) => row.Elements(w + "tc")
+                .Select(cell => string.Concat(cell.Descendants(w + "t").Select(x => x.Value))).ToArray();
+            if (newRows.Length != 3 || !cells(newRows[1]).SequenceEqual(new[] { "Row A", "Passed", "A old" }) ||
+                !cells(newRows[2]).SequenceEqual(new[] { "Row B", "Testing", "B revised" }) ||
+                !System.Xml.Linq.XNode.DeepEquals(oldRows[0], newRows[0]))
+                throw new Exception("R44C modified unrelated table contents");
+            if (originalZip.Entries.Count != updatedZip.Entries.Count || originalZip.Entries
+                .Where(e => e.FullName != "word/document.xml")
+                .Any(e => { var newPart = updatedZip.GetEntry(e.FullName);
+                    if (newPart is null) return true;
+                    using var a = e.Open(); using var b = newPart.Open();
+                    return !System.Security.Cryptography.SHA256.HashData(a).AsSpan()
+                        .SequenceEqual(System.Security.Cryptography.SHA256.HashData(b)); }))
+                throw new Exception("R44C changed non-document package parts");
+        }
+        Throws<IOException>(() => handler.ExecuteAsync(Request(NIRACapabilityIds.DocxTableCellsBatch,
+            payload(Path.Combine(folder, "stale.docx"), updates, new string('0',64))))
+            .GetAwaiter().GetResult());
+        Throws<IOException>(() => handler.ExecuteAsync(Request(NIRACapabilityIds.DocxTableCellsBatch,
+            payload(Path.Combine(folder, "wrong-old.docx"),
+                "Row A\tStatus\tIncorrect\tPassed\nRow B\tStatus\tTesting\tPassed")))
+            .GetAwaiter().GetResult());
+        Throws<ArgumentException>(() => handler.ExecuteAsync(Request(NIRACapabilityIds.DocxTableCellsBatch,
+            payload(Path.Combine(folder, "duplicate.docx"),
+                "Row A\tStatus\tTesting\tPassed\nRow A\tStatus\tTesting\tDone")))
+            .GetAwaiter().GetResult());
+        Throws<InvalidOperationException>(() => handler.ExecuteAsync(Request(NIRACapabilityIds.DocxTableCellsBatch,
+            payload(Path.Combine(folder, "missing.docx"), "Missing\tStatus\tTesting\tPassed")))
+            .GetAwaiter().GetResult());
+        Throws<IOException>(() => handler.ExecuteAsync(Request(NIRACapabilityIds.DocxTableCellsBatch,
+            payload(destination, updates))).GetAwaiter().GetResult());
+        if (Directory.GetFiles(folder, "*.docx").Length != 4)
+            throw new Exception("R44C rejected operations published unintended files");
+    }
+    finally { Directory.Delete(folder, recursive: true); }
+});
+
+Check("R44D deletes selected keyed data rows safely without changing survivors", () =>
+{
+    string folder = Path.Combine(Path.GetTempPath(), "nira-r44d-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        string created = Path.Combine(folder, "created.docx");
+        string table = Path.Combine(folder, "table.docx");
+        string source = Path.Combine(folder, "source.docx");
+        string destination = Path.Combine(folder, "deleted.docx");
+        new NIRADocxCreateCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxCreate,
+            JsonSerializer.Serialize(new { path = created, title = "R44D", content = "## Keep\nPreserve" })))
+            .GetAwaiter().GetResult();
+        new NIRADocxTableAddCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxTableAdd,
+            JsonSerializer.Serialize(new { source = created, destination = table,
+                tsv = "Feature\tStatus\tDescription\nKeep A\tPassed\tFirst\nRemove B\tTesting\tSecond\nRemove C\tTesting\tThird\nKeep D\tPassed\tFourth",
+                expectedSourceSha256 = Sha(created) }))).GetAwaiter().GetResult();
+        new NIRADocxTableStyleCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxTableStyle,
+            JsonSerializer.Serialize(new { source = table, destination = source,
+                headerTsv = "Feature\tStatus\tDescription", headerFillHex = "17365D",
+                stripeFillHex = "EAF2F8", expectedSourceSha256 = Sha(table) })))
+            .GetAwaiter().GetResult();
+        string sha = Sha(source);
+        string payload(string target, string keys, string? expectedSha = null) => JsonSerializer.Serialize(new {
+            source, destination = target, headerTsv = "Feature\tStatus\tDescription",
+            rowKeys = keys, expectedSourceSha256 = expectedSha ?? sha
+        });
+        var handler = new NIRADocxTableRowsDeleteCapabilityHandler();
+        var result = handler.ExecuteAsync(Request(NIRACapabilityIds.DocxTableRowsDelete,
+            payload(destination, "Remove B\nRemove C"))).GetAwaiter().GetResult();
+        if (!result.Succeeded || Sha(source) != sha ||
+            !result.Output.Contains("TableRowsBefore=5", StringComparison.Ordinal) ||
+            !result.Output.Contains("TableRowsDeleted=2", StringComparison.Ordinal) ||
+            !result.Output.Contains("TableRowsAfter=3", StringComparison.Ordinal) ||
+            !result.Output.Contains("OtherPackagePartsPreserved=True", StringComparison.Ordinal) ||
+            !result.Output.Contains("PostWriteVerified=True", StringComparison.Ordinal))
+            throw new Exception("R44D did not produce a verified delete receipt");
+        using (var original = System.IO.Compression.ZipFile.OpenRead(source))
+        using (var updated = System.IO.Compression.ZipFile.OpenRead(destination))
+        {
+            XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+            var originalXml = System.Xml.Linq.XDocument.Load(original.GetEntry("word/document.xml")!.Open());
+            var updatedXml = System.Xml.Linq.XDocument.Load(updated.GetEntry("word/document.xml")!.Open());
+            var oldRows = originalXml.Descendants(w + "tbl").Single().Elements(w + "tr").ToArray();
+            var savedRows = updatedXml.Descendants(w + "tbl").Single().Elements(w + "tr").ToArray();
+            if (savedRows.Length != 3 ||
+                !System.Xml.Linq.XNode.DeepEquals(oldRows[0], savedRows[0]) ||
+                !System.Xml.Linq.XNode.DeepEquals(oldRows[1], savedRows[1]) ||
+                !System.Xml.Linq.XNode.DeepEquals(oldRows[4], savedRows[2]))
+                throw new Exception("R44D did not preserve surviving rows byte-equivalently");
+        }
+        Throws<IOException>(() => handler.ExecuteAsync(Request(NIRACapabilityIds.DocxTableRowsDelete,
+            payload(Path.Combine(folder, "stale.docx"), "Remove B", new string('0',64))))
+            .GetAwaiter().GetResult());
+        Throws<InvalidOperationException>(() => handler.ExecuteAsync(Request(NIRACapabilityIds.DocxTableRowsDelete,
+            payload(Path.Combine(folder, "missing.docx"), "Unknown")))
+            .GetAwaiter().GetResult());
+        Throws<ArgumentException>(() => handler.ExecuteAsync(Request(NIRACapabilityIds.DocxTableRowsDelete,
+            payload(Path.Combine(folder, "duplicate.docx"), "Remove B\nRemove B")))
+            .GetAwaiter().GetResult());
+        Throws<InvalidOperationException>(() => handler.ExecuteAsync(Request(NIRACapabilityIds.DocxTableRowsDelete,
+            payload(Path.Combine(folder, "all.docx"), "Keep A\nRemove B\nRemove C\nKeep D")))
+            .GetAwaiter().GetResult());
+        Throws<IOException>(() => handler.ExecuteAsync(Request(NIRACapabilityIds.DocxTableRowsDelete,
+            payload(destination, "Remove B"))).GetAwaiter().GetResult());
+        if (Directory.GetFiles(folder, "*.docx").Length != 4)
+            throw new Exception("R44D rejected deletes created unwanted files");
+    }
+    finally { Directory.Delete(folder, recursive: true); }
+});
+
+// R45: one transaction combines multiple cell CAS, row deletion and row appends.
+Check("R45 one atomic multi-action Word table transaction is independently verified", () =>
+{
+    string folder = Path.Combine(Path.GetTempPath(), "nira-r45-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        string created = Path.Combine(folder, "created.docx");
+        string table = Path.Combine(folder, "table.docx");
+        string source = Path.Combine(folder, "styled.docx");
+        string output = Path.Combine(folder, "transaction.docx");
+        new NIRADocxCreateCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxCreate,
+            JsonSerializer.Serialize(new { path = created, title = "R45", content = "## Overview\nKeep paragraphs" })))
+            .GetAwaiter().GetResult();
+        new NIRADocxTableAddCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxTableAdd,
+            JsonSerializer.Serialize(new { source = created, destination = table,
+                tsv = "Feature\tStatus\tDescription\nKeep Alpha\tTesting\tAlpha original\nRemove Beta\tTesting\tBeta original\nKeep Gamma\tPassed\tGamma original",
+                expectedSourceSha256 = Sha(created) }))).GetAwaiter().GetResult();
+        new NIRADocxTableStyleCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxTableStyle,
+            JsonSerializer.Serialize(new { source = table, destination = source,
+                headerTsv = "Feature\tStatus\tDescription", headerFillHex = "17365D",
+                stripeFillHex = "EAF2F8", expectedSourceSha256 = Sha(table) }))).GetAwaiter().GetResult();
+        string sourceHash = Sha(source);
+        string payload(string destinationPath, string? updates = null, string? deletes = null,
+            string? appends = null, string? sha = null) => JsonSerializer.Serialize(new {
+                source, destination = destinationPath, headerTsv = "Feature\tStatus\tDescription",
+                expectedSourceSha256 = sha ?? sourceHash,
+                updatesTsv = updates, deleteRowKeys = deletes, appendRowsTsv = appends
+            });
+        const string edits = "Keep Alpha\tStatus\tTesting\tPassed\nKeep Gamma\tDescription\tGamma original\tGamma revised";
+        const string added = "New Delta\tPassed\tNew verified row\nNew Epsilon\tPassed\tSecond verified row";
+        var handler = new NIRADocxTableTransactionCapabilityHandler();
+        var result = handler.ExecuteAsync(Request(NIRACapabilityIds.DocxTableTransaction,
+            payload(output, edits, "Remove Beta", added))).GetAwaiter().GetResult();
+        if (!result.Succeeded || !File.Exists(output) || Sha(source) != sourceHash ||
+            !result.Output.Contains("UpdatedCellsCount=2", StringComparison.Ordinal) ||
+            !result.Output.Contains("DeletedRowsCount=1", StringComparison.Ordinal) ||
+            !result.Output.Contains("AppendedRowsCount=2", StringComparison.Ordinal) ||
+            !result.Output.Contains("TableRowsBefore=4", StringComparison.Ordinal) ||
+            !result.Output.Contains("TableRowsAfter=5", StringComparison.Ordinal) ||
+            !result.Output.Contains("OtherPackagePartsPreserved=True", StringComparison.Ordinal) ||
+            !result.Output.Contains("PostWriteVerified=True", StringComparison.Ordinal) ||
+            !result.Output.Contains("SourceUnchanged=True", StringComparison.Ordinal) ||
+            !result.Output.Contains("OverwroteExisting=False", StringComparison.Ordinal))
+            throw new Exception("R45 combined transaction lacks complete audited proof");
+        using (var original = System.IO.Compression.ZipFile.OpenRead(source))
+        using (var updated = System.IO.Compression.ZipFile.OpenRead(output))
+        {
+            XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+            var oldDoc = System.Xml.Linq.XDocument.Load(original.GetEntry("word/document.xml")!.Open());
+            var newDoc = System.Xml.Linq.XDocument.Load(updated.GetEntry("word/document.xml")!.Open());
+            string[] cells(System.Xml.Linq.XElement row) => row.Elements(w + "tc")
+                .Select(cell => string.Concat(cell.Descendants(w + "t").Select(t => t.Value))).ToArray();
+            var oldRows = oldDoc.Descendants(w + "tbl").Single().Elements(w + "tr").ToArray();
+            var newRows = newDoc.Descendants(w + "tbl").Single().Elements(w + "tr").ToArray();
+            if (newRows.Length != 5 || !System.Xml.Linq.XNode.DeepEquals(oldRows[0], newRows[0]) ||
+                !cells(newRows[1]).SequenceEqual(new[] { "Keep Alpha", "Passed", "Alpha original" }) ||
+                !cells(newRows[2]).SequenceEqual(new[] { "Keep Gamma", "Passed", "Gamma revised" }) ||
+                !cells(newRows[3]).SequenceEqual(new[] { "New Delta", "Passed", "New verified row" }) ||
+                !cells(newRows[4]).SequenceEqual(new[] { "New Epsilon", "Passed", "Second verified row" }))
+                throw new Exception("R45 saved table values disagree with required transaction");
+            if (original.Entries.Count != updated.Entries.Count || original.Entries
+                .Where(e => e.FullName != "word/document.xml")
+                .Any(e => { var changed = updated.GetEntry(e.FullName);
+                    if (changed is null) return true;
+                    using var a = e.Open(); using var b = changed.Open();
+                    return !System.Security.Cryptography.SHA256.HashData(a).AsSpan()
+                        .SequenceEqual(System.Security.Cryptography.SHA256.HashData(b)); }))
+                throw new Exception("R45 changed unrelated DOCX package parts");
+        }
+        if (handler.Descriptor.DefaultRisk != NIRACapabilityRisk.Modify ||
+            handler.Descriptor.Parameters.Count(p => p.Required) != 4)
+            throw new Exception("R45 has an incorrect authorization / schema boundary");
+        Throws<IOException>(() => handler.ExecuteAsync(Request(NIRACapabilityIds.DocxTableTransaction,
+            payload(Path.Combine(folder, "stale.docx"), edits, "Remove Beta", added, new string('0', 64))))
+            .GetAwaiter().GetResult());
+        Throws<IOException>(() => handler.ExecuteAsync(Request(NIRACapabilityIds.DocxTableTransaction,
+            payload(Path.Combine(folder, "wrong-old.docx"), "Keep Alpha\tStatus\tWrong\tPassed")))
+            .GetAwaiter().GetResult());
+        Throws<ArgumentException>(() => handler.ExecuteAsync(Request(NIRACapabilityIds.DocxTableTransaction,
+            payload(Path.Combine(folder, "conflict.docx"), "Remove Beta\tStatus\tTesting\tPassed", "Remove Beta")))
+            .GetAwaiter().GetResult());
+        Throws<InvalidOperationException>(() => handler.ExecuteAsync(Request(NIRACapabilityIds.DocxTableTransaction,
+            payload(Path.Combine(folder, "duplicate.docx"), appends: "Keep Alpha\tPassed\tDuplicate key")))
+            .GetAwaiter().GetResult());
+        Throws<InvalidOperationException>(() => handler.ExecuteAsync(Request(NIRACapabilityIds.DocxTableTransaction,
+            payload(Path.Combine(folder, "delete-all.docx"), deletes: "Keep Alpha\nRemove Beta\nKeep Gamma")))
+            .GetAwaiter().GetResult());
+        Throws<ArgumentException>(() => handler.ExecuteAsync(Request(NIRACapabilityIds.DocxTableTransaction,
+            payload(Path.Combine(folder, "empty.docx")))).GetAwaiter().GetResult());
+        Throws<IOException>(() => handler.ExecuteAsync(Request(NIRACapabilityIds.DocxTableTransaction,
+            payload(output, edits, "Remove Beta", added))).GetAwaiter().GetResult());
+        if (Directory.GetFiles(folder, "*.docx").Length != 4)
+            throw new Exception("R45 invalid requests created an unexpected file");
+    }
+    finally { Directory.Delete(folder, recursive: true); }
+});
+
+
+Check("R45 DOCX specialist module fits 7000-char loader and is actually selected", () =>
+{
+    string working = Path.Combine(Directory.GetCurrentDirectory(), "NIRAAgent", "Prompt", "modules");
+    string installed = Path.Combine(AppContext.BaseDirectory, "Prompt", "modules");
+    string module = File.Exists(Path.Combine(working, "documents_docx.yaml")) ? working : installed;
+    string path = Path.Combine(module, "documents_docx.yaml");
+    if (!File.Exists(path)) throw new Exception("DOCX specialist module missing from repo/output");
+    string yaml = File.ReadAllText(path).Trim();
+    if (yaml.Length is 0 or > 7000 ||
+        !yaml.Contains("filesystem.docx.table.transaction", StringComparison.Ordinal))
+        throw new Exception("DOCX module exceeds hard loader cap or omits combined workflow");
+    var none = NIRAModularCognitionPrompt.Select(Array.Empty<string>(), promptRoot: module);
+    var specialized = NIRAModularCognitionPrompt.Select(
+        new[] { NIRACapabilityIds.DocxTableTransaction }, promptRoot: module);
+    if (none.Guidance.Length != 0 || specialized.Modules != "documents_docx" ||
+        !specialized.Guidance.Contains("PREFERRED FOR COMBINED OPERATIONS", StringComparison.Ordinal))
+        throw new Exception("Trusted DOCX capability did not load its compact specialist prompt");
+});
+
+// R46: whole-document formatting in one native write, plus independent
+// read-only preservation comparison. Uses real OpenXML files, not mock output.
+Check("R46 professional DOCX profiles preserve all content and reject unsafe writes", () =>
+{
+    string folder = Path.Combine(Path.GetTempPath(), "nira-r46-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        string created = Path.Combine(folder, "created.docx");
+        string source = Path.Combine(folder, "source.docx");
+        string formatted = Path.Combine(folder, "business.docx");
+        new NIRADocxCreateCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxCreate,
+            JsonSerializer.Serialize(new { path = created, title = "R46 Document",
+                content = "## Overview\nA normal body paragraph that must remain unchanged.\n## Results\nA second body paragraph." })))
+            .GetAwaiter().GetResult();
+        new NIRADocxTableAddCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxTableAdd,
+            JsonSerializer.Serialize(new { source = created, destination = source,
+                tsv = "Feature\tStatus\tDescription\nIntegrity\tPassed\tOriginal unchanged\nStyle\tTesting\tNative style",
+                expectedSourceSha256 = Sha(created) }))).GetAwaiter().GetResult();
+        string hashBefore = Sha(source);
+        var tool = new NIRADocxProfessionalFormatCapabilityHandler();
+        var receipt = tool.ExecuteAsync(Request(NIRACapabilityIds.DocxProfessionalFormat,
+            JsonSerializer.Serialize(new { source, destination = formatted,
+                expectedSourceSha256 = hashBefore, profile = "business", accentHex = "17365D" })))
+            .GetAwaiter().GetResult();
+        if (!receipt.Succeeded || Sha(source) != hashBefore || !File.Exists(formatted) ||
+            !receipt.Output.Contains("PostWriteVerified=True", StringComparison.Ordinal) ||
+            !receipt.Output.Contains("SourceAndDestinationContentIdentical=True", StringComparison.Ordinal) ||
+            !receipt.Output.Contains("OtherPackagePartsPreserved=True", StringComparison.Ordinal) ||
+            !receipt.Output.Contains("SourceUnchanged=True", StringComparison.Ordinal) ||
+            !receipt.Output.Contains("OverwroteExisting=False", StringComparison.Ordinal) ||
+            tool.Descriptor.DefaultRisk != NIRACapabilityRisk.Modify)
+            throw new Exception("R46 professional formatter did not verify full source and output preservation");
+        using (var package = System.IO.Compression.ZipFile.OpenRead(formatted))
+        {
+            XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+            var xml = System.Xml.Linq.XDocument.Load(package.GetEntry("word/document.xml")!.Open());
+            var paragraphs = xml.Root!.Descendants(w + "p").Where(p =>
+                p.Descendants(w + "t").Any(t => !string.IsNullOrWhiteSpace(t.Value))).ToArray();
+            var title = paragraphs.First();
+            string? titleAlignment = (string?)title.Element(w + "pPr")?.Element(w + "jc")?.Attribute(w + "val");
+            string? titleSize = (string?)title.Element(w + "r")?.Element(w + "rPr")?.Element(w + "sz")?.Attribute(w + "val");
+            string? normalSize = (string?)paragraphs.First(p =>
+                string.Concat(p.Descendants(w + "t").Select(t => t.Value)).StartsWith("A normal"))
+                .Element(w + "r")?.Element(w + "rPr")?.Element(w + "sz")?.Attribute(w + "val");
+            if (titleAlignment != "center" || titleSize != "44" || normalSize != "22" ||
+                xml.Descendants(w + "tbl").Count() != 1)
+                throw new Exception("R46 Word body title, body typography or table did not match requested profile");
+        }
+        var comparer = new NIRADocxContentCompareCapabilityHandler();
+        var report = comparer.ExecuteAsync(Request(NIRACapabilityIds.DocxContentCompare,
+            JsonSerializer.Serialize(new { source, candidate = formatted }))).GetAwaiter().GetResult();
+        if (!report.Succeeded || report.ChangedSystemState ||
+            !report.Output.Contains("BodyContentIdentical=True", StringComparison.Ordinal) ||
+            !report.Output.Contains("TablesIdentical=True", StringComparison.Ordinal) ||
+            !report.Output.Contains("SectionsIdentical=True", StringComparison.Ordinal) ||
+            !report.Output.Contains("OtherPackagePartsIdentical=True", StringComparison.Ordinal) ||
+            !report.Output.Contains("FormattingOnlyDifference=True", StringComparison.Ordinal) ||
+            comparer.Descriptor.DefaultRisk != NIRACapabilityRisk.Observe)
+            throw new Exception("R46 independent read-only compare lost structure or content integrity");
+        // Both other profiles operate on the same source; no intermediate
+        // source mutation or generated filename substitution is permitted.
+        foreach (string profile in new[] { "academic", "compact" })
+        {
+            string target = Path.Combine(folder, profile + ".docx");
+            var styled = tool.ExecuteAsync(Request(NIRACapabilityIds.DocxProfessionalFormat,
+                JsonSerializer.Serialize(new { source, destination = target,
+                    expectedSourceSha256 = hashBefore, profile }))).GetAwaiter().GetResult();
+            if (!styled.Succeeded || !File.Exists(target) || Sha(source) != hashBefore)
+                throw new Exception($"R46 {profile} profile failed source isolation");
+        }
+        Throws<IOException>(() => tool.ExecuteAsync(Request(NIRACapabilityIds.DocxProfessionalFormat,
+            JsonSerializer.Serialize(new { source, destination = Path.Combine(folder, "stale.docx"),
+                expectedSourceSha256 = new string('0', 64) }))).GetAwaiter().GetResult());
+        Throws<ArgumentException>(() => tool.ExecuteAsync(Request(NIRACapabilityIds.DocxProfessionalFormat,
+            JsonSerializer.Serialize(new { source, destination = Path.Combine(folder, "unsafe.docx"),
+                expectedSourceSha256 = hashBefore, accentHex = "NOTHEX" }))).GetAwaiter().GetResult());
+        Throws<IOException>(() => tool.ExecuteAsync(Request(NIRACapabilityIds.DocxProfessionalFormat,
+            JsonSerializer.Serialize(new { source, destination = formatted,
+                expectedSourceSha256 = hashBefore }))).GetAwaiter().GetResult());
+        if (Directory.GetFiles(folder, "*.docx").Length != 5)
+            throw new Exception("R46 rejected operations unexpectedly created DOCX output");
+    }
+    finally { Directory.Delete(folder, recursive: true); }
+});
+
+Check("R46 specialist guidance fits existing 7000-character prompt loader", () =>
+{
+    string installed = Path.Combine(AppContext.BaseDirectory, "Prompt", "modules");
+    string working = Path.Combine(Directory.GetCurrentDirectory(), "NIRAAgent", "Prompt", "modules");
+    string dir = File.Exists(Path.Combine(working, "documents_docx.yaml")) ? working : installed;
+    string guidance = File.ReadAllText(Path.Combine(dir, "documents_docx.yaml"));
+    if (guidance.Length > 7000 ||
+        !guidance.Contains("filesystem.docx.professional.format", StringComparison.Ordinal) ||
+        !guidance.Contains("filesystem.docx.content.compare", StringComparison.Ordinal) ||
+        !guidance.Contains("PREFERRED FOR COMBINED OPERATIONS", StringComparison.Ordinal))
+        throw new Exception("R46 prompt missing a tool or over existing 7k loader cap");
+    var selected = NIRAModularCognitionPrompt.Select(
+        new[] { NIRACapabilityIds.DocxProfessionalFormat }, promptRoot: dir);
+    if (selected.Modules != "documents_docx" ||
+        !selected.Guidance.Contains("PREFERRED FOR WHOLE-DOCUMENT STYLE", StringComparison.Ordinal))
+        throw new Exception("R46 expert module did not load from registered capability identity");
+});
+
+// R47 acceptance: genuine OpenXML templates, metadata, native report production,
+// multi-document atomic preflight and cross-part SHA-backed preservation.
+Check("R47 template inspection, single fill and header/footer/table preservation", () =>
+{
+    string folder = Path.Combine(Path.GetTempPath(), "nira-r47-template-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        string plain = Path.Combine(folder, "plain.docx");
+        string tabled = Path.Combine(folder, "table.docx");
+        string source = Path.Combine(folder, "template.docx");
+        string dest = Path.Combine(folder, "filled.docx");
+        new NIRADocxCreateCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxCreate,
+            JsonSerializer.Serialize(new { path=plain, title="{{CLIENT}} Report",
+                content="## Overview\nHello {{CLIENT}} on {{DATE}}." }))).GetAwaiter().GetResult();
+        new NIRADocxTableAddCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxTableAdd,
+            JsonSerializer.Serialize(new { source=plain, destination=tabled,
+                expectedSourceSha256=Sha(plain), tsv="Item\tStatus\nAudit\t{{STATUS}}" }))).GetAwaiter().GetResult();
+        new NIRADocxHeaderFooterCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxHeaderFooter,
+            JsonSerializer.Serialize(new { source=tabled, destination=source,
+                expectedSourceSha256=Sha(tabled), headerText="Company {{CLIENT}}", footerText="{{DATE}}", pageNumbers="true" })))
+            .GetAwaiter().GetResult();
+        string originalHash = Sha(source);
+        var inspect = new NIRADocxTemplateInspectCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.DocxTemplateInspect, JsonSerializer.Serialize(new { path=source })))
+            .GetAwaiter().GetResult();
+        if (!inspect.Succeeded || !inspect.Output.Contains("PlaceholderCount=3") ||
+            !inspect.Output.Contains("CLIENT") || !inspect.Output.Contains("STATUS") ||
+            !inspect.Output.Contains("DATE") || !inspect.Output.Contains(originalHash, StringComparison.OrdinalIgnoreCase))
+            throw new Exception("Template inspect missed body, table or header/footer keys");
+        var filled = new NIRADocxTemplateFillCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.DocxTemplateFill, JsonSerializer.Serialize(new {
+                source, destination=dest, expectedSourceSha256=originalHash,
+                valuesJson=JsonSerializer.Serialize(new { CLIENT="Maya", DATE="2026-10-28", STATUS="Approved" })
+            }))).GetAwaiter().GetResult();
+        if (!filled.Succeeded || !filled.ChangedSystemState || !File.Exists(dest) ||
+            !filled.Output.Contains("PostWriteVerified=True") ||
+            !filled.Output.Contains("SourceUnchanged=True") || Sha(source) != originalHash)
+            throw new Exception("Template fill did not verify a new file or source preservation");
+        string check = new NIRADocxInspectCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.DocxInspect, JsonSerializer.Serialize(new { path=dest })))
+            .GetAwaiter().GetResult().Output;
+        if (!check.Contains("Tables=1") || !check.Contains("HeaderPresent=True") ||
+            !check.Contains("FooterPresent=True") || !check.Contains("PageNumberField=True"))
+            throw new Exception("Template fill broke native table or header/footer/Page field");
+        using var a = System.IO.Compression.ZipFile.OpenRead(dest);
+        using var b = System.IO.Compression.ZipFile.OpenRead(source);
+        foreach (var p in a.Entries.Where(p => p.FullName == "word/document.xml" ||
+            p.FullName.StartsWith("word/header", StringComparison.Ordinal) ||
+            p.FullName.StartsWith("word/footer", StringComparison.Ordinal)))
+        {
+            using Stream stream = p.Open();
+            string content = new StreamReader(stream).ReadToEnd();
+            if (content.Contains("{{CLIENT}}") || content.Contains("{{DATE}}") || content.Contains("{{STATUS}}"))
+                throw new Exception("Unfilled placeholder survived output XML");
+        }
+        var remaining = new NIRADocxTemplateInspectCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.DocxTemplateInspect, JsonSerializer.Serialize(new { path=dest })))
+            .GetAwaiter().GetResult().Output;
+        if (!remaining.Contains("PlaceholderCount=0")) throw new Exception("Filled file still contains placeholders");
+        Throws<IOException>(() => new NIRADocxTemplateFillCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.DocxTemplateFill, JsonSerializer.Serialize(new {
+                source, destination=Path.Combine(folder,"stale.docx"), expectedSourceSha256=new string('0',64),
+                valuesJson=JsonSerializer.Serialize(new { CLIENT="A",DATE="B", STATUS="C" })
+            }))).GetAwaiter().GetResult());
+        Throws<IOException>(() => new NIRADocxTemplateFillCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.DocxTemplateFill, JsonSerializer.Serialize(new {
+                source, destination=dest, expectedSourceSha256=originalHash,
+                valuesJson=JsonSerializer.Serialize(new { CLIENT="A",DATE="B",STATUS="C" })
+            }))).GetAwaiter().GetResult());
+        Throws<InvalidOperationException>(() => new NIRADocxTemplateFillCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.DocxTemplateFill, JsonSerializer.Serialize(new {
+                source, destination=Path.Combine(folder,"missing.docx"), expectedSourceSha256=originalHash,
+                valuesJson=JsonSerializer.Serialize(new { CLIENT="A",DATE="B" })
+            }))).GetAwaiter().GetResult());
+        if (File.Exists(Path.Combine(folder,"stale.docx")) || File.Exists(Path.Combine(folder,"missing.docx")))
+            throw new Exception("Rejected template fill created an output file");
+    }
+    finally { Directory.Delete(folder, recursive:true); }
+});
+
+Check("R47 batch performs one guarded multi-document release and structured report creation", () =>
+{
+    string folder = Path.Combine(Path.GetTempPath(), "nira-r47-batch-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        string template = Path.Combine(folder,"template.docx");
+        new NIRADocxCreateCapabilityHandler().ExecuteAsync(Request(NIRACapabilityIds.DocxCreate,
+            JsonSerializer.Serialize(new { path=template, content="Hello {{CLIENT}}.\nStatus: {{STATUS}}" })))
+            .GetAwaiter().GetResult();
+        string expected = Sha(template);
+        var batch = new NIRADocxTemplateBatchCapabilityHandler();
+        string jobs = JsonSerializer.Serialize(new object[] {
+            new { fileName="client-01.docx", values=new { CLIENT="Asha", STATUS="Ready" } },
+            new { fileName="client-02.docx", values=new { CLIENT="Nimal", STATUS="Complete" } },
+            new { fileName="client-03.docx", values=new { CLIENT="Maya", STATUS="Pending" } }
+        });
+        var result = batch.ExecuteAsync(Request(NIRACapabilityIds.DocxTemplateBatch,
+            JsonSerializer.Serialize(new { source=template, destinationDirectory=folder,
+                expectedSourceSha256=expected, jobsJson=jobs }))).GetAwaiter().GetResult();
+        if (!result.Succeeded || !result.Output.Contains("CreatedDocuments=3") ||
+            !result.Output.Contains("PostWriteVerified=True") ||
+            !File.Exists(Path.Combine(folder,"client-01.docx")) ||
+            !File.Exists(Path.Combine(folder,"client-03.docx")) || Sha(template) != expected)
+            throw new Exception("R47 batch lost source safety, output count or verified publication");
+        Throws<IOException>(() => batch.ExecuteAsync(Request(NIRACapabilityIds.DocxTemplateBatch,
+            JsonSerializer.Serialize(new {source=template,destinationDirectory=folder,
+                expectedSourceSha256=expected,jobsJson=jobs}))).GetAwaiter().GetResult());
+        string unsafeJobs = JsonSerializer.Serialize(new object[] {
+            new {fileName="../../escape.docx", values=new { CLIENT="A",STATUS="B" } }
+        });
+        Throws<ArgumentException>(() => batch.ExecuteAsync(Request(NIRACapabilityIds.DocxTemplateBatch,
+            JsonSerializer.Serialize(new { source=template, destinationDirectory=folder,
+                expectedSourceSha256=expected, jobsJson=unsafeJobs }))).GetAwaiter().GetResult());
+        string badMap = JsonSerializer.Serialize(new object[] {
+            new {fileName="safe.docx", values=new {CLIENT="A"} }
+        });
+        Throws<InvalidOperationException>(() => batch.ExecuteAsync(Request(NIRACapabilityIds.DocxTemplateBatch,
+            JsonSerializer.Serialize(new { source=template, destinationDirectory=folder,
+                expectedSourceSha256=expected, jobsJson=badMap }))).GetAwaiter().GetResult());
+        if (File.Exists(Path.Combine(folder,"safe.docx"))) throw new Exception("Failed batch published partial output");
+        string report = Path.Combine(folder,"report.docx");
+        var document = new NIRADocxReportCreateCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.DocxReportCreate, JsonSerializer.Serialize(new {
+                path=report, title="NIRA Production Report",
+                sectionsJson=JsonSerializer.Serialize(new object[] {
+                    new { heading="Overview", body="Native Word report.\nSummary of completed work." },
+                    new { heading="Results", body="Table of verified metrics.",
+                        tableTsv="Metric\tValue\nSuccess\tTrue\nFiles\tThree" }
+                })
+            }))).GetAwaiter().GetResult();
+        if (!document.Succeeded || !File.Exists(report) ||
+            !document.Output.Contains("ReportSections=2") ||
+            !document.Output.Contains("ReportTables=1") ||
+            !document.Output.Contains("PostWriteVerified=True"))
+            throw new Exception("Structured report creation or saved verification failed");
+        Throws<IOException>(() => new NIRADocxReportCreateCapabilityHandler().ExecuteAsync(Request(
+            NIRACapabilityIds.DocxReportCreate, JsonSerializer.Serialize(new {
+                path=report,title="Repeat",sectionsJson="[{\"heading\":\"x\",\"body\":\"y\"}]"
+            }))).GetAwaiter().GetResult());
+    }
+    finally { Directory.Delete(folder, recursive:true); }
+});
+
+Check("R47.2 all four audited Word operations survive reviewer exhaustion", () =>
+{
+    string template = @"C:\Users\user\Desktop\NIRA-R41-TEST\r47-template.docx";
+    string filled = @"C:\Users\user\Desktop\NIRA-R41-TEST\r47-single.docx";
+    string dir = @"C:\Users\user\Desktop\NIRA-R41-TEST";
+    string hash = new string('a',64), filledHash = new string('b',64);
+    string reportHash = hash;
+    var req = new Dictionary<string,NIRACapabilityRequest> {
+        ["report"] = Request(NIRACapabilityIds.DocxReportCreate, JsonSerializer.Serialize(new { path=template, title="{{CLIENT}}", sectionsJson="[]" })),
+        ["inspect"] = Request(NIRACapabilityIds.DocxTemplateInspect, JsonSerializer.Serialize(new {path=template})),
+        ["fill"] = Request(NIRACapabilityIds.DocxTemplateFill, JsonSerializer.Serialize(new {source=template,destination=filled,expectedSourceSha256=hash,
+            valuesJson="{\"CLIENT\":\"ELVARA\",\"DATE\":\"2026-10-28\",\"STATUS\":\"Passed\"}"})),
+        ["batch"] = Request(NIRACapabilityIds.DocxTemplateBatch, JsonSerializer.Serialize(new {
+            source=template,destinationDirectory=dir,expectedSourceSha256=hash,
+            jobsJson=JsonSerializer.Serialize(new object[] {
+                new {fileName="r47-client-01.docx",values=new {CLIENT="One",DATE="2026-10-28",STATUS="Passed"}},
+                new {fileName="r47-client-02.docx",values=new {CLIENT="Two",DATE="2026-10-28",STATUS="Pending"}}
+            })
+        }))
+    };
+    var res = new Dictionary<string,NIRACapabilityResult> {
+        ["report"] = new() {CapabilityId=NIRACapabilityIds.DocxReportCreate,Status=NIRACapabilityResultStatus.Succeeded,
+            Risk=NIRACapabilityRisk.Modify,ChangedSystemState=true,AuditRecorded=true,
+            Output=$"Destination={template}\nDestinationSHA256={reportHash}\nReportSections=2\nPostWriteVerified=True\nOverwroteExisting=False\nVisualPaginationVerified=False"},
+        ["inspect"] = new() {CapabilityId=NIRACapabilityIds.DocxTemplateInspect,Status=NIRACapabilityResultStatus.Succeeded,
+            Risk=NIRACapabilityRisk.Observe,Output=$"Path={template}\nSHA256={hash}\nPlaceholderCount=3\nNoFilesModified=True"},
+        ["fill"] = new() {CapabilityId=NIRACapabilityIds.DocxTemplateFill,Status=NIRACapabilityResultStatus.Succeeded,
+            Risk=NIRACapabilityRisk.Modify,ChangedSystemState=true,AuditRecorded=true,
+            Output=$"Source={template}\nSourceSHA256={hash}\nDestination={filled}\nDestinationSHA256={filledHash}\nReplacedPlaceholders=4\nPlaceholderKeys=3\nHeaderFooterAndTablesPreserved=True\nPostWriteVerified=True\nSourceUnchanged=True\nOverwroteExisting=False\nVisualPaginationVerified=False"},
+        ["batch"] = new() {CapabilityId=NIRACapabilityIds.DocxTemplateBatch,Status=NIRACapabilityResultStatus.Succeeded,
+            Risk=NIRACapabilityRisk.Modify,ChangedSystemState=true,AuditRecorded=true,
+            Output=$"Source={template}\nSourceSHA256={hash}\nDestinationDirectory={dir}\nCreatedDocuments=2\nOutputFilesJson={JsonSerializer.Serialize(new[] {
+                new {path=Path.Combine(dir,"r47-client-01.docx"),sha256=new string('c',64)},
+                new {path=Path.Combine(dir,"r47-client-02.docx"),sha256=new string('d',64)}
+            })}\nPostWriteVerified=True\nSourceUnchanged=True\nOverwroteExisting=False\nVisualPaginationVerified=False"}
+    };
+    string? verified = NIRADocxObservedCompletionPolicy.FromVerifiedR47WorkflowResults(req,res);
+    if (verified is null || !verified.Contains("r47-client-02.docx",StringComparison.Ordinal) ||
+        !verified.Contains("single template fill",StringComparison.OrdinalIgnoreCase) ||
+        !verified.Contains("no existing destination overwritten",StringComparison.OrdinalIgnoreCase))
+        throw new Exception("R47 valid audited workflow was discarded");
+    res["batch"] = res["batch"] with { AuditRecorded=false };
+    if (NIRADocxObservedCompletionPolicy.FromVerifiedR47WorkflowResults(req,res) != null)
+        throw new Exception("Unaudited R47 write was certified");
+    res["batch"] = res["batch"] with { AuditRecorded=true, Output=res["batch"].Output.Replace("PostWriteVerified=True", "PostWriteVerified=False") };
+    if (NIRADocxObservedCompletionPolicy.FromVerifiedR47WorkflowResults(req,res) != null)
+        throw new Exception("Unverified R47 batch was certified");
+    res.Remove("batch");
+    if (NIRADocxObservedCompletionPolicy.FromVerifiedR47WorkflowResults(req,res) != null)
+        throw new Exception("Incomplete R47 workflow was reported as complete");
+});
+
+Check("R47 tool catalog, scoped batch destination and specialist module are synchronized", () =>
+{
+    if (new NIRADocxTemplateInspectCapabilityHandler().Descriptor.DefaultRisk != NIRACapabilityRisk.Observe ||
+        new NIRADocxTemplateBatchCapabilityHandler().Descriptor.DefaultRisk != NIRACapabilityRisk.Modify ||
+        new NIRADocxReportCreateCapabilityHandler().Descriptor.DefaultRisk != NIRACapabilityRisk.Modify)
+        throw new Exception("R47 capability risk types were changed");
+    string working = Path.Combine(Directory.GetCurrentDirectory(),"NIRAAgent","Prompt","modules");
+    string installed = Path.Combine(AppContext.BaseDirectory,"Prompt","modules");
+    string root = File.Exists(Path.Combine(working,"documents_docx.yaml")) ? working : installed;
+    string guidance = File.ReadAllText(Path.Combine(root,"documents_docx.yaml"));
+    if (guidance.Length > 7000 ||
+        !guidance.Contains("filesystem.docx.template.fill", StringComparison.Ordinal) ||
+        !guidance.Contains("filesystem.docx.template.batch", StringComparison.Ordinal) ||
+        !guidance.Contains("filesystem.docx.report.create", StringComparison.Ordinal) ||
+        NIRAModularCognitionPrompt.Select(new[] { NIRACapabilityIds.DocxTemplateBatch }, promptRoot:root)
+            .Modules != "documents_docx")
+        throw new Exception("R47 specialist tool guidance not discoverable under 7K loader limit");
 });
 
 Console.WriteLine($"REGRESSION CHECKS: {passed} passed, {failed} failed");
