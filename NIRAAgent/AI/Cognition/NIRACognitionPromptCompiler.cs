@@ -1833,6 +1833,12 @@ internal static class NIRACognitionPromptCompiler
         string? embeddedAppId =
             NIRAScopedApplicationPromptCatalog.TryGetEmbeddedAppId(
                 context, out string trustedAppId) ? trustedAppId : null;
+        Add(b, "CROSS-DOMAIN DEEP WORK ORCHESTRATION",
+            "Solve the original user goal through evidence-based dependencies, " +
+            "not a fixed workflow. Optional workPlan records observable deliverables " +
+            "and the next milestone, not authority or proof. A tool can support " +
+            "any domain. Validate retrieved facts and assets before using them " +
+            "downstream. Do not claim completion until final deliverables are verified.");
         Add(b, "REGISTERED CAPABILITY QUICK SIGNATURES",
             CapabilityIndex(context.CapabilityContext, embeddedAppId));
         if (expanded.Contains("capabilities") || capabilityIds.Count > 0 ||
@@ -2255,13 +2261,17 @@ internal static class NIRACognitionPromptCompiler
             audit, not as a simultaneous top-level action. This avoids an extra
             model call solely to ask for the two newly generated IDs.
 
-            IMPORTANT: A dynamicToolProposals Create with runAfterCreate=true may run
-            its newly accepted TEMPORARY procedure in the SAME cognition cycle using
-            invocationArguments, without knowing the generated tool GUID. Use only for
-            a coherent deterministic bounded sequence grounded in CURRENT observations,
-            never future unknown pages/refs. No implicit cross-goal ownership or
-            bypass of a newly created goal/branch. If a step is unpredictable, stop
-            the procedure and let NIRA reason over its actual evidence.
+            IMPORTANT: dynamic tools are executable ONLY through a real committed
+            goal, branch, and branch work item. A top-level dynamicToolInvocation
+            is NOT authorized merely because the user asked for an outcome.
+            For ordinary serial tasks use direct registered capabilityRequests.
+            For a bounded composed procedure, create/choose a valid goal and
+            branch, then assign the invocation as branchWorkProposals. With exactly
+            ONE accepted new branch and ONE accepted new Temporary tool, a
+            runAfterCreate=true proposal may be bound into actual branch work in
+            that same cycle. Otherwise the tool is created but NOT executed.
+            This never bypasses normal per-step authorization/audit; stop at
+            unknown future page/state dependencies and reconsider fresh evidence.
             """ + "\n\n" + outputContract + "\n\n" + """
             OPTIONAL CONTEXT / FINAL FIELDS (no new runtime permission):
             "contextRequests": ["memory|conversation|self|character|goals|branches|work|pc|capabilities|tools|artifacts|evidence"],
@@ -2313,10 +2323,11 @@ internal static class NIRACognitionPromptCompiler
             OPTIONAL SAME-CYCLE DYNAMIC-TOOL FIELDS (Create ONLY):
             "runAfterCreate": true|false,
             "invocationArguments": {"parameterName": "typed value"}.
-            The runtime runs only a successfully created Temporary tool, with its
-            exact committed ID; every step is still authorization/audit-checked.
-            Leave runAfterCreate false for reusable tools that need a separate
-            invocation, for new goal/branch ownership and for unknown next states.
+            Same-cycle execution is allowed ONLY when the runtime can bind the
+            accepted Temporary tool to a real committed branch work item.
+            Otherwise it is deferred, not executed. Every primitive step still
+            passes normal authorization/audit. For a simple one-off action,
+            prefer direct capabilityRequests. Never repeat an uncertain mutation.
             """ + "\n\n" + ResourcePresentationRules + "\n\nNIRA CHARACTER KERNEL (derived from authoritative personality YAML):\n" +
                 CharacterKernel(personalityYaml);
     }
@@ -2349,10 +2360,10 @@ internal static class NIRACognitionPromptCompiler
         // Keep all capability names visible, but after a trusted DOCX result
         // transmit detailed signatures only for the currently active domain.
         // Explicit schema expansion restores full information on demand.
-        if (NIRAModularCognitionPrompt.Enabled && embeddedAppId == null &&
-            context.Cycle > 1 && expanded.Count == 0 && capabilityIds.Count == 0)
-            catalog = NIRAModularCognitionPrompt.FocusDocxToolDirectory(
-                catalog, context.ObservedCapabilityIds);
+        // R49: do not hide cross-domain argument signatures after a DOCX step.
+        // The runtime-generated index is already bounded; model-led workflows
+        // may legitimately require web, image, filesystem and document tools
+        // in the same user run. Exact schemas remain opt-in.
         // Once an exclusive calculator receipt exists, the current turn has
         // no reason to retransmit the entire tool catalog. The model can
         // still request a fresh capability schema via contextRequests if
@@ -2424,6 +2435,21 @@ internal static class NIRACognitionPromptCompiler
                 Limit(context.BranchWorkContext, 1400));
         }
         Add(b, "UNRESOLVED USER CLARIFICATION", Limit(context.TaskContinuityContext, 1600));
+        // R49: default autonomous goal decomposition is general-purpose,
+        // applies equally to files, research, code, desktop and Office tasks.
+        Add(b, "GENERAL OUTCOME-DRIVEN EXECUTION (R49)",
+            "The user specifies WHAT to accomplish, not implementation parameters. " +
+            "When the objective needs several dependent tools, use optional workPlan " +
+            "with the original objective, observable completionCriteria and the nextMilestone. " +
+            "Discover and combine currently registered capabilities even across " +
+            "different domains. Fresh observations and sourced research can be inputs " +
+            "to downstream creation/editing. Infer safe, reversible presentation defaults; " +
+            "do not invent facts, machine paths or grants. Independent safe reads can " +
+            "be proposed together; dependent writes need observed inputs first. " +
+            "After each tool result, assess whether the COMPLETE requested outcome " +
+            "is satisfied, whether to verify or replan, or whether user input is " +
+            "truly indispensable. A tool receipt is not automatically goal completion. " +
+            "Do not blindly repeat writes, bypass denials or conceal partial results.");
         // Compact runtime-generated signatures include parameter names/types so
         // straightforward primitives can be requested on cycle 1 without a schema-only call.
         // A model can know the right primitive but place its ID and arguments
@@ -2567,6 +2593,64 @@ internal static class NIRACognitionPromptCompiler
             "distinct voice and one coherent reading flow, with speech conveying " +
             "the answer instead of reading block labels. No extra model call " +
             "to style the response.");
+        Add(b, "COMPOSABLE DELIVERABLE EXECUTION CONTRACT",
+            "Preserve the original requested output and target as an outstanding goal " +
+            "across observation, research, image collection and file creation. " +
+            "Research and media are supporting inputs, not the requested output file. " +
+            "After enough trusted research evidence, choose a currently registered " +
+            "format-native creation capability; do not substitute a plain text file, " +
+            "a chat answer, a launched editor, or a picture in chat for the requested " +
+            "deliverable. Use source-attributed facts and verified local media, " +
+            "but optional unavailable media should not silently abort the entire " +
+            "deliverable. Never invent a path, permission or completed write. " +
+            "When an exact primitive ID is absent from the shortened quick catalog, " +
+            "use the complete registered ID directory to request its exact schema. " +
+            "Finish only after an authorized write and reliable saved-output evidence; " +
+            "otherwise state the exact unmet requirement without claiming success.");
+        Add(b, "GENERAL DELIVERABLE QUALITY AND MEDIA COMPOSITION",
+            "A valid file hash proves file integrity, not usefulness, factual correctness, " +
+            "requested length or aesthetic quality. For ANY substantial saved deliverable " +
+            "first derive a content brief from the user's outcome: audience, purpose, " +
+            "expected depth, approximate size, factual evidence, required sections and " +
+            "optional media or data visuals. Do not substitute a small generic summary " +
+            "for a longer requested report. For word-processing tasks with explicit " +
+            "page or word targets, draft enough original substantive body text before " +
+            "the write, select a realistic minimumBodyWords and pass it to the registered " +
+            "Word Studio capability. Page counts require actual rendering to establish; " +
+            "a word-count gate is only a conservative preliminary check. " +
+            "Use the available style profile appropriate to the audience, such as academic " +
+            "for student work. Select tables and charts only when independently grounded " +
+            "facts or measurements call for comparison; never fabricate chart values. " +
+            "For visual content, verify raster bytes and reuse rights separately, then " +
+            "pass exact observed local asset paths to image blocks; multiple images " +
+            "may be placed near their relevant prose, with clear caption and credit. " +
+            "When actual images are required, select a realistic minimumImages " +
+            "gate, but allow zero for explicitly optional visuals. " +
+            "A media search result or an image shown in chat is not an image embedded " +
+            "in the requested document. If retrieval fails, identify the missing visual " +
+            "and continue with the rest of the task when possible, without claiming " +
+            "the omitted requirement is fulfilled. An authorized original diagram " +
+            "may replace a missing illustrative graphic when appropriate, but never " +
+            "mislabel generated imagery as historical or documentary evidence. " +
+            "Ground every referenced factual " +
+            "claim in actually observed sources; avoid invented bibliographies and " +
+            "placeholder references. Before reporting task completion, compare the " +
+            "saved artifact's reported content length, sections, tables, media, charts " +
+            "and integrity with the initial brief. If only a technically valid but " +
+            "substantially incomplete file was produced, disclose partial completion " +
+            "rather than saying the original objective is fully done. " +
+            "When a tool rejects a malformed parameter, correct it to the exact " +
+            "registered capability signature; do not invent alternate field names. " +
+            "When a document creator reports too few body words, expand the " +
+            "substantive, evidence-grounded draft rather than lowering the " +
+            "quality requirement. A definite NO FILE PUBLISHED receipt allows " +
+            "a corrected attempt at the SAME unused destination; an uncertain " +
+            "write requires inspection before retrying. Never go into a generic " +
+            "reasoning loop that repeats location scans after the intended path " +
+            "and tool error are already known. Report exactly what research " +
+            "ran and why document creation failed if the objective remains open. " +
+            "Apply this evaluation to documents, spreadsheets, software outputs, " +
+            "visuals and all other deliverables without topic-based rules.");
         Add(b, "CANONICAL CAPABILITY REQUEST JSON SHAPE",
             "capabilityRequests is an ARRAY; one item is " +
             "{\"capabilityId\":\"EXACT_REGISTERED_ID\",\"arguments\":{\"requiredName\":\"typed_grounded_value\"},\"reason\":\"why needed\"}. " +
@@ -2592,6 +2676,14 @@ internal static class NIRACognitionPromptCompiler
                 "registered capability and authority can actually support it. " +
                 "Ordinary conversation needs no tool; answer naturally.");
         }
+        // The compact quick index is size-bounded. Its middle can be clipped as
+        // the plugin/runtime catalog grows. Always expose every *registered ID*
+        // separately, so the model can request an exact missing schema instead
+        // of hallucinating an unavailable primitive or using unrelated tools.
+        // This is a generic inventory, not an intent classifier or a topic map.
+        if (embeddedAppId == null)
+            Add(b, "COMPLETE REGISTERED PRIMITIVE IDS (request exact schema when needed)",
+                CapabilityIdentityDirectory(context.CapabilityContext));
         Add(b, "LIVE CAPABILITY QUICK SIGNATURES (! required, ? optional; CALL DIRECTLY WHEN GROUNDED)", catalog);
         if (embeddedAppId == null)
             Add(b, "EXACT USER-NAMED REGISTERED PRIMITIVES — CALL THESE DIRECTLY WHEN READY",
@@ -2950,6 +3042,21 @@ internal static class NIRACognitionPromptCompiler
         return Limit(b.ToString(), 2800).Trim();
     }
 
+
+    // The full identifier directory remains useful even when the detailed
+    // parameter index is shortened for latency. Only exact runtime entries
+    // may appear here; no user text, task name or LLM-invented capability.
+    internal static string CapabilityIdentityDirectory(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
+        return string.Join(" ", raw.Split('\n')
+            .Select(line => line.Trim())
+            .Where(line => line.StartsWith("- ", StringComparison.Ordinal) &&
+                line.Contains(" | defaultRisk=", StringComparison.Ordinal))
+            .Select(line => line[2..line.IndexOf(" | defaultRisk=", StringComparison.Ordinal)])
+            .Where(id => id.Length is > 2 and <= 120)
+            .Distinct(StringComparer.OrdinalIgnoreCase));
+    }
 
     private static string CapabilityIndex(string? raw, string? embeddedAppId)
     {

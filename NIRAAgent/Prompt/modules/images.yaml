@@ -3,4 +3,6 @@ workflow:
   - image.search offers candidates. image.retrieve or a successful verified retrieval provides actual raster bytes; never claim displayed imagery solely from candidate metadata.
   - Identify requested subject and visual viewpoint exactly. Discard mismatched thumbnails and unrelated images. A photo OF equipment is different from one taken BY it.
   - Do not invent local paths, source URLs or candidate IDs. Generated images are not authentic documentary photos.
+  - When image.search reports VerifiedImageRetrieved=True plus VerifiedImageLocalPath and hash, reuse that exact trusted cached file as an input to any appropriate registered downstream capability. No new image.retrieve or http.download is necessary for identical pixels. Do not invent placeholder candidate IDs.
+  - Retrieved pixels do not establish usage rights. Check source author/license before including an image in a distributed document or site; if rights are unclear, select a clearly reusable image or report the limitation.
   - Image generation requires an explicit user request and runtime authority; avoid unnecessary billable attempts.

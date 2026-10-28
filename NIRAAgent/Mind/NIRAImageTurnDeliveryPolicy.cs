@@ -54,6 +54,22 @@ public static class NIRAImageTurnDeliveryPolicy
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 
+    // Mechanical DELIVERY distinction, not a topic-specific tool router:
+    // visual research may support creating a requested saved artifact rather
+    // than itself being the user's visible deliverable. The model still decides
+    // which tools and source material the task needs. A direct image-only
+    // request retains normal inline image delivery.
+    private static readonly Regex SavedArtifactRequest = new(
+        @"\b(?:create|make|prepare|write|draft|design|generate|produce|build|compile|export|save)\b" +
+        @"[\s\S]{0,450}\b(?:assignment|report|essay|document|file|spreadsheet|workbook|presentation|slides|pdf|docx|xlsx|pptx|website|application|project)\b" +
+        @"|\b(?:save|export)\b[\s\S]{0,200}\b(?:desktop|downloads|folder|file)\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    public static bool IsArtifactFirstRequest(string? userText) =>
+        !string.IsNullOrWhiteSpace(userText) &&
+        !IsSimpleImageOnlyRequest(userText) &&
+        SavedArtifactRequest.IsMatch(userText);
+
     public static bool ExplicitPhotographRequest(string? userText) =>
         !string.IsNullOrWhiteSpace(userText) && Regex.IsMatch(userText,
             @"\b(?:photos?|photographs?)\b",

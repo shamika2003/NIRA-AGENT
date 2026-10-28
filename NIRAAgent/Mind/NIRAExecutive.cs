@@ -933,6 +933,11 @@ public sealed class NIRAExecutive
         int? explicitImageCount = mindEvent.Source == NIRAMindEventSource.User
             ? NIRAImageTurnDeliveryPolicy.ReadExplicitImageCount(mindEvent.Content) : null;
         int imageDeliveryTarget = explicitImageCount ?? 0;
+        // Suppress reference-image CHAT presentation when the user's requested
+        // primary deliverable is a saved artifact. Retrieval and model access
+        // remain intact: the verified file can still be embedded in that artifact.
+        bool artifactFirstRequest = mindEvent.Source == NIRAMindEventSource.User &&
+            NIRAImageTurnDeliveryPolicy.IsArtifactFirstRequest(mindEvent.Content);
         var verifiedImageDeliveryHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var verifiedImageSourceUris = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var verifiedImageDeliveryPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1099,6 +1104,10 @@ public sealed class NIRAExecutive
         bool acceptedNeedUserResumesPriorObjective = false;
 
 
+        // R49: one per-run outcome ledger, separate from memory/goal persistence.
+        // This does not dispatch capabilities or treat model plans as evidence.
+        NIRAGeneralWorkLedger generalWork = new();
+
         NIRACognitionContext? latestContext =
             null;
 
@@ -1135,6 +1144,13 @@ public sealed class NIRAExecutive
                     .ToArray()
             };
 
+            // Carry the actual prior tool statuses into each subsequent model
+            // decision without adding a redundant prompt to the first call.
+            string generalWorkPulse = generalWork.Snapshot();
+            if (generalWorkPulse.Length > 0)
+                context = context with { ExecutiveEvidence =
+                    context.ExecutiveEvidence + "\n" + generalWorkPulse };
+
             latestContext =
                 context;
 
@@ -1167,6 +1183,10 @@ public sealed class NIRAExecutive
                     expandedSections,
                     expandedCapabilityIds,
                     synthesizeFromEvidence);
+
+            // Advisory milestones keep the original goal visible across tools.
+            // They never replace the Executive's authorizer or reviewer.
+            generalWork.Propose(decision.WorkPlan);
 
             // General-purpose same-call resource planning. NIRA, not keyword
             // matching in the runtime, decides whether an optional real image
@@ -1306,7 +1326,7 @@ public sealed class NIRAExecutive
             // A fulfilled, image-only continuation is not permission to chase
             // more candidate IDs. Terminalize using ACTUAL displayed pixels;
             // unrelated ongoing work, approvals and other tools are untouched.
-            if (cycle > 1 && imageDeliveryTarget > 0 &&
+            if (!artifactFirstRequest && cycle > 1 && imageDeliveryTarget > 0 &&
                 verifiedImageRetrievalCount >= imageDeliveryTarget &&
                 decision.State == NIRACognitionState.Continue &&
                 decision.CapabilityRequests.Count > 0 &&
@@ -3205,6 +3225,30 @@ public sealed class NIRAExecutive
                     Debug.WriteLine($"[Executive] BRANCH CAPABILITY ROUTED | " +
                         $"Branch={routingBranchId:D} | Capability={request.CapabilityId}");
                 }
+
+                // An internal branch-result turn already has an authoritative
+                // active parent/branch. Convert the model's exact dynamic-tool
+                // request into new branch WORK, never an unowned direct call.
+                HashSet<string> ownedDynamic = new(
+                    proposedBranchWork
+                        .Where(work => work.Kind == NIRABranchWorkKind.DynamicTool)
+                        .Select(work => work.DynamicToolInvocation!.BuildSignature()),
+                    StringComparer.OrdinalIgnoreCase);
+                foreach (NIRADynamicToolInvocation candidate in decision.DynamicToolInvocations)
+                {
+                    NIRADynamicToolInvocation invocation = candidate.Normalize();
+                    if (!ownedDynamic.Add(invocation.BuildSignature())) continue;
+                    proposedBranchWork.Add(new NIRABranchWorkProposal
+                    {
+                        BranchId = routingBranchId.ToString("D"),
+                        Kind = NIRABranchWorkKind.DynamicTool,
+                        DynamicToolInvocation = invocation,
+                        Confidence = 1.0,
+                        Reason = "Runtime ownership routing: execute the model's exact tool under its active branch."
+                    });
+                    Debug.WriteLine($"[Executive] BRANCH DYNAMIC TOOL ROUTED | " +
+                        $"Branch={routingBranchId:D}");
+                }
             }
 
             // If exactly one authoritative branch was JUST created by this
@@ -3349,6 +3393,43 @@ public sealed class NIRAExecutive
                 };
                 Debug.WriteLine($"[Executive] BRANCH GOAL-ID ALIAS RESOLVED | " +
                     $"Goal={candidateId:D} | Branch={choices[0].Id:D}");
+            }
+
+            // R49.1: a single newly committed branch can own a single newly
+            // accepted temporary procedure immediately when the model explicitly
+            // set runAfterCreate. This creates REAL branch work via the existing
+            // work service. It does NOT run directly or fabricate ownership.
+            if (newBranchesThisCycle.Length == 1 &&
+                newDynamicToolProposals.Length == 1 &&
+                newDynamicToolProposals[0].RunAfterCreate &&
+                dynamicToolMutations.Count == 1 &&
+                dynamicToolMutations[0].Action == NIRADynamicToolApplyAction.Created &&
+                dynamicToolMutations[0].Tool is
+                    { Persistence: NIRADynamicToolPersistence.Temporary,
+                      Status: NIRADynamicToolStatus.Active } acceptedTemporary)
+            {
+                NIRADynamicToolInvocation exactInvocation = new()
+                {
+                    ToolId = acceptedTemporary.Id.ToString("D"),
+                    Arguments = newDynamicToolProposals[0].InvocationArguments,
+                    Reason = newDynamicToolProposals[0].Reason
+                };
+                bool alreadyAssigned = proposedBranchWork.Any(work =>
+                    work.Kind == NIRABranchWorkKind.DynamicTool &&
+                    work.DynamicToolInvocation != null &&
+                    work.DynamicToolInvocation.BuildSignature() == exactInvocation.BuildSignature());
+                if (!alreadyAssigned)
+                {
+                    proposedBranchWork.Add(new NIRABranchWorkProposal
+                    {
+                        BranchId = newBranchesThisCycle[0].Id.ToString("D"),
+                        Kind = NIRABranchWorkKind.DynamicTool,
+                        DynamicToolInvocation = exactInvocation,
+                        Confidence = 1.0,
+                        Reason = "Same-cycle accepted temporary procedure assigned to the newly committed branch."
+                    });
+                    Debug.WriteLine("[Executive] TEMPORARY TOOL OWNED BY NEW BRANCH");
+                }
             }
 
             NIRABranchWorkProposal[] newBranchWorkProposals =
@@ -3582,6 +3663,12 @@ public sealed class NIRAExecutive
             bool topLevelMachineActionsDisallowed =
                 internalBranchLifecycleEvent || branchOwnershipCommittedThisCycle;
 
+            // Executive's foreground authority lease carries a run/optional
+            // goal, never a committed WorkId. Only the BranchRunner can issue
+            // a valid dynamic-tool execution lease. Preserve direct primitive
+            // capability calls for ordinary user requests.
+            bool topLevelDynamicToolAuthorized =
+                NIRADynamicToolService.HasCommittedOwnership(_authorityContext.Current);
 
             int suppressedTopLevelToolInvocations =
                 0;
@@ -3597,7 +3684,8 @@ public sealed class NIRAExecutive
                             string signature =
                                 invocation.BuildSignature();
 
-                            if (topLevelMachineActionsDisallowed)
+                            if (topLevelMachineActionsDisallowed ||
+                                !topLevelDynamicToolAuthorized)
                             {
                                 suppressedTopLevelToolInvocations++;
                                 executedDynamicToolInvocations.Add(
@@ -3642,13 +3730,15 @@ public sealed class NIRAExecutive
                 }
 
                 if (topLevelMachineActionsDisallowed ||
+                    !topLevelDynamicToolAuthorized ||
                     newBranchWorkOwnedThisCycle || sameCycleInvocations.Count >= 2)
                 {
                     dynamicToolEvidence.AppendLine(
                         $"Same-cycle execution deferred for tool {created.Tool.Id:D}: " +
-                        "task/branch ownership or bounded dispatch limit; " +
-                        "no action was dispatched. Use its exact committed ID " +
-                        "under the appropriate owner on a later decision.");
+                        "no committed execution-work lease at this call site. " +
+                        "No procedure steps ran. Assign this exact tool to an " +
+                        "existing or newly created active branch via branchWorkProposals; " +
+                        "the branch runner executes under real goal/branch/work ownership.");
                     continue;
                 }
 
@@ -3736,6 +3826,11 @@ public sealed class NIRAExecutive
             foreach ((string rejectedCapabilityId, string schemaError) in
                      capabilitySchemaRejections)
             {
+                // Exact diagnostics make a persistent schema mismatch actionable.
+                // Nothing in this trace executes or authorizes a tool call.
+                NIRADiagnosticTrace.Event("CAPABILITY-SCHEMA-REJECTED",
+                    $"Run={runId:D} Cycle={cycle} Capability={rejectedCapabilityId} " +
+                    $"Error={schemaError.Replace('\n', ' ').Replace('\r', ' ')}");
                 bool hasValidSibling =
                     !string.IsNullOrWhiteSpace(rejectedCapabilityId) &&
                     schemaValidCapabilities.Any(valid =>
@@ -3780,7 +3875,7 @@ public sealed class NIRAExecutive
                 schemaValidCapabilities.Count == 0)
             {
                 awaitingRejectedCapabilityEvidence = true;
-                if (capabilitySchemaCorrectionCount == 0)
+                if (capabilitySchemaCorrectionCount < 2)
                 {
                     capabilitySchemaCorrectionCount++;
                     capabilitySchemaCorrectionThisCycle = true;
@@ -3806,7 +3901,9 @@ public sealed class NIRAExecutive
                         State = NIRACognitionState.Blocked,
                         EmitReply = mindEvent.Source == NIRAMindEventSource.User,
                         Reply = mindEvent.Source == NIRAMindEventSource.User
-                            ? "I couldn't form a valid request for that live check, so I didn't run anything."
+                            ? "I couldn't execute that requested operation: its proposed arguments " +
+                              "still did not match the registered capability schema. " +
+                              "No result has been claimed for that rejected operation."
                             : string.Empty,
                         Speech = string.Empty,
                         ReplyReady = true,
@@ -3884,6 +3981,8 @@ public sealed class NIRAExecutive
                         ? "This is an internal branch lifecycle event. Direct top-level machine actions are not allowed to escape the task graph here. Assign executable work to an open branch through branchWorkProposals and wait for its authoritative result."
                         : branchOwnershipCommittedThisCycle
                             ? "A new branch was committed in this cycle. Do not dispatch top-level machine actions beside branch-owned work. Continue, inspect the committed graph, and assign the bounded work through the correct branch on the next cycle."
+                            : !topLevelDynamicToolAuthorized && suppressedTopLevelToolInvocations > 0
+                            ? "A dynamic-tool invocation needs a committed goal, branch and work item. No unowned dynamic tool ran. For a simple task use direct registered capabilityRequests; for a multi-step procedure propose/create a real goal and branch and assign its exact invocation via branchWorkProposals. Reuse previous successful research/image receipts. Do not report the user objective completed."
                             : "The identical bounded work is already owned by an accepted branch-work assignment. Let the branch runtime execute it and wait for PersistentBranchWorkResult instead of dispatching it twice.");
 
                 Debug.WriteLine(
@@ -4319,6 +4418,7 @@ public sealed class NIRAExecutive
                     capabilityResults[index];
 
                 studioPaths.Observe(newCapabilityRequests[index], result);
+                generalWork.Observe(newCapabilityRequests[index], result);
 
                 capabilityResultsBySignature[signature] =
                     result;
@@ -4562,9 +4662,13 @@ public sealed class NIRAExecutive
                 // facts even when every image command succeeded. Previously this
                 // evidence was only appended following a FAILED image.retrieve.
                 string proof = $"AUTHORITATIVE IMAGE RECEIPT: {verifiedImageRetrievalCount} " +
-                    "distinct verified image file(s) have been downloaded and are queued " +
-                    "for inline chat delivery in this run. Do not say none were obtained, " +
-                    "the provider failed for all images, or photos cannot be shown. " +
+                    "distinct verified image file(s) have been downloaded and " +
+                    (artifactFirstRequest
+                        ? "are supporting resources for the requested saved artifact, NOT " +
+                          "independent chat deliverables. Use a verified local file path " +
+                          "with an appropriate document/artifact capability when permitted. "
+                        : "are available for inline chat presentation in this run. ") +
+                    "Do not say none were obtained or the provider failed for all images. " +
                     "A later timeout does not undo these successful receipts. " +
                     "File validity alone does not establish topical relevance; " +
                     "keep subject claims grounded in the observed source metadata.";
@@ -4582,8 +4686,10 @@ public sealed class NIRAExecutive
                 // successful image receipts from an earlier cognition cycle.
                 executiveEvidence.AppendLine();
                 executiveEvidence.AppendLine(
-                    $"VERIFIED IMAGE DELIVERY (AUTHORITATIVE): {verifiedImageRetrievalCount} real " +
-                    "image(s) were already retrieved into NIRA chat during this run. " +
+                    $"VERIFIED IMAGE RETRIEVAL (AUTHORITATIVE): {verifiedImageRetrievalCount} real " +
+                    "image(s) were retrieved as " +
+                    (artifactFirstRequest ? "task resources" : "chat resources") +
+                    " during this run. " +
                     "Subsequent image.retrieve failures affect only those candidates; " +
                     "do NOT say the provider was unavailable or no pictures were shown. " +
                     "Do not issue further image.retrieve requests in this turn. " +
@@ -4959,13 +5065,16 @@ public sealed class NIRAExecutive
                     };
             }
 
-            int newRuntimeVisuals =
+            int newRuntimeVisuals = artifactFirstRequest ? 0 :
                 CollectRuntimeVisualPresentations(
                     runtimeVisualPresentations,
                     runtimeVisualPresentationSignatures,
                     capabilityEvidence,
                     dynamicToolCapabilityResults.Concat(capabilityResults),
                     verifiedImageDeliveryPaths);
+            if (artifactFirstRequest && newlyVerifiedImages > 0)
+                NIRADiagnosticTrace.Event("IMAGE-DELIVERY",
+                    $"Run={runId:D} Stage=SupportAssetNotChat Count={newlyVerifiedImages}");
 
             if (newRuntimeVisuals > 0)
             {
@@ -6444,7 +6553,12 @@ public sealed class NIRAExecutive
                                 "satisfy the full request. Explain restricted parts " +
                                 "separately while reporting already obtained results.",
                                 capabilityEvidence.ToString(),
-                                dynamicToolEvidence.ToString()),
+                                dynamicToolEvidence.ToString(),
+                                "SAVED ARTIFACT EVIDENCE (verified package structure only, " +
+                                "not source quality, image licence, or visual page count): " +
+                                (NIRADocxObservedCompletionPolicy.FromVerifiedStudioPartialResults(
+                                    capabilityRequestsBySignature, capabilityResultsBySignature)
+                                    ?? "No independently verified Studio document receipt.")),
                             latestContext?.ConversationContext ?? string.Empty,
                             GetPendingTaskForEvent(mindEvent)?.Objective ?? string.Empty,
                             originAppId,
@@ -6675,7 +6789,9 @@ public sealed class NIRAExecutive
                         reviewDeferredUserGoalCompletions.Length == 0 &&
                         string.IsNullOrWhiteSpace(dynamicToolEvidence.ToString()) &&
                         GetPendingTaskForEvent(mindEvent) == null
-                            ? NIRADocxObservedCompletionPolicy.FromResults(
+                            ? NIRADocxObservedCompletionPolicy.FromVerifiedStudioPartialResults(
+                                capabilityRequestsBySignature, capabilityResultsBySignature)
+                                ?? NIRADocxObservedCompletionPolicy.FromResults(
                                 capabilityRequestsBySignature, capabilityResultsBySignature)
                                 ?? NIRADocxObservedCompletionPolicy.FromVerifiedPageBreakResults(
                                     capabilityRequestsBySignature, capabilityResultsBySignature)
@@ -6689,11 +6805,11 @@ public sealed class NIRAExecutive
                             Speech = string.Empty, ReplyReady = true,
                             CharacterReady = true,
                             DisplayBlocks = Array.Empty<NIRARichBlock>(),
-                            DecisionSummary = "Verified DOCX append+two inspections; partial receipt after reviewer exhaustion."
+                            DecisionSummary = "Verified saved DOCX result; partial receipt after reviewer exhaustion."
                         };
                         completionReviewConfirmedComplete = true;
                         NIRADiagnosticTrace.Event("DOCX-RECEIPT-PARTIAL-DELIVERY",
-                            $"Run={runId:D} Cycle={cycle} Scope=AppendAndTwoInspections " +
+                            $"Run={runId:D} Cycle={cycle} Scope=VerifiedDocxOperation " +
                             "FinalNarrativeReview=Unresolved");
                     }
                     else
@@ -6863,7 +6979,9 @@ public sealed class NIRAExecutive
                 !desktopActionNeedsObservation)
             {
                 string? verifiedDocxPartial = NIRADocxObservedCompletionPolicy
-                    .FromVerifiedStudioResults(capabilityRequestsBySignature, capabilityResultsBySignature)
+                    .FromVerifiedStudioPartialResults(capabilityRequestsBySignature, capabilityResultsBySignature)
+                    ?? NIRADocxObservedCompletionPolicy.FromVerifiedStudioResults(
+                        capabilityRequestsBySignature, capabilityResultsBySignature)
                     ?? NIRADocxObservedCompletionPolicy.FromVerifiedR47WorkflowResults(
                         capabilityRequestsBySignature, capabilityResultsBySignature)
                     ?? NIRADocxObservedCompletionPolicy.FromVerifiedProfessionalResults(
@@ -6888,6 +7006,37 @@ public sealed class NIRAExecutive
                     };
                     NIRADiagnosticTrace.Event("DOCX-FORMAT-VERIFIED-PARTIAL",
                         $"Run={runId:D} Cycle={cycle} Reason=ModelBlocked VerifiedSavedCopy=True");
+                }
+                else
+                {
+                    // A model's generic failure explanation cannot erase actual
+                    // source research or hide a trustworthy Studio failure receipt.
+                    // This applies to any topic or authored document.
+                    NIRACapabilityResult? studioFailure = capabilityResultsBySignature.Values
+                        .LastOrDefault(r => r.CapabilityId == NIRACapabilityIds.DocxStudioCreate &&
+                            r.Status == NIRACapabilityResultStatus.Failed);
+                    if (studioFailure != null)
+                    {
+                        bool researched = capabilityResultsBySignature.Values.Any(r =>
+                            r.CapabilityId == NIRACapabilityIds.WebSearch && r.Succeeded);
+                        string detail = studioFailure.Summary.Trim();
+                        if (detail.Length > 550) detail = detail[..550] + "...";
+                        decision = decision with
+                        {
+                            EmitReply = true,
+                            Reply = (researched ? "Source research ran, but " : "") +
+                                "the requested Word document was not verified as created. " +
+                                "Word Studio reported: " + detail + " " +
+                                (studioFailure.OutcomeUncertain
+                                    ? "A partial file may exist; inspect the target before retrying."
+                                    : "The tool reported no published document for this failed attempt."),
+                            Speech = string.Empty,
+                            ReplyReady = true,
+                            CharacterReady = true,
+                            DisplayBlocks = Array.Empty<NIRARichBlock>(),
+                            DecisionSummary = "Blocked task grounded in Word Studio failure receipt."
+                        };
+                    }
                 }
             }
 
@@ -7260,7 +7409,7 @@ public sealed class NIRAExecutive
                 // successful photos after a later failed/duplicate search. Fix
                 // only a demonstrably false image-unavailable claim; preserve
                 // NIRA's original character wording in every other case.
-                if (verifiedImageRetrievalCount > 0 &&
+                if (!artifactFirstRequest && verifiedImageRetrievalCount > 0 &&
                     IsFalseImageUnavailableClaim(reply))
                 {
                     reply = $"I retrieved {verifiedImageRetrievalCount} verified " +
@@ -7326,7 +7475,7 @@ public sealed class NIRAExecutive
                 ||
                 !string.IsNullOrWhiteSpace(reply);
 
-            if (allowVisualPresentation)
+            if (allowVisualPresentation && !artifactFirstRequest)
             {
                 IEnumerable<NIRAVisualArtifactPresentationRequest> presentationsToEmit =
                     runtimeVisualPresentations

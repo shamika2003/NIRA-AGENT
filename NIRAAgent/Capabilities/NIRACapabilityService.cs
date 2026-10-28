@@ -19,7 +19,8 @@ public sealed class NIRACapabilityService
         (capabilityId == NIRACapabilityIds.FileWrite &&
          exception is DirectoryNotFoundException) ||
         (capabilityId == NIRACapabilityIds.DocxStudioCreate &&
-         exception is NIRADocxStudioDestinationExistsException);
+         exception is NIRADocxStudioDestinationExistsException or
+             NIRADocxStudioNoPublishedFileException);
 
     private readonly NIRACapabilityRegistry _registry;
     private readonly INIRACapabilityAuthorizer _authorizer;
@@ -501,6 +502,17 @@ public sealed class NIRACapabilityService
                     $"Stage={(dispatched ? "AfterDispatch" : "BeforeDispatch")} | " +
                     $"ArgumentNames={argumentNames} | ExceptionType={ex.GetType().Name}");
             }
+            if (request.CapabilityId == NIRACapabilityIds.DocxStudioCreate)
+            {
+                // Local diagnostic only. Bound the native error instead of
+                // persisting model-generated document content or capability JSON.
+                string shortReason = ex.Message.Replace('\r', ' ').Replace('\n', ' ');
+                if (shortReason.Length > 350) shortReason = shortReason[..350] + "...";
+                NIRADiagnosticTrace.Event("DOCX-STUDIO-ERROR",
+                    $"Exception={ex.GetType().Name} Dispatched={dispatched} " +
+                    $"DefiniteNoEffect={preflightNoEffect} " +
+                    $"PublishedStateUncertain={dispatched && !preflightNoEffect} Reason={shortReason}");
+            }
             result = Make(dispatched ? NIRACapabilityResultStatus.Failed : NIRACapabilityResultStatus.Rejected,
                 ex.Message + (dispatched && risk != NIRACapabilityRisk.Observe && !preflightNoEffect
                     ? " Partial effects may remain; inspect before retrying." : "")) with
@@ -568,9 +580,14 @@ public sealed class NIRACapabilityService
             request.CapabilityId ==
             NIRACapabilityIds.ProcessStart;
 
+        bool documentStudio =
+            request.CapabilityId ==
+            NIRACapabilityIds.DocxStudioCreate;
+
         if (!browserCapability &&
             !applicationResolve &&
-            !processStart)
+            !processStart &&
+            !documentStudio)
         {
             return request;
         }
@@ -589,7 +606,10 @@ public sealed class NIRACapabilityService
                 property.Name;
 
             string mapped =
-                applicationResolve &&
+                documentStudio &&
+                name.Equals("styleProfile", StringComparison.OrdinalIgnoreCase)
+                    ? "profile"
+                    : applicationResolve &&
                 (name.Equals(
                      "applicationName",
                      StringComparison.OrdinalIgnoreCase)
@@ -727,6 +747,28 @@ public sealed class NIRACapabilityService
             {
                 normalizedValue = JsonSerializer.SerializeToElement(
                     new[] { property.Value.GetString() ?? string.Empty });
+                changed = true;
+            }
+            // Registered parameters ending in Json intentionally carry serialized
+            // JSON as a string. Models sometimes emit the equivalent JSON value
+            // as an object/array. Serialize that value losslessly before the
+            // ordinary schema and authority checks. No tool or domain IDs here.
+            else if (parameterType == "string" &&
+                     parameter.Name.EndsWith("Json", StringComparison.OrdinalIgnoreCase) &&
+                     property.Value.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+            {
+                normalizedValue = JsonSerializer.SerializeToElement(
+                    property.Value.GetRawText());
+                changed = true;
+            }
+            // Numeric/Boolean scalar input is unambiguous when the *registered*
+            // descriptor requires a string. This is representation repair only,
+            // not missing-argument inference, a tool alias or authorization.
+            else if (parameterType == "string" &&
+                     property.Value.ValueKind is JsonValueKind.True or JsonValueKind.False or JsonValueKind.Number)
+            {
+                normalizedValue = JsonSerializer.SerializeToElement(
+                    property.Value.ToString().ToLowerInvariant());
                 changed = true;
             }
             else if (parameterType == "integer")

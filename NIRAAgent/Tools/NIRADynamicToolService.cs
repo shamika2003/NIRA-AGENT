@@ -177,6 +177,14 @@ public sealed class NIRADynamicToolService
         return results;
     }
 
+    // Shared admission predicate for the Executive and tool service.
+    // Goal ownership alone is insufficient: executable work requires a real
+    // committed branch and a committed work item as well.
+    internal static bool HasCommittedOwnership(NIRAAuthorityExecutionContext owner) =>
+        owner.GoalId is Guid goalId && goalId != Guid.Empty &&
+        owner.BranchId is Guid branchId && branchId != Guid.Empty &&
+        owner.WorkId is Guid workId && workId != Guid.Empty;
+
     public async Task<IReadOnlyList<NIRADynamicToolExecutionResult>> ExecuteAsync(
         IReadOnlyList<NIRADynamicToolInvocation> invocations,
         CancellationToken cancellationToken = default)
@@ -191,13 +199,25 @@ public sealed class NIRADynamicToolService
             // Defense in depth: a tool may have non-capability bookkeeping as
             // well as primitive steps; its invocation still belongs to work.
             NIRAAuthorityExecutionContext owner = _executionContext.Current;
-            if (owner.GoalId is not Guid goalId || goalId == Guid.Empty ||
-                owner.BranchId is not Guid branchId || branchId == Guid.Empty ||
-                owner.WorkId is not Guid workId || workId == Guid.Empty)
+            if (!HasCommittedOwnership(owner))
             {
-                Debug.WriteLine("[BranchOwnership] DIRECT TOOL REJECTED");
-                throw new InvalidOperationException(
-                    "BranchOwnedExecutionRequired: dynamic tool must have committed goal, branch and work ownership.");
+                // A rejected invocation must not crash the entire user task.
+                // Zero primitive steps execute, and no model-supplied IDs are
+                // accepted as a substitute for authoritative ownership.
+                const string reason = "BranchOwnedExecutionRequired: dynamic tool must have committed goal, branch and work ownership.";
+                Debug.WriteLine("[BranchOwnership] DIRECT TOOL REJECTED (NO EXECUTION)");
+                DateTimeOffset rejectedAt = DateTimeOffset.UtcNow;
+                results.Add(new NIRADynamicToolExecutionResult
+                {
+                    ToolName = "unowned",
+                    Succeeded = false,
+                    Aborted = true,
+                    Summary = reason,
+                    FailureReason = reason,
+                    StartedAtUtc = rejectedAt,
+                    FinishedAtUtc = rejectedAt
+                });
+                continue;
             }
             DateTimeOffset now = DateTimeOffset.UtcNow;
 

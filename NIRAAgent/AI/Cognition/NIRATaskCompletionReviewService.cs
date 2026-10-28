@@ -25,6 +25,16 @@ public sealed class NIRATaskCompletionReviewService
             that merely greets the user or discusses a previous task is NeedsWork.
             Do not mark a draft Complete because its tone is nice, its JSON is
             valid, its internal summary says done, or a tool call once succeeded.
+            VERIFIED ARTIFACT CONTINUITY: In multi-tool requests, a successful
+            audited post-write document receipt remains a real saved-file result
+            even when other research, image, first-attempt or final-appearance
+            checks fail. Do not assert that no file was created when the actual
+            same-run write receipt proves otherwise. Review the complete user
+            objective separately: page count, writing quality, image license,
+            citations and Word visual rendering are NOT proven by a DOCX ZIP
+            structure check. If those remain unverified, require a truthful
+            partial completion report naming the saved file and specific gaps;
+            never discard independently confirmed work or invent its quality.
             TEMPORAL COMMITMENT PERSISTENCE: the NIRA self-model's trusted
             commitment store and scheduler (not a generic tool capability) own
             first future wake-ups. When EXECUTIVE EVIDENCE contains an explicit

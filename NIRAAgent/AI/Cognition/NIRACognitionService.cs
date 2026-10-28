@@ -3659,6 +3659,7 @@ public sealed class NIRACognitionService
             Speech = ReadValue(root, "speech", string.Empty) ?? string.Empty,
             DisplayBlocks = NIRARichBlockJsonReader.Read(root),
             ResourceIntent = ReadOptional<NIRAResourceIntent>(root, "resourceIntent"),
+            WorkPlan = ReadOptional<NIRAAutonomousWorkPlan>(root, "workPlan"),
 
             ReplyPresentation = ReadValue(
                 root,

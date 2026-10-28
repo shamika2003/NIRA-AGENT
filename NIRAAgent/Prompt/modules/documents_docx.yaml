@@ -4,6 +4,7 @@ workflow:
   - Use registered ID/schema; inspect, write once, reuse audited PostWriteVerified receipt. Reinspect only for missing details or when user requests independent verification.
   - Modifying tools always create NEW files with an existing authorized folder. Never overwrite, guess an old cell value, retry a successful mutation, or use Word/COM for native operations. Refuse ambiguous targets, signed/macro/tracked documents and stale hashes.
   - A trusted PostWriteVerified=True + SourceUnchanged=True + OverwroteExisting=False receipt with hashes proves saved ZIP/OpenXML integrity, NOT page appearance in Microsoft Word. A failed optional read does not cancel a verified write.
+  - Research images are inputs, NOT chat output: use verified image.search VerifiedImageLocalPath with reuse rights; never invent/refetch media paths. For complete sourced DOCX use filesystem.docx.studio.create at a NEW path, not filesystem.write; omit unlicensed pictures and placeholders.
 
 basic:
   - filesystem.docx.create: NEW path, content (1-300 nonempty lines, <=20k chars, # or ## native Word headings), optional title.

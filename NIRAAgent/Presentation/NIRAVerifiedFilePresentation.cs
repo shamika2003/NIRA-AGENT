@@ -27,6 +27,26 @@ public static class NIRAVerifiedFilePresentation
             .Select(p => (Request: p.Value, Result: results[p.Key]))
             .ToArray();
 
+        // A native Word Studio completion is a saved artifact, not the final
+        // answer's source image. Promote only the auditable save receipt, never
+        // a generic text-write to a .docx suffix or an invented filename.
+        foreach (var (request, result) in proven.Reverse())
+        {
+            if (request.CapabilityId != NIRACapabilityIds.DocxStudioCreate ||
+                !result.ChangedSystemState ||
+                !result.Output.Contains("PostWriteVerified=True", StringComparison.Ordinal) ||
+                !result.Output.Contains("OverwroteExisting=False", StringComparison.Ordinal) ||
+                !TryArgument(request.Arguments, "path", out var destination) ||
+                !IsAbsoluteWindowsFilePath(destination))
+                continue;
+
+            return Add(existing, new NIRARichBlock
+            {
+                Type = "file", Title = FileName(destination),
+                Text = destination, Unit = "DOCX SAVED / VERIFIED"
+            });
+        }
+
         // A copy is stronger evidence of a new artifact than a preceding directory listing.
         foreach (var (request, result) in proven.Reverse())
         {

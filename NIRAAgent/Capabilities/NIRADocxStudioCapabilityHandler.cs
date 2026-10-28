@@ -17,6 +17,16 @@ internal sealed class NIRADocxStudioDestinationExistsException : IOException
             "Do not retry filesystem.docx.studio.create against this path.") { }
 }
 
+// A rejected input with no published destination is a definite no-write result.
+// Keep this distinct from unknown failures that occur during/after publication.
+internal sealed class NIRADocxStudioNoPublishedFileException : ArgumentException
+{
+    public NIRADocxStudioNoPublishedFileException(string reason, Exception inner)
+        : base("STUDIO_INPUT_REJECTED_NO_FILE: " + reason +
+            " No document was published. Revise the actual invalid input; " +
+            "the same unused destination may be used after correction.", inner) { }
+}
+
 // R48 Word Studio: ONE atomic, styled, native DOCX composition operation.
 // Its inputs are explicitly bounded JSON, not executable XML or Word macros.
 internal static partial class NIRADocx
@@ -103,7 +113,13 @@ internal static partial class NIRADocx
         if (listId != 0) props.Add(new XElement(W + "numPr",
             new XElement(W + "ilvl", new XAttribute(W + "val", 0)),
             new XElement(W + "numId", new XAttribute(W + "val", listId))));
-        props.Add(new XElement(W + "spacing", new XAttribute(W + "after", afterTwips)));
+        if (style != null && style.StartsWith("Heading", StringComparison.Ordinal))
+        {
+            props.Add(new XElement(W + "keepNext"));
+            props.Add(new XElement(W + "keepLines"));
+        }
+        props.Add(new XElement(W + "spacing", new XAttribute(W + "after", afterTwips),
+            new XAttribute(W + "line", 285), new XAttribute(W + "lineRule", "auto")));
         props.Add(new XElement(W + "jc", new XAttribute(W + "val", alignment == "justify" ? "both" : alignment)));
         return new XElement(W + "p", props);
     }
@@ -193,8 +209,9 @@ internal static partial class NIRADocx
         for (int i = 0; i < parsed.Count; i++)
         {
             XElement tr = new(W + "tr");
-            if (i == 0) tr.Add(new XElement(W + "trPr", new XElement(W + "tblHeader",
-                new XAttribute(W + "val", 1))));
+            tr.Add(new XElement(W + "trPr", new XElement(W + "cantSplit")));
+            if (i == 0) tr.Element(W + "trPr")!.Add(new XElement(W + "tblHeader",
+                new XAttribute(W + "val", 1)));
             for (int col = 0; col < columns; col++)
             {
                 string text = parsed[i][col];
@@ -229,8 +246,9 @@ internal static partial class NIRADocx
             new XElement(W + "num", new XAttribute(W + "numId", 2),
                 new XElement(W + "abstractNumId", new XAttribute(W + "val", 1)))));
     }
-    private static XDocument Styles48(string accent)
+    private static XDocument Styles48(string accent, string profile)
     {
+        string face = profile == "academic" ? "Cambria" : "Calibri";
         XElement Heading(int level, int size) => new(W + "style", new XAttribute(W + "type", "paragraph"),
             new XAttribute(W + "styleId", "Heading" + level),
             new XElement(W + "name", new XAttribute(W + "val", "heading " + level)),
@@ -243,12 +261,12 @@ internal static partial class NIRADocx
             new XElement(W + "style", new XAttribute(W + "type", "paragraph"),
                 new XAttribute(W + "styleId", "Normal"), new XAttribute(W + "default", 1),
                 new XElement(W + "name", new XAttribute(W + "val", "Normal")),
-                new XElement(W + "rPr", new XElement(W + "rFonts", new XAttribute(W + "ascii", "Calibri"),
-                    new XAttribute(W + "hAnsi", "Calibri")), new XElement(W + "sz", new XAttribute(W + "val", 22)))),
+                new XElement(W + "rPr", new XElement(W + "rFonts", new XAttribute(W + "ascii", face),
+                    new XAttribute(W + "hAnsi", face)), new XElement(W + "sz", new XAttribute(W + "val", 22)))),
             Heading(1, 18), Heading(2, 14), Heading(3, 12)));
     }
-    private static void Package48(string path, XDocument doc, string accent,
-        XDocument? header, XDocument? footer, byte[]? image, string? imageExtension, string? imageMime)
+    private static void Package48(string path, XDocument doc, string accent, string profile,
+        XDocument? header, XDocument? footer, IReadOnlyList<Studio48Media> media)
     {
         using FileStream file = new(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
         using (ZipArchive zip = new(file, ZipArchiveMode.Create, leaveOpen: true))
@@ -265,8 +283,10 @@ internal static partial class NIRADocx
             Type("word/numbering.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml");
             if (header != null) Type("word/headerR48.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml");
             if (footer != null) Type("word/footerR48.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml");
-            if (image != null) types.Add(new XElement(CT48 + "Default", new XAttribute("Extension", imageExtension!),
-                new XAttribute("ContentType", imageMime!)));
+            foreach (Studio48Media asset in media.GroupBy(m => m.Extension, StringComparer.OrdinalIgnoreCase)
+                         .Select(group => group.First()))
+                types.Add(new XElement(CT48 + "Default", new XAttribute("Extension", asset.Extension),
+                    new XAttribute("ContentType", asset.Mime)));
             WriteXml(zip, ContentTypePart, new XDocument(types));
             WriteXml(zip, RelationshipPart, new XDocument(new XElement(PR48 + "Relationships",
                 new XElement(PR48 + "Relationship", new XAttribute("Id", "rId1"),
@@ -280,19 +300,20 @@ internal static partial class NIRADocx
                 new XAttribute("Type", BaseRel48 + "header"), new XAttribute("Target", "headerR48.xml")));
             if (footer != null) links.Add(new XElement(PR48 + "Relationship", new XAttribute("Id", "rId4"),
                 new XAttribute("Type", BaseRel48 + "footer"), new XAttribute("Target", "footerR48.xml")));
-            if (image != null) links.Add(new XElement(PR48 + "Relationship", new XAttribute("Id", "rId5"),
-                new XAttribute("Type", BaseRel48 + "image"), new XAttribute("Target", "media/nira-r48." + imageExtension)));
+            foreach (Studio48Media asset in media)
+                links.Add(new XElement(PR48 + "Relationship", new XAttribute("Id", asset.RelationshipId),
+                    new XAttribute("Type", BaseRel48 + "image"), new XAttribute("Target", "media/" + asset.FileName)));
             WriteXml(zip, "word/_rels/document.xml.rels", new XDocument(links));
             WriteXml(zip, DocumentPart, doc);
-            WriteXml(zip, "word/styles.xml", Styles48(accent));
+            WriteXml(zip, "word/styles.xml", Styles48(accent, profile));
             WriteXml(zip, "word/numbering.xml", Numbering48());
             if (header != null) WriteXml(zip, "word/headerR48.xml", header);
             if (footer != null) WriteXml(zip, "word/footerR48.xml", footer);
-            if (image != null)
+            foreach (Studio48Media asset in media)
             {
-                ZipArchiveEntry entry = zip.CreateEntry("word/media/nira-r48." + imageExtension, CompressionLevel.Optimal);
+                ZipArchiveEntry entry = zip.CreateEntry("word/media/" + asset.FileName, CompressionLevel.Optimal);
                 using Stream dst = entry.Open();
-                dst.Write(image);
+                dst.Write(asset.Bytes);
             }
         }
         file.Flush(true);
@@ -300,9 +321,29 @@ internal static partial class NIRADocx
     internal static async Task<NIRACapabilityHandlerResult> Studio48Async(
         NIRACapabilityRequest request, CancellationToken ct)
     {
+        // Parse/quality/media validation can fail before the create-only publish.
+        // File absence is checked *after* failure; a published destination or an
+        // unclassified I/O exception remains uncertain and must be inspected.
+        string? intendedPath = null;
+        try
+        {
+            intendedPath = GetPath(request, "path");
+            return await Studio48CoreAsync(request, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is ArgumentException or JsonException or XmlException or InvalidDataException)
+        {
+            if (intendedPath != null && !File.Exists(intendedPath) && !Directory.Exists(intendedPath))
+                throw new NIRADocxStudioNoPublishedFileException(ex.Message, ex);
+            throw;
+        }
+    }
+
+    private static async Task<NIRACapabilityHandlerResult> Studio48CoreAsync(
+        NIRACapabilityRequest request, CancellationToken ct)
+    {
         string path = GetPath(request, "path");
         string title = RequiredText(request, "title", 180).Trim();
-        string raw = RequiredText(request, "blocksJson", 65000);
+        string raw = RequiredText(request, "blocksJson", 180000);
         NIRAFileIntegrity.RejectLinkedPaths(path);
         if (File.Exists(path) || Directory.Exists(path))
             throw new NIRADocxStudioDestinationExistsException(path);
@@ -312,6 +353,16 @@ internal static partial class NIRADocx
         string orient = (NIRACapabilityArguments.GetOptionalRawString(request, "orientation", 12) ?? "portrait").ToLowerInvariant();
         string mm = NIRACapabilityArguments.GetOptionalRawString(request, "marginMm", 2) ?? "20";
         string accent = Color48(NIRACapabilityArguments.GetOptionalRawString(request, "accentHex", 6) ?? "17365D");
+        string profile = (NIRACapabilityArguments.GetOptionalRawString(request, "profile", 10) ?? "general")
+            .ToLowerInvariant();
+        if (profile is not ("general" or "academic" or "business"))
+            throw new ArgumentException("profile must be general, academic or business.");
+        string minWordsText = NIRACapabilityArguments.GetOptionalRawString(request, "minimumBodyWords", 5) ?? "0";
+        if (!int.TryParse(minWordsText, out int minimumBodyWords) || minimumBodyWords is < 0 or > 12000)
+            throw new ArgumentException("minimumBodyWords must be an integer between 0 and 12000.");
+        string minImagesText = NIRACapabilityArguments.GetOptionalRawString(request, "minimumImages", 1) ?? "0";
+        if (!int.TryParse(minImagesText, out int minimumImages) || minimumImages is < 0 or > 6)
+            throw new ArgumentException("minimumImages must be an integer between 0 and 6.");
         string? headerText = CleanOptionalLine(request, "headerText");
         string? footerText = CleanOptionalLine(request, "footerText");
         string pageFlag = NIRACapabilityArguments.GetOptionalRawString(request, "pageNumbers", 5) ?? "false";
@@ -320,24 +371,19 @@ internal static partial class NIRADocx
             pageFlag is not ("true" or "false"))
             throw new ArgumentException("paper A4/LETTER, orientation portrait/landscape, marginMm 10-35, pageNumbers true/false.");
         bool pages = pageFlag == "true";
-        string? imagePath = NIRACapabilityArguments.GetOptionalRawString(request, "imagePath", 32760);
-        byte[]? image = null;
-        string? imageExtension = null, imageMime = null;
-        int imageWidth = 0, imageHeight = 0;
-        if (!string.IsNullOrWhiteSpace(imagePath))
-        {
-            NIRAFileIntegrity.RejectLinkedPaths(imagePath);
-            FileInfo input = new(imagePath);
-            if (!input.Exists || input.Length is < 24 or > 5 * 1024 * 1024)
-                throw new ArgumentException("imagePath requires a real local PNG/JPEG under 5 MiB.");
-            image = await File.ReadAllBytesAsync(imagePath, ct).ConfigureAwait(false);
-            var meta = VerifyImage(image);
-            imageExtension = meta.Ext; imageMime = meta.Mime;
-            imageWidth = meta.Width; imageHeight = meta.Height;
-        }
+        string? legacyImagePath = NIRACapabilityArguments.GetOptionalRawString(request, "imagePath", 32760);
         using JsonDocument parsed = JsonDocument.Parse(raw, new JsonDocumentOptions { MaxDepth = 12 });
-        if (parsed.RootElement.ValueKind != JsonValueKind.Array || parsed.RootElement.GetArrayLength() is < 1 or > 80)
-            throw new ArgumentException("blocksJson requires 1-80 blocks.");
+        if (parsed.RootElement.ValueKind != JsonValueKind.Array || parsed.RootElement.GetArrayLength() is < 1 or > 120)
+            throw new ArgumentException("blocksJson requires 1-120 blocks.");
+        List<Studio48Media> media = await LoadStudio48MediaAsync(parsed.RootElement,
+            legacyImagePath, ct).ConfigureAwait(false);
+        if (media.Count < minimumImages)
+            throw new ArgumentException($"Document has {media.Count} verified local images, " +
+                $"but minimumImages={minimumImages}. No document was created.");
+        int bodyWords = CountStudio48BodyWords(parsed.RootElement);
+        if (bodyWords < minimumBodyWords)
+            throw new ArgumentException($"Document content is too short: {bodyWords} body words, " +
+                $"minimumBodyWords={minimumBodyWords}. No document was created. Expand substantive writing first.");
         int pageWidth = paper == "A4" ? 11906 : 12240;
         int pageHeight = paper == "A4" ? 16838 : 15840;
         if (orient == "landscape") (pageWidth, pageHeight) = (pageHeight, pageWidth);
@@ -346,9 +392,10 @@ internal static partial class NIRADocx
         if (tableWidth <= 0) throw new ArgumentException("Margins leave no usable table width.");
         XElement body = new(W + "body");
         XElement titleP = P48("center", 280);
-        titleP.Add(TextRun48(title, true, false, false, accent, 24));
+        titleP.Element(W + "pPr")!.Add(new XElement(W + "keepNext"));
+        titleP.Add(TextRun48(title, true, false, false, accent, profile == "academic" ? 20 : 24));
         body.Add(titleP);
-        int count = 0, headings = 0, tables = 0, lists = 0, breaks = 0, links = 0, images = 0;
+        int count = 0, headings = 0, tables = 0, charts = 0, lists = 0, breaks = 0, links = 0, images = 0;
         foreach (JsonElement block in parsed.RootElement.EnumerateArray())
         {
             ct.ThrowIfCancellationRequested();
@@ -363,6 +410,9 @@ internal static partial class NIRADocx
                     break;
                 case "table":
                     body.Add(Table48(block, accent, tableWidth)); tables++; break;
+                case "chart":
+                    foreach (XElement element in ChartTable48(block, accent, tableWidth)) body.Add(element);
+                    charts++; tables++; break;
                 case "quote":
                     XElement quote = BodyParagraph48(block, "paragraph", accent);
                     XElement quoteProps = quote.Element(W + "pPr")!;
@@ -399,32 +449,43 @@ internal static partial class NIRADocx
                         TextRun48(GetString48(block, "text", 300), false, false, true, "1769AA", 11)));
                     body.Add(linkP); links++; break;
                 case "image":
-                    if (image == null || images != 0) throw new ArgumentException("One image block requires top-level imagePath.");
+                    if (images >= media.Count) throw new ArgumentException("Image block has no verified local imagePath.");
+                    Studio48Media asset = media[images];
                     string alt = GetString48(block, "altText", 200);
-                    int width = GetInt48(block, "widthMm", 55, 10, 140);
+                    int width = GetInt48(block, "widthMm", 55, 10, 160);
                     string alignment = GetString48(block, "alignment", 12, false);
                     if (alignment.Length == 0) alignment = "center";
                     if (alignment is not ("left" or "center" or "right"))
                         throw new ArgumentException("Image alignment must be left, center or right.");
+                    int maximumWidthMm = (int)Math.Floor(tableWidth * 25.4 / 1440.0);
+                    if (width > maximumWidthMm)
+                        throw new ArgumentException($"Image widthMm={width} exceeds usable page width of {maximumWidthMm} mm.");
                     long cx = width * 36000L;
-                    long cy = (long)Math.Round(cx * (double)imageHeight / imageWidth);
+                    long cy = (long)Math.Round(cx * (double)asset.Height / asset.Width);
                     if (cy > 160 * 36000L) throw new ArgumentException("Image too tall; reduce widthMm.");
                     string caption = GetString48(block, "caption", 300, false);
-                    body.Add(DrawingParagraph("rId5", alt, 1, Path.GetFileName(imagePath!), cx, cy, alignment,
-                        0, 0, caption.Length != 0));
+                    body.Add(DrawingParagraph(asset.RelationshipId, alt, images + 1,
+                        asset.FileName, cx, cy, alignment, 0, 0, caption.Length != 0));
                     if (caption.Length != 0)
                     {
-                        XElement cap = P48("center", 110);
+                        XElement cap = P48(alignment, 110);
                         cap.Add(TextRun48(caption, false, true, false, "617086", 9));
                         body.Add(cap);
+                    }
+                    string credit = GetString48(block, "credit", 400, false);
+                    if (credit.Length != 0)
+                    {
+                        XElement sourceP = P48(alignment, 120);
+                        sourceP.Add(TextRun48(credit, false, false, false, "65758A", 8));
+                        body.Add(sourceP);
                     }
                     images++; break;
                 default: throw new ArgumentException("Unsupported Word Studio block type: " + type);
             }
             count++;
         }
-        if (image != null && images != 1)
-            throw new ArgumentException("Provided imagePath requires exactly one image block.");
+        if (images != media.Count)
+            throw new ArgumentException("Each provided image must correspond to exactly one image block.");
         int w = pageWidth;
         int h = pageHeight;
         int twips = marginTwips;
@@ -446,7 +507,7 @@ internal static partial class NIRADocx
         XDocument? ftr = footerText == null && !pages ? null : PartDocument(false, footerText, pages);
         ct.ThrowIfCancellationRequested();
         XDocument expectedSavedXml = SerializedExpected48(doc);
-        PublishNew(path, staged => Package48(staged, doc, accent, hdr, ftr, image, imageExtension, imageMime), expectedSavedXml);
+        PublishNew(path, staged => Package48(staged, doc, accent, profile, hdr, ftr, media), expectedSavedXml);
         // Verify *actual saved* media, relationships, header/footer and numbering parts.
         using (ZipArchive saved = ZipFile.OpenRead(path))
         {
@@ -454,14 +515,23 @@ internal static partial class NIRADocx
                 (hdr != null && saved.GetEntry("word/headerR48.xml") == null) ||
                 (ftr != null && saved.GetEntry("word/footerR48.xml") == null))
                 throw new InvalidDataException("Word Studio saved package missing a required Word part.");
-            if (image != null)
+            foreach (Studio48Media asset in media)
             {
-                ZipArchiveEntry? entry = saved.GetEntry("word/media/nira-r48." + imageExtension);
-                if (entry == null) throw new InvalidDataException("Image media part missing.");
+                ZipArchiveEntry? entry = saved.GetEntry("word/media/" + asset.FileName);
+                if (entry == null) throw new InvalidDataException("Image media part missing: " + asset.FileName);
                 using Stream input = entry.Open();
-                if (!SHA256.HashData(input).AsSpan().SequenceEqual(SHA256.HashData(image)))
-                    throw new InvalidDataException("Saved image bytes differ from original.");
+                if (!SHA256.HashData(input).AsSpan().SequenceEqual(SHA256.HashData(asset.Bytes)))
+                    throw new InvalidDataException("Saved image bytes differ from original: " + asset.FileName);
             }
+            using Stream relStream = saved.GetEntry("word/_rels/document.xml.rels")?.Open() ??
+                throw new InvalidDataException("Word media relationships missing.");
+            XDocument savedRelations = LoadXml(relStream);
+            foreach (Studio48Media asset in media)
+                if (!savedRelations.Descendants(PR48 + "Relationship").Any(r =>
+                    (string?)r.Attribute("Id") == asset.RelationshipId &&
+                    (string?)r.Attribute("Type") == BaseRel48 + "image" &&
+                    (string?)r.Attribute("Target") == "media/" + asset.FileName))
+                    throw new InvalidDataException("Word image relationship not preserved: " + asset.RelationshipId);
         }
         string structure = VerifyPublishedDocument(path, expectedSavedXml);
         var hash = await NIRAFileIntegrity.HashAsync(path, CancellationToken.None).ConfigureAwait(false);
@@ -470,8 +540,9 @@ internal static partial class NIRADocx
             ChangedSystemState = true,
             Summary = "R48 Word Studio: complete styled Word document saved and structurally verified with one atomic new-file operation.",
             Output = $"Destination={path}\nDestinationSHA256={hash.Sha256}\nDestinationBytes={hash.Bytes}\n" +
-                $"StudioBlocks={count}\nStudioHeadings={headings}\nStudioTables={tables}\nStudioLists={lists}\n" +
+                $"StudioBlocks={count}\nStudioHeadings={headings}\nStudioTables={tables}\nStudioCharts={charts}\nStudioLists={lists}\n" +
                 $"StudioPageBreaks={breaks}\nStudioLinks={links}\nStudioImages={images}\n" +
+                $"BodyWords={bodyWords}\nMinimumBodyWords={minimumBodyWords}\nMinimumImages={minimumImages}\nProfile={profile}\n" +
                 $"HeaderPresent={hdr != null}\nFooterPresent={ftr != null}\nPageNumberField={pages}\n" +
                 $"Paper={paper}\nOrientation={orient}\nMarginMm={margin}\nAccentHex={accent}\n" +
                 $"{structure}\nOverwroteExisting=False\nVisualPaginationVerified=False"
@@ -485,11 +556,11 @@ public sealed class NIRADocxStudioCapabilityHandler : INIRACapabilityHandler
     {
         Id = NIRACapabilityIds.DocxStudioCreate,
         DefaultRisk = NIRACapabilityRisk.Modify,
-        Description = "R48 Word Studio: create one complete, styled native DOCX in one atomic operation. Rich paragraphs/runs, headings, bullets, numbers, striped tables, quotes, dividers, TOC field, page breaks, http(s) links, one embedded PNG/JPEG, caption, header/footer, native PAGE field, A4/Letter portrait/landscape, margins and accent. Only NEW files, audited post-write ZIP/media verification. Does not render Word pages or PDFs.",
+        Description = "Native Word composer: create a NEW structured DOCX atomically. Academic/business/general typography, substantive paragraphs, headings, bullets, numbering, full-width tables, editable numeric data-bar charts, quotations, images (up to six), captions/credits, hyperlinks, header/footer and PAGE field. Optional minimumBodyWords prevents short content from satisfying longer assignments. Images require verified existing local files and independent reuse-right checks. Verifies saved XML/media, never rendered pagination.",
         Parameters = [
             NIRADocx.Param("path", true, "NEW unused .docx destination in an authorized folder."),
             NIRADocx.Param("title", true, "Title of document; one line, maximum 180 characters."),
-            NIRADocx.Param("blocksJson", true, "JSON array 1-80: {type:'paragraph'|'heading'|'bullet'|'number'|'table'|'quote'|'divider'|'toc'|'pagebreak'|'link'|'image',...}. Paragraphs: text or runs:[{text,bold,italic,underline,colorHex}], optional alignment/fontSizePt. Heading: text, level 1-3. Table: rows:[[cell,...],...] 2-40 x 2-8. Link: text,url. Image: altText,widthMm,optional caption; requires top-level imagePath."),
+            NIRADocx.Param("blocksJson", true, "JSON array 1-120 of blocks: paragraph, heading(level 1-3), bullet, number, table(rows 2-40 x 2-8), chart(data:[{label,value}], optional title/source), quote, divider, toc, pagebreak, link(text,url), image(altText,widthMm,caption,credit,imagePath). Paragraph/heading/list: text or runs with formatting. Use multiple image blocks with each imagePath. Do not insert charts/tables without grounded data."),
             NIRADocx.Param("paper", false, "A4 (default) or LETTER"),
             NIRADocx.Param("orientation", false, "portrait (default) or landscape"),
             NIRADocx.Param("marginMm", false, "10-35, default 20"),
@@ -497,7 +568,10 @@ public sealed class NIRADocxStudioCapabilityHandler : INIRACapabilityHandler
             NIRADocx.Param("headerText", false, "Optional one-line running header"),
             NIRADocx.Param("footerText", false, "Optional one-line running footer"),
             NIRADocx.Param("pageNumbers", false, "true for native Word PAGE field; default false"),
-            NIRADocx.Param("imagePath", false, "Optional existing local PNG/JPEG under 5 MiB; must have one image block")
+            NIRADocx.Param("imagePath", false, "Backward compatibility: local PNG/JPEG if exactly one image block lacks its own imagePath."),
+            NIRADocx.Param("profile", false, "general (default), academic (student/research writing), or business."),
+            NIRADocx.Param("minimumBodyWords", false, "Optional word-count quality gate 0-12000, as a STRING integer; for explicit long-form tasks set from requested length. No output if insufficient substantive text."),
+            NIRADocx.Param("minimumImages", false, "Optional 0-6 STRING quality gate for images when user requires them; only count verified local image blocks. Missing images cause a pre-write failure, not a false success.")
         ]
     };
     public NIRACapabilityRisk ResolveRisk(NIRACapabilityRequest request) => NIRACapabilityRisk.Modify;

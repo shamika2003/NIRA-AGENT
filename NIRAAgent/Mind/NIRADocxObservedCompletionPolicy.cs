@@ -297,6 +297,56 @@ public static class NIRADocxObservedCompletionPolicy
         return reply.ToString();
     }
 
+    // R49.2: a real user task can use web research, images, ordinary file writes,
+    // and multiple (including failed) Studio attempts in one turn. The R48
+    // one-shot validator rightly rejects that MIXED request as a whole. Isolate
+    // exactly one audited successful Studio create, validate it with the exact
+    // R48 routine, and return an explicitly PARTIAL result. Never certify the
+    // overall research, academic quality, image rights or rendered page count.
+    public static string? FromVerifiedStudioPartialResults(
+        IReadOnlyDictionary<string, NIRACapabilityRequest> requests,
+        IReadOnlyDictionary<string, NIRACapabilityResult> results)
+    {
+        if (requests.Count == 0 || results.Count == 0) return null;
+
+        KeyValuePair<string, NIRACapabilityRequest>? selected = null;
+        NIRACapabilityResult? saved = null;
+        foreach (KeyValuePair<string, NIRACapabilityRequest> entry in requests)
+        {
+            if (entry.Value.CapabilityId != NIRACapabilityIds.DocxStudioCreate ||
+                !results.TryGetValue(entry.Key, out NIRACapabilityResult? result) ||
+                result.CapabilityId != entry.Value.CapabilityId ||
+                result.Status != NIRACapabilityResultStatus.Succeeded)
+                continue;
+
+            // Do not silently choose one among multiple successfully created
+            // documents and imply it fulfilled every requested deliverable.
+            if (selected.HasValue) return null;
+            selected = entry;
+            saved = result;
+        }
+
+        if (selected is null || saved is null) return null;
+        var exactRequest = new Dictionary<string, NIRACapabilityRequest>(StringComparer.Ordinal)
+        {
+            [selected.Value.Key] = selected.Value.Value
+        };
+        var exactResult = new Dictionary<string, NIRACapabilityResult>(StringComparer.Ordinal)
+        {
+            [selected.Value.Key] = saved
+        };
+        string? audited = FromVerifiedStudioResults(exactRequest, exactResult);
+        if (audited is null) return null;
+
+        const string oneShotHeading = "**R48 Word Studio: document created and verified.**";
+        const string partialHeading = "**A Word document was saved during this request.**";
+        return audited.Replace(oneShotHeading, partialHeading, StringComparison.Ordinal) +
+            "\n\n**Remaining checks:** The requested content quality, source attribution, " +
+            "image reuse permissions, approximate page count and visual pagination " +
+            "have not all been independently established. This is a verified " +
+            "saved-file report, not proof that every assignment requirement was met.";
+    }
+
     // R46: audited single-write DOCX styling receipt. It is safe to deliver
     // without an additional independent model reviewer only for an explicit
     // single-tool user request and no outstanding non-DOCX work. Every fact

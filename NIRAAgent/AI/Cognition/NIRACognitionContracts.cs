@@ -80,6 +80,14 @@ public sealed record NIRAResourceIntent
     public string Purpose { get; init; } = string.Empty;
 }
 
+// Advisory plan for an unfamiliar multi-step user objective. Never an authority grant.
+public sealed record NIRAAutonomousWorkPlan
+{
+    public string Objective { get; init; } = string.Empty;
+    public IReadOnlyList<string> CompletionCriteria { get; init; } = Array.Empty<string>();
+    public string NextMilestone { get; init; } = string.Empty;
+}
+
 public sealed record NIRACognitionDecision
 {
     public NIRACognitionState State
@@ -109,6 +117,7 @@ public sealed record NIRACognitionDecision
     public string Speech { get; init; } = string.Empty;
     public IReadOnlyList<NIRARichBlock> DisplayBlocks { get; init; } = Array.Empty<NIRARichBlock>();
     public NIRAResourceIntent? ResourceIntent { get; init; }
+    public NIRAAutonomousWorkPlan? WorkPlan { get; init; }
 
     public NIRAReplyPresentationMode ReplyPresentation
     {

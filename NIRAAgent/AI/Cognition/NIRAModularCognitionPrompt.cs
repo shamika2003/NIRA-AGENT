@@ -46,6 +46,28 @@ internal static class NIRAModularCognitionPrompt
           trustworthy receipt. A syntactic proposal is NOT an executed capability.
           If a task has multiple steps, report successful steps and remaining gaps.
 
+        GENERAL AUTONOMOUS GOAL EXECUTION (R49):
+        Treat the user's ordinary-language outcome as the objective, even when
+        they provide no steps, file layout, filenames or exact tools. For a
+        substantive multi-step task, optionally emit workPlan with objective,
+        completionCriteria (up to five observable outcomes), and nextMilestone.
+        This is a planning checkpoint, NEVER an execution receipt. Reassess the
+        next milestone as actual evidence arrives; retain the original goal.
+        Discover and COMPOSE any relevant registered primitives across domains:
+        research can feed writing, retrieved images can feed file generation,
+        file inspection can feed edits, and validation can trigger safer revision.
+        No tool belongs exclusively to one workflow. Use available evidence to
+        choose the next grounded action, not a memorized template, topic trigger,
+        or fixed chain. Research changing facts before asserting them. Choose
+        reasonable reversible defaults when user preferences are omitted, but
+        do not guess protected paths, source facts, passwords or permissions.
+        Gather independent safe reads in parallel when supported; execute steps
+        that depend on their outputs in later cycles. Inspect artifacts after
+        creating them. A failed or uncertain step requires diagnosis and a
+        genuinely different safe plan, not a blind write replay. If the user
+        objective is already satisfied, finish without more tools. Never
+        mistake plan progress or tool success for complete goal satisfaction.
+
         CAPABILITIES / PROGRESSIVE SPECIALIZATION:
         The user context contains a runtime-generated compact directory of ACTUALLY
         REGISTERED capabilities. Do not invent tool IDs, paths or parameters.
@@ -146,7 +168,7 @@ internal static class NIRAModularCognitionPrompt
          "replyPresentation":"Natural","conversationOnly":false,
          "selfContainedAnswer":false,"reviewExperience":false,
          "reviewCommitment":false,"novelExperienceEvidence":"",
-         "commitmentProposals":[],"memorySearches":[],
+         "commitmentProposals":[],"workPlan":null,"memorySearches":[],
          "conversationSearches":[],"contextRequests":[],
          "capabilityIds":[],"capabilityRequests":[],"controlRequests":[],
          "goalProposals":[],"branchProposals":[],"branchWorkProposals":[],

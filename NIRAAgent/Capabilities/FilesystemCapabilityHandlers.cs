@@ -767,7 +767,7 @@ public sealed class NIRAFileWriteCapabilityHandler
                 NIRACapabilityIds.FileWrite,
 
             Description =
-                "Write UTF-8 text to an existing or new file. Supports overwrite or append and returns post-write hash evidence.",
+                "Write UTF-8 PLAIN TEXT to .txt/.md/config/code files, never binary Office documents, images, PDFs or ZIPs. Supports overwrite/append and returns post-write hash evidence. Use format-aware capabilities for DOCX/XLSX/PPTX/PDF.",
 
             DefaultRisk =
                 NIRACapabilityRisk.Modify,
@@ -824,6 +824,21 @@ public sealed class NIRAFileWriteCapabilityHandler
 
 
         NIRAWindowsProtectedFolderAccessService.RejectRedirectedKnownFolderShadow(path);
+
+        // Text-only writes must never masquerade as binary office documents or
+        // image/package files. A 40-byte string saved as .docx blocks a later
+        // create-only Word Studio operation and is NOT a valid Word document.
+        // The prohibition is extension-based, independent of user topic.
+        string extension = Path.GetExtension(path);
+        if (new[] { ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt",
+                    ".pdf", ".odt", ".ods", ".odp", ".zip",
+                    ".png", ".jpg", ".jpeg", ".webp", ".gif" }
+            .Contains(extension, StringComparer.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                "TEXT_WRITE_BINARY_FORMAT_REJECTED: filesystem.write writes plain UTF-8 text, " +
+                "not a valid '" + extension + "' file. Use a format-aware registered " +
+                "creation capability; draft text belongs in a .txt/.md file. " +
+                "The requested destination was not created or overwritten.");
 
         string content =
             NIRACapabilityArguments.RequireRawString(

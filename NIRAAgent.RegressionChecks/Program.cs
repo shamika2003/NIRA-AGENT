@@ -18,6 +18,7 @@ using NIRAAgent.PC.Awareness;
 using NIRAAgent.Images;
 using NIRAAgent.Gallery;
 using NIRAAgent.Artifacts;
+using NIRAAgent.Tools;
 
 // Run with: dotnet run --project NIRAAgent.RegressionChecks
 // These are offline contract checks, not simulated live model/Bridge tests.
@@ -26,6 +27,286 @@ int failed = 0;
 Console.WriteLine($"[DeepRouting] REGRESSION | Revision={NIRAModelSelection.RoutingRevision} | " +
     $"Assembly={typeof(NIRAModelSelection).Assembly.Location}");
 Console.WriteLine("[ConcurrentMind] REGRESSION | Revision=NIRA-CONCURRENT-20261014-S4-ADAPTIVE");
+
+// R49.3: generic artifact requests preserve reference images as source assets,
+// and the raw text writer never creates a fake native Word document.
+Check("R49.3 supporting reference imagery is not an automatic chat answer", () =>
+{
+    if (!NIRAImageTurnDeliveryPolicy.IsArtifactFirstRequest(
+            "Create a four-page student assignment about an inventor with appropriate images and save it on my Desktop.") ||
+        !NIRAImageTurnDeliveryPolicy.IsArtifactFirstRequest(
+            "Prepare a presentation using researched illustrations and export the file.") ||
+        NIRAImageTurnDeliveryPolicy.IsArtifactFirstRequest(
+            "Show me two real photographs of a historic machine") ||
+        NIRAImageTurnDeliveryPolicy.IsArtifactFirstRequest(
+            "Explain how a mechanical computer worked."))
+        throw new Exception("Artifact-first vs. direct visual answer routing regressed.");
+});
+Check("R49.3 filesystem.write refuses a fake binary Office document", () =>
+{
+    string path = Path.Combine(Path.GetTempPath(), "nira-r493-" +
+        Guid.NewGuid().ToString("N") + ".docx");
+    var request = new NIRACapabilityRequest {
+        CapabilityId = NIRACapabilityIds.FileWrite,
+        Arguments = JsonSerializer.SerializeToElement(new {
+            path, content = "[Drafting text]", mode = "overwrite" })
+    };
+    bool prevented = false;
+    try
+    {
+        new NIRAFileWriteCapabilityHandler().ExecuteAsync(request)
+            .GetAwaiter().GetResult();
+    }
+    catch (InvalidOperationException ex)
+    {
+        prevented = ex.Message.Contains("TEXT_WRITE_BINARY_FORMAT_REJECTED", StringComparison.Ordinal);
+    }
+    if (!prevented || File.Exists(path))
+        throw new Exception("A plain text write created a corrupt .docx destination.");
+});
+Check("R49.3 proven Studio file produces a file card; forged text write does not", () =>
+{
+    string path = @"C:\Users\test\Desktop\real.docx";
+    var request = new NIRACapabilityRequest {
+        CapabilityId = NIRACapabilityIds.DocxStudioCreate,
+        Arguments = JsonSerializer.SerializeToElement(new { path })
+    };
+    var success = new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.DocxStudioCreate,
+        Status = NIRACapabilityResultStatus.Succeeded,
+        Risk = NIRACapabilityRisk.Modify, ChangedSystemState = true,
+        Output = "PostWriteVerified=True\nOverwroteExisting=False\nDestinationSHA256=abc"
+    };
+    var requests = new Dictionary<string, NIRACapabilityRequest> { ["one"] = request };
+    var results = new Dictionary<string, NIRACapabilityResult> { ["one"] = success };
+    var cards = NIRAVerifiedFilePresentation.Attach(Array.Empty<NIRARichBlock>(), requests, results, "Saved");
+    if (!cards.Any(b => b.Type == "file" && b.Text == path))
+        throw new Exception("Audited native DOCX save lost its grounded file card.");
+    results["one"] = success with { Status = NIRACapabilityResultStatus.Failed };
+    if (NIRAVerifiedFilePresentation.Attach(Array.Empty<NIRARichBlock>(), requests, results, "Failed")
+        .Any(b => b.Type == "file"))
+        throw new Exception("Failed Word creation falsely produced a verified file card.");
+});
+
+// R49.1: no dynamic procedure runs from a run/goal-only foreground context.
+Check("R49.1 dynamic procedure requires real committed goal branch and work", () =>
+{
+    var runOnly = new NIRAAuthorityExecutionContext { RunId = Guid.NewGuid() };
+    Guid goal = Guid.NewGuid(), branch = Guid.NewGuid(), work = Guid.NewGuid();
+    if (NIRADynamicToolService.HasCommittedOwnership(runOnly) ||
+        NIRADynamicToolService.HasCommittedOwnership(runOnly with { GoalId = goal }) ||
+        NIRADynamicToolService.HasCommittedOwnership(runOnly with { GoalId = goal, BranchId = branch }) ||
+        !NIRADynamicToolService.HasCommittedOwnership(runOnly with {
+            GoalId = goal, BranchId = branch, WorkId = work }))
+        throw new Exception("Uncommitted dynamic tool execution could bypass work ownership.");
+});
+
+// R49.4: Model output can be structurally correct yet use JSON values for
+// registered string-encoded arguments. Repair representations before validation;
+// never invent missing required fields or relax the authorization boundary.
+Check("R49.4 descriptor-bound JSON and scalar argument normalization", () =>
+{
+    var handler = new NIRADocxStudioCapabilityHandler();
+    var service = new NIRACapabilityService(
+        new NIRACapabilityRegistry(new INIRACapabilityHandler[] { handler }),
+        null!, null!, null!);
+    var request = Request(NIRACapabilityIds.DocxStudioCreate,
+        """{"path":"C:\\Temp\\new.docx","title":"Sample","blocksJson":[{"type":"heading","level":1,"text":"Overview"},{"type":"paragraph","text":"Information"}],"pageNumbers":true,"marginMm":20}""");
+    if (!service.TryNormalizeAndValidateSchema(request, out var normalized, out var error))
+        throw new Exception("Representation repair failed: " + error);
+    var args = normalized.Arguments;
+    if (args.GetProperty("blocksJson").ValueKind != JsonValueKind.String ||
+        args.GetProperty("pageNumbers").GetString() != "true" ||
+        args.GetProperty("marginMm").GetString() != "20")
+        throw new Exception("Registered string representation was not normalized");
+    using var contents = JsonDocument.Parse(args.GetProperty("blocksJson").GetString()!);
+    if (contents.RootElement.GetArrayLength() != 2)
+        throw new Exception("Structured blocks lost content during normalization");
+    var missingPath = Request(NIRACapabilityIds.DocxStudioCreate,
+        """{"title":"Sample","blocksJson":[]}""");
+    if (service.TryNormalizeAndValidateSchema(missingPath, out _, out _))
+        throw new Exception("Required path was inferred, bypassing safe schema validation");
+});
+
+Check("R49.4 full registered capability identities survive long catalogs", () =>
+{
+    string longCatalog = "NIRA TRUSTED PRIMITIVE CAPABILITIES\nAVAILABLE PRIMITIVES\n" +
+        string.Concat(Enumerable.Range(0, 250).Select(i =>
+            $"- generic.capability{i} | defaultRisk=Observe | fake description\n" +
+            $"  - query: string | required=True | long hint {new string('x', 100)}\n"));
+    var ids = NIRACognitionPromptCompiler.CapabilityIdentityDirectory(longCatalog);
+    if (!ids.Contains("generic.capability0", StringComparison.Ordinal) ||
+        !ids.Contains("generic.capability249", StringComparison.Ordinal) ||
+        ids.Contains("long hint", StringComparison.Ordinal))
+        throw new Exception("Exact registered IDs were lost in oversized catalog");
+});
+
+// R49: generic planning must survive unrelated tools and never fabricate proof.
+Check("R49 general-work ledger preserves goals and reports only actual receipts", () =>
+{
+    var ledger = new NIRAGeneralWorkLedger();
+    if (ledger.Snapshot().Length != 0) throw new Exception("Empty chat acquired a work plan");
+    ledger.Propose(new NIRAAutonomousWorkPlan {
+        Objective = "Prepare an evidence-based report",
+        CompletionCriteria = new[] { "Sources verified", "Output file inspected" },
+        NextMilestone = "Find independent sources"
+    });
+    ledger.Propose(new NIRAAutonomousWorkPlan {
+        Objective = "A different objective", NextMilestone = "Inspect the source"
+    });
+    var request = Request(NIRACapabilityIds.WebSearch, """{"query":"arbitrary question"}""");
+    ledger.Observe(request, new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.WebSearch,
+        Status = NIRACapabilityResultStatus.Succeeded,
+        Risk = NIRACapabilityRisk.Observe
+    });
+    string evidence = ledger.Snapshot();
+    if (!evidence.Contains("Prepare an evidence-based report", StringComparison.Ordinal) ||
+        evidence.Contains("A different objective", StringComparison.Ordinal) ||
+        !evidence.Contains("web.search | Succeeded | Observe", StringComparison.Ordinal) ||
+        !evidence.Contains("Inspect the source", StringComparison.Ordinal) ||
+        !evidence.Contains("not", StringComparison.OrdinalIgnoreCase))
+        throw new Exception("Model plan replaced the goal or a receipt was treated as final proof");
+});
+Check("R49 complex tasks retain cross-domain tool signatures in cognition", () =>
+{
+    string prompt = NIRAModularCognitionPrompt.CoreSystem("identity: NIRA");
+    string work = NIRACognitionPromptCompiler.DeepWorkUser(new NIRACognitionContext {
+        RunId = Guid.NewGuid(), Cycle = 2,
+        Event = NIRAMindEvent.UserMessage("Prepare a report", Guid.NewGuid(), "test"),
+        CapabilityContext = "NIRA TRUSTED PRIMITIVE CAPABILITIES\nAVAILABLE PRIMITIVES\n" +
+            "- web.search | defaultRisk=Observe | Fetch sources\n" +
+            "  - query: string | required=True | Search query\n" +
+            "- filesystem.docx.studio.create | defaultRisk=Modify | Create Word file\n" +
+            "  - path: string | required=True | Output path"
+    });
+    if (!prompt.Contains("COMPOSE", StringComparison.Ordinal) ||
+        !prompt.Contains("workPlan", StringComparison.Ordinal) ||
+        !work.Contains("CROSS-DOMAIN DEEP WORK", StringComparison.Ordinal) ||
+        !work.Contains("web.search", StringComparison.Ordinal) ||
+        !work.Contains("filesystem.docx.studio.create", StringComparison.Ordinal))
+        throw new Exception("Multi-domain goal reasoning or accessible capability directory missing");
+});
+
+// R51: studio parameter spelling, native no-write failures, and exact error semantics.
+Check("R51 Word Studio profile alias repairs without dropping arbitrary parameters", () =>
+{
+    var handler = new NIRADocxStudioCapabilityHandler();
+    var service = new NIRACapabilityService(
+        new NIRACapabilityRegistry(new INIRACapabilityHandler[] { handler }),
+        null!, null!, null!);
+    var request = Request(NIRACapabilityIds.DocxStudioCreate,
+        """{"path":"C:\\Temp\\r51.docx","title":"Unrelated sample","blocksJson":[{"type":"paragraph","text":"A sample"}],"styleProfile":"academic"}""");
+    if (!service.TryNormalizeAndValidateSchema(request, out var normalized, out var error) ||
+        normalized.Arguments.TryGetProperty("styleProfile", out _) ||
+        normalized.Arguments.GetProperty("profile").GetString() != "academic" ||
+        normalized.Arguments.GetProperty("blocksJson").ValueKind != JsonValueKind.String)
+        throw new Exception("Word Studio style alias schema normalization failed: " + error);
+    var conflict = Request(NIRACapabilityIds.DocxStudioCreate,
+        """{"path":"C:\\Temp\\r51.docx","title":"Sample","blocksJson":"[]","profile":"academic","styleProfile":"business"}""");
+    if (service.TryNormalizeAndValidateSchema(conflict, out _, out _))
+        throw new Exception("Conflicting profile and styleProfile should not be guessed.");
+    var unknown = Request(NIRACapabilityIds.DocxStudioCreate,
+        """{"path":"C:\\Temp\\r51.docx","title":"Sample","blocksJson":"[]","undocumentedParameter":1}""");
+    if (service.TryNormalizeAndValidateSchema(unknown, out _, out _))
+        throw new Exception("Unknown Word Studio arguments were silently discarded.");
+});
+
+Check("R51 invalid Word content fails with definite no-publish exception", () =>
+{
+    string folder = Path.Combine(Path.GetTempPath(), "nira-r51-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        string path = Path.Combine(folder, "too-short.docx");
+        var request = Request(NIRACapabilityIds.DocxStudioCreate,
+            JsonSerializer.Serialize(new { path, title = "Neutral sample",
+                blocksJson = """[{"type":"paragraph","text":"Only a few words"}]""",
+                minimumBodyWords = "100" }));
+        try
+        {
+            new NIRADocxStudioCapabilityHandler().ExecuteAsync(request).GetAwaiter().GetResult();
+            throw new Exception("Too-short document incorrectly created.");
+        }
+        catch (NIRADocxStudioNoPublishedFileException ex)
+        {
+            if (!ex.Message.Contains("too short", StringComparison.OrdinalIgnoreCase) ||
+                !ex.Message.Contains("No document was published", StringComparison.Ordinal))
+                throw new Exception("Rejected input lost accurate diagnostic evidence.");
+        }
+        if (File.Exists(path)) throw new Exception("Rejected input created a DOCX file.");
+    }
+    finally { try { Directory.Delete(folder, recursive: true); } catch (IOException) { } }
+});
+
+// R50: mixed rich document composition must not depend on any named person or report topic.
+Check("R50 Word Studio supports several images, data bars and length preflight", () =>
+{
+    string folder = Path.Combine(Path.GetTempPath(), "nira-r50-studio-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        string imagePath = Path.Combine(folder, "pixel.png");
+        File.WriteAllBytes(imagePath, Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/avcAAAAASUVORK5CYII="));
+        string path = Path.Combine(folder, "composed.docx");
+        object[] blocks = {
+            new { type = "heading", level = 1, text = "Independent observations" },
+            new { type = "paragraph", text = "The measured values below illustrate an independent " +
+                "comparison. This is an invented regression fixture, not external research. " +
+                "A substantial document would provide attributed contextual explanation " +
+                "and references appropriate to its requested audience and length." },
+            new { type = "chart", title = "Observed quantities", data = new[] {
+                new { label = "Category A", value = 12.0 },
+                new { label = "Category B", value = 6.0 }
+            }, source = "Synthetic test dataset" },
+            new { type = "image", altText = "First raster", imagePath, widthMm = 25,
+                caption = "First image", credit = "Image supplied by caller" },
+            new { type = "image", altText = "Second raster", imagePath, widthMm = 25,
+                caption = "Second image", credit = "Image supplied by caller" }
+        };
+        var request = new NIRACapabilityRequest {
+            CapabilityId = NIRACapabilityIds.DocxStudioCreate,
+            Arguments = JsonSerializer.SerializeToElement(new {
+                path, title = "Independent document", blocksJson = JsonSerializer.Serialize(blocks),
+                profile = "academic", minimumBodyWords = "20"
+            })
+        };
+        NIRACapabilityHandlerResult saved = new NIRADocxStudioCapabilityHandler()
+            .ExecuteAsync(request).GetAwaiter().GetResult();
+        if (!saved.Output.Contains("StudioImages=2", StringComparison.Ordinal) ||
+            !saved.Output.Contains("StudioCharts=1", StringComparison.Ordinal) ||
+            !saved.Output.Contains("StudioTables=1", StringComparison.Ordinal) ||
+            !saved.Output.Contains("Profile=academic", StringComparison.Ordinal) ||
+            !saved.Output.Contains("PostWriteVerified=True", StringComparison.Ordinal))
+            throw new Exception("R50 mixed media or quality receipt missing.");
+        using (var zip = System.IO.Compression.ZipFile.OpenRead(path))
+        {
+            if (zip.GetEntry("word/media/nira-r48.png") == null ||
+                zip.GetEntry("word/media/studio-image-2.png") == null)
+                throw new Exception("R50 did not persist two independent image parts.");
+            using var docStream = zip.GetEntry("word/document.xml")!.Open();
+            XDocument doc = XDocument.Load(docStream);
+            XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+            if (doc.Descendants(w + "tbl").Count() != 1 ||
+                doc.Descendants(w + "drawing").Count() != 2)
+                throw new Exception("R50 embedded chart table or drawings not found.");
+        }
+        string tooShort = Path.Combine(folder, "too-short.docx");
+        var insufficient = request with { Arguments = JsonSerializer.SerializeToElement(new {
+            path = tooShort, title = "Independent document", blocksJson = JsonSerializer.Serialize(blocks),
+            minimumBodyWords = "2000"
+        }) };
+        try
+        {
+            new NIRADocxStudioCapabilityHandler().ExecuteAsync(insufficient).GetAwaiter().GetResult();
+            throw new Exception("R50 saved an undersized document despite explicit gate.");
+        }
+        catch (ArgumentException ex) when (ex.Message.Contains("too short", StringComparison.Ordinal)) { }
+        if (File.Exists(tooShort)) throw new Exception("R50 length rejection created an output file.");
+    }
+    finally { try { Directory.Delete(folder, recursive: true); } catch (IOException) { } }
+});
 
 // R48: exercise the actual native Word Studio handler (not a mocked success).
 Check("R48 studio one-shot document structure, media, no overwrite", () =>
@@ -91,6 +372,65 @@ Check("R48 studio one-shot document structure, media, no overwrite", () =>
                 !xml.Contains("landscape", StringComparison.Ordinal))
                 throw new Exception("Studio body did not retain all requested blocks.");
         }
+        // R49.2: a saved Word document cannot disappear from the final report
+        // merely because this SAME user turn also searched, wrote notes or had
+        // an earlier failed Studio attempt. This is a real Studio receipt.
+        var r492Success = new NIRACapabilityResult {
+            CapabilityId = NIRACapabilityIds.DocxStudioCreate,
+            Status = NIRACapabilityResultStatus.Succeeded,
+            Risk = NIRACapabilityRisk.Modify, AuditRecorded = true,
+            ChangedSystemState = true, Output = saved.Output
+        };
+        var r492Requests = new Dictionary<string, NIRACapabilityRequest> {
+            ["saved-studio"] = request,
+            ["failed-studio"] = request with { Arguments =
+                JsonSerializer.SerializeToElement(new {
+                    path = Path.Combine(folder, "other.docx"), title = "failed", blocksJson = "[]"
+                }) },
+            ["research"] = Request(NIRACapabilityIds.WebSearch,
+                """{"query":"independent source"}"""),
+            ["notes"] = Request(NIRACapabilityIds.FileWrite,
+                """{"path":"notes.txt","content":"evidence"}""")
+        };
+        var r492Results = new Dictionary<string, NIRACapabilityResult> {
+            ["saved-studio"] = r492Success,
+            ["failed-studio"] = r492Success with {
+                Status = NIRACapabilityResultStatus.Failed,
+                ChangedSystemState = false, Output = "Invalid blocks"
+            },
+            ["research"] = new NIRACapabilityResult {
+                CapabilityId = NIRACapabilityIds.WebSearch,
+                Status = NIRACapabilityResultStatus.Succeeded,
+                Risk = NIRACapabilityRisk.Observe
+            },
+            ["notes"] = new NIRACapabilityResult {
+                CapabilityId = NIRACapabilityIds.FileWrite,
+                Status = NIRACapabilityResultStatus.Succeeded,
+                Risk = NIRACapabilityRisk.Modify,
+                ChangedSystemState = true, AuditRecorded = true
+            }
+        };
+        string? r492Partial = NIRADocxObservedCompletionPolicy.FromVerifiedStudioPartialResults(
+            r492Requests, r492Results);
+        if (r492Partial is null ||
+            !r492Partial.Contains(path, StringComparison.Ordinal) ||
+            !r492Partial.Contains("Remaining checks", StringComparison.Ordinal) ||
+            !r492Partial.Contains("Visual page appearance", StringComparison.Ordinal) ||
+            NIRADocxObservedCompletionPolicy.FromVerifiedStudioResults(
+                r492Requests, r492Results) is not null ||
+            NIRADocxObservedCompletionPolicy.FromVerifiedStudioPartialResults(
+                r492Requests, new Dictionary<string, NIRACapabilityResult>(r492Results) {
+                    ["saved-studio"] = r492Success with { AuditRecorded = false }
+                }) is not null ||
+            NIRADocxObservedCompletionPolicy.FromVerifiedStudioPartialResults(
+                r492Requests, new Dictionary<string, NIRACapabilityResult>(r492Results) {
+                    ["saved-studio"] = r492Success with {
+                        Output = r492Success.Output.Replace("PostWriteVerified=True",
+                            "PostWriteVerified=False", StringComparison.Ordinal)
+                    }
+                }) is not null)
+            throw new Exception("R49.2 multi-tool DOCX recovery fabricated or lost a saved artifact");
+
         byte[] before = File.ReadAllBytes(path);
         try { new NIRADocxStudioCapabilityHandler().ExecuteAsync(request).GetAwaiter().GetResult();
             throw new Exception("Studio overwrote a previously created file."); }
@@ -920,7 +1260,9 @@ Check("TAVILY image-only skips inaccessible candidate and delivers next verified
             !File.Exists(result.VisualArtifacts[0].LocalPath) ||
             !result.Output.Contains("ImageCandidateAttempts=2", StringComparison.Ordinal) ||
             !result.Output.Contains("ImageCandidateFailures=1", StringComparison.Ordinal) ||
-            !result.Output.Contains("VerifiedImageCount=1", StringComparison.Ordinal))
+            !result.Output.Contains("VerifiedImageCount=1", StringComparison.Ordinal) ||
+            !result.Output.Contains("VerifiedImageLocalPath=", StringComparison.Ordinal) ||
+            !result.Output.Contains("VerifiedImageSHA256=", StringComparison.Ordinal))
             throw new Exception("The failed candidate terminated retrieval, duplicated Tavily credits, or invented pixels");
     }
     finally { if (Directory.Exists(temporary)) Directory.Delete(temporary, true); }

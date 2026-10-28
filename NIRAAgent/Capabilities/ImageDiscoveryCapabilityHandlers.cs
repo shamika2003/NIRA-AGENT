@@ -12,15 +12,15 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
     public NIRACapabilityDescriptor Descriptor { get; } = new()
     {
         Id = NIRACapabilityIds.ImageSearch,
-        Description = "Search genuine current web images via Tavily (existing NIRA_TAVILY_API_KEY; no generation). Returns short-lived candidateId, title, source URL and rights status (third-party licensing is not verified). Then call image.retrieve with a returned candidateId to show a real image; never invent IDs or URLs.",
+        Description = "Search genuine current web images via Tavily (existing NIRA_TAVILY_API_KEY; no generation). Returns source metadata and verified local image assets when requested. Images may support a saved artifact or a direct chat-image request; retrieval alone does not publish them to chat. Third-party licensing remains unverified.",
         DefaultRisk = NIRACapabilityRisk.Observe,
         Parameters = new[] {
             new NIRACapabilityParameterDescriptor { Name="query", Type="string", Required=true, Description="Specific visual subject, 2-160 characters; no URLs." },
             new NIRACapabilityParameterDescriptor { Name="limit", Type="integer", Required=false, Description="Number of ranked candidates, 1-12; default 6." },
             new NIRACapabilityParameterDescriptor { Name="retrieveBest", Type="boolean", Required=false,
-                Description="Retrieve and present real licensed images in chat by default. Set false only to inspect candidate metadata without downloading. Does not create/generate images." },
+                Description="Retrieve real image assets by default (for direct chat presentation OR as inputs to a separately requested saved file). Rights are not proven. Set false to inspect candidate metadata without downloading." },
             new NIRACapabilityParameterDescriptor { Name="retrieveCount", Type="integer", Required=false,
-                Description="Optional count of distinct verified images to show when retrieveBest is true, 1-3; default 1. Pick based on actual user value, never as a quota." },
+                Description="Optional count of distinct verified images to retrieve for the task, 1-3; default 1. Images are shown in chat only when chat presentation is the actual goal." },
             new NIRACapabilityParameterDescriptor { Name="photographsOnly", Type="boolean", Required=false,
                 Description="When true, prefer authentic photos and exclude identifiable diagrams, illustrations, models and renderings; default false." }
         }
@@ -109,8 +109,15 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
                         SubjectQuery = query, SourceUri = image.SourceUri,
                         PresentToUser = true, Surface = "InlineOnly"
                     });
+                    // The already verified local cache is reusable as INPUT
+                    // for later registered tools (e.g. document rendering).
+                    // Do not ask cognition to invent candidate IDs or download
+                    // the exact same pixels again. Rights are NOT verified.
                     output.AppendLine($"VerifiedImageTitle={image.Title}");
+                    output.AppendLine($"VerifiedImageLocalPath={image.LocalPath}");
+                    output.AppendLine($"VerifiedImageSHA256={image.Sha256}");
                     output.AppendLine($"VerifiedImageSourceUri={image.SourceUri}");
+                    output.AppendLine("VerifiedImageRights=Unverified; inspect source license before reuse/publication");
                 }
                 catch (NIRAImageRetrievalUnavailableException)
                 {
@@ -137,7 +144,7 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
                     $"Outcome=ArtifactsPrepared Count={shown.Count} Surface=InlineOnly");
                 output.AppendLine($"VerifiedImageRetrieved=True\nVerifiedImageCount={shown.Count}");
                 return new NIRACapabilityHandlerResult {
-                    Summary = $"Displayed {shown.Count} distinct verified raster image(s) out of {images.Count} retrieved candidates.",
+                    Summary = $"Retrieved {shown.Count} distinct raster image asset(s) from {images.Count} candidates. Chat delivery depends on the requested goal; image reuse rights remain unverified.",
                     Output = output.ToString(), ChangedSystemState = false,
                     VisualArtifacts = shown.ToArray()
                 };
@@ -160,7 +167,7 @@ public sealed class NIRAImageRetrieveCapabilityHandler : INIRACapabilityHandler
     public NIRACapabilityDescriptor Descriptor { get; } = new()
     {
         Id = NIRACapabilityIds.ImageRetrieve,
-        Description = "Retrieve a verified raster image candidate into NIRA's own bounded visual cache and automatically present it in chat with its known source and explicit rights status. CandidateId MUST come from image.search. This does not write user files, require a browser, or accept a URL/path from the model.",
+        Description = "Retrieve a raster image candidate into NIRA's bounded verified visual cache as a reusable task asset. Present in chat only for a requested chat visual; otherwise it can support a saved artifact subject to reuse rights. CandidateId MUST come from image.search.",
         DefaultRisk = NIRACapabilityRisk.Observe,
         Parameters = new[] {
             new NIRACapabilityParameterDescriptor { Name="candidateId", Type="string", Required=true, Description="Exact short-lived candidateId from a successful image.search result. No URL/path." }
@@ -182,7 +189,7 @@ public sealed class NIRAImageRetrieveCapabilityHandler : INIRACapabilityHandler
         NIRAAgent.Diagnostics.NIRADiagnosticTrace.Event("IMAGE-DELIVERY",
             "Outcome=ArtifactsPrepared Count=1 Surface=InlineOnly");
         return new NIRACapabilityHandlerResult {
-            Summary = $"Retrieved a real raster reference image '{download.Title}' ({download.Bytes} bytes). Image queued for NIRA chat.",
+            Summary = $"Retrieved a real raster reference image '{download.Title}' ({download.Bytes} bytes) for the active task. Its chat presentation, if any, is decided by the Executive.",
             Output = $"LocalPath={download.LocalPath}\nTitle={download.Title}\nCaption={download.Caption}\nSourceUri={download.SourceUri}\nSHA256={download.Sha256}\nBytes={download.Bytes}\nVerifiedImageRetrieved=True",
             VisualArtifacts = new [] { new NIRACapabilityVisualArtifact {
                 LocalPath=download.LocalPath, Title=download.Title, Caption=download.Caption,
