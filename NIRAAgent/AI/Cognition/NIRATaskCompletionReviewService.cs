@@ -25,6 +25,23 @@ public sealed class NIRATaskCompletionReviewService
             that merely greets the user or discusses a previous task is NeedsWork.
             Do not mark a draft Complete because its tone is nice, its JSON is
             valid, its internal summary says done, or a tool call once succeeded.
+            GENERAL OUTCOME-DEPENDENCY REVIEW (R53): The optional R53 user-goal
+            ledger provides model-proposed completion criteria and trusted
+            capability STATUS history. Do not trust its model-authored criteria
+            as a substitute for the ORIGINAL user's requirements, nor treat
+            a green tool result as proof of content quality. Trace each material
+            user requirement to observed evidence or an honestly stated limit.
+            A researched document, software project, spreadsheet, presentation
+            or another deliverable can require multiple tools: retrieval,
+            synthesis, creation, verification and corrective edits. These are
+            examples, NOT fixed mandatory routes or per-topic hardcoded rules.
+            If only research or an outline was produced when an actual saved
+            artifact was requested, verdict=NeedsWork and request the missing
+            valid execution. If a file exists but the promised amount of
+            writing, source support, images, data correctness or appearance
+            was NOT verified, do not endorse those qualities. Recommend a
+            specific grounded next step when tools can materially improve the
+            result. Do not require optional decoration or endless searches.
             VERIFIED ARTIFACT CONTINUITY: In multi-tool requests, a successful
             audited post-write document receipt remains a real saved-file result
             even when other research, image, first-attempt or final-appearance

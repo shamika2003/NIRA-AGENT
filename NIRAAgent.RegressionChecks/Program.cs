@@ -28,6 +28,500 @@ Console.WriteLine($"[DeepRouting] REGRESSION | Revision={NIRAModelSelection.Rout
     $"Assembly={typeof(NIRAModelSelection).Assembly.Location}");
 Console.WriteLine("[ConcurrentMind] REGRESSION | Revision=NIRA-CONCURRENT-20261014-S4-ADAPTIVE");
 
+// R58: canonical tool wire values and duplicate detection. Structural validation
+// must be executable code, never a hope that the selected LLM obeys a prompt.
+Check("R58 canonical DOCX block array and backward-compatible string", () =>
+{
+    var handler = new NIRADocxStudioCapabilityHandler();
+    var service = new NIRACapabilityService(
+        new NIRACapabilityRegistry(new INIRACapabilityHandler[] { handler }),
+        null!, null!, null!);
+    string common = """{"path":"C:\\Temp\\r58.docx","title":"Typed blocks","blocksJson": [{"type":"paragraph","text":"A complete object"}]}""";
+    var direct = Request(NIRACapabilityIds.DocxStudioCreate, common);
+    if (!service.TryNormalizeAndValidateSchema(direct, out var normalized, out var error) ||
+        normalized.Arguments.GetProperty("blocksJson").ValueKind != JsonValueKind.Array)
+        throw new Exception("Native JSON array must pass without string encoding: " + error);
+    string legacyBlocks = """[{"type":"paragraph","text":"A complete object"}]""";
+    var legacy = Request(NIRACapabilityIds.DocxStudioCreate,
+        JsonSerializer.Serialize(new { path = @"C:\Temp\r58.docx", title = "Typed blocks",
+            blocksJson = legacyBlocks }));
+    if (!service.TryNormalizeAndValidateSchema(legacy, out var migrated, out error) ||
+        migrated.Arguments.GetProperty("blocksJson").ValueKind != JsonValueKind.Array)
+        throw new Exception("Exact legacy JSON array string was not migrated: " + error);
+    var invalid = Request(NIRACapabilityIds.DocxStudioCreate,
+        JsonSerializer.Serialize(new { path = @"C:\Temp\r58.docx", title = "Broken nested JSON",
+            blocksJson = """[{"type":"paragraph","text":"C:\Users"}]""" }));
+    if (service.TryNormalizeAndValidateSchema(invalid, out _, out error) ||
+        !error.Contains("Malformed nested JSON", StringComparison.Ordinal))
+        throw new Exception("Malformed legacy JSON must be rejected before dispatch: " + error);
+});
+
+// R62.2: verify execution through the *existing* case-normalizing authorization
+// boundary without changing authorization, browser, or HTTP argument handling.
+Check("R62.2 prepared typed DOCX array executes and reopens a genuine file", () =>
+{
+    string dir = Path.Combine(Path.GetTempPath(), "nira-r621-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(dir);
+    try
+    {
+        var handler = new NIRADocxStudioCapabilityHandler();
+        var service = new NIRACapabilityService(
+            new NIRACapabilityRegistry(new INIRACapabilityHandler[] { handler }),
+            null!, null!, null!);
+        var policy = new NIRACapabilityRequestPolicy(null!, null!);
+        string path = Path.Combine(dir, "typed.docx");
+        var input = Request(NIRACapabilityIds.DocxStudioCreate,
+            JsonSerializer.Serialize(new {
+                path, title = "Integrated native document",
+                blocksJson = new object[] {
+                    new { type = "heading", level = 1, text = "Technical overview" },
+                    new { type = "paragraph", text = "This Word document preserves original facts and engineering context through the complete preparation and composition pipeline." },
+                    new { type = "paragraph", text = "Its paragraphs remain separate, source structure remains readable, and no unrelated argument or tool-specific exception changes the intended content." }
+                }, minimumBodyWords = "20", profile = "academic"
+            }));
+        if (!service.TryNormalizeAndValidateSchema(input, out var normalized, out var error))
+            throw new Exception("Valid typed preflight failed: " + error);
+        var prepared = policy.Prepare(normalized);
+        if (!prepared.Arguments.TryGetProperty("blocksjson", out var value) ||
+            value.ValueKind != JsonValueKind.Array || value.GetArrayLength() != 3)
+            throw new Exception("Original request preparation contract unexpectedly changed.");
+        var native = NIRACapabilityArguments.RequireStructuredJson(prepared, "blocksJson", JsonValueKind.Array);
+        if (JsonDocument.Parse(native).RootElement.GetArrayLength() != 3)
+            throw new Exception("Typed argument reader lost content after preparation.");
+        var result = handler.ExecuteAsync(prepared).GetAwaiter().GetResult();
+        if (!result.Succeeded || !File.Exists(path))
+            throw new Exception("Studio did not create the native Word file.");
+        using (var word = System.IO.Compression.ZipFile.OpenRead(path))
+        {
+            var entry = word.GetEntry("word/document.xml") ??
+                throw new Exception("Native Word document part was not saved.");
+            using var reader = new StreamReader(entry.Open());
+            string xml = reader.ReadToEnd();
+            if (!xml.Contains("Technical overview", StringComparison.Ordinal) ||
+                !xml.Contains("original facts", StringComparison.Ordinal) ||
+                !xml.Contains("paragraphs remain separate", StringComparison.Ordinal) ||
+                word.GetEntry("word/styles.xml") is null)
+                throw new Exception("Saved Word package lost source content or styles.");
+        }
+        byte[] before = System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path));
+        try
+        {
+            handler.ExecuteAsync(prepared).GetAwaiter().GetResult();
+            throw new Exception("Existing file was overwritten.");
+        }
+        catch (NIRADocxStudioDestinationExistsException) { }
+        if (!before.SequenceEqual(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path))))
+            throw new Exception("Create-only collision modified existing bytes.");
+
+        // Original case-normalization is security-relevant for HTTP headers.
+        var disallowedHeader = Request(NIRACapabilityIds.HttpRequest,
+            """{"url":"https://example.com","headers":{"Host":"untrusted.example"}}""");
+        bool deniedHost = false;
+        try { policy.Prepare(disallowedHeader); }
+        catch (InvalidOperationException) { deniedHost = true; }
+        if (!deniedHost) throw new Exception("Protected Host header was not rejected.");
+    }
+    finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
+});
+
+// R61.1: all registered typed arrays, not only names ending in Json, must
+// share strict parsing, duplicate protection, and a normal preflight failure.
+// The test uses web.search as an independent capability and does no network IO.
+Check("R61.1 declared JSON arrays normalize safely across capabilities", () =>
+{
+    using var handler = new NIRAWebSearchCapabilityHandler();
+    var service = new NIRACapabilityService(
+        new NIRACapabilityRegistry(new INIRACapabilityHandler[] { handler }),
+        null!, null!, null!);
+    var valid = Request(NIRACapabilityIds.WebSearch,
+        JsonSerializer.Serialize(new {
+            queries = """["first independent search","second independent search"]"""
+        }));
+    if (!service.TryNormalizeAndValidateSchema(valid, out var result, out var error) ||
+        result.Arguments.GetProperty("queries").ValueKind != JsonValueKind.Array ||
+        result.Arguments.GetProperty("queries").GetArrayLength() != 2 ||
+        result.Arguments.GetProperty("queries")[0].GetString() != "first independent search" ||
+        result.Arguments.GetProperty("queries")[1].GetString() != "second independent search")
+        throw new Exception("The generic typed-array migration lost valid inputs: " + error);
+    var malformed = Request(NIRACapabilityIds.WebSearch,
+        JsonSerializer.Serialize(new { queries = """["bad\Users"]""" }));
+    if (service.TryNormalizeAndValidateSchema(malformed, out _, out error) ||
+        !error.Contains("Malformed nested JSON", StringComparison.Ordinal))
+        throw new Exception("Invalid generic array JSON did not report a bounded schema failure: " + error);
+});
+
+Check("R58 disallow duplicate cognition and nested JSON keys", () =>
+{
+    using var outer = JsonDocument.Parse("""{"state":"Continue","state":"Complete"}""");
+    try
+    {
+        NIRAJsonWireContract.EnsureUniqueProperties(outer.RootElement);
+        throw new Exception("Duplicate decision keys were accepted");
+    }
+    catch (InvalidOperationException ex) when (ex.Message.Contains("Duplicate JSON property", StringComparison.Ordinal)) { }
+    var handler = new NIRADocxStudioCapabilityHandler();
+    var service = new NIRACapabilityService(
+        new NIRACapabilityRegistry(new INIRACapabilityHandler[] { handler }),
+        null!, null!, null!);
+    var duplicate = Request(NIRACapabilityIds.DocxStudioCreate,
+        """{"path":"C:\\Temp\\r58.docx","title":"Duplicate keys","blocksJson":[{"type":"paragraph","text":"first","text":"second"}]}""");
+    if (service.TryNormalizeAndValidateSchema(duplicate, out _, out var error) ||
+        !error.Contains("Duplicate JSON property", StringComparison.Ordinal))
+        throw new Exception("Duplicated block keys reached dispatch: " + error);
+});
+
+// R59: an actionless model-only "drafting" continuation must not satisfy
+// an actual deliverable, and the recovery must be bounded and authorization free.
+Check("R59 actionless required output triggers one schema replan", () =>
+{
+    var work = new NIRAGeneralWorkLedger();
+    work.Propose(new NIRAAutonomousWorkPlan {
+        Objective = "Create a saved report",
+        RequiresStateChange = true, RequiresToolExecution = true,
+        CompletionCriteria = new[] { "Real output verified" }
+    });
+    var noAction = new NIRACognitionDecision {
+        State = NIRACognitionState.Continue, EmitReply = false,
+        ProgressUpdate = "Now drafting", DecisionSummary = "Preparing next step"
+    };
+    if (!work.ShouldRecoverActionlessContinuation(noAction, false) ||
+        work.ShouldRecoverActionlessContinuation(noAction, true) ||
+        !work.HasUnfulfilledStateChange ||
+        work.UnfulfilledOutputReply().Contains("desktop.ini", StringComparison.Ordinal))
+        throw new Exception("Actionless continuation lost bounded recovery or truthful output status.");
+    var requested = noAction with {
+        CapabilityRequests = new[] { Request(NIRACapabilityIds.DocxStudioCreate,
+            """{"path":"C:\\Temp\\report.docx","title":"Report","blocksJson":[]}""") }
+    };
+    if (work.ShouldRecoverActionlessContinuation(requested, false))
+        throw new Exception("Valid capability proposals were suppressed.");
+    var read = Request(NIRACapabilityIds.FileRead, """{"path":"C:\\Temp\\source.txt"}""");
+    work.Observe(read, new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.FileRead,
+        Risk = NIRACapabilityRisk.Observe,
+        Status = NIRACapabilityResultStatus.Succeeded
+    });
+    if (!work.HasUnfulfilledStateChange ||
+        !work.ShouldRecoverActionlessContinuation(noAction, false))
+        throw new Exception("Read-only evidence was mistaken for a saved artifact.");
+    work.Observe(requested.CapabilityRequests[0], new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.DocxStudioCreate,
+        Risk = NIRACapabilityRisk.Modify,
+        ChangedSystemState = true,
+        Status = NIRACapabilityResultStatus.Succeeded
+    });
+    if (work.HasUnfulfilledStateChange ||
+        work.ShouldRecoverActionlessContinuation(noAction, false))
+        throw new Exception("Verified changed-state receipt did not clear actionless recovery.");
+});
+
+
+// R64: Images found by independently authorized searches must be reachable by
+// Word Studio without model-fabricated file paths, bypassed schema or duplicate images.
+Check("R64 observed image paths bind to native DOCX without bypassing validation", () =>
+{
+    string folder = Path.Combine(Path.GetTempPath(), "nira-r64-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        string a = Path.Combine(folder, "amber.png"), b = Path.Combine(folder, "violet.png");
+        byte[] png = Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/avcAAAAASUVORK5CYII=");
+        File.WriteAllBytes(a, png); File.WriteAllBytes(b, png);
+        var assets = new[] {
+            new NIRACapabilityVisualArtifact { LocalPath = a, Title = "Amber reactor photograph", SubjectQuery = "amber reactor" },
+            new NIRACapabilityVisualArtifact { LocalPath = b, Title = "Violet engine image", SubjectQuery = "violet engine" }
+        };
+        string outPath = Path.Combine(folder, "verified.docx");
+        var blocks = new object[] {
+            new { type = "heading", level = 1, text = "Observations" },
+            new { type = "paragraph", text = "These examples are deliberately synthetic fixtures for checking the Word writer, not assertions from external research." },
+            new { type = "image", altText = "Amber reactor", caption = "Amber reactor" },
+            new { type = "image", altText = "Violet engine", caption = "Violet engine" }
+        };
+        var request = Request(NIRACapabilityIds.DocxStudioCreate,
+            JsonSerializer.Serialize(new { path = outPath, title = "Synthetic study", blocksJson = blocks,
+                minimumImages = "2", minimumBodyWords = "10" }));
+        var bound = NIRADocxVerifiedMediaBinding.Apply(request, assets, out int count);
+        if (count != 2 || bound.Arguments.GetProperty("blocksJson").GetArrayLength() != 4)
+            throw new Exception("Two previously observed images were not bound to the correct placeholders.");
+        var handler = new NIRADocxStudioCapabilityHandler();
+        var service = new NIRACapabilityService(new NIRACapabilityRegistry(
+            new INIRACapabilityHandler[] { handler }), null!, null!, null!);
+        if (!service.TryNormalizeAndValidateSchema(bound, out var checkedRequest, out var error))
+            throw new Exception("Bound request fails actual schema: " + error);
+        var result = handler.ExecuteAsync(checkedRequest).GetAwaiter().GetResult();
+        if (!result.Output.Contains("StudioImages=2", StringComparison.Ordinal) ||
+            !result.Output.Contains("PostWriteVerified=True", StringComparison.Ordinal))
+            throw new Exception("Real Word Studio did not publish both accepted images.");
+        using (var package = System.IO.Compression.ZipFile.OpenRead(outPath))
+            if (package.Entries.Count(e => e.FullName.StartsWith("word/media/", StringComparison.Ordinal)) != 2)
+                throw new Exception("Word package image parts were missing.");
+        byte[] before = File.ReadAllBytes(outPath);
+        try { handler.ExecuteAsync(checkedRequest).GetAwaiter().GetResult();
+            throw new Exception("Duplicate request overwrote document."); }
+        catch (NIRADocxStudioDestinationExistsException) { }
+        if (!before.SequenceEqual(File.ReadAllBytes(outPath)))
+            throw new Exception("No-overwrite guarantee was violated.");
+        var unrelated = Request(NIRACapabilityIds.DocxStudioCreate, JsonSerializer.Serialize(new {
+            path = Path.Combine(folder, "unrelated.docx"), title = "Different subject",
+            blocksJson = new[] { new { type = "image", altText = "Ocean biology", caption = "Deep ocean life" } },
+            minimumImages = "1" }));
+        var unchanged = NIRADocxVerifiedMediaBinding.Apply(unrelated, assets, out int unrelatedCount);
+        if (unrelatedCount != 0 || unchanged.Arguments.GetRawText() != unrelated.Arguments.GetRawText())
+            throw new Exception("An unrelated photo was falsely bound to a different subject.");
+        try { handler.ExecuteAsync(unchanged).GetAwaiter().GetResult();
+            throw new Exception("Required image minimum was silently relaxed."); }
+        catch (NIRADocxStudioNoPublishedFileException ex) when
+            (ex.Message.Contains("minimumImages=1", StringComparison.Ordinal)) { }
+        if (File.Exists(Path.Combine(folder, "unrelated.docx")))
+            throw new Exception("Invalid image minimum published a document.");
+    }
+    finally { try { Directory.Delete(folder, true); } catch (IOException) { } }
+});
+
+// R65: generic structural repair for semantically recoverable table rows.
+// This exercises the real handler, verifies saved Word text/columns, and
+// separately proves that ambiguous nested data never creates an output.
+Check("R65 generic table rows retain source values and publish verified DOCX", () =>
+{
+    string folder = Path.Combine(Path.GetTempPath(), "nira-r65-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        string path = Path.Combine(folder, "rectified.docx");
+        object[] blocks = {
+            new { type = "heading", level = 1, text = "A neutral comparative study" },
+            new { type = "paragraph", text = "This independent example describes the measurements and distinguishes their observed amounts. Each row of the table is preserved without guessing missing values." },
+            new { type = "table", rows = new object[] {
+                new object[] { "Measure", "Observed result", "Notes" },
+                new object[] { "Series one", "12" },
+                new object[] { new { text = "Series two" }, new { value = 27 }, "Recorded" },
+                new object[] { "Series three" }
+            } },
+            new { type = "paragraph", text = "Rows with absent positions remain visibly blank, rather than suggesting that any measurement was taken when no data existed." }
+        };
+        var request = new NIRACapabilityRequest {
+            CapabilityId = NIRACapabilityIds.DocxStudioCreate,
+            Arguments = JsonSerializer.SerializeToElement(new {
+                path, title = "Generic independent table", blocksJson = JsonSerializer.Serialize(blocks),
+                profile = "academic", minimumBodyWords = "20"
+            })
+        };
+        var result = new NIRADocxStudioCapabilityHandler().ExecuteAsync(request)
+            .GetAwaiter().GetResult();
+        if (!result.Output.Contains("PostWriteVerified=True", StringComparison.Ordinal) ||
+            !result.Output.Contains("StudioTables=1", StringComparison.Ordinal))
+            throw new Exception("A recoverable table did not reach verified publication.");
+        byte[] original = File.ReadAllBytes(path);
+        using (var zip = System.IO.Compression.ZipFile.OpenRead(path))
+        using (var reader = zip.GetEntry("word/document.xml")!.Open())
+        {
+            XDocument xml = XDocument.Load(reader);
+            XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+            XElement table = xml.Descendants(w + "tbl").Single();
+            var rows = table.Elements(w + "tr").ToArray();
+            if (rows.Length != 4 || rows.Any(row => row.Elements(w + "tc").Count() != 3))
+                throw new Exception("Canonical table is not rectangular.");
+            string content = string.Join(" ", xml.Descendants(w + "t").Select(t => t.Value));
+            foreach (string value in new[] { "Measure", "Observed result", "Series one", "12",
+                         "Series two", "27", "Recorded", "Series three" })
+                if (!content.Contains(value, StringComparison.Ordinal))
+                    throw new Exception("An original cell value was lost: " + value);
+        }
+        try {
+            new NIRADocxStudioCapabilityHandler().ExecuteAsync(request).GetAwaiter().GetResult();
+            throw new Exception("Studio overwrote an existing document.");
+        } catch (NIRADocxStudioDestinationExistsException) { }
+        if (!File.ReadAllBytes(path).SequenceEqual(original))
+            throw new Exception("Create-only table recovery modified the original.");
+
+        string invalid = Path.Combine(folder, "invalid.docx");
+        var bad = request with { Arguments = JsonSerializer.SerializeToElement(new {
+            path = invalid, title = "Invalid nested table",
+            blocksJson = JsonSerializer.Serialize(new object[] {
+                new { type = "table", rows = new object[] {
+                    new object[] { "First", "Second" },
+                    new object[] { "value", new { arbitrary = new[] { "nested" } } }
+                } }
+            })
+        }) };
+        try {
+            new NIRADocxStudioCapabilityHandler().ExecuteAsync(bad).GetAwaiter().GetResult();
+            throw new Exception("Unsupported nested cells were silently changed.");
+        } catch (NIRADocxStudioNoPublishedFileException) { }
+        if (File.Exists(invalid)) throw new Exception("Invalid source created an output.");
+    }
+    finally { try { Directory.Delete(folder, recursive: true); } catch (IOException) { } }
+});
+
+// R66: any unfinished model-led task can request one FOCUSED grounded
+// registered capability without direct execution, aliases or hallucinated IDs.
+Check("R66 focused continuation retains exact declared action and parameters", () =>
+{
+    const string catalog = "- workspace.observe | defaultRisk=Observe | Observe a sample\n" +
+        "  - target: string | required=True | Item to observe\n" +
+        "- workspace.publish | defaultRisk=Modify | Publish a result\n" +
+        "  - destination: string | required=True | New target\n" +
+        "  - content: string | required=True | Content\n";
+    const string proposal = """{"capabilityId":"workspace.publish","arguments":{"destination":"C:\\Temp\\result.txt","content":"Original work"},"reason":"User requested a new output"}""";
+    if (!NIRAFocusedWorkComposer.TryParseProposedAction(proposal, catalog, out var action) ||
+        action == null || action.CapabilityId != "workspace.publish" ||
+        action.Arguments.GetProperty("content").GetString() != "Original work" ||
+        !action.Reason.Contains("User requested", StringComparison.Ordinal))
+        throw new Exception("Focused model proposal was lost or its operational arguments changed.");
+    foreach (string invalid in new [] {
+        """{"capabilityId":"workspace.delete","arguments":{"target":"anything"}}""",
+        """{"capabilityId":"workspace.publish","arguments":{}} trailing""",
+        """{"capabilityId":"workspace.publish","arguments":[]}""",
+        """{"capabilityId":"workspace.publish","arguments":{"content":"hello"},"steps":[{"capabilityId":"other"}]}"""
+    })
+    {
+        // Additional structural fields must not silently authorize more
+        // operations. The focused parser takes one ID only; any extras remain
+        // inert and the core preflight still checks the chosen arguments.
+        bool accepted = NIRAFocusedWorkComposer.TryParseProposedAction(invalid, catalog, out _);
+        if (accepted)
+            throw new Exception("Focused recovery accepted an unknown or malformed tool identity.");
+    }
+});
+Check("R66 content quantity is derived from the user's number, not topic names", () =>
+{
+    if (NIRAFocusedWorkComposer.ExplicitRequestedWords("Write about any subject around 1,000 words") != 1000 ||
+        NIRAFocusedWorkComposer.ExplicitRequestedWords("Prepare a 1250 word case study") != 1250 ||
+        NIRAFocusedWorkComposer.ExplicitRequestedWords("Show me a photograph") != 0 ||
+        NIRAFocusedWorkComposer.ExplicitRequestedWords("Write 12 words") != 0)
+        throw new Exception("Generic length extraction regressed.");
+});
+
+// R57: a broken syntax-repair echo is not a permanent work failure. The
+// fresh-decision stage is model-only and must not fabricate/authorize tools.
+Check("R57 malformed-primary recovery is bounded and contract aware", () =>
+{
+    if (!NIRACognitionService.MayAttemptFreshDecisionRecovery(false,
+            "{\"state\":\"Continue\",,}") ||
+        NIRACognitionService.MayAttemptFreshDecisionRecovery(true,
+            "{\"state\":\"Continue\",,}") ||
+        NIRACognitionService.MayAttemptFreshDecisionRecovery(false, "") ||
+        NIRACognitionService.MayAttemptFreshDecisionRecovery(false,
+            new string('x', 120001)))
+        throw new Exception("Fresh retry did not enforce normal-primary and size bounds.");
+    string directive = NIRACognitionService.FreshDecisionRecoveryDirective;
+    if (!directive.Contains("Do NOT copy", StringComparison.Ordinal) ||
+        !directive.Contains("state=Continue", StringComparison.Ordinal) ||
+        !directive.Contains("REGISTERED capability", StringComparison.Ordinal) ||
+        !directive.Contains("Executive", StringComparison.Ordinal) ||
+        !directive.Contains("JSON escapes", StringComparison.Ordinal))
+        throw new Exception("Fresh retry lost trusted receipts or typed tool constraints.");
+});
+
+// R56: one envelope shape works for unrelated capability IDs and does not
+// let a quality-review refusal erase a real, read-back-verified artifact.
+Check("R56 tool protocol uses typed identity and actual result status", () =>
+{
+    foreach (string capability in new[] { "math.calculate", "web.search", "filesystem.read" })
+    {
+        string envelope = NIRAToolProtocolV1.ResultEnvelope(new NIRACapabilityResult {
+            CapabilityId = capability, Status = NIRACapabilityResultStatus.Succeeded,
+            Risk = NIRACapabilityRisk.Observe, Summary = "Observed",
+            Output = "Example output", AuditRecorded = true
+        });
+        using JsonDocument document = JsonDocument.Parse(envelope);
+        var root = document.RootElement;
+        if (root.GetProperty("protocol").GetString() != "nira.tool.v1" ||
+            root.GetProperty("capabilityId").GetString() != capability ||
+            !root.GetProperty("success").GetBoolean() ||
+            root.GetProperty("result").GetProperty("summary").GetString() != "Observed")
+            throw new Exception("Typed result envelope was not grounded in the actual receipt.");
+    }
+    string failed = NIRAToolProtocolV1.ResultEnvelope(new NIRACapabilityResult {
+        CapabilityId = "filesystem.write", Status = NIRACapabilityResultStatus.Failed,
+        Risk = NIRACapabilityRisk.Modify, Summary = "Failed" });
+    if (JsonDocument.Parse(failed).RootElement.GetProperty("success").GetBoolean())
+        throw new Exception("Failure was represented as a success.");
+});
+Check("R56 independent review preserves only verified partial files", () =>
+{
+    DateTimeOffset when = DateTimeOffset.UtcNow;
+    const string path = @"C:\example\generated-report.md";
+    var save = new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.FileWrite,
+        Status = NIRACapabilityResultStatus.Succeeded,
+        Risk = NIRACapabilityRisk.Modify, ChangedSystemState = true,
+        FinishedAtUtc = when, Summary = "Wrote '" + path +
+            "' successfully. Mode=overwrite | Length=100 | SHA256=" + new string('a', 64) + "." };
+    var read = new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.FileRead,
+        Status = NIRACapabilityResultStatus.Succeeded,
+        Risk = NIRACapabilityRisk.Observe,
+        FinishedAtUtc = when.AddSeconds(1),
+        Summary = "Read 5 line(s) from '" + path + "' starting at line 1. Truncated=False." };
+    string? partial = NIRAToolProtocolV1.VerifiedPartialArtifact(
+        new[] { save, read }, "The document needs more content.");
+    if (partial is null || !partial.Contains(path, StringComparison.Ordinal) ||
+        !partial.Contains("partially complete", StringComparison.Ordinal) ||
+        !partial.Contains("needs more content", StringComparison.Ordinal))
+        throw new Exception("Independent review lost verified partial deliverable.");
+    if (NIRAToolProtocolV1.VerifiedPartialArtifact(new[] { save }, "Incomplete") != null ||
+        NIRAToolProtocolV1.VerifiedPartialArtifact(new[] { read with { FinishedAtUtc = when.AddSeconds(-1) }, save }, "Incomplete") != null)
+        throw new Exception("An unverified or earlier read certified a saved artifact.");
+});
+
+// R53: no topic, document type, source name or test phrase routes this controller.
+// It only validates advisory dependencies against actual capability outcomes.
+Check("R53 general goal prerequisites prevent unsupported completion", () =>
+{
+    var ledger = new NIRAGeneralWorkLedger();
+    ledger.Propose(new NIRAAutonomousWorkPlan {
+        Objective = "Produce a deliverable from independently observed inputs",
+        CompletionCriteria = new[] { "Inputs acquired", "Output verified" },
+        NextMilestone = "Observe inputs", RequiresToolExecution = true,
+        RequiresStateChange = true
+    });
+    var terminal = new NIRACognitionDecision {
+        State = NIRACognitionState.Complete, EmitReply = true,
+        Reply = "I finished everything." };
+    if (!ledger.ShouldReconsiderTerminal(terminal) ||
+        !ledger.RequiresGoalLevelReview ||
+        ledger.ShouldReconsiderTerminal(terminal with { State = NIRACognitionState.NeedUser }))
+        throw new Exception("Unexecuted goal could be certified or a real clarification blocked.");
+    var read = Request(NIRACapabilityIds.WebSearch,
+        """{"query":"unrelated inputs"}""");
+    ledger.Observe(read, new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.WebSearch,
+        Status = NIRACapabilityResultStatus.Succeeded,
+        Risk = NIRACapabilityRisk.Observe });
+    if (!ledger.ShouldReconsiderTerminal(terminal) ||
+        !ledger.HasSuccessfulExecution || ledger.HasVerifiedStateChange)
+        throw new Exception("Read-only research falsely satisfied a requested mutation.");
+    var edit = Request(NIRACapabilityIds.FileWrite,
+        """{"path":"sample.txt","content":"sample"}""");
+    ledger.Observe(edit, new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.FileWrite,
+        Status = NIRACapabilityResultStatus.Succeeded,
+        Risk = NIRACapabilityRisk.Modify, ChangedSystemState = true });
+    if (ledger.ShouldReconsiderTerminal(terminal) ||
+        !ledger.HasVerifiedStateChange ||
+        !ledger.ReviewerEvidence().Contains("NOT independently certified", StringComparison.Ordinal))
+        throw new Exception("Actual mutation missing, or a criterion was certified without review.");
+});
+Check("R53 later plans cannot silently erase original prerequisites", () =>
+{
+    var ledger = new NIRAGeneralWorkLedger();
+    ledger.Propose(new NIRAAutonomousWorkPlan {
+        Objective = "First goal", NextMilestone = "Check inputs",
+        CompletionCriteria = new[] { "Target confirmed" },
+        RequiresToolExecution = true, RequiresStateChange = true });
+    ledger.Propose(new NIRAAutonomousWorkPlan {
+        Objective = "Unrelated replacement", NextMilestone = "Check saved result" });
+    string snapshot = ledger.Snapshot();
+    if (!snapshot.Contains("First goal", StringComparison.Ordinal) ||
+        snapshot.Contains("Unrelated replacement", StringComparison.Ordinal) ||
+        !ledger.ShouldReconsiderTerminal(new NIRACognitionDecision {
+            State = NIRACognitionState.Complete, EmitReply = true, Reply = "Done." }))
+        throw new Exception("Replanning erased the original goal or prerequisite.");
+});
+
 // R49.3: generic artifact requests preserve reference images as source assets,
 // and the raw text writer never creates a fake native Word document.
 Check("R49.3 supporting reference imagery is not an automatic chat answer", () =>
@@ -101,6 +595,55 @@ Check("R49.1 dynamic procedure requires real committed goal branch and work", ()
         throw new Exception("Uncommitted dynamic tool execution could bypass work ownership.");
 });
 
+// R55: explanation metadata is not an operational capability argument.
+// Valid metadata shape repairs are generic; all other argument and permission
+// validation remains strict, including for state-changing tool requests.
+Check("R55 request reason metadata is normalized without relaxing write schema", () =>
+{
+    var registry = new NIRACapabilityRegistry(new INIRACapabilityHandler[] {
+        new NIRAFileWriteCapabilityHandler(),
+        new NIRADirectoryCreateCapabilityHandler(),
+        new NIRAFileReadCapabilityHandler()
+    });
+    var service = new NIRACapabilityService(registry, null!, null!, null!);
+    var write = Request(NIRACapabilityIds.FileWrite,
+        """{"path":"C:\\Temp\\generic.md","content":"A real report","reason":"User asked for a saved deliverable"}""");
+    if (!service.TryNormalizeAndValidateSchema(write, out var normalized, out var error))
+        throw new Exception("R55 metadata normalization rejected valid request: " + error);
+    if (normalized.Reason != "User asked for a saved deliverable" ||
+        normalized.Arguments.TryGetProperty("reason", out _) ||
+        normalized.Arguments.GetProperty("content").GetString() != "A real report" ||
+        normalized.Arguments.GetProperty("path").GetString() != @"C:\Temp\generic.md")
+        throw new Exception("Request reason or operational inputs changed unexpectedly.");
+
+    var directory = Request(NIRACapabilityIds.DirectoryCreate,
+        """{"path":"C:\\Temp\\new-folder","reason":"Prepare authorized destination"}""");
+    if (!service.TryNormalizeAndValidateSchema(directory, out var created, out error) ||
+        created.Reason != "Prepare authorized destination" ||
+        created.Arguments.TryGetProperty("reason", out _))
+        throw new Exception("Metadata normalization failed for another mutating primitive: " + error);
+
+    var read = Request(NIRACapabilityIds.FileRead,
+        """{"path":"C:\\Temp\\notes.md","reason":"Obtain saved evidence"}""");
+    if (!service.TryNormalizeAndValidateSchema(read, out var observed, out error) ||
+        observed.Reason != "Obtain saved evidence")
+        throw new Exception("Metadata normalization was coupled to file writes: " + error);
+
+    var conflict = write with { Reason = "A different explanation" };
+    if (service.TryNormalizeAndValidateSchema(conflict, out _, out _))
+        throw new Exception("Contradictory explanation metadata was accepted.");
+    foreach (var malformed in new[] {
+        """{"path":"C:\\Temp\\generic.md","content":"x","reason":{"danger":true}}""",
+        """{"path":"C:\\Temp\\generic.md","content":"x","reason":"ok","overwriteExisting":true}""",
+        """{"content":"x","reason":"ok"}"""
+    })
+    {
+        if (service.TryNormalizeAndValidateSchema(
+            Request(NIRACapabilityIds.FileWrite, malformed), out _, out _))
+            throw new Exception("Unsafe or incomplete write request passed schema validation.");
+    }
+});
+
 // R49.4: Model output can be structurally correct yet use JSON values for
 // registered string-encoded arguments. Repair representations before validation;
 // never invent missing required fields or relax the authorization boundary.
@@ -115,12 +658,11 @@ Check("R49.4 descriptor-bound JSON and scalar argument normalization", () =>
     if (!service.TryNormalizeAndValidateSchema(request, out var normalized, out var error))
         throw new Exception("Representation repair failed: " + error);
     var args = normalized.Arguments;
-    if (args.GetProperty("blocksJson").ValueKind != JsonValueKind.String ||
+    if (args.GetProperty("blocksJson").ValueKind != JsonValueKind.Array ||
         args.GetProperty("pageNumbers").GetString() != "true" ||
         args.GetProperty("marginMm").GetString() != "20")
-        throw new Exception("Registered string representation was not normalized");
-    using var contents = JsonDocument.Parse(args.GetProperty("blocksJson").GetString()!);
-    if (contents.RootElement.GetArrayLength() != 2)
+        throw new Exception("Registered canonical JSON array was not retained");
+    if (args.GetProperty("blocksJson").GetArrayLength() != 2)
         throw new Exception("Structured blocks lost content during normalization");
     var missingPath = Request(NIRACapabilityIds.DocxStudioCreate,
         """{"title":"Sample","blocksJson":[]}""");
@@ -200,7 +742,7 @@ Check("R51 Word Studio profile alias repairs without dropping arbitrary paramete
     if (!service.TryNormalizeAndValidateSchema(request, out var normalized, out var error) ||
         normalized.Arguments.TryGetProperty("styleProfile", out _) ||
         normalized.Arguments.GetProperty("profile").GetString() != "academic" ||
-        normalized.Arguments.GetProperty("blocksJson").ValueKind != JsonValueKind.String)
+        normalized.Arguments.GetProperty("blocksJson").ValueKind != JsonValueKind.Array)
         throw new Exception("Word Studio style alias schema normalization failed: " + error);
     var conflict = Request(NIRACapabilityIds.DocxStudioCreate,
         """{"path":"C:\\Temp\\r51.docx","title":"Sample","blocksJson":"[]","profile":"academic","styleProfile":"business"}""");
@@ -235,6 +777,78 @@ Check("R51 invalid Word content fails with definite no-publish exception", () =>
                 throw new Exception("Rejected input lost accurate diagnostic evidence.");
         }
         if (File.Exists(path)) throw new Exception("Rejected input created a DOCX file.");
+    }
+    finally { try { Directory.Delete(folder, recursive: true); } catch (IOException) { } }
+});
+
+// R63: optional media must not block otherwise valid report publishing. The
+// quality gate remains strict, and every skipped image is explicitly audited.
+Check("R63 Studio omits invalid optional raster, preserves text and enforces minimum images", () =>
+{
+    string folder = Path.Combine(Path.GetTempPath(), "nira-r63-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        string goodImage = Path.Combine(folder, "photo.png");
+        File.WriteAllBytes(goodImage, Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/avcAAAAASUVORK5CYII="));
+        string invalidImage = Path.Combine(folder, "missing.jpg");
+        string invalidBytes = Path.Combine(folder, "nonraster.png");
+        File.WriteAllText(invalidBytes, new string('X', 150));
+        string destination = Path.Combine(folder, "report.docx");
+        object[] blocks = {
+            new { type = "heading", level = 1, text = "Independent analysis" },
+            new { type = "paragraph", text = "First original technical observation. Second source-backed " +
+                "observation. Third practical conclusion with important limitations." },
+            new { type = "image", imagePath = invalidImage, altText = "Missing reference image" },
+            new { type = "image", imagePath = goodImage, altText = "Verified existing raster" },
+            new { type = "image", imagePath = invalidBytes, altText = "Invalid file bytes" }
+        };
+        NIRACapabilityRequest Create(string path, string minImages = "0", string minWords = "8") =>
+            Request(NIRACapabilityIds.DocxStudioCreate,
+                JsonSerializer.Serialize(new { path, title = "Media safety", blocksJson = blocks,
+                    minimumImages = minImages, minimumBodyWords = minWords }));
+        var saved = new NIRADocxStudioCapabilityHandler().ExecuteAsync(Create(destination))
+            .GetAwaiter().GetResult();
+        if (!File.Exists(destination) ||
+            !saved.Output.Contains("PostWriteVerified=True", StringComparison.Ordinal) ||
+            !saved.Output.Contains("StudioImages=1", StringComparison.Ordinal) ||
+            !saved.Output.Contains("StudioImagesSkipped=2", StringComparison.Ordinal) ||
+            !saved.Output.Contains("OptionalImagesIncomplete=True", StringComparison.Ordinal) ||
+            !saved.Summary.Contains("WARNING", StringComparison.Ordinal))
+            throw new Exception("Optional image omissions were not disclosed or verified.");
+        using (var package = System.IO.Compression.ZipFile.OpenRead(destination))
+        {
+            if (package.Entries.Count(e => e.FullName.StartsWith("word/media/", StringComparison.Ordinal)) != 1)
+                throw new Exception("Invalid image was embedded in the DOCX.");
+            using var reader = new StreamReader(package.GetEntry("word/document.xml")!.Open());
+            string xml = reader.ReadToEnd();
+            if (!xml.Contains("First original technical observation", StringComparison.Ordinal) ||
+                xml.Contains("Missing reference image", StringComparison.Ordinal))
+                throw new Exception("Content was dropped or rejected figure was included.");
+        }
+        foreach (var spec in new[] { ("min-image", "2", "8"), ("min-words", "0", "100") })
+        {
+            string rejectedPath = Path.Combine(folder, spec.Item1 + ".docx");
+            try
+            {
+                new NIRADocxStudioCapabilityHandler().ExecuteAsync(
+                    Create(rejectedPath, spec.Item2, spec.Item3)).GetAwaiter().GetResult();
+                throw new Exception("Mandatory quality requirement was bypassed.");
+            }
+            catch (NIRADocxStudioNoPublishedFileException) { }
+            if (File.Exists(rejectedPath)) throw new Exception("Rejected output was published.");
+        }
+        byte[] unchanged = File.ReadAllBytes(destination);
+        try
+        {
+            new NIRADocxStudioCapabilityHandler().ExecuteAsync(Create(destination))
+                .GetAwaiter().GetResult();
+            throw new Exception("Existing destination was overwritten.");
+        }
+        catch (NIRADocxStudioDestinationExistsException) { }
+        if (!File.ReadAllBytes(destination).SequenceEqual(unchanged))
+            throw new Exception("Existing destination changed.");
     }
     finally { try { Directory.Delete(folder, recursive: true); } catch (IOException) { } }
 });
@@ -1756,7 +2370,7 @@ Check("R5 web search accepts a single-query array shape without extra model repa
     if (!receipt.Succeeded || transport.Count != 1)
         throw new Exception("Valid one-query requests required unnecessary recovery");
     foreach (string invalid in new[] {
-        """{"queries":["one","two","three","four"]}""",
+        """{"queries":["one","two","three","four","five","six","seven","eight","nine"]}""",
         """{"queries":[{"topic":"one"}]}""",
         """{"query":"arbitrary","provider":"nope"}""",
         """{"query":"arbitrary","evidenceDepth":"strange"}"""
@@ -1766,6 +2380,66 @@ Check("R5 web search accepts a single-query array shape without extra model repa
                 Request(NIRACapabilityIds.WebSearch, invalid)));
     if (transport.Count != 1)
         throw new Exception("Structural preflight produced a network side effect");
+});
+
+// R61: use an actual compiled core marker, not only a passing unit test,
+// so the deployment process can reject a stale WPF-side assembly before launch.
+Check("R61 runtime web contract marker is linked to eight-query implementation", () =>
+{
+    if (NIRAWebSearchCapabilityHandler.RuntimeWebContractRevision != "NIRA-WEB-QUERY-V2-8-R61")
+        throw new Exception("The runtime web-contract assembly is not the expected revision.");
+    string[] eight = Enumerable.Range(1, 8).Select(i => "unrelated query " + i).ToArray();
+    var request = Request(NIRACapabilityIds.WebSearch,
+        JsonSerializer.Serialize(new { queries = eight }));
+    if (NIRAWebSearchCapabilityHandler.ReadSearchQueries(request).Count != 8)
+        throw new Exception("Eight-query handler contract is not compiled into this assembly.");
+});
+
+// R60: web research must not fail just because the model proposes more than
+// three independent topics. Keep every bounded query and use the actual
+// production handler/registry, with a fake network and no topic router.
+Check("R60 web search multi-query normalization and bounded execution", () =>
+{
+    using var transport = new NIRAWebFakeTransport(req =>
+    {
+        using var sent = JsonDocument.Parse(req.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
+        string query = sent.RootElement.GetProperty("query").GetString() ?? "";
+        return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
+            Content = new StringContent(JsonSerializer.Serialize(new {
+                results = new[] { new { url = "https://source.example.org/" + Uri.EscapeDataString(query),
+                    title = "Source", content = "Generic observed source for " + query } }
+            }))
+        };
+    });
+    using var http = new HttpClient(transport);
+    using var handler = new NIRAWebSearchCapabilityHandler(http,
+        key => key == "NIRA_TAVILY_API_KEY" ? "offline-key" : null);
+    var service = new NIRACapabilityService(
+        new NIRACapabilityRegistry(new INIRACapabilityHandler[] { handler }), null!, null!, null!);
+    string[] terms = { "alpha", "beta", "gamma", "delta", "epsilon" };
+    var input = Request(NIRACapabilityIds.WebSearch,
+        JsonSerializer.Serialize(new { queries = JsonSerializer.Serialize(terms), provider = "tavily", maxSources = 8 }));
+    if (!service.TryNormalizeAndValidateSchema(input, out var normalized, out var error) ||
+        normalized.Arguments.GetProperty("queries").GetArrayLength() != terms.Length)
+        throw new Exception("A lossless encoded query array was rejected: " + error);
+    var result = handler.ExecuteAsync(normalized).GetAwaiter().GetResult();
+    if (!result.Succeeded || transport.Count != 5 ||
+        terms.Any(term => !result.Output.Contains(term, StringComparison.Ordinal)))
+        throw new Exception("Bounded multi-query research did not retrieve each source");
+    var dedup = Request(NIRACapabilityIds.WebSearch,
+        """{"queries":["alpha","beta","ALPHA","gamma"]}""");
+    if (NIRAWebSearchCapabilityHandler.ReadSearchQueries(dedup).Count != 3)
+        throw new Exception("Duplicate queries were not deduplicated");
+    var invalid = Request(NIRACapabilityIds.WebSearch,
+        """{"queries":["a","b","c","d","e","f","g","h","i"]}""");
+    if (service.TryNormalizeAndValidateSchema(invalid, out _, out _))
+        throw new Exception("Oversized network batch was accepted");
+    var wrong = Request(NIRACapabilityIds.WebSearch,
+        """{"queries":[{"q":"alpha"}]}""");
+    if (service.TryNormalizeAndValidateSchema(wrong, out _, out _))
+        throw new Exception("Invalid query element type bypassed structural validation");
+    if (transport.Count != 5)
+        throw new Exception("Preflight rejection caused network side effects");
 });
 
 Check("R5 resource policy distinguishes actually displayed images from candidates", () =>
@@ -1905,7 +2579,7 @@ Check("WEB configuration and bounds reject unconfigured keys and oversized searc
     var normal = Request(NIRACapabilityIds.WebSearch, """{"query":"public data"}""");
     Throws<InvalidOperationException>(() => search.ExecuteAsync(normal).GetAwaiter().GetResult());
     Throws<InvalidOperationException>(() => search.ExecuteAsync(Request(NIRACapabilityIds.WebSearch,
-        """{"queries":["a","b","c","d"]}""")).GetAwaiter().GetResult());
+        """{"queries":["a","b","c","d","e","f","g","h","i"]}""")).GetAwaiter().GetResult());
     Throws<InvalidOperationException>(() => search.ExecuteAsync(Request(NIRACapabilityIds.WebSearch,
         """{"query":"topic","provider":"arbitrary"}""")).GetAwaiter().GetResult());
     if (transport.Count != 0) throw new Exception("Invalid requests caused network side effects");

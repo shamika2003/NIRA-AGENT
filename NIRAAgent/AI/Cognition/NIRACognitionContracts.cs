@@ -86,6 +86,12 @@ public sealed record NIRAAutonomousWorkPlan
     public string Objective { get; init; } = string.Empty;
     public IReadOnlyList<string> CompletionCriteria { get; init; } = Array.Empty<string>();
     public string NextMilestone { get; init; } = string.Empty;
+    // Advisory planning constraints, never authorization or execution evidence.
+    // These describe whether completing the ORIGINAL user request requires a
+    // real registered capability and/or an observed state change. The Executive
+    // verifies actual receipts and may request a bounded reconsideration.
+    public bool RequiresToolExecution { get; init; }
+    public bool RequiresStateChange { get; init; }
 }
 
 public sealed record NIRACognitionDecision

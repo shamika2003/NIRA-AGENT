@@ -1666,7 +1666,7 @@ internal static class NIRACognitionPromptCompiler
         - RESEARCH IN ONE PASS: For a multi-part investigation, design the
           evidence plan BEFORE searching. Choose 2-3 DISTINCT, independently
           relevant web.search requests in ONE capabilityRequests batch when
-          possible; each web.search can itself take 1-3 targeted queries.
+          possible; each web.search accepts up to 8 distinct targeted queries.
           Prefer primary/official specifications, standards and engineering
           documentation; add independent corroboration for disputed claims.
           The Executive will run eligible independent read-only requests in
@@ -1835,8 +1835,10 @@ internal static class NIRACognitionPromptCompiler
                 context, out string trustedAppId) ? trustedAppId : null;
         Add(b, "CROSS-DOMAIN DEEP WORK ORCHESTRATION",
             "Solve the original user goal through evidence-based dependencies, " +
-            "not a fixed workflow. Optional workPlan records observable deliverables " +
-            "and the next milestone, not authority or proof. A tool can support " +
+            "not a fixed workflow. For substantive multi-step objectives, " +
+            "workPlan records criteria, next milestone, requiresToolExecution " +
+            "and requiresStateChange (planning signals, not authority or proof). " +
+            "A tool can support " +
             "any domain. Validate retrieved facts and assets before using them " +
             "downstream. Do not claim completion until final deliverables are verified.");
         Add(b, "REGISTERED CAPABILITY QUICK SIGNATURES",
@@ -2439,8 +2441,10 @@ internal static class NIRACognitionPromptCompiler
         // applies equally to files, research, code, desktop and Office tasks.
         Add(b, "GENERAL OUTCOME-DRIVEN EXECUTION (R49)",
             "The user specifies WHAT to accomplish, not implementation parameters. " +
-            "When the objective needs several dependent tools, use optional workPlan " +
-            "with the original objective, observable completionCriteria and the nextMilestone. " +
+            "When the objective needs several dependent tools, include workPlan " +
+            "with the original objective, observable completionCriteria, nextMilestone, " +
+            "requiresToolExecution and requiresStateChange. These are planning " +
+            "constraints, never authorization or completion proof. " +
             "Discover and combine currently registered capabilities even across " +
             "different domains. Fresh observations and sourced research can be inputs " +
             "to downstream creation/editing. Infer safe, reversible presentation defaults; " +
@@ -2659,7 +2663,18 @@ internal static class NIRACognitionPromptCompiler
             "EXACT key and correct JSON value type. A parameterless primitive " +
             "must have arguments:{}; do not use id/tool/name in place of " +
             "capabilityId. If required values are unknown, request the exact " +
-            "schema/context rather than inventing them.");
+            "schema/context rather than inventing them. " +
+            "All tool exchanges use nira.tool.v1 semantics: request has " +
+            "capabilityId/arguments/reason; response has capabilityId/status/" +
+            "success/result, with optional evidence. The runtime, not the " +
+            "model, supplies the trusted result envelope. Read NIRA_TOOL_RESULT_V1 " +
+            "as a receipt for THAT capability only. A failed/rejected request " +
+            "is not an execution. Repair using the exact descriptor. " +
+            "After a verified output write, a later quality-review objection " +
+            "cannot erase that output: propose a safe NEW revision and read " +
+            "it back, or report the original as partial with its verified path " +
+            "and precise remaining gaps. Do not repeat a completion statement " +
+            "without a new action.");
         if (embeddedAppId != null)
         {
             Add(b, "TRUSTED EMBEDDED APP SCOPE",

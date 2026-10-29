@@ -82,6 +82,33 @@ internal static class NIRACapabilityArguments
     }
 
 
+    // Use the same typed JSON reader after schema normalization and path
+    // preparation. A prepared request may contain lowercased argument keys;
+    // TryGetProperty performs case-insensitive lookup without changing values.
+    public static string RequireStructuredJson(
+        NIRACapabilityRequest request,
+        string name,
+        JsonValueKind requiredKind,
+        int maximumLength = 180000)
+    {
+        if (requiredKind is not (JsonValueKind.Array or JsonValueKind.Object))
+            throw new ArgumentException("A structured JSON kind is required.", nameof(requiredKind));
+        if (!TryGetProperty(request, name, out JsonElement value))
+            throw new ArgumentException($"Capability argument '{name}' is required.");
+        string json = value.ValueKind switch
+        {
+            JsonValueKind.Array or JsonValueKind.Object when value.ValueKind == requiredKind
+                => value.GetRawText(),
+            JsonValueKind.String => NIRAJsonWireContract.ParseLegacyTypedJson(
+                value.GetString(), requiredKind, name).GetRawText(),
+            _ => throw new ArgumentException(
+                $"Capability argument '{name}' must be a JSON {requiredKind.ToString().ToLowerInvariant()}.")
+        };
+        if (json.Length > maximumLength)
+            throw new ArgumentException($"Capability argument '{name}' exceeds {maximumLength} characters.");
+        return json;
+    }
+
     public static string RequireRawString(
         NIRACapabilityRequest request,
         string name,

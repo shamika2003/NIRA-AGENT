@@ -235,6 +235,19 @@ public sealed class NIRAFileReadCapabilityHandler
             $"Read {includedLines} line(s) from '{path}' starting at line {startLine}. " +
             $"Length={file.Length} bytes | LastWriteUtc={file.LastWriteTimeUtc:O} | Truncated={truncated}.";
 
+        // If and only if the complete text file was read, expose an exact
+        // Unicode word-count metric. The independent reviewer must not infer
+        // a requested length from byte size or a model-written assertion.
+        if (startLine == 1 && !truncated && file.Length <= 500_000)
+        {
+            string completeText = string.Join("\n", rawLines);
+            int exactWords = System.Text.RegularExpressions.Regex.Matches(
+                completeText,
+                @"[\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant).Count;
+            summary += $" WholeFileWordCount={exactWords}.";
+        }
+
         // Deterministic numeric evidence supplements (never replaces) raw file
         // content. It is completely generic: no project, column name, or fixture
         // is assumed. Skip ambiguous columns instead of inventing a sum.

@@ -926,6 +926,11 @@ public sealed class NIRAExecutive
         // Subsequent stagnation retains the existing fail-closed loop guard.
         bool repeatedReadRecoveryUsed = false;
         bool partialEvidenceSynthesisUsed = false;
+        bool actionlessOutputRecoveryUsed = false;
+        bool focusedWorkRecoveryUsed = false;
+        // Keep an independently modeled next action until the next ordinary
+        // Executive cycle, where every existing preflight/authority gate runs.
+        NIRACognitionDecision? pendingFocusedWorkDecision = null;
         // A real image provider outage gets at most ONE answer-only cognition
         // continuation. Never spend further rounds on unchanged image failures.
         int unavailableImageProviderCycle = 0; // Also covers exhausted image retrieval.
@@ -941,6 +946,7 @@ public sealed class NIRAExecutive
         var verifiedImageDeliveryHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var verifiedImageSourceUris = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var verifiedImageDeliveryPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var verifiedDocumentImageAssets = new List<NIRACapabilityVisualArtifact>();
         NIRADiagnosticTrace.Event("IMAGE-TURN-BUDGET",
             $"Run={runId:D} ExplicitCount={explicitImageCount?.ToString() ?? "None"} " +
             "ModelStillSelectsImageNeed=True");
@@ -977,6 +983,12 @@ public sealed class NIRAExecutive
         // At most two independent reviews of an action-based user's final
         // answer. A review is a reconsideration signal, never world evidence.
         int taskCompletionReviewCount = 0;
+        // A rejected terminal answer about an actually changed deliverable is
+        // not repaired by another confident final answer about the SAME bytes.
+        // This run-local count comes only from trusted capability receipts.
+        int? rejectedMutationCount = null;
+        bool rejectedMutationReplanIssued = false;
+        string lastUnresolvedReviewGap = string.Empty;
         // Numeric preflight corrections are distinct from independent objective reviews.
         // Sharing a counter made one unsupported detail exhaust the entire answer path.
         int webGroundingCorrectionCount = 0;
@@ -1107,6 +1119,9 @@ public sealed class NIRAExecutive
         // R49: one per-run outcome ledger, separate from memory/goal persistence.
         // This does not dispatch capabilities or treat model plans as evidence.
         NIRAGeneralWorkLedger generalWork = new();
+        // R53: one bounded replan if cognition declares completion before its
+        // own tool/state prerequisites have actual trusted receipts.
+        bool unsupportedGoalTerminalReconsidered = false;
 
         NIRACognitionContext? latestContext =
             null;
@@ -1176,17 +1191,112 @@ public sealed class NIRAExecutive
                 // here used to terminate current/live tasks before execution.
                 expandedCapabilityIds.Count == 0;
 
-            NIRACognitionDecision decision =
-                await _cognition.ThinkAsync(
+            NIRACognitionDecision decision;
+            if (pendingFocusedWorkDecision is { } pending)
+            {
+                pendingFocusedWorkDecision = null;
+                decision = pending;
+                NIRADiagnosticTrace.Event("FOCUSED-ACTION-DISPATCH-CYCLE",
+                    $"Run={runId:D} Cycle={cycle} ToolRequests={decision.CapabilityRequests.Count} " +
+                    "StillSubjectToNormalPreflight=True");
+            }
+            else
+            {
+                decision = await _cognition.ThinkAsync(
                     context,
                     cancellationToken,
                     expandedSections,
                     expandedCapabilityIds,
                     synthesizeFromEvidence);
+            }
 
             // Advisory milestones keep the original goal visible across tools.
             // They never replace the Executive's authorizer or reviewer.
             generalWork.Propose(decision.WorkPlan);
+
+            // R59: A model can keep promising "now drafting" while proposing
+            // no tool call. Goal proposals do not produce the user-facing
+            // artifact. On the FIRST such continuation, bring the registered
+            // schemas back into focus and require a real next action. This
+            // never dispatches a tool or changes authorization.
+            if (mindEvent.Source == NIRAMindEventSource.User &&
+                generalWork.ShouldRecoverActionlessContinuation(
+                    decision, actionlessOutputRecoveryUsed))
+            {
+                actionlessOutputRecoveryUsed = true;
+                expandedSections.Add("capabilities");
+                // Specialist guidance is only exposed for an actual Word
+                // deliverable, not for unrelated images or presentations.
+                // This adds discoverability; the model still has to make an
+                // explicit schema-valid request and the Executive authorizes it.
+                if (artifactFirstRequest &&
+                    (mindEvent.Content.Contains(".docx", StringComparison.OrdinalIgnoreCase) ||
+                     mindEvent.Content.Contains("Word document", StringComparison.OrdinalIgnoreCase)))
+                {
+                    expandedCapabilityIds.Add(NIRACapabilityIds.DocxStudioCreate);
+                    expandedCapabilityIds.Add(NIRACapabilityIds.DocxInspect);
+                }
+                executiveEvidence.AppendLine(
+                    "R59 ACTIONLESS CONTINUATION RECOVERY: The original " +
+                    "user-requested output remains uncreated. A new goal, " +
+                    "drafting promise, source search or directory listing " +
+                    "is NOT the output. Choose an exact registered capability " +
+                    "and issue its schema-valid capabilityRequest NOW, or " +
+                    "request a precise missing schema/context. For DOCX " +
+                    "creation use document-aware tools, blocksJson as real " +
+                    "structured content, correct argument names and sufficient " +
+                    "original writing. Do not spend another cycle merely " +
+                    "announcing that drafting is underway. Do not bypass " +
+                    "authorization, pretend a write happened or invent assets.");
+                NIRADiagnosticTrace.Event("R59-ACTIONLESS-REPLAN",
+                    $"Run={runId:D} Cycle={cycle} " +
+                    $"FocusedIds={expandedCapabilityIds.Count} " +
+                    "Operation=SchemaExpansionOnly");
+                continue;
+            }
+
+            // Second-stage MODEL-LED recovery after the ordinary action schema
+            // has already been expanded. This solves the observed failure where
+            // source/image retrieval succeeds but the full personality+tools
+            // cognition loop emits no actual executable next step. No hardcoded
+            // subject, filename, action or permission; a focused model proposes
+            // a registered capability for the SAME Executive dispatch path.
+            if (mindEvent.Source == NIRAMindEventSource.User &&
+                !focusedWorkRecoveryUsed && actionlessOutputRecoveryUsed &&
+                generalWork.ShouldRecoverActionlessContinuation(decision, false))
+            {
+                focusedWorkRecoveryUsed = true;
+                NIRACognitionDecision? recovered = null;
+                try
+                {
+                    recovered = await _cognition.TryRecoverFocusedWorkAsync(
+                        context, verifiedDocumentImageAssets, cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    NIRADiagnosticTrace.Event("FOCUSED-ACTION-ERROR",
+                        $"Run={runId:D} Type={exception.GetType().Name}");
+                }
+                if (recovered is { CapabilityRequests.Count: > 0 })
+                {
+                    decision = recovered;
+                    NIRADiagnosticTrace.Event("FOCUSED-ACTION-HANDOFF",
+                        $"Run={runId:D} Cycle={cycle} Requests={decision.CapabilityRequests.Count} " +
+                        "PreflightAndAuthorizationStillRequired=True");
+                }
+                else
+                {
+                    executiveEvidence.AppendLine(
+                        "FOCUSED WORK ACTION: A separate narrow model pass failed " +
+                        "to produce a complete, safe, registered capability request. " +
+                        "The user objective remains open. Use only actual observed " +
+                        "tools and truthful next steps; do not invent success.");
+                }
+            }
 
             // General-purpose same-call resource planning. NIRA, not keyword
             // matching in the runtime, decides whether an optional real image
@@ -3799,8 +3909,21 @@ public sealed class NIRAExecutive
             List<(string CapabilityId, string Error)> capabilitySchemaRejections =
                 new();
 
-            foreach (NIRACapabilityRequest candidate in decision.CapabilityRequests)
+            foreach (NIRACapabilityRequest proposed in decision.CapabilityRequests)
             {
+                // The model can select an illustration and write its caption,
+                // but only a prior trusted image receipt can supply a local path.
+                // This is an input-only normalization before ordinary schema,
+                // authorization, and the Word Studio raster/quality checks.
+                NIRACapabilityRequest candidate = proposed;
+                if (artifactFirstRequest && proposed.CapabilityId == NIRACapabilityIds.DocxStudioCreate)
+                {
+                    candidate = NIRADocxVerifiedMediaBinding.Apply(
+                        proposed, verifiedDocumentImageAssets, out int boundImages);
+                    NIRADiagnosticTrace.Event("DOCX-ASSET-HANDOFF",
+                        $"Run={runId:D} Cycle={cycle} Retrieved={verifiedDocumentImageAssets.Count} " +
+                        $"Bound={boundImages} SchemaAndAuthorizationStillRequired=True");
+                }
                 if (_capabilities.TryNormalizeAndValidateSchema(
                         candidate,
                         out NIRACapabilityRequest normalized,
@@ -3845,6 +3968,17 @@ public sealed class NIRAExecutive
                         : "NeedsSchemaCorrection";
 
                 executiveEvidence.AppendLine();
+                executiveEvidence.AppendLine(
+                    "NIRA_TOOL_REQUEST_REJECTION_V1: " +
+                    JsonSerializer.Serialize(new
+                    {
+                        protocol = "nira.tool.v1", kind = "capability.request.rejected",
+                        capabilityId = rejectedCapabilityId,
+                        status = "SchemaRejected", error = schemaError,
+                        dispatched = false,
+                        repair = hasValidSibling ? "AlreadyCoveredByValidSibling" :
+                            "UseExactRegisteredParameterNamesAndTypes"
+                    }));
                 executiveEvidence.AppendLine(
                     "EXECUTIVE CAPABILITY SCHEMA PREFLIGHT " +
                     $"| Disposition={disposition} | " +
@@ -4653,6 +4787,19 @@ public sealed class NIRAExecutive
                     verifiedImageDeliveryHashes.Add(pixels);
                     if (source.Length > 0) verifiedImageSourceUris.Add(source);
                     verifiedImageDeliveryPaths.Add(visual.LocalPath);
+                    // A downloaded image is an observed task resource, even if
+                    // intentionally hidden from chat when the output is a file.
+                    // Preserve its actual path and source identity for Studio.
+                    if (artifactFirstRequest)
+                    {
+                        try
+                        {
+                            NIRACapabilityVisualArtifact imageAsset = visual.Normalize();
+                            if (!string.IsNullOrWhiteSpace(imageAsset.LocalPath))
+                                verifiedDocumentImageAssets.Add(imageAsset);
+                        }
+                        catch (InvalidOperationException) { /* Not a grounded file. */ }
+                    }
                     verifiedImageRetrievalCount++;
                     newlyVerifiedImages++;
                 }
@@ -4674,6 +4821,18 @@ public sealed class NIRAExecutive
                     "keep subject claims grounded in the observed source metadata.";
                 executiveEvidence.AppendLine(proof);
                 capabilityEvidence.AppendLine(proof);
+                if (artifactFirstRequest)
+                {
+                    foreach (NIRACapabilityVisualArtifact asset in verifiedDocumentImageAssets.TakeLast(6))
+                    {
+                        string detail = "OBSERVED DOCUMENT IMAGE ASSET (path from trusted tool; " +
+                            "source title is external metadata, not license proof): " +
+                            JsonSerializer.Serialize(new { asset.LocalPath, asset.Title,
+                                asset.SubjectQuery, asset.SourceUri });
+                        executiveEvidence.AppendLine(detail);
+                        capabilityEvidence.AppendLine(detail);
+                    }
+                }
                 NIRADiagnosticTrace.Event("IMAGE-DELIVERY-TRUTH",
                     $"Run={runId:D} Cycle={cycle} New={newlyVerifiedImages} " +
                     $"TotalDistinct={verifiedImageRetrievalCount} NextCognition=Informed");
@@ -5646,6 +5805,44 @@ public sealed class NIRAExecutive
                     (deniedCloseAlreadyObserved && noProgressCycles >= 1);
 
 
+                // Generic last-chance recovery at the ACTUAL no-progress
+                // boundary. The preceding cognition may have requested an
+                // already-completed read, context or nonprogressing goal rather
+                // than being literally actionless. That is the failure shown
+                // by the R65 live run; checking only empty request arrays
+                // misses it. Do not bypass any permission/approval boundary.
+                if (forceTerminal && !focusedWorkRecoveryUsed &&
+                    generalWork.HasUnfulfilledStateChange &&
+                    mindEvent.Source == NIRAMindEventSource.User &&
+                    !desktopActionNeedsObservation && !preReviewCommitmentSucceeded)
+                {
+                    focusedWorkRecoveryUsed = true;
+                    NIRACognitionDecision? focused = null;
+                    try
+                    {
+                        focused = await _cognition.TryRecoverFocusedWorkAsync(
+                            context, verifiedDocumentImageAssets, cancellationToken);
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception error)
+                    {
+                        NIRADiagnosticTrace.Event("FOCUSED-ACTION-ERROR",
+                            $"Run={runId:D} Stage=ProgressGuard Type={error.GetType().Name}");
+                    }
+                    if (focused is { CapabilityRequests.Count: > 0 })
+                    {
+                        pendingFocusedWorkDecision = focused;
+                        noProgressCycles = 0;
+                        NIRADiagnosticTrace.Event("FOCUSED-ACTION-REPLAN",
+                            $"Run={runId:D} Cycle={cycle} Stage=ProgressGuard " +
+                            "NextCycle=NormalPreflight OriginalObjectivePreserved=True");
+                        continue;
+                    }
+                }
+
                 if (forceTerminal &&
                     TryReadMetadataGuid(mindEvent, "goalId", out Guid waitingWorkGoalId) &&
                     _branchWork.CurrentWork.Any(item =>
@@ -5664,6 +5861,7 @@ public sealed class NIRAExecutive
                 }
                 else if (forceTerminal && !deniedCloseAlreadyObserved &&
                     !partialEvidenceSynthesisUsed &&
+                    !generalWork.HasUnfulfilledStateChange &&
                     mindEvent.Source == NIRAMindEventSource.User &&
                     capabilityResultsBySignature.Values.Any(result => result.Succeeded &&
                         result.Risk == NIRACapabilityRisk.Observe))
@@ -5689,8 +5887,9 @@ public sealed class NIRAExecutive
                 }
                 else if (forceTerminal)
                 {
-                    string fallbackReply =
-                        BuildNoProgressFallbackReply(
+                    string fallbackReply = generalWork.HasUnfulfilledStateChange
+                        ? generalWork.UnfulfilledOutputReply()
+                        : BuildNoProgressFallbackReply(
                             decision,
                             lastCapabilityResult,
                             capabilityResultsBySignature.Values.ToArray());
@@ -5808,6 +6007,97 @@ public sealed class NIRAExecutive
                     $"Run={runId:D} Cycle={cycle} PreviousState={decision.State} " +
                     $"Emit={decision.EmitReply} ReplyChars={decision.Reply?.Length ?? 0}");
                 decision = NIRAWebResearchReplyPolicy.TruthfulFailure();
+            }
+
+            // R53: The model's workPlan is advisory; it cannot grant tools or
+            // certify outcomes. One bounded preterminal reconsideration prevents
+            // declaring success without the prerequisite execution the plan
+            // itself declared necessary. The normal reviewer handles all other
+            // semantic coverage questions; explicit NeedUser and Blocked stay intact.
+            if (mindEvent.Source == NIRAMindEventSource.User &&
+                !unsupportedGoalTerminalReconsidered &&
+                generalWork.ShouldReconsiderTerminal(decision) &&
+                !preReviewCommitmentSucceeded && !desktopActionNeedsObservation &&
+                decision.CapabilityRequests.Count == 0 &&
+                decision.ContextRequests.Count == 0 &&
+                decision.GoalProposals.Count == 0 &&
+                decision.BranchProposals.Count == 0 &&
+                decision.BranchWorkProposals.Count == 0 &&
+                decision.DynamicToolProposals.Count == 0 &&
+                decision.DynamicToolInvocations.Count == 0 &&
+                decision.ControlRequests.Count == 0 &&
+                !decision.ReviewCommitment)
+            {
+                unsupportedGoalTerminalReconsidered = true;
+                executiveEvidence.AppendLine();
+                executiveEvidence.AppendLine(generalWork.ReconsiderationEvidence());
+                NIRADiagnosticTrace.Event("R53-GOAL-RECONSIDER",
+                    $"Run={runId:D} Cycle={cycle} VerifiedTool=" +
+                    $"{generalWork.HasSuccessfulExecution} " +
+                    $"VerifiedMutation={generalWork.HasVerifiedStateChange}");
+                continue;
+            }
+
+            // General artifact-quality recovery. After independent review has
+            // rejected the content of an observed state-changing operation,
+            // a repeated terminal claim with no NEW verified mutation cannot
+            // satisfy the original request. Give one bounded opportunity to
+            // propose a genuinely different, permission-checked correction.
+            // This is content-neutral: it uses neither subjects nor filenames.
+            if (mindEvent.Source == NIRAMindEventSource.User &&
+                rejectedMutationCount.HasValue &&
+                decision.State == NIRACognitionState.Complete &&
+                decision.EmitReply &&
+                capabilityResultsBySignature.Values.Count(result =>
+                    result.Succeeded && !result.OutcomeUncertain &&
+                    result.ChangedSystemState) <= rejectedMutationCount.Value)
+            {
+                if (!rejectedMutationReplanIssued)
+                {
+                    rejectedMutationReplanIssued = true;
+                    executiveEvidence.AppendLine();
+                    executiveEvidence.AppendLine(
+                        "UNRESOLVED OUTPUT QUALITY: The saved or changed artifact " +
+                        "was reviewed and judged incomplete. Another final narrative " +
+                        "about the unchanged output is NOT a correction. Choose a " +
+                        "registered, authorized editing/revision capability and " +
+                        "supply improved substantive content based on the original " +
+                        "requirements and observed source evidence. Read/inspect the " +
+                        "new result before claiming completion. Never overwrite an " +
+                        "existing destination without authorization. If correction " +
+                        "cannot be safely completed, give a truthful partial result. " +
+                        "Outstanding review issue: " + lastUnresolvedReviewGap);
+                    expandedSections.Add("capabilities");
+                    NIRADiagnosticTrace.Event("QUALITY-REVISION-REPLAN",
+                        $"Run={runId:D} Cycle={cycle} FreshMutation=False");
+                    continue;
+                }
+                NIRACapabilityResult? latestChange =
+                    capabilityResultsBySignature.Values
+                        .Where(result => result.Succeeded &&
+                            !result.OutcomeUncertain && result.ChangedSystemState)
+                        .OrderByDescending(result => result.FinishedAtUtc)
+                        .FirstOrDefault();
+                string verifiedPart = latestChange is null
+                    ? "A prior operation was observed, but no new correction was verified."
+                    : "Last verified operation: " +
+                      (latestChange.Summary.Length <= 550
+                          ? latestChange.Summary : latestChange.Summary[..550]);
+                string partialReply = "I completed part of the request, but the " +
+                    "output still does not meet all your requirements. " + verifiedPart +
+                    " An independent quality review identified unfinished work: " +
+                    lastUnresolvedReviewGap +
+                    " I did not save or verify an improved revision, so I won't " +
+                    "claim the entire task is complete.";
+                decision = decision with {
+                    State = NIRACognitionState.Blocked,
+                    EmitReply = true, Reply = partialReply, Speech = string.Empty,
+                    ReplyReady = true, CharacterReady = true,
+                    DisplayBlocks = Array.Empty<NIRARichBlock>(),
+                    DecisionSummary = "Unresolved review with no new verified mutation."
+                };
+                NIRADiagnosticTrace.Event("QUALITY-REVISION-INCOMPLETE",
+                    $"Run={runId:D} Cycle={cycle} FreshMutation=False");
             }
 
             bool userTerminalDraft =
@@ -6016,6 +6306,7 @@ public sealed class NIRAExecutive
                 // state in this run. Generic document requests still go through
                 // the normal independent objective reviewer.
                 if (!completionReviewConfirmedComplete && hasNoOutstandingWork &&
+                    !generalWork.RequiresGoalLevelReview &&
                     mindEvent.Source == NIRAMindEventSource.User &&
                     mindEvent.Content.Contains(NIRACapabilityIds.DocxProfessionalFormat,
                         StringComparison.OrdinalIgnoreCase) &&
@@ -6050,6 +6341,7 @@ public sealed class NIRAExecutive
                 // narrative reviewer that has no additional filesystem access.
                 // This is not enabled for mixed actions or pending objectives.
                 if (!completionReviewConfirmedComplete && hasNoOutstandingWork &&
+                    !generalWork.RequiresGoalLevelReview &&
                     mindEvent.Source == NIRAMindEventSource.User &&
                     !preReviewCommitmentSucceeded && !desktopActionNeedsObservation &&
                     GetPendingTaskForEvent(mindEvent) == null &&
@@ -6082,6 +6374,7 @@ public sealed class NIRAExecutive
                 // R48 Word Studio: a single audited atomic composer receipt
                 // already proves its saved structure and no-overwrite semantics.
                 if (!completionReviewConfirmedComplete && hasNoOutstandingWork &&
+                    !generalWork.RequiresGoalLevelReview &&
                     mindEvent.Source == NIRAMindEventSource.User &&
                     !preReviewCommitmentSucceeded && !desktopActionNeedsObservation &&
                     GetPendingTaskForEvent(mindEvent) == null &&
@@ -6554,6 +6847,7 @@ public sealed class NIRAExecutive
                                 "separately while reporting already obtained results.",
                                 capabilityEvidence.ToString(),
                                 dynamicToolEvidence.ToString(),
+                                generalWork.ReviewerEvidence(),
                                 "SAVED ARTIFACT EVIDENCE (verified package structure only, " +
                                 "not source quality, image licence, or visual page count): " +
                                 (NIRADocxObservedCompletionPolicy.FromVerifiedStudioPartialResults(
@@ -6704,6 +6998,23 @@ public sealed class NIRAExecutive
                 else
                 {
                     taskCompletionReviewCount++;
+                    // Record precisely which verified mutations existed at the
+                    // time of rejection; another model reply alone is not repair.
+                    // NeedUser/Blocked outcomes and read-only tasks remain exempt.
+                    if (taskReview.Verdict == "NeedsWork" &&
+                        decision.State == NIRACognitionState.Complete &&
+                        capabilityResultsBySignature.Values.Any(result =>
+                            result.Succeeded && !result.OutcomeUncertain &&
+                            result.ChangedSystemState))
+                    {
+                        rejectedMutationCount = capabilityResultsBySignature.Values
+                            .Count(result => result.Succeeded &&
+                                !result.OutcomeUncertain && result.ChangedSystemState);
+                        rejectedMutationReplanIssued = false;
+                        lastUnresolvedReviewGap =
+                            taskReview.Gap.Length <= 500
+                                ? taskReview.Gap : taskReview.Gap[..500];
+                    }
                     Debug.WriteLine(
                         $"[ObjectiveGate] REJECT | Run={runId:D} | Cycle={cycle} | " +
                         $"Verdict={taskReview.Verdict} | " +
@@ -6738,13 +7049,17 @@ public sealed class NIRAExecutive
                                   "new live capabilities just to manufacture evidence " +
                                   "for a past observation. Never present current readings " +
                                   "as if they were historical records."
-                                : "Preserve verified independent outcomes. If current " +
-                                  "data is needed, request a permitted registered " +
-                                  "capability; if sufficient evidence is already " +
-                                  "available, ANSWER NOW and cover all requested parts. " +
-                                  "If a part is unavailable, explain exactly that part " +
-                                  "while completing the others. Do not merely greet " +
-                                  "or repeat already completed observations.");
+                                : "Preserve verified independent outcomes. " +
+                                  "If the reviewer found an incomplete saved artifact, " +
+                                  "rework its ACTUAL CONTENT and use registered " +
+                                  "authorized capabilities to save a safe correction " +
+                                  "and read it back. A new success claim about the " +
+                                  "unchanged file will not count. Respect no-overwrite " +
+                                  "requirements; use a new noncolliding revision " +
+                                  "destination if necessary. For purely informational " +
+                                  "answers, correct the missing facts or cite observed " +
+                                  "sources. Report verified independent successes and " +
+                                  "precisely identify anything still unfinished.");
                         if (taskCompletionReviewCount == 1)
                         {
                             // Expand the relevant evidence family instead of
@@ -6814,6 +7129,30 @@ public sealed class NIRAExecutive
                     }
                     else
                     {
+                    string? savedArtifactPartial = taskReview.Verdict == "NeedsWork" &&
+                        !preReviewCommitmentSucceeded && !desktopActionNeedsObservation
+                            ? NIRAToolProtocolV1.VerifiedPartialArtifact(
+                                capabilityResultsBySignature.Values.ToArray(), taskReview.Gap)
+                            : null;
+                    if (savedArtifactPartial is not null)
+                    {
+                        decision = decision with
+                        {
+                            State = NIRACognitionState.Blocked,
+                            EmitReply = true,
+                            Reply = savedArtifactPartial,
+                            Speech = string.Empty,
+                            ReplyReady = true,
+                            CharacterReady = true,
+                            DisplayBlocks = Array.Empty<NIRARichBlock>(),
+                            DecisionSummary = "Verified artifact delivered as partial after quality review exhaustion."
+                        };
+                        NIRADiagnosticTrace.Event("VERIFIED-ARTIFACT-PARTIAL-DELIVERY",
+                            $"Run={runId:D} Cycle={cycle} " +
+                            "Reason=ReviewerExhausted SourceAndReadbackProven=True");
+                    }
+                    else
+                    {
                     string? researchDigest = taskReview.Verdict == "NeedsWork" &&
                         !preReviewCommitmentSucceeded && !desktopActionNeedsObservation &&
                         NIRAWebResearchReplyPolicy.IsGroundedAnswerShape(decision)
@@ -6862,6 +7201,7 @@ public sealed class NIRAExecutive
                         };
                     }
                     } // no verified DOCX handoff
+                    } // no verified partial filesystem artifact handoff
                     Debug.WriteLine(
                         $"[ObjectiveGate] BOUNDED_STOP | Run={runId:D} | Cycle={cycle}");
                 }
@@ -8898,6 +9238,11 @@ public sealed class NIRAExecutive
             evidence.AppendLine();
             evidence.AppendLine(
                 "AUTHORITATIVE CAPABILITY RESULT");
+            // The V1 envelope is the canonical machine-readable receipt. The
+            // legacy fields below remain temporarily for the existing evidence
+            // and source-digest consumers, never as a second tool outcome.
+            evidence.AppendLine("NIRA_TOOL_RESULT_V1: " +
+                NIRAToolProtocolV1.ResultEnvelope(result));
             evidence.AppendLine(
                 $"RequestId: {result.RequestId:D}");
             evidence.AppendLine(

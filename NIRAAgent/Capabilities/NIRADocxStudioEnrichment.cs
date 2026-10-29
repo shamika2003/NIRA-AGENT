@@ -11,42 +11,68 @@ internal static partial class NIRADocx
     private sealed record Studio48Media(byte[] Bytes, string Extension, string Mime,
         int Width, int Height, string FileName, string RelationshipId);
 
-    private static async Task<List<Studio48Media>> LoadStudio48MediaAsync(
+    // A bad optional image must not destroy independently valid document text.
+    // Omitted blocks are reported in the saved file receipt; no image is forged.
+    private sealed record Studio48MediaSelection(
+        List<Studio48Media> Media, HashSet<int> OmittedBlockIndices, int RequestedImages);
+
+    private static async Task<Studio48MediaSelection> LoadStudio48MediaAsync(
         JsonElement blocks, string? legacyImagePath, CancellationToken cancellationToken)
     {
         List<Studio48Media> media = new();
+        HashSet<int> omitted = new();
+        int blockIndex = -1, imageOrdinal = 0;
         long totalBytes = 0;
         foreach (JsonElement block in blocks.EnumerateArray())
         {
+            blockIndex++;
             if (block.ValueKind != JsonValueKind.Object ||
                 !block.TryGetProperty("type", out JsonElement kind) ||
                 kind.ValueKind != JsonValueKind.String ||
                 !string.Equals(kind.GetString(), "image", StringComparison.OrdinalIgnoreCase)) continue;
-            if (media.Count == 6)
+            imageOrdinal++;
+            if (imageOrdinal > 6)
                 throw new ArgumentException("Word Studio allows up to six images per document.");
+            // The legacy top-level path only applies to the FIRST image block,
+            // never to another one just because an earlier input was rejected.
             string path = GetString48(block, "imagePath", 32760, false);
-            if (path.Length == 0 && media.Count == 0)
+            if (path.Length == 0 && imageOrdinal == 1)
                 path = legacyImagePath ?? "";
             if (string.IsNullOrWhiteSpace(path))
-                throw new ArgumentException("Each image block needs a verified local imagePath.");
-            NIRAFileIntegrity.RejectLinkedPaths(path);
-            FileInfo file = new(path);
-            if (!file.Exists || file.Length is < 24 or > 5 * 1024 * 1024)
-                throw new ArgumentException("Image input must be an existing PNG/JPEG no larger than 5 MiB.");
-            totalBytes += file.Length;
-            if (totalBytes > 15 * 1024 * 1024)
-                throw new ArgumentException("Image inputs exceed the combined 15 MiB limit.");
-            byte[] bytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
-            var metadata = VerifyImage(bytes);
-            int index = media.Count + 1;
-            media.Add(new Studio48Media(bytes, metadata.Ext, metadata.Mime,
-                metadata.Width, metadata.Height,
-                index == 1 ? $"nira-r48.{metadata.Ext}" : $"studio-image-{index}.{metadata.Ext}",
-                $"rId{index + 4}"));
+            {
+                omitted.Add(blockIndex);
+                continue;
+            }
+            try
+            {
+                NIRAFileIntegrity.RejectLinkedPaths(path);
+                FileInfo file = new(path);
+                if (!file.Exists || file.Length is < 24 or > 5 * 1024 * 1024 ||
+                    totalBytes + file.Length > 15 * 1024 * 1024)
+                {
+                    omitted.Add(blockIndex);
+                    continue;
+                }
+                byte[] bytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
+                var metadata = VerifyImage(bytes);
+                int index = media.Count + 1;
+                media.Add(new Studio48Media(bytes, metadata.Ext, metadata.Mime,
+                    metadata.Width, metadata.Height,
+                    index == 1 ? $"nira-r48.{metadata.Ext}" : $"studio-image-{index}.{metadata.Ext}",
+                    $"rId{index + 4}"));
+                totalBytes += bytes.Length;
+            }
+            // These exceptions mean that this *input image* cannot be used.
+            // No relaxation of provenance, raster verification, or disk permissions.
+            catch (Exception ex) when (ex is ArgumentException or InvalidDataException or
+                InvalidOperationException or IOException or UnauthorizedAccessException)
+            {
+                omitted.Add(blockIndex);
+            }
         }
-        if (!string.IsNullOrWhiteSpace(legacyImagePath) && media.Count != 1)
+        if (!string.IsNullOrWhiteSpace(legacyImagePath) && imageOrdinal != 1)
             throw new ArgumentException("Top-level imagePath is only supported for one image block; use per-block imagePath for multiple images.");
-        return media;
+        return new Studio48MediaSelection(media, omitted, imageOrdinal);
     }
 
     private static int CountStudio48BodyWords(JsonElement blocks)
@@ -67,13 +93,10 @@ internal static partial class NIRADocx
                             part.ValueKind == JsonValueKind.String)
                             total += CountStudioWords(part.GetString() ?? "");
             }
-            else if (kind == "table" && block.TryGetProperty("rows", out JsonElement rows) &&
-                     rows.ValueKind == JsonValueKind.Array)
-                foreach (JsonElement row in rows.EnumerateArray())
-                    if (row.ValueKind == JsonValueKind.Array)
-                        foreach (JsonElement cell in row.EnumerateArray())
-                            if (cell.ValueKind == JsonValueKind.String)
-                                total += CountStudioWords(cell.GetString() ?? "");
+            else if (kind == "table")
+                foreach (List<string> row in ParseStudio48TableRows(block))
+                    foreach (string cell in row)
+                        total += CountStudioWords(cell);
         }
         return total;
     }

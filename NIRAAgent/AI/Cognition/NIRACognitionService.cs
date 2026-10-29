@@ -72,6 +72,22 @@ public sealed class NIRACognitionService
     }
     // Malformed deep decisions remain inert until a syntax-only repair has
     // passed both JSON preflight and normal Executive decision validation.
+    // Single NIRA-owned model-side rule shared by normal, deep, and fresh
+    // decision recovery. Actual enforcement remains in executable schemas.
+    internal const string CanonicalJsonWireDirective =
+        "R58 CANONICAL JSON WIRE CONTRACT (MANDATORY): " +
+        "Return exactly one object with declared property names and correct types. " +
+        "Never rename, exchange values between, omit required or duplicate fields. " +
+        "Under capabilityRequests, use EXACT registered capabilityId and " +
+        "EXACT argument names, with one arguments object and reason OUTSIDE arguments. " +
+        "For JSON-valued capability fields (e.g. blocksJson), put a REAL JSON array/object " +
+        "directly in arguments, NOT a JSON array encoded as a quoted string. " +
+        "The trusted runtime converts legacy JSON representations as needed. " +
+        "Windows paths in strings must escape each backslash; do not concatenate raw JSON. " +
+        "A preflight error means the proposed operation DID NOT execute. " +
+        "For DOCX creation, retain material source information and satisfy " +
+        "the actual length/content gate before claiming completion.";
+
     internal const int MaximumDeepJsonRepairInputChars = 120000;
     internal static bool ShouldAttemptDeepSyntaxRepair(string? raw) =>
         !string.IsNullOrWhiteSpace(raw) &&
@@ -83,6 +99,41 @@ public sealed class NIRACognitionService
     // source synthesis recovery) are separate from delegated Ultra calls.
     // Count them so RUN-MODEL-CALLS never understates the cloud work.
     private readonly ConcurrentDictionary<Guid, int> _auxiliaryPrimaryCalls = new();
+
+    // At most one fresh-decision recovery per run. Syntax repair can echo the
+    // same invalid payload, so a failed repair must not strand earlier tool work.
+    // No tool is executed here: the resulting decision still flows through the
+    // normal Executive preflight, authorization and objective review.
+    private readonly ConcurrentDictionary<Guid, byte> _freshDecisionRecoveryRuns = new();
+
+    internal static bool MayAttemptFreshDecisionRecovery(bool specialistActive, string? raw) =>
+        !specialistActive && !string.IsNullOrWhiteSpace(raw) &&
+        raw.Length <= MaximumDeepJsonRepairInputChars;
+
+    internal const string FreshDecisionRecoveryDirective = """
+        FRESH STRUCTURED DECISION RECOVERY (ONE ATTEMPT):
+        The preceding cognition response was malformed JSON, and a syntax-only
+        repair failed. Do NOT copy or quote either invalid model response.
+        Re-evaluate the ORIGINAL user objective against the CURRENT trustworthy
+        tool receipts, goal state, and registered capability directory provided
+        in the user context. Earlier executed operations retain their outcomes;
+        malformed model text was never dispatched as an action.
+        Return ONE new, syntactically valid JSON object matching the normal NIRA
+        cognition contract. No code fences, text outside JSON, or trailing commas.
+        For any long string argument, encode newlines as JSON escapes (\n),
+        encode embedded quotation marks as (\"), and escape Windows path
+        separators (\\). Do not paste raw unescaped multiline text into a
+        JSON string. Keep action arrays concise and use only REGISTERED capability
+        IDs and the exact observed parameter types. A tool requires the normal
+        capabilityRequests array of {capabilityId, arguments, reason} objects.
+        If more work is required, return state=Continue and a concrete next
+        authorized proposal; do NOT claim the objective is complete because
+        preliminary searches or calculations succeeded. If the task actually
+        completed, return a grounded Complete reply. A real blocker must be
+        reported accurately with previously verified partial work intact.
+        The Executive, not you, still enforces every operation and permission.
+        """;
+
 
     // Large image collections are observed once per run. The lazy cache avoids
     // duplicate vision calls when the Executive requests subsequent cognition
@@ -325,6 +376,15 @@ public sealed class NIRACognitionService
     }
 
 
+    // Generic actionless-work recovery; the model selects a registered action,
+    // while the Executive retains all execution and permission authority.
+    public Task<NIRACognitionDecision?> TryRecoverFocusedWorkAsync(
+        NIRACognitionContext context,
+        IReadOnlyList<NIRACapabilityVisualArtifact> verifiedImageAssets,
+        CancellationToken cancellationToken) =>
+        NIRAFocusedWorkComposer.RecoverAsync(_ollama, context,
+            verifiedImageAssets, cancellationToken);
+
     public async Task<NIRACognitionDecision> ThinkAsync(
         NIRACognitionContext context,
         CancellationToken cancellationToken = default,
@@ -528,6 +588,9 @@ public sealed class NIRACognitionService
             }
         }
 
+        // All normal/specialist cycles share the same canonical model contract.
+        systemPrompt += "\n\n" + CanonicalJsonWireDirective;
+
         Debug.WriteLine($"[CognitionPrompt] Run={context.RunId:D} | Cycle={context.Cycle} | " +
             $"Mode={(legacy ? "Legacy" : evidenceSynthesisOnly ? "EvidenceSynthesis" : calculatorSynthesis ? "CalculatorSynthesis" : webResearchSynthesis ? "WebResearchSynthesis" : bootstrap ? "Bootstrap" : informationOnly ? "Information" : "Focused")} | " +
             $"ReasoningModel={selectedModel} | SystemChars={systemPrompt.Length} | " +
@@ -619,6 +682,7 @@ public sealed class NIRACognitionService
                 if (!string.IsNullOrWhiteSpace(scoped.Guidance))
                     fullDeepSystem += "\n\nSCOPED ELVARA APPLICATION GUIDANCE " +
                         "(supplemental; the NIRA runtime wins):\n" + scoped.Guidance;
+                fullDeepSystem += "\n\n" + CanonicalJsonWireDirective;
                 fullDeepSystem += BuildDeepWorkPolicy();
                 string firstDeepUserPrompt =
                     NIRACognitionPromptCompiler.DeepWorkUser(context,
@@ -849,6 +913,51 @@ public sealed class NIRACognitionService
                     $"Run={context.RunId:D} Cycle={context.Cycle} " +
                     $"Outcome=Failed Exception={retryEx.GetType().Name} " +
                     $"RepairedChars={repaired.Length}");
+                // A syntax-repair model sometimes echoes the SAME broken JSON.
+                // Retry a FRESH decision once with a compact, general contract
+                // and the original trusted user/context evidence, never the
+                // malformed response as its next instruction. This is model-only
+                // reasoning and cannot bypass the normal Executive.
+                if (MayAttemptFreshDecisionRecovery(specialistActive, raw) &&
+                    _freshDecisionRecoveryRuns.TryAdd(context.RunId, 0))
+                {
+                    if (_freshDecisionRecoveryRuns.Count > 2048)
+                        foreach (Guid stale in _freshDecisionRecoveryRuns.Keys.Take(1024))
+                            if (stale != context.RunId)
+                                _freshDecisionRecoveryRuns.TryRemove(stale, out _);
+
+                    NIRADiagnosticTrace.Event("COGNITION-FRESH-DECISION-RETRY",
+                        $"Run={context.RunId:D} Cycle={context.Cycle} " +
+                        "Reason=SyntaxRepairFailed Model=Primary PreviousPayloadReused=False");
+                    RecordAuxiliaryPrimaryCall(context.RunId);
+                    try
+                    {
+                        string fresh = await _ollama.ChatAsync(
+                            NIRAModelSelection.Primary,
+                            NIRAModularCognitionPrompt.CoreSystem(_personality) +
+                                "\n\n" + CanonicalJsonWireDirective +
+                                "\n\n" + FreshDecisionRecoveryDirective,
+                            specialistUserPrompt,
+                            cancellationToken,
+                            jsonMode: true);
+                        result = ParseDecision(fresh);
+                        NIRADiagnosticTrace.Event("COGNITION-FRESH-DECISION-RESULT",
+                            $"Run={context.RunId:D} Cycle={context.Cycle} " +
+                            $"Outcome=Valid State={result.State} " +
+                            $"ProposedCapabilities={result.CapabilityRequests.Count}");
+                        // Continue the NORMAL validation / dispatch path below.
+                        // Successful read-only calls from earlier cycles remain
+                        // trustworthy evidence, NOT proof of final completion.
+                        goto DecisionParsed;
+                    }
+                    catch (Exception freshError) when
+                        (freshError is InvalidOperationException or JsonException)
+                    {
+                        NIRADiagnosticTrace.Event("COGNITION-FRESH-DECISION-RESULT",
+                            $"Run={context.RunId:D} Cycle={context.Cycle} " +
+                            $"Outcome=Invalid Type={freshError.GetType().Name}");
+                    }
+                }
                 if (webResearchSynthesis)
                     return await RecoverWebAnswerAsync(context,
                         "SyntaxRepairFailed", cancellationToken);
@@ -856,12 +965,16 @@ public sealed class NIRACognitionService
                 {
                     State = NIRACognitionState.Blocked,
                     EmitReply = true,
-                    Reply = "I couldn't reliably interpret that last reasoning step, " +
-                        "so I didn't execute it. I can't confirm the requested result.",
-                    DecisionSummary = "Malformed model decision after one isolated syntax repair."
+                    Reply = "The latest model decision was invalid, even after recovery. " +
+                        "I could not execute that proposed step. Earlier verified tool results " +
+                        "are not cancelled by the model-formatting error, but I have not " +
+                        "verified the requested final output.",
+                    DecisionSummary = "Malformed model decision after bounded recovery; " +
+                        "trusted earlier capability receipts are retained."
                 };
             }
         }
+    DecisionParsed:
         // A damaged prose payload is a MODEL failure before any Windows
         // side effect. Do not let keyboard automation attempt to make it work.
         // One bounded promotion asks Ultra for a new full NIRA decision under
@@ -3637,6 +3750,17 @@ public sealed class NIRACognitionService
                 "NIRA cognition must return one JSON object.");
         }
 
+        // Reject duplicate field names (including case-only duplicates) before
+        // System.Text.Json's last-key-wins behavior could silently swap values.
+        // Route this through the existing bounded invalid-decision recovery,
+        // NEVER auto-pick the first/last value of an ambiguous field.
+        try { NIRAJsonWireContract.EnsureUniqueProperties(root); }
+        catch (InvalidOperationException ex)
+        {
+            throw new InvalidOperationException(
+                "The reasoning model returned malformed JSON with ambiguous duplicate fields. " +
+                "No proposed action was executed.", ex);
+        }
 
         return new NIRACognitionDecision
         {

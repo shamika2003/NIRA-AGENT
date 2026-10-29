@@ -13,6 +13,10 @@ namespace NIRAAgent.Capabilities;
 // search-result URLs are treated as UNTRUSTED evidence and are never fetched here.
 public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDisposable
 {
+    // Build/run identity: a source-level fix is not live until the UI actually
+    // loads the matching core assembly. This marker is independent of queries.
+    public static string RuntimeWebContractRevision => "NIRA-WEB-QUERY-V2-8-R61";
+    private static int _runtimeIdentityLogged;
     private readonly HttpClient _client;
     private readonly bool _ownsClient;
     private readonly Func<string, string?> _environment;
@@ -29,11 +33,11 @@ public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDi
     {
         Id = NIRACapabilityIds.WebSearch,
         DefaultRisk = NIRACapabilityRisk.Observe,
-        Description = "Search the public web through authorized Brave LLM Context / Tavily / Exa APIs. Returns attributed, bounded source extracts with URLs, dates when available and provider provenance. No browser session, Google scraping or CAPTCHA solving. Prefer for general/current research before interactive browser navigation. API keys remain outside cognition. Batch up to 3 genuinely useful search queries; zero-key configuration yields a clear setup error.",
+        Description = "Search the public web through authorized Brave LLM Context / Tavily / Exa APIs. Returns attributed, bounded source extracts with URLs, dates when available and provider provenance. No browser session, Google scraping or CAPTCHA solving. Prefer for general/current research before interactive browser navigation. API keys remain outside cognition. Accept up to 8 distinct search queries in a bounded request; zero-key configuration yields a clear setup error.",
         Parameters = new[]
         {
             Param("query", "string", false, "One natural-language search query (1-400 chars). Specify query OR queries."),
-            Param("queries", "array", false, "Optional array of 1-3 distinct search query strings (each 1-400 chars)."),
+            Param("queries", "array", false, "Optional array of 1-8 distinct search query strings (each 1-400 chars)."),
             Param("provider", "string", false, "auto (default), brave, tavily or exa. Auto tries configured providers in Brave / Tavily / Exa order with failover."),
             Param("maxSources", "integer", false, "Maximum distinct sources returned overall (1-8, default 5)."),
             Param("freshness", "string", false, "any (default), day, week, month, year; use short freshness for current events."),
@@ -85,6 +89,12 @@ public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDi
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _environment = environment ?? throw new ArgumentNullException(nameof(environment));
         _ownsClient = ownsClient;
+        if (Interlocked.Exchange(ref _runtimeIdentityLogged, 1) == 0)
+            NIRADiagnosticTrace.Event("WEB-CONTRACT-LOADED",
+                $"Revision={RuntimeWebContractRevision} " +
+                $"CoreAssembly={typeof(NIRAWebSearchCapabilityHandler).Assembly.Location} " +
+                $"CoreMvid={typeof(NIRAWebSearchCapabilityHandler).Assembly.ManifestModule.ModuleVersionId:D} " +
+                $"ProcessPath={Environment.ProcessPath}");
     }
 
     internal NIRAWebSearchCapabilityHandler(HttpClient client, Func<string, string?> environment,
@@ -118,8 +128,12 @@ public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDi
         if (!string.IsNullOrWhiteSpace(one)) queries.Add(one.Trim());
         if (TryArg(request, "queries", out JsonElement array))
         {
-            if (array.ValueKind != JsonValueKind.Array || array.GetArrayLength() > 3)
-                throw new InvalidOperationException("queries must be an array of no more than 3 strings.");
+            if (array.ValueKind != JsonValueKind.Array)
+                throw new InvalidOperationException("queries must be an array of strings.");
+            // Bound raw iteration as well as the distinct provider requests.
+            // Duplicate queries do not consume additional network calls.
+            if (array.GetArrayLength() > 32)
+                throw new InvalidOperationException("queries has too many entries; use smaller batches.");
             foreach (JsonElement entry in array.EnumerateArray())
             {
                 if (entry.ValueKind != JsonValueKind.String)
@@ -128,8 +142,8 @@ public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDi
             }
         }
         queries = queries.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        if (queries.Count is < 1 or > 3 || queries.Any(q => q.Length is < 1 or > 400))
-            throw new InvalidOperationException("Specify 1-3 distinct queries of 1-400 characters each.");
+        if (queries.Count is < 1 or > 8 || queries.Any(q => q.Length is < 1 or > 400))
+            throw new InvalidOperationException("Specify 1-8 distinct queries of 1-400 characters each; split larger investigations into additional requests.");
         return queries;
     }
 

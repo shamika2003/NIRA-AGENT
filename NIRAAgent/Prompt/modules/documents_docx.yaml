@@ -1,10 +1,10 @@
 # NIRA DOCX specialist: guidance only, no new permissions. DOCX is ZIP, not plain text.
 workflow:
-  - Inspect once with filesystem.docx.inspect for SHA256, table headers and counts; for templates use filesystem.docx.template.inspect for {{KEY}} and hash. filesystem.hash is optional when SHA is fresh.
-  - Use registered ID/schema; inspect, write once, reuse audited PostWriteVerified receipt. Reinspect only for missing details or when user requests independent verification.
-  - Modifying tools always create NEW files with an existing authorized folder. Never overwrite, guess an old cell value, retry a successful mutation, or use Word/COM for native operations. Refuse ambiguous targets, signed/macro/tracked documents and stale hashes.
-  - A trusted PostWriteVerified=True + SourceUnchanged=True + OverwroteExisting=False receipt with hashes proves saved ZIP/OpenXML integrity, NOT page appearance in Microsoft Word. A failed optional read does not cancel a verified write.
-  - Research images are inputs, NOT chat output: use verified image.search VerifiedImageLocalPath with reuse rights; never invent/refetch media paths. For complete sourced DOCX use filesystem.docx.studio.create at a NEW path, not filesystem.write; omit unlicensed pictures and placeholders.
+  - Inspect with filesystem.docx.inspect for SHA256/table metadata; for templates use filesystem.docx.template.inspect for {{KEY}} and hash.
+  - Use exact registered ID/schema; write once; trust audited PostWriteVerified receipt. Reinspect if evidence is missing.
+  - Write only NEW files in authorized existing folders. No overwrite, guessed cell values or repeated writes. Refuse ambiguous/signed/macro/tracked files and stale hashes.
+  - Audited PostWriteVerified=True + SourceUnchanged=True + OverwroteExisting=False and hashes prove package integrity, NOT rendered appearance.
+  - Use verified local image paths and rights. Leave minimumImages unset for optional images. Report omitted images; explicit minima still block publication.
 
 basic:
   - filesystem.docx.create: NEW path, content (1-300 nonempty lines, <=20k chars, # or ## native Word headings), optional title.
@@ -41,8 +41,9 @@ reporting:
   - Report paths, SHA256, counts, preserved parts, skips/errors from trusted receipts. XML verification is not Word rendering. Avoid redundant inspection after verified write.
 word_studio_r48:
   - PREFERRED for creating a COMPLETE polished Word document in one audited operation: filesystem.docx.studio.create. It creates one new DOCX; do not chain report.create/paragraph.format/table.add just to make one new report.
-  - Required path, title, blocksJson array of 1-80 objects. Types: paragraph, heading(level 1-3), bullet, number, table(rows array 2-40 x 2-8), quote, divider, toc (Word-updatable field), pagebreak, link(text,url), image(altText,widthMm,optional caption). Paragraph/heading/list accept text OR runs:[{text,bold,italic,underline,optional colorHex}], optional alignment/fontSizePt.
-  - Optional paper A4/LETTER, orientation portrait/landscape, marginMm 10-35, accentHex RGB, headerText, footerText, pageNumbers true/false. One optional source PNG/JPEG requires imagePath at top-level and exactly one image block; do not fabricate an image path. For multiple images, use the existing image.insert copy workflow or a designed template.
-  - Creates native headings/lists, striped tables, links, breaks, image/caption, header/footer/PAGE. Word fields may need refresh; not a PDF renderer.
-  - One bounded write, automatic package/media verification and destination SHA-256. Never reopen merely to verify what the successful audited receipt already verified. Never claim rendered page count or visual fidelity.
+  - Required: path, title, blocksJson = NATIVE JSON array (1-120 block objects), never a serialized/double-escaped string. Schema Type=array is validated BEFORE dispatch; legacy strings only if parsable as an array. Block types: paragraph, heading(level 1-3), bullet, number, table(rows 2-40, 2-8 columns; each row a JSON array of cell strings, with matching lengths), quote, divider, toc, pagebreak, link(text,url), image(altText,widthMm,caption). Text blocks accept text OR runs:[{text,bold,italic,underline,colorHex}], optional alignment/fontSizePt.
+  - Count actual body words BEFORE submitting: paragraphs/lists/quotes/tables count, headings/captions do not. For ~N words draft ~1.15*N; distinguish approximate targets from hard minima. On short input, retain prior research and ADD substantive material; do not rewrite shorter.
+  - Optional paper A4/LETTER, orientation portrait/landscape, marginMm 10-35, accentHex RGB, headerText, footerText, pageNumbers true/false. For a single figure, top-level imagePath is supported; for multiple images give each image block its own imagePath from verified local assets. Never invent paths.
+  - Native headings, lists, tables, links, images, header/footer/PAGE; not a page renderer.
+  - One create-only audited write; reports package/media SHA-256, not rendered pages.
   - R48.3 existing destination is a DEFINITE collision, not an uncertain write. Never delete/overwrite or retry same path with changed blocksJson. Use an unused name for new creation, or inspect/hash existing file when asked; existence alone is NOT proof of requested content.

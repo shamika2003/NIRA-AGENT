@@ -93,6 +93,13 @@ public sealed class NIRACapabilityService
             NIRACapabilityDescriptor descriptor =
                 handler.Descriptor.Normalize();
 
+            // R55: The request's explanatory Reason is metadata, not a tool
+            // argument. A model can accidentally nest it inside arguments.
+            // Move that ONE unambiguous metadata field to its declared owner;
+            // keep unknown operational arguments and the normal authority
+            // boundary strict, including for state-changing capabilities.
+            normalized = NormalizeMisplacedRequestReason(normalized, descriptor);
+
             normalized =
                 NormalizeCapabilityArgumentsToDescriptor(
                     normalized,
@@ -102,6 +109,10 @@ public sealed class NIRACapabilityService
             ValidateArguments(
                 normalized,
                 descriptor);
+
+            // Detect malformed nested JSON and ambiguous duplicate keys BEFORE
+            // any handler, authorizer, audit attempt or filesystem side effect.
+            NIRAJsonWireContract.ValidateJsonArguments(normalized, descriptor);
 
             // A pure, provider-free web preflight catches invalid structured
             // search inputs before authorization/HTTP, with no extra LLM call.
@@ -395,6 +406,9 @@ public sealed class NIRACapabilityService
                 throw new InvalidOperationException("The capability ID is not registered.");
             NIRACapabilityDescriptor descriptor = handler.Descriptor.Normalize();
 
+            // Same canonicalization at the execution boundary so direct callers
+            // cannot disagree with Executive preflight. Authorization still runs.
+            request = NormalizeMisplacedRequestReason(request, descriptor);
             request =
                 NormalizeCapabilityArgumentsToDescriptor(
                     request,
@@ -408,6 +422,9 @@ public sealed class NIRACapabilityService
             // example HTTP POST or overwrite=true) before request preparation.
             risk = descriptor.DefaultRisk;
             ValidateArguments(request, descriptor);
+            // Run the same wire-contract checks for DIRECT capability callers;
+            // Executive preflight is not the only entry point.
+            NIRAJsonWireContract.ValidateJsonArguments(request, descriptor);
             risk = handler.ResolveRisk(request);
             if (request.CapabilityId == NIRACapabilityIds.DesktopAct)
                 NIRADiagnosticTrace.Event("DESKTOP-ACTION-REQUEST",
@@ -687,6 +704,56 @@ public sealed class NIRACapabilityService
     }
 
 
+    // Request metadata belongs outside registered operational arguments.
+    // This representation-only normalization is independent of the user's
+    // topic, tool family and requested destination. It does not bypass
+    // validation, permissions, risk checks or create-only safeguards.
+    private static NIRACapabilityRequest NormalizeMisplacedRequestReason(
+        NIRACapabilityRequest request,
+        NIRACapabilityDescriptor descriptor)
+    {
+        if (request.Arguments.ValueKind != JsonValueKind.Object ||
+            descriptor.Parameters.Any(p =>
+                p.Name.Equals("reason", StringComparison.OrdinalIgnoreCase)))
+            return request;
+
+        JsonProperty[] misplaced = request.Arguments.EnumerateObject()
+            .Where(p => p.Name.Equals("reason", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (misplaced.Length == 0) return request;
+        if (misplaced.Length != 1 || misplaced[0].Value.ValueKind != JsonValueKind.String)
+            throw new InvalidOperationException(
+                "Request metadata 'reason' must be one string outside arguments.");
+
+        string embedded = misplaced[0].Value.GetString()?.Trim() ?? string.Empty;
+        string original = request.Reason?.Trim() ?? string.Empty;
+        if (embedded.Length > 1600 ||
+            (original.Length > 0 && !string.Equals(
+                original, embedded, StringComparison.Ordinal)))
+            throw new InvalidOperationException(
+                "Conflicting or oversized request metadata 'reason'; no operation dispatched.");
+
+        Dictionary<string, JsonElement> arguments =
+            new(StringComparer.OrdinalIgnoreCase);
+        foreach (JsonProperty property in request.Arguments.EnumerateObject())
+        {
+            if (property.Name.Equals("reason", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!arguments.TryAdd(property.Name, property.Value.Clone()))
+                throw new InvalidOperationException(
+                    $"Duplicate capability argument '{property.Name}'.");
+        }
+
+        NIRADiagnosticTrace.Event("CAPABILITY-METADATA-NORMALIZED",
+            $"Capability={descriptor.Id} Field=reason Source=arguments Destination=request " +
+            "AuthorizationUnchanged=True");
+        return request with
+        {
+            Reason = original.Length > 0 ? original : embedded,
+            Arguments = JsonSerializer.SerializeToElement(arguments)
+        };
+    }
+
     private static NIRACapabilityRequest NormalizeCapabilityArgumentsToDescriptor(
         NIRACapabilityRequest request,
         NIRACapabilityDescriptor descriptor,
@@ -737,16 +804,45 @@ public sealed class NIRACapabilityService
             string parameterType =
                 parameter.Type.Trim().ToLowerInvariant();
 
-            // A model sometimes represents a one-item array as a scalar.
-            // Normalize only the unambiguous web.search single-query shape;
-            // never split text on commas or discard requested queries.
-            if (descriptor.Id == NIRACapabilityIds.WebSearch &&
+            // A declared array can arrive as a serialized JSON array string.
+            // Decode that unambiguously typed representation once, keeping all
+            // members and leaving validation and authorization unchanged.
+            // No text splitting, invented values, query rewriting or truncation.
+            if (parameterType == "array" &&
+                property.Value.ValueKind == JsonValueKind.String &&
+                (property.Value.GetString() ?? string.Empty).TrimStart().StartsWith("[", StringComparison.Ordinal))
+            {
+                // All declared array parameters share one bounded parser. The
+                // previous direct JsonDocument.Parse bypassed the uniform
+                // malformed-nested-JSON diagnostic (including invalid escapes).
+                // This is value-preserving normalization, not error suppression.
+                normalizedValue = NIRAJsonWireContract.ParseLegacyTypedJson(
+                    property.Value.GetString(), JsonValueKind.Array, parameter.Name);
+                changed = true;
+            }
+            // A singular search query represented under the plural parameter
+            // is unambiguously one string, not multiple queries to split.
+            else if (descriptor.Id == NIRACapabilityIds.WebSearch &&
                 parameter.Name.Equals("queries", StringComparison.OrdinalIgnoreCase) &&
                 parameterType == "array" &&
                 property.Value.ValueKind == JsonValueKind.String)
             {
                 normalizedValue = JsonSerializer.SerializeToElement(
                     new[] { property.Value.GetString() ?? string.Empty });
+                changed = true;
+            }
+            // R58: a registered native array/object is the canonical wire type.
+            // Older clients sometimes send a double-encoded JSON string: parse
+            // it ONCE, require the declared structural type, and preserve values.
+            // No new names, source facts, or missing fields are inferred.
+            else if (parameter.Name.EndsWith("Json", StringComparison.OrdinalIgnoreCase) &&
+                     (parameterType is "array" or "object") &&
+                     property.Value.ValueKind == JsonValueKind.String)
+            {
+                normalizedValue = NIRAJsonWireContract.ParseLegacyTypedJson(
+                    property.Value.GetString(),
+                    parameterType == "array" ? JsonValueKind.Array : JsonValueKind.Object,
+                    parameter.Name);
                 changed = true;
             }
             // Registered parameters ending in Json intentionally carry serialized

@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Xml;
 using System.Xml.Linq;
+using NIRAAgent.Diagnostics;
 
 namespace NIRAAgent.Capabilities;
 
@@ -31,6 +32,7 @@ internal sealed class NIRADocxStudioNoPublishedFileException : ArgumentException
 // Its inputs are explicitly bounded JSON, not executable XML or Word macros.
 internal static partial class NIRADocx
 {
+    internal const string RuntimeDocxContractRevision = "NIRA-DOCX-OPTIONAL-MEDIA-R63";
     private static readonly XNamespace CT48 = "http://schemas.openxmlformats.org/package/2006/content-types";
     private static readonly XNamespace PR48 = "http://schemas.openxmlformats.org/package/2006/relationships";
     private const string BaseRel48 = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/";
@@ -157,30 +159,115 @@ internal static partial class NIRADocx
         }
         return p;
     }
-    private static XElement Table48(JsonElement data, string accent, int availableTwips)
+    // Canonicalize independently authored table rows without changing their
+    // meanings or inventing cell values. The native Word renderer needs an
+    // equal-width rectangular grid; missing positions become EMPTY cells.
+    // This accepts common equivalent JSON encodings, never arbitrary nested
+    // objects, and rejects ambiguity/overflow before publishing a file.
+    private static List<List<string>> ParseStudio48TableRows(JsonElement table)
     {
-        if (!data.TryGetProperty("rows", out var rows) || rows.ValueKind != JsonValueKind.Array ||
-            rows.GetArrayLength() is < 2 or > 40)
+        if (!table.TryGetProperty("rows", out JsonElement rows) ||
+            rows.ValueKind != JsonValueKind.Array || rows.GetArrayLength() is < 2 or > 40)
             throw new ArgumentException("table rows require 2-40 rows.");
-        var parsed = new List<List<string>>();
-        int columns = 0;
-        foreach (var row in rows.EnumerateArray())
+
+        static string CellText(JsonElement value)
         {
-            if (row.ValueKind != JsonValueKind.Array || row.GetArrayLength() is < 2 or > 8)
-                throw new ArgumentException("Every table row must contain 2-8 cells.");
-            if (columns == 0) columns = row.GetArrayLength();
-            if (columns != row.GetArrayLength()) throw new ArgumentException("Table rows must have matching column counts.");
-            var cells = new List<string>();
-            foreach (var cell in row.EnumerateArray())
+            string text = value.ValueKind switch
             {
-                if (cell.ValueKind != JsonValueKind.String || cell.GetString()!.Length > 500)
-                    throw new ArgumentException("Table cell must be text up to 500 characters.");
-                string text = cell.GetString()!;
-                XmlConvert.VerifyXmlChars(text);
-                cells.Add(text);
+                JsonValueKind.String => value.GetString() ?? "",
+                JsonValueKind.Number => value.GetRawText(),
+                JsonValueKind.True => "true",
+                JsonValueKind.False => "false",
+                JsonValueKind.Null => "",
+                _ => throw new ArgumentException("A table cell must be scalar text, a number, boolean or null; nested values are ambiguous.")
+            };
+            if (text.Length > 500) throw new ArgumentException("Table cell exceeds 500 characters.");
+            XmlConvert.VerifyXmlChars(text);
+            return text;
+        }
+        static List<string> Cells(JsonElement row)
+        {
+            if (row.ValueKind == JsonValueKind.Object)
+            {
+                // {"cells":[...]} and {"values":[...]} are explicit row wrappers.
+                JsonProperty[] props = row.EnumerateObject().ToArray();
+                if (props.Length == 1 &&
+                    (props[0].NameEquals("cells") || props[0].NameEquals("values")))
+                {
+                    if (props[0].Value.ValueKind != JsonValueKind.Array)
+                        throw new ArgumentException("Wrapped table row cells must be an array.");
+                    return Cells(props[0].Value);
+                }
+                if (props.Length == 0 || props.Length > 8)
+                    throw new ArgumentException("Object table row needs 1-8 scalar entries.");
+                // Do not discard source field names or assume what they mean.
+                return props.Select(prop =>
+                {
+                    string value = CellText(prop.Value);
+                    string text = prop.Name + ": " + value;
+                    if (text.Length > 500) throw new ArgumentException("Table cell exceeds 500 characters.");
+                    return text;
+                }).ToList();
             }
+            if (row.ValueKind == JsonValueKind.String)
+            {
+                string text = CellText(row);
+                // TSV is unambiguous. Never split ordinary prose at commas.
+                return text.Contains('\t') ? text.Split('\t').ToList() : new List<string> { text };
+            }
+            if (row.ValueKind != JsonValueKind.Array)
+                throw new ArgumentException("A table row must be an array, object or text.");
+            if (row.GetArrayLength() == 1 && row[0].ValueKind == JsonValueKind.Object)
+            {
+                JsonProperty[] fields = row[0].EnumerateObject().ToArray();
+                if (fields.Length == 1 &&
+                    (fields[0].NameEquals("cells") || fields[0].NameEquals("values")))
+                    return Cells(row[0]);
+            }
+            List<string> cells = new();
+            foreach (JsonElement cell in row.EnumerateArray())
+            {
+                if (cell.ValueKind == JsonValueKind.Object)
+                {
+                    JsonProperty[] props = cell.EnumerateObject().ToArray();
+                    if (props.Length != 1 ||
+                        !(props[0].NameEquals("text") || props[0].NameEquals("value")))
+                        throw new ArgumentException("Cell objects require exactly one text or value field.");
+                    cells.Add(CellText(props[0].Value));
+                }
+                else cells.Add(CellText(cell));
+            }
+            return cells;
+        }
+
+        List<List<string>> parsed = new();
+        int maxColumns = 2;
+        foreach (JsonElement row in rows.EnumerateArray())
+        {
+            List<string> cells = Cells(row);
+            if (cells.Count is < 1 or > 8)
+                throw new ArgumentException("Every table row must contain 1-8 recoverable cells.");
+            if (cells.Any(cell => cell.Length > 500))
+                throw new ArgumentException("Table cell exceeds 500 characters.");
+            maxColumns = Math.Max(maxColumns, cells.Count);
             parsed.Add(cells);
         }
+        int padded = 0;
+        foreach (List<string> row in parsed)
+        {
+            padded += maxColumns - row.Count;
+            while (row.Count < maxColumns) row.Add("");
+        }
+        if (padded != 0)
+            NIRADiagnosticTrace.Event("DOCX-TABLE-CANONICALIZED",
+                $"Rows={parsed.Count} Columns={maxColumns} EmptyPositionsAdded={padded} NoValuesInvented=True");
+        return parsed;
+    }
+
+    private static XElement Table48(JsonElement data, string accent, int availableTwips)
+    {
+        List<List<string>> parsed = ParseStudio48TableRows(data);
+        int columns = parsed[0].Count;
         // Match the editable page width instead of the old 1500-twip grid
         // that produced narrow tables on landscape documents. Allocate cells
         // proportionally to bounded observed contents, not named column titles.
@@ -325,12 +412,14 @@ internal static partial class NIRADocx
         // File absence is checked *after* failure; a published destination or an
         // unclassified I/O exception remains uncertain and must be inspected.
         string? intendedPath = null;
+        NIRADiagnosticTrace.Event("DOCX-CONTRACT-LOADED",
+            $"Revision={RuntimeDocxContractRevision} Payload=NativeArrayOrValidatedLegacyJson");
         try
         {
             intendedPath = GetPath(request, "path");
             return await Studio48CoreAsync(request, ct).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is ArgumentException or JsonException or XmlException or InvalidDataException)
+        catch (Exception ex) when (ex is ArgumentException or JsonException or XmlException or InvalidDataException or InvalidOperationException)
         {
             if (intendedPath != null && !File.Exists(intendedPath) && !Directory.Exists(intendedPath))
                 throw new NIRADocxStudioNoPublishedFileException(ex.Message, ex);
@@ -343,7 +432,13 @@ internal static partial class NIRADocx
     {
         string path = GetPath(request, "path");
         string title = RequiredText(request, "title", 180).Trim();
-        string raw = RequiredText(request, "blocksJson", 180000);
+        // Canonical R58 input is a native JSON array (no nested string escaping).
+        // Legacy direct callers may still supply a JSON string; the capability
+        // preflight normalizes either representation to the declared array type.
+        string raw = NIRACapabilityArguments.RequireStructuredJson(
+            request, "blocksJson", JsonValueKind.Array, 180000);
+        if (raw.Length > 180000)
+            throw new ArgumentException("blocksJson exceeds 180000 characters.");
         NIRAFileIntegrity.RejectLinkedPaths(path);
         if (File.Exists(path) || Directory.Exists(path))
             throw new NIRADocxStudioDestinationExistsException(path);
@@ -373,17 +468,31 @@ internal static partial class NIRADocx
         bool pages = pageFlag == "true";
         string? legacyImagePath = NIRACapabilityArguments.GetOptionalRawString(request, "imagePath", 32760);
         using JsonDocument parsed = JsonDocument.Parse(raw, new JsonDocumentOptions { MaxDepth = 12 });
+        try { NIRAJsonWireContract.EnsureUniqueProperties(parsed.RootElement); }
+        catch (InvalidOperationException ex)
+        {
+            // This validation runs BEFORE any file creation. Keep native
+            // handler no-effect semantics for rejected duplicate JSON keys.
+            throw new ArgumentException("blocksJson has ambiguous duplicate properties: " + ex.Message, ex);
+        }
         if (parsed.RootElement.ValueKind != JsonValueKind.Array || parsed.RootElement.GetArrayLength() is < 1 or > 120)
             throw new ArgumentException("blocksJson requires 1-120 blocks.");
-        List<Studio48Media> media = await LoadStudio48MediaAsync(parsed.RootElement,
+        var selectedMedia = await LoadStudio48MediaAsync(parsed.RootElement,
             legacyImagePath, ct).ConfigureAwait(false);
+        List<Studio48Media> media = selectedMedia.Media;
+        int skippedImages = selectedMedia.OmittedBlockIndices.Count;
         if (media.Count < minimumImages)
-            throw new ArgumentException($"Document has {media.Count} verified local images, " +
-                $"but minimumImages={minimumImages}. No document was created.");
+            throw new ArgumentException($"Document has {media.Count} verified local images " +
+                $"({skippedImages} unusable input(s) omitted), but minimumImages={minimumImages}. No document was created.");
+        if (parsed.RootElement.GetArrayLength() == skippedImages)
+            throw new ArgumentException("No document body remains after rejecting unusable optional images.");
         int bodyWords = CountStudio48BodyWords(parsed.RootElement);
         if (bodyWords < minimumBodyWords)
             throw new ArgumentException($"Document content is too short: {bodyWords} body words, " +
-                $"minimumBodyWords={minimumBodyWords}. No document was created. Expand substantive writing first.");
+                $"minimumBodyWords={minimumBodyWords}, shortfall={minimumBodyWords - bodyWords} words. " +
+                "No document was created. Preserve the previously researched content and ADD " +
+                "substantive, evidence-grounded body paragraphs before resubmitting; do not " +
+                "rewrite or compress the entire draft.");
         int pageWidth = paper == "A4" ? 11906 : 12240;
         int pageHeight = paper == "A4" ? 16838 : 15840;
         if (orient == "landscape") (pageWidth, pageHeight) = (pageHeight, pageWidth);
@@ -396,9 +505,14 @@ internal static partial class NIRADocx
         titleP.Add(TextRun48(title, true, false, false, accent, profile == "academic" ? 20 : 24));
         body.Add(titleP);
         int count = 0, headings = 0, tables = 0, charts = 0, lists = 0, breaks = 0, links = 0, images = 0;
+        int sourceBlockIndex = -1;
         foreach (JsonElement block in parsed.RootElement.EnumerateArray())
         {
             ct.ThrowIfCancellationRequested();
+            sourceBlockIndex++;
+            // Image dimensions and raster signatures were already validated.
+            // Preserve the order and exact content of every non-image block.
+            if (selectedMedia.OmittedBlockIndices.Contains(sourceBlockIndex)) continue;
             if (block.ValueKind != JsonValueKind.Object) throw new ArgumentException("Word blocks must be JSON objects.");
             string type = GetString48(block, "type", 12).ToLowerInvariant();
             switch (type)
@@ -538,10 +652,13 @@ internal static partial class NIRADocx
         return new NIRACapabilityHandlerResult
         {
             ChangedSystemState = true,
-            Summary = "R48 Word Studio: complete styled Word document saved and structurally verified with one atomic new-file operation.",
+            Summary = "R48 Word Studio: styled Word document saved and structurally verified with one atomic new-file operation." +
+                (skippedImages > 0 ? $" WARNING: {skippedImages} unusable optional image block(s) omitted; check whether the user still needs these images." : ""),
             Output = $"Destination={path}\nDestinationSHA256={hash.Sha256}\nDestinationBytes={hash.Bytes}\n" +
                 $"StudioBlocks={count}\nStudioHeadings={headings}\nStudioTables={tables}\nStudioCharts={charts}\nStudioLists={lists}\n" +
                 $"StudioPageBreaks={breaks}\nStudioLinks={links}\nStudioImages={images}\n" +
+                $"StudioImageInputsRequested={selectedMedia.RequestedImages}\nStudioImagesSkipped={skippedImages}\n" +
+                $"OptionalImagesIncomplete={skippedImages > 0}\n" +
                 $"BodyWords={bodyWords}\nMinimumBodyWords={minimumBodyWords}\nMinimumImages={minimumImages}\nProfile={profile}\n" +
                 $"HeaderPresent={hdr != null}\nFooterPresent={ftr != null}\nPageNumberField={pages}\n" +
                 $"Paper={paper}\nOrientation={orient}\nMarginMm={margin}\nAccentHex={accent}\n" +
@@ -560,7 +677,8 @@ public sealed class NIRADocxStudioCapabilityHandler : INIRACapabilityHandler
         Parameters = [
             NIRADocx.Param("path", true, "NEW unused .docx destination in an authorized folder."),
             NIRADocx.Param("title", true, "Title of document; one line, maximum 180 characters."),
-            NIRADocx.Param("blocksJson", true, "JSON array 1-120 of blocks: paragraph, heading(level 1-3), bullet, number, table(rows 2-40 x 2-8), chart(data:[{label,value}], optional title/source), quote, divider, toc, pagebreak, link(text,url), image(altText,widthMm,caption,credit,imagePath). Paragraph/heading/list: text or runs with formatting. Use multiple image blocks with each imagePath. Do not insert charts/tables without grounded data."),
+            new NIRACapabilityParameterDescriptor { Name = "blocksJson", Type = "array", Required = true,
+                Description = "MANDATORY native JSON ARRAY (not a quoted/double-encoded string), 1-120 blocks: paragraph, heading(level 1-3), bullet, number, table(rows 2-40 x 2-8), chart(data:[{label,value}], optional title/source), quote, divider, toc, pagebreak, link(text,url), image(altText,widthMm,caption,credit,imagePath). Text and runs may contain ordinary strings. Preserve all material source content; use the exact user-requested content length." },
             NIRADocx.Param("paper", false, "A4 (default) or LETTER"),
             NIRADocx.Param("orientation", false, "portrait (default) or landscape"),
             NIRADocx.Param("marginMm", false, "10-35, default 20"),
