@@ -205,8 +205,10 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
 
     // Only verified source-backed images enter the paragraph-aware document.
     // Nonretrieved and generated assets keep their established gallery/viewer.
-    public bool HasInlineVisuals => Content.Length >= 100 &&
-        VisualArtifacts.Count is > 0 and <= 4 &&
+    public bool HasInlineVisuals =>
+        (Content.Length >= 100 || _richContentFrames.Any(frame => frame.Blocks.Any(block =>
+            !string.IsNullOrWhiteSpace(block.ImageSubject)))) &&
+        VisualArtifacts.Count is > 0 and <= 12 &&
         VisualArtifacts.All(v => v.HasPreview && v.HasSourceUri && !v.IsGeneratedImage);
     public int InlineVisualRevision => VisualArtifacts.Count;
 
@@ -340,7 +342,7 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
             return;
         }
         var photos = VisualArtifacts.Where(p => p.HasPreview && p.HasSourceUri && !p.IsGeneratedImage)
-            .Take(4).ToArray();
+            .Take(12).ToArray();
         if (photos.Length == 0)
         {
             RebuildUnplacedAssistantImages();
@@ -432,17 +434,30 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
                 ? photo.Title : photo.SubjectQuery;
             // Prose and rich blocks are different WPF rows. Let the document
             // own photos with a real paragraph anchor; never double-render.
-            if (NIRAInlineImageAnchorPolicy.FindLine(Content, subject) >= 0)
+            if (!_richContentFrames.Any(pair => pair.Blocks.Any(b =>
+                    !string.IsNullOrWhiteSpace(b.ImageSubject) &&
+                    string.Equals(b.ImageSubject.Trim(), photo.SubjectQuery.Trim(),
+                        StringComparison.OrdinalIgnoreCase))) &&
+                NIRAInlineImageAnchorPolicy.FindLine(Content, subject) >= 0)
                 continue;
+            // Block 03 owns placement: an imageSubject equals one ACTUALLY
+            // returned image-search subject. No match => no model-directed
+            // placement; the established verified-text heuristic remains as
+            // an automatic fallback for older saved conversations.
             var ranked = _richContentFrames.Select(pair => new
             {
                 pair.View,
-                Score = pair.Blocks.Max(b => NIRAInlineImageAnchorPolicy.MatchSection(
-                    string.IsNullOrWhiteSpace(photo.SubjectQuery) ? photo.Title : photo.SubjectQuery,
-                    b.Title,
-                    b.Type == "tabs" ? b.Items : null,
-                    b.Type == "tabs" ? b.Panels : null,
-                    b.Text))
+                Score = pair.Blocks.Max(b =>
+                    !string.IsNullOrWhiteSpace(b.ImageSubject) &&
+                    string.Equals(b.ImageSubject.Trim(), photo.SubjectQuery.Trim(),
+                        StringComparison.OrdinalIgnoreCase)
+                    ? 1000
+                    : NIRAInlineImageAnchorPolicy.MatchSection(
+                        string.IsNullOrWhiteSpace(photo.SubjectQuery) ? photo.Title : photo.SubjectQuery,
+                        b.Title,
+                        b.Type == "tabs" ? b.Items : null,
+                        b.Type == "tabs" ? b.Panels : null,
+                        b.Text))
             }).Where(x => x.Score > 0).OrderByDescending(x => x.Score).ToArray();
             // A rich block must actually identify the subject. Dropping an
             // unanchored image is safer than a fake visual placed at the end.

@@ -561,12 +561,15 @@ public sealed class NIRATaskCompletionReviewService
             string.IsNullOrWhiteSpace(request.WebResearchSourceEvidence) ||
             verdict != "Complete" || string.IsNullOrWhiteSpace(reply)) return false;
         string approved = reply.Trim();
-        return approved.Length is >= 180 and <= 14000 &&
-            // The reviewer may not "approve" an unreferenced new narrative.
-            // At least one observed Markdown citation is required.
-            Regex.IsMatch(approved, @"\]\(https?://", RegexOptions.IgnoreCase) &&
+        // A concise source-backed correction is as legitimate as a long one.
+        // Do not force the reviewer to pad its answer to an arbitrary length.
+        // A validated bare source URL is just as useful as a Markdown citation.
+        // Both forms must match the *observed* receipts; invented URLs fail.
+        return approved.Length is >= 40 and <= 14000 &&
             !NIRAPublicOutputContract.ContainsInternalProtocol(approved) &&
             !approved.StartsWith("{", StringComparison.Ordinal) &&
+            NIRAWebResearchGroundingGate.HasObservedReference(
+                request.WebResearchSourceEvidence, approved) &&
             NIRAWebResearchGroundingGate.Check(
                 request.WebResearchSourceEvidence, approved).Accepted;
     }
@@ -708,6 +711,11 @@ public sealed class NIRATaskCompletionReviewService
                 "knowledge, transparent arithmetic and explicitly illustrative " +
                 "assumptions do not need to appear word-for-word in a web page. " +
                 "Do not claim a seller's claim is an independent measurement. " +
+                "The runtime presents genuine verified images separately " +
+                "from the factual draft: if VERIFIED IMAGE CATALOG lists images, " +
+                "do not reject the answer merely because the draft text has " +
+                "no inline image Markdown. Do not invent images when the catalog " +
+                "is empty. This catalog does not prove scientific claims. " +
                 "A genuinely useful answer may qualify weak source coverage; " +
                 "do not demand unrequested details, photographs, or more web " +
                 "searches. When something essential is missing, identify the " +
@@ -735,6 +743,9 @@ public sealed class NIRATaskCompletionReviewService
             prompt = "CURRENT USER OBJECTIVE (only acceptance target):\n" +
                 original + "\n\nOBSERVED WEB EXTRACTS (not verified facts):\n" +
                 Limit(request.WebResearchSourceEvidence, 24000) +
+                "\n\nVERIFIED IMAGE CATALOG (independent image receipts, " +
+                "rendered by Block 03; not scientific evidence):\n" +
+                Limit(request.VerifiedImageCatalog, 4500) +
                 "\n\nDRAFT ANSWER TO REVIEW:\n" +
                 Limit(request.DraftReply, MaxDraft) +
                 "\n\nReturn the JSON verdict for this objective ONLY.";
@@ -827,8 +838,19 @@ public sealed class NIRATaskCompletionReviewService
             if (approved.Length > 0 && request.SourceOnlyResearchReview &&
                 verdict == "Complete" && !correctedAnswerAllowed)
             {
+                string rejection = approved.Length < 40 || approved.Length > 14000
+                    ? "AnswerLength"
+                    : NIRAPublicOutputContract.ContainsInternalProtocol(approved) ||
+                      approved.StartsWith("{", StringComparison.Ordinal)
+                        ? "InternalProtocol"
+                        : !NIRAWebResearchGroundingGate.HasObservedReference(
+                            request.WebResearchSourceEvidence, approved)
+                            ? "NoObservedReference"
+                            : !NIRAWebResearchGroundingGate.Check(
+                                request.WebResearchSourceEvidence, approved).Accepted
+                                ? "UnobservedReference" : "OtherValidation";
                 NIRAAgent.Diagnostics.NIRADiagnosticTrace.Event(
-                    "WEB-REVIEW-APPROVED-REPLY", "Accepted=False Reason=GroundingOrFormat");
+                    "WEB-REVIEW-APPROVED-REPLY", $"Accepted=False Reason={rejection}");
                 return new NIRATaskCompletionReview("NeedsWork",
                     "Reviewer correction was not source-grounded or renderable.",
                     "Revise the answer using observed evidence without unobserved citations.") {
@@ -1035,6 +1057,9 @@ public sealed record NIRATaskCompletionReviewRequest(
     // Explicitly enabled by the Executive only when every observed capability
     // is a successful read-only web.search and the draft has no pending actions.
     public bool SourceOnlyResearchReview { get; init; }
+    // Trusted metadata captured from successful image-search artifacts. The
+    // independent fact reviewer checks text; Block 03 places verified images.
+    public string VerifiedImageCatalog { get; init; } = string.Empty;
 }
 
 public sealed record NIRATaskCompletionReview(

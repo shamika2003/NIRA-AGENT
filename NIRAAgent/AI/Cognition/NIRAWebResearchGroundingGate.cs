@@ -14,26 +14,70 @@ internal static class NIRAWebResearchGroundingGate
         @"(?m)^URL:\s*(?<url>https?://\S+)",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
-    private static readonly Regex LinkedUrl = new(
-        @"\]\(\s*(?<url>https?://(?:[^\s()]|\([^)]*\))+)",
+    // Includes bare URLs and Markdown destinations. A citation is not grounded
+    // merely because it is written outside Markdown link syntax.
+    private static readonly Regex VisibleUrl = new(
+        @"https?://[^\s<>\[\]""']+",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    // A model may invent a URL during a focused factual correction even when
+    // its prose can still be checked. Remove ONLY unsupported citation links
+    // before independent re-review. This never certifies the corrected claims,
+    // never changes a real tool receipt and never runs on arbitrary user text.
+    // Markdown link labels remain visible as plain text, without false sourcing.
+    private static readonly Regex MarkdownCitation = new(
+        @"\[(?<label>[^\]\r\n]{1,200})\]\((?<url>https?://[^\s\)]+)\)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    internal static string RemoveUnobservedCitationLinks(string evidence, string correction)
+    {
+        if (string.IsNullOrWhiteSpace(correction)) return correction;
+        string[] observed = ObservedUrls(evidence);
+        if (observed.Length == 0) return correction; // No unverified promotion.
+        bool Allowed(string url) =>
+            observed.Any(source => Equivalent(source, CleanUrl(url)));
+        string cleaned = MarkdownCitation.Replace(correction, match =>
+            Allowed(match.Groups["url"].Value) ? match.Value : match.Groups["label"].Value);
+        // Bare invented URLs are not citation evidence either. Existing
+        // observed URLs are preserved byte-for-byte for the grounding gate.
+        cleaned = VisibleUrl.Replace(cleaned, match =>
+            Allowed(match.Value) ? match.Value : string.Empty);
+        return cleaned.Trim();
+    }
+
+    internal static string ObservedCitationAllowlist(string evidence) =>
+        string.Join("\n", ObservedUrls(evidence).Select(url => "- " + url));
+
+    internal static bool HasObservedReference(string? evidence, string? answer)
+    {
+        string[] observed = ObservedUrls(evidence);
+        return observed.Length > 0 && VisibleUrl.Matches(answer ?? string.Empty)
+            .Select(m => CleanUrl(m.Value))
+            .Any(link => observed.Any(url => Equivalent(url, link)));
+    }
+
+    private static string[] ObservedUrls(string? evidence) =>
+        UrlRow.Matches(evidence ?? string.Empty).Select(m => CleanUrl(m.Groups["url"].Value))
+            .Where(u => Uri.TryCreate(u, UriKind.Absolute, out Uri? parsed) &&
+                parsed is { Scheme: "https" or "http" })
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+    private static string CleanUrl(string url) =>
+        url.TrimEnd('.', ',', ';', ':', ')', ']', '}', '>');
 
     internal static NIRAWebResearchGroundingVerdict Check(string? evidence, string? draft)
     {
         if (string.IsNullOrWhiteSpace(evidence) || string.IsNullOrWhiteSpace(draft))
             return NIRAWebResearchGroundingVerdict.Pass;
 
-        string[] urls = UrlRow.Matches(evidence).Select(m => m.Groups["url"].Value)
-            .Where(u => Uri.TryCreate(u, UriKind.Absolute, out Uri? parsed) &&
-                parsed is { Scheme: "https" or "http" })
-            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        string[] urls = ObservedUrls(evidence);
         // Unparseable evidence is never upgraded to authority by this gate.
         // The Executive's trust envelope and reviewer still own eligibility.
         if (urls.Length == 0) return NIRAWebResearchGroundingVerdict.Pass;
 
-        foreach (Match link in LinkedUrl.Matches(draft))
+        foreach (Match link in VisibleUrl.Matches(draft))
         {
-            string target = link.Groups["url"].Value.TrimEnd('.', ',', ';');
+            string target = CleanUrl(link.Value);
             if (!urls.Any(u => Equivalent(u, target)))
                 return new(false, "UnobservedCitation",
                     "The researched reply cites a URL not present in the observed web sources.");

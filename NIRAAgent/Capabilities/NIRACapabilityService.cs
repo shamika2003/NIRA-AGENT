@@ -494,6 +494,9 @@ public sealed class NIRACapabilityService
         }
         catch (Exception ex)
         {
+            if (request.CapabilityId.StartsWith("filesystem.", StringComparison.OrdinalIgnoreCase))
+                NIRADiagnosticTrace.Event("FILESYSTEM-FAILURE",
+                    NIRAFilesystemFailureDiagnostic.Format(request.CapabilityId, ex, dispatched));
             if (request.CapabilityId is NIRACapabilityIds.DesktopAct or
                 NIRACapabilityIds.DesktopClose or NIRACapabilityIds.DesktopInspect)
                 NIRADiagnosticTrace.Event("DESKTOP-FAILURE",

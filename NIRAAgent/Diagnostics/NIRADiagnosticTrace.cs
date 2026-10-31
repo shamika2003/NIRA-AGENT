@@ -43,6 +43,62 @@ public static class NIRADiagnosticTrace
     public static bool DetailedToolCaptureEnabled =>
         Environment.GetEnvironmentVariable("NIRA_DEBUG_TOOL_DETAILS") == "1" || TranscriptSwitch;
 
+    // Explicit local development capture of what was ACTUALLY delivered.
+    // Distinct from the raw LLM response transcript (which may include rejected
+    // candidates). Default off because conversations can contain private data.
+    public static bool PublicResponseCaptureEnabled =>
+        Environment.GetEnvironmentVariable("NIRA_DEBUG_PUBLIC_RESPONSES") == "1" &&
+        Environment.GetEnvironmentVariable("NIRA_DEBUG_LLM_TRANSCRIPTS") != "0";
+    public static string PublicResponseLogPath => Path.Combine(DirectoryPath,
+        $"nira-public-{Environment.ProcessId}.jsonl");
+
+    public static void PublicResponse(Guid runId, string stage,
+        string markdownReply, string speech, object? displayBlocks,
+        object? verifiedImageMetadata)
+    {
+        if (!PublicResponseCaptureEnabled) return;
+        try
+        {
+            Append(PublicResponseLogPath, JsonSerializer.Serialize(new
+            {
+                TimestampUtc = DateTimeOffset.UtcNow,
+                Event = "PUBLIC-DELIVERY",
+                RunId = runId,
+                Stage = stage,
+                MarkdownReply = markdownReply,
+                Speech = speech,
+                DisplayBlocks = displayBlocks,
+                VerifiedImageMetadata = verifiedImageMetadata
+            }));
+        }
+        catch (Exception ex) when (ex is JsonException or NotSupportedException)
+        {
+            Event("PUBLIC-DELIVERY-CAPTURE", $"Status=Failed Kind={ex.GetType().Name}");
+        }
+    }
+
+    public static void PublicVisualEmitted(Guid runId, string subject,
+        string sourceUri, string localPath)
+    {
+        if (!PublicResponseCaptureEnabled) return;
+        try
+        {
+            Append(PublicResponseLogPath, JsonSerializer.Serialize(new
+            {
+                TimestampUtc = DateTimeOffset.UtcNow,
+                Event = "PUBLIC-IMAGE-EMITTED",
+                RunId = runId,
+                Subject = subject,
+                SourceUri = sourceUri,
+                VerifiedLocalPath = localPath
+            }));
+        }
+        catch (Exception ex) when (ex is JsonException or NotSupportedException)
+        {
+            Event("PUBLIC-IMAGE-CAPTURE", $"Status=Failed Kind={ex.GetType().Name}");
+        }
+    }
+
     public static string StatusPath => Path.Combine(DirectoryPath,
         $"nira-diagnostics-status-{Environment.ProcessId}.txt");
     private static bool _statusWritten;
@@ -145,6 +201,10 @@ public static class NIRADiagnosticTrace
                         $"PromptCapture={LlmPromptCaptureEnabled}\n" +
                         $"ResponseCapture={LlmResponseCaptureEnabled}\n" +
                         $"DetailedToolCapture={DetailedToolCaptureEnabled}\n" +
+                        $"PublicResponseCapture={PublicResponseCaptureEnabled}\n" +
+                        $"PublicResponseLog={PublicResponseLogPath}\n" +
+                        "To capture delivered Markdown and native blocks: NIRA_DEBUG_PUBLIC_RESPONSES=1\n" +
+                        "To capture the raw model response: NIRA_DEBUG_LLM_RESPONSES=1\n" +
                         "To enable full LLM prompts/responses before launch: " +
                         "NIRA_DEBUG_LLM_TRANSCRIPTS=1\n" +
                         "To disable capture even under a debugger: NIRA_DEBUG_LLM_TRANSCRIPTS=0\n" +
@@ -154,6 +214,7 @@ public static class NIRADiagnosticTrace
                 // Keep logs bounded, but allow a full multi-round prompt trace
                 // to stay intact during one ordinary debugging run.
                 long limit = string.Equals(filePath, LlmLogPath, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(filePath, PublicResponseLogPath, StringComparison.OrdinalIgnoreCase)
                     ? 32_000_000 : 4_000_000;
                 if (File.Exists(filePath) && new FileInfo(filePath).Length > limit)
                     File.Move(filePath, filePath + ".previous", overwrite: true);

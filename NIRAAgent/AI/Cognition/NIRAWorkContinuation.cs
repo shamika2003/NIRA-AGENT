@@ -175,6 +175,17 @@ internal static class NIRAWorkContinuation
         reason, or request missing registered schemas using contextRequests and
         capabilityIds. Batch independent work when appropriate; respect verified
         prerequisites for dependent or potentially mutating operations.
+        TOOL FACT FIDELITY: When a calculator receipt supplies an evaluated
+        expression or named steps, repeat the exact observed decimal values.
+        Do not fabricate intermediate arithmetic from mental reconstruction.
+        If an intermediate number was not in the receipt, omit it or request
+        named calculator steps, instead of guessing. Distinguish total capacity
+        from free capacity and the units used in each converted measurement.
+        For combined research and calculation, include EVERY requested result
+        in the factual findings; retrieved links alone do not complete a
+        request for an actual comparison or computed difference. If sources
+        do not establish a claim, preserve the precise gap rather than
+        repeatedly rephrasing the same unsupported answer.
         State=Complete only when the task's material requirements are satisfied
         by supplied facts, valid reasoning and actual receipts. For completed
         work return emitReply=true, reply=<full factual findings and verified

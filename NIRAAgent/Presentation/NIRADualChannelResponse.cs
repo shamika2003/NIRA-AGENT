@@ -16,6 +16,10 @@ public sealed record NIRARichBlock
     public IReadOnlyList<string> Items { get; init; } = Array.Empty<string>();
     // Tabs: parallel, model-authored labels/content; UI never executes supplied text.
     public IReadOnlyList<string> Panels { get; init; } = Array.Empty<string>();
+    // Response Realization may identify the verified image-search subject to
+    // place immediately AFTER this block. This field is layout-only, never a
+    // source URL or permission to retrieve a new image.
+    public string ImageSubject { get; init; } = string.Empty;
     public double? ProgressValue { get; init; }
     public double? ProgressMaximum { get; init; }
     public IReadOnlyList<string> Columns { get; init; } = Array.Empty<string>();
@@ -36,7 +40,11 @@ public sealed record NIRARichInteractionState
 
 public static class NIRAPresentationPolicy
 {
-    public const int MaxBlocks = 8;
+    // Legacy compatibility name only: there is no arbitrary number-of-blocks quota.
+    // The JSON reader bounds the complete payload by size; Normalization bounds
+    // every component's fields and the WPF UI virtualizes/scrolls large replies.
+    public const int MaxBlocks = int.MaxValue;
+    public const int MaxPresentationPayloadCharacters = 350_000;
     private static string Clip(string? s, int n)
     {
         string value = (s ?? string.Empty).Trim();
@@ -47,20 +55,20 @@ public static class NIRAPresentationPolicy
     {
         if (blocks is null || blocks.Count == 0) return Array.Empty<NIRARichBlock>();
         var accepted = new List<NIRARichBlock>();
-        foreach (var input in blocks.Take(MaxBlocks))
+        foreach (var input in blocks)
         {
             if (input is null) continue;
             string type = (input.Type ?? string.Empty).Trim().ToLowerInvariant();
             if (type is not ("heading" or "text" or "hero" or "insight" or "source" or "video" or "card" or "metric" or "equation" or "table" or "chart" or "code" or "details" or "list" or "quote" or "timeline" or "checklist" or "progress" or "tabs" or "followups" or "file")) continue;
-            var items = (input.Items ?? Array.Empty<string>()).Take(24).Select(x => Clip(x, type == "file" ? 32760 : 450)).Where(x => x.Length > 0).ToArray();
+            var items = (input.Items ?? Array.Empty<string>()).Take(128).Select(x => Clip(x, type == "file" ? 32760 : 450)).Where(x => x.Length > 0).ToArray();
             var panels = (input.Panels ?? Array.Empty<string>()).Take(5).Select(x => Clip(x, 3000)).ToArray();
             var cols = (input.Columns ?? Array.Empty<string>()).Take(8).Select(c => Clip(c, 75)).ToArray();
             var rows = (input.Rows ?? Array.Empty<IReadOnlyList<string>>())
-                .Take(40).Where(row => row != null)
+                .Take(256).Where(row => row != null)
                 .Select(row => (IReadOnlyList<string>)row.Take(cols.Length).Select(x => Clip(x, 240)).ToArray())
                 .Where(row => row.Count == cols.Length).ToArray();
-            var labels = (input.Labels ?? Array.Empty<string>()).Take(40).Select(x => Clip(x, 85)).ToArray();
-            var values = (input.Values ?? Array.Empty<double>()).Take(40).ToArray();
+            var labels = (input.Labels ?? Array.Empty<string>()).Take(256).Select(x => Clip(x, 85)).ToArray();
+            var values = (input.Values ?? Array.Empty<double>()).Take(256).ToArray();
             if ((type is "list" or "timeline" or "checklist" or "followups") && items.Length == 0) continue;
             if (type == "tabs" && (items.Length < 2 || items.Length > 5 ||
                 panels.Length != items.Length || panels.Any(string.IsNullOrWhiteSpace))) continue;
@@ -82,7 +90,7 @@ public static class NIRAPresentationPolicy
             if (type == "followups" && items.Length > 6) items = items.Take(6).ToArray();
             if (type == "progress" && title.Length == 0) continue;
             accepted.Add(input with { Type=type, Title=title, Text=text, Unit=Clip(input.Unit, 24),
-                Language=Clip(input.Language, 25), Items=items, Panels=panels, Columns=cols, Rows=rows, Labels=labels, Values=values });
+                Language=Clip(input.Language, 25), ImageSubject=Clip(input.ImageSubject, 160), Items=items, Panels=panels, Columns=cols, Rows=rows, Labels=labels, Values=values });
         }
         return accepted;
     }

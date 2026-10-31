@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace NIRAAgent.AI.Cognition;
 
@@ -14,6 +15,45 @@ internal static class NIRACapabilityPromptDirectory
     // Complex *required* structured inputs must be discovered before use.
     // Registered optional arrays (e.g. a batched query) remain usable directly.
     private sealed record Tool(string Id, string Header, IReadOnlyList<string> Parameters);
+
+    // Read-only relevance ordering for the FIRST model round. This is advisory
+    // exposure of already registered contracts, not a hardcoded list of tools,
+    // a routing decision, or a capability execution/permission shortcut.
+    // Newly registered tool families can participate without changing this code.
+    private static HashSet<string> Terms(string? value)
+    {
+        var terms = new HashSet<string>(StringComparer.Ordinal);
+        if (string.IsNullOrWhiteSpace(value)) return terms;
+        foreach (Match match in Regex.Matches(value, "[A-Za-z][A-Za-z0-9]*"))
+        {
+            string word = match.Value.ToLowerInvariant();
+            if (word.Length < 4 || NoiseWords.Contains(word)) continue;
+            // A bounded prefix groups natural inflections (calculate/calculator,
+            // source/sources) without an external model or topic-specific map.
+            terms.Add(word.Length > 6 ? word[..6] : word);
+        }
+        return terms;
+    }
+
+    private static readonly HashSet<string> NoiseWords = new(StringComparer.Ordinal)
+    {
+        "string", "array", "object", "integer", "boolean", "required",
+        "false", "true", "default", "observe", "modify", "optional",
+        "registered", "capability", "request", "requests", "value",
+        "values", "name", "names", "tool", "tools", "with", "that",
+        "from", "this", "these", "your", "have", "need", "give",
+        "tell", "please", "what", "when", "where", "there", "some"
+    };
+
+    private static int Relevance(Tool tool, HashSet<string> requestedTerms)
+    {
+        if (requestedTerms.Count == 0) return 0;
+        int idMatches = Terms(tool.Id).Count(requestedTerms.Contains);
+        int descriptionMatches = Terms(tool.Header).Count(requestedTerms.Contains);
+        int parameterMatches = Terms(string.Join(" ", tool.Parameters))
+            .Count(requestedTerms.Contains);
+        return idMatches * 8 + descriptionMatches * 3 + parameterMatches;
+    }
 
     internal static string Build(NIRACognitionContext c)
     {
@@ -37,6 +77,8 @@ internal static class NIRACapabilityPromptDirectory
                 ((List<string>)current.Parameters).Add(line);
         }
         if (current is not null) tools.Add(current);
+
+        HashSet<string> requestedTerms = Terms(c.Event?.Content);
 
         // Select direct contracts by their real registered schema size, not the
         // alphabetical position of their capability ID. Otherwise a directory
@@ -63,7 +105,8 @@ internal static class NIRACapabilityPromptDirectory
                 tool.Id,
                 Full = full,
                 Family = family,
-                Eligible = !requiredStructured && tool.Parameters.Count <= 13
+                Eligible = !requiredStructured && tool.Parameters.Count <= 13,
+                Relevance = Relevance(tool, requestedTerms)
             };
         }).ToArray();
         var directIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -73,17 +116,20 @@ internal static class NIRACapabilityPromptDirectory
         // discovery-only just because another namespace has many long schemas.
         var eligible = candidates.Where(c => c.Eligible).ToArray();
         var familySeeds = eligible.GroupBy(c => c.Family, StringComparer.OrdinalIgnoreCase)
-            .Select(g => g.OrderBy(c => c.Full.Length).ThenBy(c => c.Id,
-                StringComparer.OrdinalIgnoreCase).First())
-            .OrderBy(c => c.Full.Length).ThenBy(c => c.Id,
-                StringComparer.OrdinalIgnoreCase);
+            .Select(g => g.OrderByDescending(c => c.Relevance)
+                .ThenBy(c => c.Full.Length)
+                .ThenBy(c => c.Id, StringComparer.OrdinalIgnoreCase).First())
+            .OrderByDescending(c => c.Relevance)
+            .ThenBy(c => c.Full.Length)
+            .ThenBy(c => c.Id, StringComparer.OrdinalIgnoreCase);
         foreach (var candidate in familySeeds)
         {
             if (candidate.Full.Length > directBudget - directLength) continue;
             if (directIds.Add(candidate.Id)) directLength += candidate.Full.Length;
         }
 
-        foreach (var candidate in eligible.OrderBy(c => c.Full.Length)
+        foreach (var candidate in eligible.OrderByDescending(c => c.Relevance)
+            .ThenBy(c => c.Full.Length)
             .ThenBy(c => c.Id, StringComparer.OrdinalIgnoreCase))
         {
             if (directIds.Contains(candidate.Id) ||
@@ -99,8 +145,15 @@ internal static class NIRACapabilityPromptDirectory
             bool isDirect = directIds.Contains(candidate.Id);
             inventory.Append("- ").Append(candidate.Id).Append(" | ")
                 .AppendLine(isDirect ? "DIRECT" : "DISCOVER");
-            if (isDirect) direct.Append(candidate.Full);
         }
+        // Put the full descriptor of the most relevant directly callable tool
+        // FIRST, rather than hiding it behind many unrelated registrations.
+        // The exact same descriptor strings still come from the registry.
+        foreach (var candidate in candidates.Where(c => directIds.Contains(c.Id))
+            .OrderByDescending(c => c.Relevance)
+            .ThenBy(c => c.Full.Length)
+            .ThenBy(c => c.Id, StringComparer.OrdinalIgnoreCase))
+            direct.Append(candidate.Full);
 
         // The exact same runtime-registered parameter/enum/range/required data
         // is used by the capability preflight; there is no parallel JSON schema.
@@ -109,6 +162,37 @@ internal static class NIRACapabilityPromptDirectory
         int marker = source.IndexOf("AVAILABLE PRIMITIVES", StringComparison.Ordinal);
         if (marker >= 0)
             result.AppendLine(NIRACognitionContextText.Bound(source[..marker], 3100));
+        if (c.Cycle <= 1)
+        {
+            result.AppendLine("FIRST-ROUND DIRECT TOOL CHOICE: If the requested work can " +
+                "be performed with an already registered DIRECT tool, propose its " +
+                "exact capabilityRequests in THIS first decision; no discovery " +
+                "round is needed. Prefer the smallest sufficient observational " +
+                "operation and its returned evidence. Do not start an interactive " +
+                "session or multi-step navigation merely to retrieve public or " +
+                "machine information if an available direct read-only primitive " +
+                "can supply it. If a tool is DISCOVER, request its registered " +
+                "schema first; do not guess required structured arguments. " +
+                "Only real results justify a final answer. Registered tools are " +
+                "never auto-executed or granted authorization by this directory.");
+            var relevantDirect = candidates.Where(c => directIds.Contains(c.Id) && c.Relevance > 0)
+                .OrderByDescending(c => c.Relevance)
+                .ThenBy(c => c.Full.Length)
+                .ThenBy(c => c.Id, StringComparer.OrdinalIgnoreCase)
+                .Take(5).Select(c => c.Id).ToArray();
+            if (relevantDirect.Length > 0)
+                result.Append("REQUEST-RELEVANT REGISTERED DIRECT IDS (suggestions only): ")
+                    .AppendLine(string.Join(", ", relevantDirect));
+        }
+        result.AppendLine("SHARED TOOL CONTRACT: These registered capabilities are " +
+            "available to both the first cognition decision and EVERY internal " +
+            "work continuation. If the user explicitly requires an actual " +
+            "registered tool result, do not substitute an unaudited mental " +
+            "calculation or remembered web/PC data; propose capabilityRequests " +
+            "using the exact DIRECT descriptor. Later internal cycles may " +
+            "request more registered tools based on previous receipts. " +
+            "DISCOVER contracts require real schema discovery first. " +
+            "The Executive alone validates, authorizes and runs proposals.");
         result.AppendLine("CAPABILITY IDENTITIES (all currently registered):")
             .Append(inventory);
         result.AppendLine("DIRECT CAPABILITY EXACT REGISTERED ARGUMENT DESCRIPTORS:")
@@ -123,6 +207,18 @@ internal static class NIRACapabilityPromptDirectory
             "arguments before its full registered schema is returned.");
         result.AppendLine("The model only proposes actions; the Executive validates, " +
             "authorizes and executes. A tool registration is NOT permission.");
+        if (tools.Any(t => t.Id.StartsWith("filesystem.", StringComparison.OrdinalIgnoreCase)))
+            result.AppendLine("CURRENT-USER KNOWN-FOLDER PATH CONTRACT: When the user " +
+                "says my Downloads/Documents/Desktop/Pictures/Music/Videos, provide a " +
+                "relative known-folder alias such as Downloads\\report.docx, NOT " +
+                "C:\\Users\\<guessed-user>\\Downloads\\report.docx. The registered " +
+                "filesystem path normalizer resolves that alias using the current " +
+                "Windows user's configured location. Never infer the Windows account " +
+                "name from NIRA's user's name or chat history. If a tool reports " +
+                "UnverifiedOtherProfileKnownFolder, correct the intended current-user " +
+                "path using the alias; do not request Defender changes or retry " +
+                "the incorrect absolute path. Explicitly requested OTHER-user " +
+                "destinations require observation and ordinary authorization.");
         if (!string.IsNullOrWhiteSpace(c.DynamicToolContext))
             result.AppendLine("DYNAMIC TOOL DIRECTORY (identity only; get contract " +
                 "and required permission before invocation):\n" +

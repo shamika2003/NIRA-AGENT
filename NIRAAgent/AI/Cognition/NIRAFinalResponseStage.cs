@@ -59,12 +59,12 @@ public sealed class NIRAFinalResponseStage
         if (passedThroughInternalWork)
             return true;
 
-        // Executive-verified, character-ready first-call responses are already
-        // public NIRA speech. Re-running a style model solely for an opening
-        // repeated in chat is more expensive than the cadence improvement;
-        // entry cognition already sees the prior openings. A real character
-        // shift or nonready reply must still enter Block 03.
-        if (verifiedDirectFirstCall && !authoritativeCharacterShift &&
+        // The COMPLETE package already lives in Block 01's input. Once its
+        // first-call reply is verified and marked ready, delivering it does NOT
+        // require Block 03 (even if the committed mood changed this turn).
+        // If not ready or if tools/internal work occurred, Block 03 still owns
+        // the final public response.
+        if (verifiedDirectFirstCall &&
             decision.ReplyReady && decision.CharacterReady)
             return false;
 
@@ -112,16 +112,20 @@ public sealed class NIRAFinalResponseStage
                     Interaction = request.Interaction,
                     AppliedSocialAppraisal = request.AppliedSocialAppraisal,
                     RequiredVerbatimFragments = request.RequiredVerbatimFragments,
-                    AllowPresentationComposition = request.DisplayBlocks.Count == 0
+                    VerifiedWorkEvidence = request.ReviewEvidence,
+                    VerifiedImageCatalog = request.VerifiedImageCatalog,
+                    AllowPresentationComposition = true
                 },
                 cancellationToken);
 
         bool reverted = false;
 
         if (request.HasCapabilityResults &&
-            !NIRAPublicCharacterDelivery.PreservesGroundedResult(
+            !NIRAResponsePresentationModule.PreservesGroundedCompletion(
                 groundedReply,
-                realized.Reply))
+                string.Join("\n", request.ReviewEvidence, request.VerifiedImageCatalog),
+                realized.Reply,
+                realized.DisplayBlocks))
         {
             reverted = true;
             realized = realized with
@@ -130,39 +134,18 @@ public sealed class NIRAFinalResponseStage
                 Speech = groundedSpeech
             };
         }
-        else if (request.RequiresPresentationReview &&
-                 request.HasCapabilityResults &&
-                 !string.Equals(realized.Reply, groundedReply, StringComparison.Ordinal))
-        {
-            NIRATaskCompletionReview? review =
-                await _review.ReviewAsync(
-                    new NIRATaskCompletionReviewRequest(
-                        request.OriginalUserObjective,
-                        NIRAPresentationPolicy.ForObjectiveReview(realized.Reply,
-                            realized.DisplayBlocks.Count > 0 ? realized.DisplayBlocks : request.DisplayBlocks),
-                        request.ReviewEvidence,
-                        request.ConversationContext,
-                        request.PendingObjective,
-                        request.ExternalAppId),
-                    cancellationToken);
-
-            if (review?.Verdict != "Complete")
-            {
-                reverted = true;
-                realized = realized with
-                {
-                    Reply = groundedReply,
-                    Speech = groundedSpeech
-                };
-            }
-        }
+        // The user-task completion review belongs to Block 02 BEFORE this
+        // stage. A style-only independent LLM review after Block 03 would turn
+        // one response-building call into extra rounds and can erase valid
+        // character/UI. Keep the deterministic evidence-preservation check
+        // above; do not call the task reviewer a second time for phrasing.
 
         return new NIRAFinalResponseStageResult
         {
             Reply = realized.Reply,
             Speech = realized.Speech,
             DisplayBlocks = reverted ? request.DisplayBlocks :
-                (request.DisplayBlocks.Count > 0 ? request.DisplayBlocks : realized.DisplayBlocks),
+                (realized.DisplayBlocks.Count > 0 ? realized.DisplayBlocks : request.DisplayBlocks),
             UsedRealization = true,
             FallbackToGroundedDraft = reverted
         };
@@ -184,6 +167,9 @@ public sealed record NIRAFinalResponseStageRequest
     public string OriginalUserObjective { get; init; } = string.Empty;
     public string PendingObjective { get; init; } = string.Empty;
     public string ReviewEvidence { get; init; } = string.Empty;
+    // Read-only, verified media metadata, not an image search request or a
+    // request to perform an action in the final response stage.
+    public string VerifiedImageCatalog { get; init; } = string.Empty;
     public string? ExternalAppId { get; init; }
     public bool HasCapabilityResults { get; init; }
     public bool RequiresPresentationReview { get; init; }

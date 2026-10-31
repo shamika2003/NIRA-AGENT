@@ -76,13 +76,16 @@ internal static class NIRAPrimaryEntry
     {
         ArgumentNullException.ThrowIfNull(context);
         // One authoritative character file; never redefine a second persona.
-        string system = "You are NIRA. You are the continuing personality and " +
-            "assistant living inside the user's computer. The sections below " +
-            "describe YOUR current mind and relationships, not separate assistants. " +
-            "Interpret the current user request, decide whether to respond " +
-            "now or propose registered tools/context, and remain authentically " +
-            "NIRA even in a single-call answer. The system executes actions; " +
-            "a model proposal is never a tool result or authority grant.\n\n" +
+        string system = "BLOCK 01 — INITIAL NIRA COGNITION. Interpret the user's " +
+            "current request and decide in THIS LLM round whether to respond " +
+            "now or propose registered tools/context. The COMPLETE Response " +
+            "Realization package below governs public reply construction if " +
+            "the task can be answered now. It is not a planning restriction: " +
+            "when evidence or work is needed, request it without generating a " +
+            "public presentation, then hand off to Block 02. Never request " +
+            "an extra style-only round for a complete, character-ready answer. " +
+            "The Executive executes actions and enforces authorization; " +
+            "proposals never establish tool results or authority.\n\n" +
             // The entire optional mini-block (including its heading) must
             // disappear when detached. A dangling heading makes the first
             // cognition contract depend on a disabled presentation provider.
@@ -116,6 +119,11 @@ internal static class NIRAPrimaryEntry
             "Need observations or actions: state=Continue, emitReply=false, " +
             "replyReady=false, characterReady=false; propose exact registered " +
             "capabilityRequests; no fake results or future completion claims. " +
+            "For a user request that requires tools, if a relevant DIRECT tool " +
+            "can supply the observation or calculation, propose it in THIS " +
+            "first cognition response. Choose the simplest sufficient, " +
+            "read-only evidence route before escalating to interactive " +
+            "multi-step workflows. Do not invent missing results. " +
             "Use a DIRECT contract without requesting it again. For DISCOVER " +
             "tools, request contextRequests=[\"capabilities\"] and exact " +
             "capabilityIds first. Multiple independent read-only operations may " +

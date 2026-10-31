@@ -1415,6 +1415,7 @@ public sealed class NIRADirectoryCreateCapabilityHandler
         string path = NIRACapabilityArguments.NormalizePath(
             NIRACapabilityArguments.RequireString(request, "path", 32760));
         string parent = Path.GetDirectoryName(path) ?? string.Empty;
+        NIRACurrentUserKnownFolderTargetPolicy.RejectUnverifiedOtherProfileKnownFolder(path);
         NIRAWindowsProtectedFolderAccessService.RejectRedirectedKnownFolderShadow(path);
         bool existedBefore = Directory.Exists(path);
         bool recovered = false;

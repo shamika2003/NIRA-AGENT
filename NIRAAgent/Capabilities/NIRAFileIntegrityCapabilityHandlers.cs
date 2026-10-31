@@ -48,6 +48,7 @@ internal static class NIRAFileIntegrity
 
     internal static void RequireNewDestination(string destination)
     {
+        NIRACurrentUserKnownFolderTargetPolicy.RejectUnverifiedOtherProfileKnownFolder(destination);
         NIRAWindowsProtectedFolderAccessService.RejectRedirectedKnownFolderShadow(destination);
         string? parent = Path.GetDirectoryName(destination);
         if (string.IsNullOrWhiteSpace(parent) || !Directory.Exists(parent))

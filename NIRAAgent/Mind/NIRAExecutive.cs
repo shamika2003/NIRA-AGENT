@@ -6917,6 +6917,9 @@ public sealed class NIRAExecutive
                 // already authoritative. Stateful and action-bearing work
                 // retains the full general reviewer and all safety checks.
                 reviewRequest = reviewRequest with {
+                    VerifiedImageCatalog =
+                        NIRAResponsePresentationModule.VerifiedImageCatalog(
+                            runtimeVisualPresentations),
                     SourceOnlyResearchReview =
                         !string.IsNullOrWhiteSpace(webResearchReviewEvidence) &&
                         NIRAWebResearchReplyPolicy.IsGroundedAnswerShape(decision) &&
@@ -7108,7 +7111,9 @@ public sealed class NIRAExecutive
                         decision.DynamicToolInvocations.Count == 0 &&
                         capabilityResultsBySignature.Values.All(r => r.Risk == NIRACapabilityRisk.Observe) &&
                         webResearchReviewEvidence.Length > 0
-                        ? NIRAWebResearchReplyPolicy.ObservedSourceHandoff(
+                        ? NIRAWebResearchReplyPolicy.ObservedSourceDigestFromResults(
+                            capabilityResultsBySignature.Values.ToArray(), mindEvent.Content) ??
+                          NIRAWebResearchReplyPolicy.ObservedSourceHandoff(
                             capabilityResultsBySignature.Values.ToArray(), mindEvent.Content)
                         : null;
                     NIRADiagnosticTrace.Event("OBJECTIVE-REVIEW-RECOVERY",
@@ -7303,7 +7308,9 @@ public sealed class NIRAExecutive
                     string? researchDigest = taskReview.Verdict == "NeedsWork" &&
                         !preReviewCommitmentSucceeded && !desktopActionNeedsObservation &&
                         NIRAWebResearchReplyPolicy.IsGroundedAnswerShape(decision)
-                            ? NIRAWebResearchReplyPolicy.ObservedSourceHandoff(
+                            ? NIRAWebResearchReplyPolicy.ObservedSourceDigestFromResults(
+                                capabilityResultsBySignature.Values.ToArray(), mindEvent.Content) ??
+                              NIRAWebResearchReplyPolicy.ObservedSourceHandoff(
                                 capabilityResultsBySignature.Values.ToArray(), mindEvent.Content)
                             : null;
                     if (researchDigest is not null)
@@ -7732,7 +7739,16 @@ public sealed class NIRAExecutive
                         completionReviewConfirmedComplete || directTemporalWakeVerified,
                         passedThroughInternalWork: cycle > 1 ||
                             _cognition.GetAdditionalCognitionCallCount(runId) > 0,
-                        verifiedDirectFirstCall: directConversation);
+                        verifiedDirectFirstCall: directConversation ||
+                            (cycle == 1 && mindEvent.Source == NIRAMindEventSource.User &&
+                             completionReviewConfirmedComplete &&
+                             !hasOutstandingCognitionWork &&
+                             capabilityResultsBySignature.Count == 0 &&
+                             !preReviewCommitmentSucceeded &&
+                             capabilityEvidence.Length == 0 &&
+                             dynamicToolEvidence.Length == 0 &&
+                             _cognition.GetAdditionalCognitionCallCount(runId) == 0 &&
+                             decision.ReplyReady && decision.CharacterReady));
 
                 bool directCharacterDelivery =
                     terminalNaturalReply && !shouldRealize;
@@ -7809,6 +7825,9 @@ public sealed class NIRAExecutive
                                         executiveEvidence.ToString(),
                                         capabilityEvidence.ToString(),
                                         dynamicToolEvidence.ToString()),
+                                VerifiedImageCatalog =
+                                    NIRAResponsePresentationModule.VerifiedImageCatalog(
+                                        runtimeVisualPresentations),
 
                                 ExternalAppId =
                                     mindEvent.Metadata.TryGetValue("externalAppId", out string? reviewApp)
@@ -7867,8 +7886,8 @@ public sealed class NIRAExecutive
 
                             // Block 03 owns new public presentation; preserve
                             // existing validated blocks if already provided.
-                            DisplayBlocks = decision.DisplayBlocks.Count > 0
-                                ? decision.DisplayBlocks : realized.DisplayBlocks
+                            DisplayBlocks = realized.DisplayBlocks.Count > 0
+                                ? realized.DisplayBlocks : decision.DisplayBlocks
                         };
 
                     expression =
@@ -7928,6 +7947,36 @@ public sealed class NIRAExecutive
                 // (or to any other independent chat/task response).
                 // This keeps unrelated task names and verbose lifecycle text
                 // out of both displayed and spoken replies without an LLM call.
+                // ONE presentation finishing boundary for both Block 01 direct
+                // responses and Block 03 post-work responses. Neither Block 02
+                // nor any capability handler takes responsibility for formatting.
+                if (decision.ReplyPresentation == NIRAReplyPresentationMode.Natural)
+                {
+                    string groundingForPresentation = string.Join("\n",
+                        executiveEvidence.ToString(), capabilityEvidence.ToString(),
+                        dynamicToolEvidence.ToString());
+                    string polished = NIRAResponsePresentationModule.PolishPublicReply(
+                        reply, groundingForPresentation);
+                    spoken = NIRAResponsePresentationModule.PolishPublicReply(
+                        spoken, groundingForPresentation);
+                    if (!string.Equals(polished, reply, StringComparison.Ordinal))
+                    {
+                        reply = polished;
+                        if (string.IsNullOrWhiteSpace(decision.Speech))
+                            spoken = NIRAPresentationPolicy.PlainSpeechFallback(reply);
+                        NIRADiagnosticTrace.Event("RESPONSE-SURFACE-POLISH",
+                            $"Run={runId:D} RemovedSerializedOutputArtifacts=True");
+                    }
+                }
+                NIRADiagnosticTrace.PublicResponse(runId,
+                    shouldRealize ? "Block03" : "Block01",
+                    reply, spoken, blocks,
+                    runtimeVisualPresentations.Select(p => new
+                    {
+                        Subject = p.SubjectQuery,
+                        Title = p.Title,
+                        Source = p.SourceUri
+                    }).ToArray());
                 Guid? archivedResponseId = await RecordResponseAsync(
                     mindEvent, reply, spoken, blocks);
                 Debug.WriteLine($"[DualResponse] Run={runId} | SpeechChars={spoken.Length} | ScreenChars={reply.Length} | Blocks={blocks.Count}");
@@ -8027,6 +8076,8 @@ public sealed class NIRAExecutive
 
                     NIRADiagnosticTrace.Event("IMAGE-DELIVERY",
                         $"Run={runId:D} Stage=VisualChunkEmitted");
+                    NIRADiagnosticTrace.PublicVisualEmitted(runId,
+                        presentation.SubjectQuery, artifact.SourceUri, artifact.LocalPath);
                     yield return new NIRAOutputChunk
                     {
                         RunId =

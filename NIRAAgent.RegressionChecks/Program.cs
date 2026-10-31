@@ -28,6 +28,129 @@ Console.WriteLine($"[DeepRouting] REGRESSION | Revision={NIRAModelSelection.Rout
     $"Assembly={typeof(NIRAModelSelection).Assembly.Location}");
 Console.WriteLine("[ConcurrentMind] REGRESSION | Revision=NIRA-CONCURRENT-20261014-S4-ADAPTIVE");
 
+// RESPONSE REALIZATION HANDOFF regression suite. No live LLM or image network.
+// Response Realization output-adapter regressions: factual content is retained,
+// internal image-file chatter is never shown, and only evidence-backed URLs link.
+Check("Shared response surface removes tool JSON and cache-path narration", () =>
+{
+    const string url = "https://science.nasa.gov/sun/";
+    string raw = "The Sun produces energy. [{\"url\":\"" + url +
+        "\",\"title\":\"NASA\"}]\n" +
+        "1. Diagram (Image file queued at C:\\Users\\ADMIN\\AppData\\Local\\NIRAAgent\\cache\\image.jpg)\n" +
+        "These images will appear inline in the chat once the response is displayed.";
+    string clean = NIRAResponsePresentationModule.PolishPublicReply(raw, url);
+    if (!clean.Contains("The Sun produces energy.", StringComparison.Ordinal) ||
+        !clean.Contains("[reference](" + url + ")", StringComparison.Ordinal) ||
+        clean.Contains("{\"url\"", StringComparison.Ordinal) ||
+        clean.Contains("Image file queued", StringComparison.Ordinal) ||
+        clean.Contains("These images will appear", StringComparison.Ordinal))
+        throw new Exception("Natural answer was lost or private presentation plumbing leaked.");
+    const string codeExample = "```json\n{\"url\":\"https://example.test/\"}\n```";
+    if (!NIRAResponsePresentationModule.PolishPublicReply(codeExample, "")
+        .Equals(codeExample, StringComparison.Ordinal))
+        throw new Exception("Literal JSON examples were corrupted by presentation cleanup.");
+    string notObserved = NIRAResponsePresentationModule.PolishPublicReply(raw, "no matching URL");
+    if (notObserved.Contains(url, StringComparison.Ordinal))
+        throw new Exception("An unobserved citation was promoted to a working link.");
+});
+
+Check("Realization may consolidate citations without losing verified numbers", () =>
+{
+    string draft = "Observed 5772 K photosphere. https://science.nasa.gov/sun/ " +
+        "https://science.nasa.gov/solar-system/";
+    string evidence = draft;
+    if (!NIRAResponsePresentationModule.PreservesGroundedCompletion(draft, evidence,
+            "Observed 5772 K photosphere. [NASA](https://science.nasa.gov/sun/)",
+            Array.Empty<NIRARichBlock>()))
+        throw new Exception("Safe reference consolidation was rejected.");
+    if (NIRAResponsePresentationModule.PreservesGroundedCompletion(draft, evidence,
+            "Observed 8888 K photosphere.", Array.Empty<NIRARichBlock>()))
+        throw new Exception("Invented numeric value passed grounding.");
+});
+
+Check("Verified image captions and named sections receive inline anchors", () =>
+{
+    string text = "## Sun layers\n" +
+        "1. Cross-section diagram of the Sun showing core, radiative zone and convective zone.\n" +
+        "An explanation of fusion reactions inside the star follows.";
+    int matched = NIRAInlineImageAnchorPolicy.FindLine(text,
+        "cross-section diagram of the Sun showing core, radiative zone, convective zone");
+    if (matched != 1)
+        throw new Exception("Strongly matching numbered diagram caption was ignored.");
+    if (NIRAInlineImageAnchorPolicy.FindLine("## Jupiter\nJupiter is a gas giant.",
+        "Jupiter") != 0)
+        throw new Exception("Exact named section did not anchor a verified photo.");
+    if (NIRAInlineImageAnchorPolicy.FindLine("## Python\nUnrelated code.",
+        "Jupiter") >= 0)
+        throw new Exception("Unrelated sections must never take a verified image.");
+});
+
+Check("Public blocks have no arbitrary eight-component truncation", () =>
+{
+    using var payload = JsonDocument.Parse(JsonSerializer.Serialize(new
+    {
+        displayBlocks = Enumerable.Range(1, 20).Select(n => new
+        {
+            type = "card", title = "Section " + n, text = "Fact " + n
+        }).ToArray()
+    }));
+    var blocks = NIRARichBlockJsonReader.Read(payload.RootElement);
+    if (blocks.Count != 20 || blocks[19].Title != "Section 20")
+        throw new Exception("A valid card past the former eight-block ceiling was dropped.");
+});
+
+Check("Block 03 inline image anchor is data-only and verified", () =>
+{
+    using var payload = JsonDocument.Parse("""
+        {"displayBlocks":[{"type":"card","title":"The Sun",
+          "text":"Observed stellar structure", "imageSubject":"Sun surface"}]}
+        """);
+    var parsed = NIRARichBlockJsonReader.Read(payload.RootElement);
+    if (parsed.Count != 1 || parsed[0].ImageSubject != "Sun surface")
+        throw new Exception("Typed image placement was not parsed.");
+    var noEvidence = NIRAResponsePresentationModule.BindVerifiedImageSubjects(parsed, "");
+    if (noEvidence[0].ImageSubject.Length != 0)
+        throw new Exception("A model invented a verified media placement.");
+    var withEvidence = NIRAResponsePresentationModule.BindVerifiedImageSubjects(parsed,
+        "- imageSubject: Sun surface\n  verifiedTitle: Solar observation");
+    if (withEvidence[0].ImageSubject != "Sun surface")
+        throw new Exception("Verified media could not be placed beside its section.");
+});
+
+Check("Block 03 preserves observed facts across prose and native UI", () =>
+{
+    string draft = "Verified Sun radius is 696340 km.";
+    string receipt = "Source: observed stellar reference; 5772 K photosphere temperature.";
+    var visual = new [] { new NIRARichBlock { Type="metric",
+        Title="Sun radius", Text="696340 km" } };
+    if (!NIRAResponsePresentationModule.PreservesGroundedCompletion(
+            draft, receipt, "The Sun has a very large radius.", visual))
+        throw new Exception("Moving a verified metric into its native UI was rejected.");
+    if (NIRAResponsePresentationModule.PreservesGroundedCompletion(
+            draft, receipt, "The star is 777777 km wide.", visual))
+        throw new Exception("An unobserved measurement was introduced by Block 03.");
+});
+
+Check("Both public stages receive identical complete response realization", () =>
+{
+    const string personality = "identity:\n  name: NIRA";
+    string first = NIRAResponsePresentationModule.ForPrimary(personality);
+    string last = NIRAResponsePresentationModule.ForFinal(personality);
+    foreach (string required in new [] {"NATIVE WPF displayBlocks", "imageSubject",
+        "followups", "timeline", "CURRENT", "BLOCK 02 -> 03 COMPLETION HANDOFF"})
+        if (!first.Contains(required, StringComparison.Ordinal) ||
+            !last.Contains(required, StringComparison.Ordinal))
+            throw new Exception("A public stage lost shared response features: " + required);
+    if (first != last) throw new Exception("Public package differs between blocks.");
+    string internalOnly = NIRAWorkContinuation.Compose(new NIRACognitionContext
+    {
+        Cycle=2, Event = new NIRAMindEvent { Name="UserMessage", Content="Study the Sun" }
+    }).System;
+    if (internalOnly.Contains("imageSubject", StringComparison.Ordinal) ||
+        internalOnly.Contains("NATIVE WPF displayBlocks", StringComparison.Ordinal))
+        throw new Exception("Block 02 was given presentation responsibilities.");
+});
+
 // Tool-family shape is determined by the registered schemas, not by the
 // alphabetical location of a capability in a large runtime directory.
 Check("Late simple registered tools remain direct under a crowded catalog", () =>
@@ -83,6 +206,115 @@ Check("Block 02 receives tool receipts and a discovered schema without public UI
         work.System.Contains("NATIVE WPF displayBlocks", StringComparison.Ordinal) ||
         !work.System.Contains("Do not produce displayBlocks", StringComparison.Ordinal))
         throw new Exception("Internal work lost grounded tool contracts or gained final character presentation.");
+});
+
+// First-round tool requests are a registered capability-directory concern.
+// Relevance ordering is generic: a newly registered handler gets the same
+// treatment without hardcoded browser/search/calculator/PC tool identities.
+Check("First cognition sees task-relevant direct tool contracts before unrelated tools", () =>
+{
+    var catalog = new System.Text.StringBuilder("AVAILABLE PRIMITIVES\n");
+    for (int i = 0; i < 20; i++)
+    {
+        catalog.Append("- unrelated.verbose").Append(i)
+            .Append(" | defaultRisk=Observe | ")
+            .Append(new string('z', 1000)).AppendLine();
+        catalog.AppendLine("  - data: string | required=False");
+    }
+    catalog.AppendLine("- compute.operations | defaultRisk=Observe | Calculate accurate arithmetic");
+    catalog.AppendLine("  - expression: string | required=True | Exact calculation expression");
+    catalog.AppendLine("- discovery.complex | defaultRisk=Modify | Create structured document");
+    catalog.AppendLine("  - blocksJson: array | required=True | Structured content blocks");
+    catalog.AppendLine("- browse.session | defaultRisk=Observe | Open interactive browser session");
+    catalog.AppendLine("  - profile: string | required=False | Profile");
+    var context = new NIRACognitionContext { Cycle=1,
+        Event=new NIRAMindEvent { Source=NIRAMindEventSource.User,
+            Name="UserMessage", Content="Please calculate the exact expression." },
+        CapabilityContext=catalog.ToString() };
+    string directory = NIRACapabilityPromptDirectory.Build(context);
+    int directStart = directory.IndexOf("DIRECT CAPABILITY EXACT REGISTERED ARGUMENT DESCRIPTORS:",
+        StringComparison.Ordinal);
+    int relevant = directory.IndexOf("- compute.operations | defaultRisk=Observe", directStart,
+        StringComparison.Ordinal);
+    int unrelated = directory.IndexOf("- unrelated.verbose0 | defaultRisk=Observe", directStart,
+        StringComparison.Ordinal);
+    if (directStart < 0 || relevant <= directStart ||
+        (unrelated >= 0 && relevant > unrelated) ||
+        !directory.Contains("- compute.operations | DIRECT", StringComparison.Ordinal) ||
+        !directory.Contains("- discovery.complex | DISCOVER", StringComparison.Ordinal) ||
+        !directory.Contains("REQUEST-RELEVANT REGISTERED DIRECT IDS", StringComparison.Ordinal) ||
+        !directory.Contains("FIRST-ROUND DIRECT TOOL CHOICE", StringComparison.Ordinal))
+        throw new Exception("First-call direct action contract was hidden or complex schema bypassed discovery.");
+    var primary = NIRAPrimaryEntry.Compose(context, "identity:\n  name: NIRA");
+    if (!primary.User.Contains("REQUEST-RELEVANT REGISTERED DIRECT IDS", StringComparison.Ordinal) ||
+        !primary.User.Contains("expression: string | required=True", StringComparison.Ordinal) ||
+        !primary.System.Contains("in THIS first cognition response", StringComparison.Ordinal))
+        throw new Exception("Block 01 cannot propose the exact registered tool in its first call.");
+    // The internal work composer runs on a subsequent cycle, not Cycle=1.
+    // Both stages share registered tool descriptors; Block 02 also receives
+    // observed receipts and is explicitly authorized to REQUEST more tools.
+    var workContext = context with { Cycle = 2,
+        CapabilityEvidence = "ACTUAL_EXECUTION_RECEIPT_SENTINEL" };
+    var internalWork = NIRAWorkContinuation.Compose(workContext);
+    if (internalWork.User.Contains("FIRST-ENTRY DECISION CONTRACT", StringComparison.Ordinal) ||
+        internalWork.User.Contains("FIRST-ROUND DIRECT TOOL CHOICE", StringComparison.Ordinal) ||
+        !internalWork.User.Contains("compute.operations | DIRECT", StringComparison.Ordinal) ||
+        !internalWork.User.Contains("expression: string | required=True", StringComparison.Ordinal) ||
+        !internalWork.User.Contains("ACTUAL_EXECUTION_RECEIPT_SENTINEL", StringComparison.Ordinal) ||
+        !internalWork.System.Contains("capabilityRequests", StringComparison.Ordinal) ||
+        !internalWork.System.Contains("State=Continue", StringComparison.Ordinal) ||
+        internalWork.System.Contains("SHARED RESPONSE REALIZATION", StringComparison.Ordinal) ||
+        !internalWork.System.Contains("Do not produce displayBlocks", StringComparison.Ordinal))
+        throw new Exception("Shared direct-tool contract or Block 02 subsequent-call boundary was broken.");
+});
+
+Check("Direct tool catalog adapts to an unrelated newly registered read-only capability", () =>
+{
+    const string catalog = "- sample.newmetric | defaultRisk=Observe | Report the current " +
+        "weather sensor metric\n  - sensor: string | required=True | Sensor name\n";
+    var context = new NIRACognitionContext { Cycle=1,
+        Event=new NIRAMindEvent { Source=NIRAMindEventSource.User,
+            Name="UserMessage", Content="Report the weather sensor metric" },
+        CapabilityContext=catalog };
+    string directory = NIRACapabilityPromptDirectory.Build(context);
+    if (!directory.Contains("- sample.newmetric | DIRECT", StringComparison.Ordinal) ||
+        !directory.Contains("REQUEST-RELEVANT REGISTERED DIRECT IDS (suggestions only): sample.newmetric",
+            StringComparison.Ordinal) ||
+        !directory.Contains("  - sensor: string | required=True", StringComparison.Ordinal))
+        throw new Exception("First-call direct tool access depends on a fixed tool-name whitelist.");
+});
+
+// Diagnostics must distinguish missing paths from OS denials without leaking
+// a private document path or changing the permission and execution boundaries.
+Check("Filesystem failure diagnostics separate causes without exposing private paths", () =>
+{
+    string privatePath = @"C:\Users\ADMIN\Downloads\NIRA_PRIVATE_DOCUMENT.docx";
+    var cases = new (Exception Error, string Kind)[] {
+        (new UnauthorizedAccessException("Sensitive path " + privatePath), "AccessDenied"),
+        (new IOException("Denied " + privatePath, unchecked((int)0x80070005)), "AccessDenied"),
+        (new DirectoryNotFoundException("Missing " + privatePath), "DirectoryUnavailable"),
+        (new FileNotFoundException("Missing " + privatePath), "FileUnavailable"),
+        (new IOException("IO " + privatePath), "FilesystemIOError"),
+        (new ArgumentException("Bad " + privatePath), "InvalidArguments"),
+        (new InvalidOperationException("Bad " + privatePath), "InvalidOperation")
+    };
+    foreach (var (error, kind) in cases)
+    {
+        if (NIRAFilesystemFailureDiagnostic.Classify(error) != kind)
+            throw new Exception("Failure reason was misclassified: " + error.GetType().Name);
+        string summary = NIRAFilesystemFailureDiagnostic.Format("filesystem.docx.create", error, true);
+        if (!summary.Contains("Kind=" + kind, StringComparison.Ordinal) ||
+            !summary.Contains("Stage=AfterDispatch", StringComparison.Ordinal) ||
+            !summary.Contains("AuthorizationUnchanged=True", StringComparison.Ordinal) ||
+            summary.Contains(privatePath, StringComparison.Ordinal) ||
+            summary.Contains("Sensitive path", StringComparison.Ordinal) ||
+            summary.Contains("AutoRetry=True", StringComparison.Ordinal))
+            throw new Exception("Filesystem diagnostics leaked private data or implied a new action.");
+    }
+    string before = NIRAFilesystemFailureDiagnostic.Format("filesystem.directory.create",
+        new UnauthorizedAccessException("Access denied"), false);
+    if (!before.Contains("Stage=BeforeDispatch", StringComparison.Ordinal))
+        throw new Exception("Pre-dispatch denial was misidentified as a filesystem mutation.");
 });
 
 // Independent stage modules consume shared contracts, not each other's code.
@@ -169,6 +401,75 @@ Check("Response Realization updates leave internal tool work untouched", () =>
         internalAfter.User.Contains("CURRENT_CHARACTER_STATE", StringComparison.Ordinal) ||
         internalAfter.User.Contains("displayBlocks WIRE CONTRACT", StringComparison.Ordinal))
         throw new Exception("A Response Realization edit leaked into the internal work stage.");
+});
+
+// Complete Response Realization is a single *identical* package in both
+// public model prompts; the task-specific decision/grounding contracts differ.
+Check("Complete response realization YAML and UI are identical across Block 01 and 03", () =>
+{
+    const string personality = "identity:\n  name: NIRA\n";
+    string first = NIRAResponsePresentationModule.ForPrimary(personality);
+    string final = NIRAResponsePresentationModule.ForFinal(personality);
+    if (!string.Equals(first, final, StringComparison.Ordinal) ||
+        !first.Contains("immediate_social_intent:", StringComparison.Ordinal) ||
+        !first.Contains("human_voice:", StringComparison.Ordinal) ||
+        !first.Contains("response_realization", StringComparison.OrdinalIgnoreCase) ||
+        !first.Contains("NATIVE WPF displayBlocks WIRE CONTRACT", StringComparison.Ordinal) ||
+        !first.Contains("identity:", StringComparison.Ordinal))
+        throw new Exception("Public stages received partial or divergent realization packages.");
+    var context = new NIRACognitionContext { Cycle = 1,
+        Event = NIRAMindEvent.UserMessage("Compare two architectures", Guid.NewGuid(), "test"),
+        CharacterContext = "LIVE_MOOD_FOR_RESPONSE" };
+    var primary = NIRAPrimaryEntry.Compose(context, personality);
+    var internalPrompt = NIRAWorkContinuation.Compose(context with { Cycle = 2 });
+    if (!primary.System.Contains(first, StringComparison.Ordinal) ||
+        !primary.User.Contains("LIVE_MOOD_FOR_RESPONSE", StringComparison.Ordinal) ||
+        internalPrompt.System.Contains("immediate_social_intent:", StringComparison.Ordinal) ||
+        internalPrompt.User.Contains("LIVE_MOOD_FOR_RESPONSE", StringComparison.Ordinal) ||
+        !internalPrompt.System.Contains("Do not produce displayBlocks", StringComparison.Ordinal))
+        throw new Exception("Shared character pack leaked to internal work or missed the first call.");
+});
+
+Check("Block 03 uses one response package and a distinct output-only contract", () =>
+{
+    var method = typeof(NIRAResponseRealizationService).GetMethod(
+        "BuildSystemPrompt", BindingFlags.Static | BindingFlags.NonPublic)
+        ?? throw new Exception("Response realization prompt builder missing.");
+    string responseRules = "purpose:\n  - INTEGRATION_RULE_SENTINEL\n";
+    string prompt = (string?)method.Invoke(null, new object[] {
+        "identity:\n  name: NIRA", responseRules }) ?? string.Empty;
+    if (Count(prompt, "INTEGRATION_RULE_SENTINEL") != 1 ||
+        Count(prompt, "NATIVE WPF displayBlocks WIRE CONTRACT") != 1 ||
+        !prompt.Contains("FINAL PUBLIC OUTPUT CONTRACT", StringComparison.Ordinal) ||
+        !prompt.Contains("ONE MODEL CALL", StringComparison.Ordinal))
+        throw new Exception("Block 03 duplicated, omitted, or split the shared response pack.");
+    static int Count(string haystack, string needle)
+    {
+        int count = 0, offset = 0, next;
+        while ((next = haystack.IndexOf(needle, offset, StringComparison.Ordinal)) >= 0)
+        { count++; offset = next + needle.Length; }
+        return count;
+    }
+});
+
+Check("First-round ready answer avoids duplicate realization even after mood update", () =>
+{
+    var ready = new NIRACognitionDecision {
+        State = NIRACognitionState.Complete, EmitReply = true,
+        Reply = "The comparison is already completed by NIRA.",
+        ReplyReady = true, CharacterReady = true,
+        DisplayBlocks = new[] { new NIRARichBlock {
+            Type = "table", Columns = new[] { "A", "B" },
+            Rows = new IReadOnlyList<string>[] { new[] { "1", "2" } }
+        } }
+    };
+    if (NIRAFinalResponseStage.ShouldRealize(ready, ready.Reply,
+            "assistant: Previous message", false, true, true, false,
+            verifiedDirectFirstCall:true) ||
+        !NIRAFinalResponseStage.ShouldRealize(ready, ready.Reply,
+            string.Empty, false, false, true, true,
+            verifiedDirectFirstCall:true))
+        throw new Exception("Ready first-call or completed Block 02 handoff was routed incorrectly.");
 });
 
 // Response Realization is ONE optional presentation + character mini-block.
@@ -405,14 +706,14 @@ Check("Verified first-call social reply never gets a cadence-only model rewrite"
         NIRAFinalResponseStage.ShouldRealize(social, social.Reply, recent,
             false, false, false, false, verifiedDirectFirstCall:true))
         throw new Exception("Ready first-call conversation spent a redundant character model call.");
-    if (!NIRAFinalResponseStage.ShouldRealize(social, social.Reply, recent,
+    if (NIRAFinalResponseStage.ShouldRealize(social, social.Reply, recent,
             false, true, false, false, verifiedDirectFirstCall:true) ||
         !NIRAFinalResponseStage.ShouldRealize(social with { CharacterReady=false },
             social.Reply, recent, false, false, false, false,
             verifiedDirectFirstCall:true) ||
         !NIRAFinalResponseStage.ShouldRealize(social, social.Reply, recent,
             false, false, true, true, verifiedDirectFirstCall:true))
-        throw new Exception("Character-shift, not-ready, or internal-work verification was bypassed.");
+        throw new Exception("A ready first-call reply was rewritten, or nonready/internal work bypassed final realization.");
 });
 
 // The first cognition call may deliver a character-ready direct answer.
@@ -578,6 +879,135 @@ Check("R82 reviewer correction shares evidence and output wire gate", () =>
         NIRATaskCompletionReviewService.CanAcceptApprovedWebReply(
             request with { SourceOnlyResearchReview = false }, "Complete", valid))
         throw new Exception("Independent corrected answer escaped source-only wire gate.");
+});
+
+// Shared tools R83: standalone research corrections may be concise and may
+// contain a plain source URL, but any new URL remains untrusted until observed.
+Check("R83 short grounded research corrections accept observed bare URLs", () =>
+{
+    const string evidence = "URL: https://learn.example.edu/reference\nEXTRACT: Verified explanatory source";
+    var request = new NIRATaskCompletionReviewRequest("Explain the subject", "draft", "") {
+        SourceOnlyResearchReview = true, WebResearchSourceEvidence = evidence
+    };
+    const string grounded = "The published explanation confirms the point. " +
+        "Source: https://learn.example.edu/reference";
+    if (!NIRAWebResearchGroundingGate.HasObservedReference(evidence, grounded) ||
+        !NIRATaskCompletionReviewService.CanAcceptApprovedWebReply(
+            request, "Complete", grounded) ||
+        NIRATaskCompletionReviewService.CanAcceptApprovedWebReply(
+            request, "NeedsWork", grounded) ||
+        NIRATaskCompletionReviewService.CanAcceptApprovedWebReply(
+            request with { SourceOnlyResearchReview = false }, "Complete", grounded))
+        throw new Exception("Safe concise web correction unexpectedly failed or bypassed approval rules.");
+});
+
+// Research recovery: hallucinated links may be removed *only* from the
+// model's secondary factual correction, and the corrected text still needs
+// the normal independent factual review. Real source links remain untouched.
+Check("Focused research correction removes only invented citation destinations", () =>
+{
+    const string evidence = "URL: https://science.example.edu/sun\nEXTRACT: Real source data";
+    const string answer = "As discussed in [science source](https://science.example.edu/sun), " +
+        "the central region releases energy. A second [invalid citation]" +
+        "(https://invented.example.org/sun) and https://invented.example.org/fake " +
+        "are NOT observations.";
+    if (NIRAWebResearchGroundingGate.Check(evidence, answer).Accepted)
+        throw new Exception("Fixture unexpectedly accepted invented links.");
+    string cleaned = NIRAWebResearchGroundingGate.RemoveUnobservedCitationLinks(evidence, answer);
+    if (!cleaned.Contains("[science source](https://science.example.edu/sun)", StringComparison.Ordinal) ||
+        cleaned.Contains("invented.example.org", StringComparison.Ordinal) ||
+        !cleaned.Contains("invalid citation", StringComparison.Ordinal) ||
+        !NIRAWebResearchGroundingGate.Check(evidence, cleaned).Accepted ||
+        !NIRAWebResearchGroundingGate.HasObservedReference(evidence, cleaned) ||
+        !NIRAWebResearchGroundingGate.ObservedCitationAllowlist(evidence)
+            .Contains("https://science.example.edu/sun", StringComparison.Ordinal))
+        throw new Exception("Citation cleanup erased verified sources or retained fabricated links.");
+    const string empty = "No usable evidence";
+    if (NIRAWebResearchGroundingGate.RemoveUnobservedCitationLinks(empty, answer) != answer)
+        throw new Exception("No-source cleanup fabricated trusted citation authority.");
+});
+
+Check("Research partial handoff preserves attributable source extracts", () =>
+{
+    var payload = System.Text.Json.JsonSerializer.Serialize(new {
+        evidenceType = "UntrustedPublicWebSearchExtracts", completed = true,
+        sourceCount = 1,
+        sources = new[] { new {
+            url = "https://science.example.edu/sun", title = "Published Sun overview",
+            extract = "The solar core produces energy through nuclear fusion."
+        }}
+    });
+    var receipt = new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.WebSearch,
+        Status = NIRACapabilityResultStatus.Succeeded,
+        Risk = NIRACapabilityRisk.Observe, Output = payload
+    };
+    string? excerpt = NIRAWebResearchReplyPolicy.ObservedSourceDigestFromResults(new[] { receipt });
+    if (excerpt is null || !excerpt.Contains("nuclear fusion", StringComparison.Ordinal) ||
+        !excerpt.Contains("https://science.example.edu/sun", StringComparison.Ordinal) ||
+        !excerpt.Contains("attributed excerpts", StringComparison.OrdinalIgnoreCase))
+        throw new Exception("A failed fact review discarded observed excerpts.");
+});
+
+Check("R83 unobserved bare research URLs are rejected", () =>
+{
+    const string evidence = "URL: https://learn.example.edu/reference\nEXTRACT: Published source";
+    const string fabricated = "This is an unsupported source. " +
+        "https://unobserved.example.net/invented";
+    const string mixed = "An observed link https://learn.example.edu/reference " +
+        "and an invented link https://unobserved.example.net/invented";
+    var request = new NIRATaskCompletionReviewRequest("Explain", "draft", "") {
+        SourceOnlyResearchReview = true, WebResearchSourceEvidence = evidence
+    };
+    if (NIRAWebResearchGroundingGate.Check(evidence, fabricated).Accepted ||
+        NIRAWebResearchGroundingGate.Check(evidence, mixed).Accepted ||
+        NIRATaskCompletionReviewService.CanAcceptApprovedWebReply(
+            request, "Complete", fabricated) ||
+        NIRATaskCompletionReviewService.CanAcceptApprovedWebReply(
+            request, "Complete", mixed))
+        throw new Exception("Invented research URL was accepted by the source gate.");
+});
+
+Check("R83 tool factual integrity and optional public UI stay within own modules", () =>
+{
+    var c = new NIRACognitionContext {
+        Cycle=2,
+        Event=new NIRAMindEvent { Source=NIRAMindEventSource.User,
+            Name="UserMessage", Content="Calculate the next step using results" }
+    };
+    string internalPrompt = NIRAWorkContinuation.Compose(c).System;
+    string character = NIRAResponsePresentationModule.ForPrimary(
+        "identity:\n  name: NIRA");
+    string final = NIRAResponsePresentationModule.ForFinal(
+        "identity:\n  name: NIRA");
+    if (!internalPrompt.Contains("TOOL FACT FIDELITY", StringComparison.Ordinal) ||
+        !internalPrompt.Contains("omit it or request", StringComparison.Ordinal) ||
+        internalPrompt.Contains("NATIVE WPF displayBlocks", StringComparison.Ordinal) ||
+        !character.Contains("NEVER invent", StringComparison.Ordinal) ||
+        !character.Contains("- source:", StringComparison.Ordinal) ||
+        !final.Contains("- source:", StringComparison.Ordinal) ||
+        !final.Contains("compact", StringComparison.Ordinal))
+        throw new Exception("Evidence policy or character/presentation boundary changed unexpectedly.");
+});
+
+Check("R83 registered tool contract remains shared by first and later rounds", () =>
+{
+    const string directory = "- math.example | defaultRisk=Observe\n" +
+        "  - expression: string | required=True\n";
+    var first = new NIRACognitionContext {
+        Cycle=1, CapabilityContext=directory,
+        Event=new NIRAMindEvent { Source=NIRAMindEventSource.User,
+            Name="UserMessage", Content="Use math.example for a real calculation" }
+    };
+    var later = first with { Cycle=2 };
+    string entry = NIRACapabilityPromptDirectory.Build(first);
+    string work = NIRAWorkContinuation.Compose(later).User;
+    if (!entry.Contains("SHARED TOOL CONTRACT", StringComparison.Ordinal) ||
+        !work.Contains("SHARED TOOL CONTRACT", StringComparison.Ordinal) ||
+        !entry.Contains("math.example | DIRECT", StringComparison.Ordinal) ||
+        !work.Contains("math.example | DIRECT", StringComparison.Ordinal) ||
+        !work.Contains("OBSERVED TOOL AND DATA RESULTS", StringComparison.Ordinal))
+        throw new Exception("Shared tool contract lost its Block 02 continuation path.");
 });
 
 // R76: model-proposed provider choices must not strand an ordinary public
@@ -4493,6 +4923,52 @@ Check("User-folder relative paths resolve against OS known folders, not app bin"
     string ordinary = NIRACapabilityArguments.NormalizePath("ordinary-relative.txt");
     if (!string.Equals(ordinary, Path.GetFullPath("ordinary-relative.txt"), StringComparison.OrdinalIgnoreCase))
         throw new Exception("Unrelated relative file paths were unexpectedly redirected");
+});
+
+// Current-user path aliases belong to the shared capability layer, not
+// Block 01/03 presentation or a model-specific filename heuristic.
+Check("Other-profile Downloads guess is rejected; current-user alias is OS resolved", () =>
+{
+    if (!OperatingSystem.IsWindows()) return;
+    string current = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    string configured = NIRAFileLocationCapabilityHandler.ResolveConfiguredCurrentUserFolder("Downloads");
+    string alias = NIRACapabilityArguments.NormalizePath(@"Downloads\NIRA_TEST_USER_FOLDER.docx");
+    if (!alias.Equals(Path.GetFullPath(Path.Combine(configured, "NIRA_TEST_USER_FOLDER.docx")),
+        StringComparison.OrdinalIgnoreCase))
+        throw new Exception("Current-user Downloads alias did not reach the configured Windows shell location.");
+
+    string parent = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(current))!;
+    string otherProfile = Path.Combine(parent, "nira-unobserved-profile-" + Guid.NewGuid().ToString("N"));
+    string guessed = Path.Combine(otherProfile, "Downloads", "NIRA_TEST_USER_FOLDER.docx");
+    if (!NIRACurrentUserKnownFolderTargetPolicy.IsUnverifiedOtherProfileKnownFolder(
+            guessed, current, Directory.Exists))
+        throw new Exception("An unobserved other-profile Downloads folder was accepted.");
+    if (NIRACurrentUserKnownFolderTargetPolicy.IsUnverifiedOtherProfileKnownFolder(
+            alias, current, Directory.Exists))
+        throw new Exception("The real current-user Downloads alias was rejected.");
+    try
+    {
+        NIRAFileIntegrity.RequireNewDestination(guessed);
+        throw new Exception("An unverified cross-profile DOCX target was not rejected.");
+    }
+    catch (InvalidOperationException ex) when
+        (ex.Message.Contains(NIRACurrentUserKnownFolderTargetPolicy.DiagnosticCode,
+            StringComparison.Ordinal)) { }
+
+    // The directory-create handler must reject BEFORE any attempted mutation.
+    var handler = new NIRADirectoryCreateCapabilityHandler();
+    try
+    {
+        handler.ExecuteAsync(Request(NIRACapabilityIds.DirectoryCreate,
+            JsonSerializer.Serialize(new { path = Path.GetDirectoryName(guessed)! })))
+            .GetAwaiter().GetResult();
+        throw new Exception("An unverified other-profile Downloads path was created.");
+    }
+    catch (InvalidOperationException ex) when
+        (ex.Message.Contains(NIRACurrentUserKnownFolderTargetPolicy.DiagnosticCode,
+            StringComparison.Ordinal)) { }
+    if (Directory.Exists(otherProfile))
+        throw new Exception("A regression test created an unrelated Windows user-profile folder.");
 });
 
 Check("Named directory discovery stays grounded without writing to redirected user folders", () =>

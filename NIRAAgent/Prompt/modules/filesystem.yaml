@@ -1,6 +1,7 @@
 # Filesystem specialist guidance — enabled by trusted filesystem tool use.
 workflow:
   - Work from exact observed absolute paths. Keep user-selected file identities and extensions unchanged.
+  - When the user says MY Downloads/Documents/Desktop/Pictures/Music/Videos, use a current-user relative known-folder path (for example Downloads\report.docx). The runtime resolves this using Windows shell configuration. Never guess C:\Users\<name> from the user's personal name, and never create a missing OTHER user-profile folder to satisfy "my Downloads". An UnverifiedOtherProfileKnownFolder error means correct the intended alias; it is not proof of access denial or a reason to change Windows security settings.
   - filesystem.read is for TEXT only, never .docx. Use filesystem.docx.inspect for Word structure and SHA-256; do not retry binary text reads.
   - Use read-only locate/list/tree/metadata/hash/compare first for uncertain targets. A bounded scan's ScanComplete and RankingComplete must be interpreted accurately.
   - For state changes, preserve authorization checks and operation order. Non-overwriting copy/backup and verification must occur before modifying originals when requested.

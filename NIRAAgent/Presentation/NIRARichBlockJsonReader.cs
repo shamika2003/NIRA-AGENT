@@ -23,6 +23,13 @@ public static class NIRARichBlockJsonReader
 
     public static IReadOnlyList<NIRARichBlock> Read(JsonElement root)
     {
+        // A size/complexity boundary, NOT a semantic limit of eight or any other
+        // fixed number of cards. Never silently truncate an otherwise valid list.
+        if (root.GetRawText().Length > NIRAPresentationPolicy.MaxPresentationPayloadCharacters)
+        {
+            NIRADiagnosticTrace.Event("RICH-PRESENTATION-PARSE", "Reason=PayloadTooLarge");
+            return Array.Empty<NIRARichBlock>();
+        }
         var result = new List<NIRARichBlock>();
         JsonElement envelope = default;
         string source = "none";
@@ -95,13 +102,13 @@ public static class NIRARichBlockJsonReader
     private static void ReadBlocks(JsonElement element, List<NIRARichBlock> results,
         int depth, string defaultType)
     {
-        if (depth > 7 || results.Count >= NIRAPresentationPolicy.MaxBlocks) return;
+        if (depth > 7) return;
         if (element.ValueKind == JsonValueKind.Array)
         {
             foreach (var child in element.EnumerateArray())
             {
                 ReadBlocks(child, results, depth + 1, defaultType);
-                if (results.Count >= NIRAPresentationPolicy.MaxBlocks) break;
+                // Continue until the structured payload is fully read.
             }
             return;
         }
@@ -141,7 +148,7 @@ public static class NIRARichBlockJsonReader
                     // {"cards":{"Option A":{"description":"..."}, ...}}
                     foreach (var named in nested.EnumerateObject())
                     {
-                        if (results.Count >= NIRAPresentationPolicy.MaxBlocks) break;
+                        // Continue until the structured payload is fully read.
                         if (named.Value.ValueKind == JsonValueKind.Object)
                         {
                             var card = Block(named.Value, "card", named.Name);
@@ -377,6 +384,7 @@ public static class NIRARichBlockJsonReader
             Unit = First(element, "", "unit"),
             Items = items,
             Panels = panels,
+            ImageSubject = First(element, "", "imageSubject"),
             Columns = cols,
             Rows = rows,
             Labels = labels,

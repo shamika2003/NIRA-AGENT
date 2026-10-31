@@ -87,20 +87,42 @@ public static class NIRAInlineImageAnchorPolicy
             return -1;
         string[] terms = Words.Matches(verifiedTitle).Select(m => m.Value.ToLowerInvariant())
             .Where(w => !Generic.Contains(w)).Distinct(StringComparer.Ordinal).Take(18).ToArray();
-        if (terms.Length < 2) return -1;
+        if (terms.Length == 0) return -1;
         string[] lines = visibleText.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        if (terms.Length == 1)
+        {
+            // A single exact named-section heading is an authoritative visual
+            // anchor (e.g. a section titled Jupiter). It is not permission to
+            // attach a weak one-word image to arbitrary prose occurrences.
+            string exactHeading = @"^\s*(?:#{1,4}\s*)?(?:\d+[.)]\s*)?" +
+                Regex.Escape(terms[0]) + @"\s*(?:[:—–-]\s*[^\r\n]{1,70})?$";
+            for (int i = 0; i < lines.Length; i++)
+                if (Regex.IsMatch(lines[i], exactHeading,
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                    return i;
+            return -1;
+        }
         int bestLine = -1, bestOverlap = 0;
         for (int i = 0; i < lines.Length; i++)
         {
             string line = lines[i].Trim();
-            if (line.Length < 35 || line.StartsWith("```") || line.StartsWith('|') ||
+            // Scientific figure captions are often numbered or bulleted.
+            // They are valid image anchors when their concrete subject terms
+            // match, unlike arbitrary unrelated bullets in a long answer.
+            if (line.Length < 26 || line.StartsWith("```") || line.StartsWith('|') ||
                 line.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
-                line.StartsWith("***", StringComparison.Ordinal) ||
-                Regex.IsMatch(line, @"^\s*[-*+]\s|^\s*\d+[.)]\s|^\s*#{1,4}\s"))
+                line.StartsWith("***", StringComparison.Ordinal))
                 continue;
             var words = Words.Matches(line).Select(m => m.Value.ToLowerInvariant())
                 .ToHashSet(StringComparer.Ordinal);
             int overlap = terms.Count(words.Contains);
+            // A specific, model-authored numbered figure caption is a better
+            // anchor than a later summary paragraph that repeats the labels.
+            // This is a presentation-layout signal, not evidence of pixels.
+            bool figureCaption = Regex.IsMatch(line,
+                @"^\s*(?:[-*+]\s+|\d+[.)]\s+).{0,170}\b(?:diagram|figure|image|photo|illustration)\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (overlap >= 2 && figureCaption) return i;
             if (overlap >= 2 && overlap > bestOverlap)
             {
                 bestLine = i;

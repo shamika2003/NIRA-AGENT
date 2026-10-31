@@ -137,7 +137,7 @@ public static class NIRAChatDocument
         // Text-anchored photos also belong inside replies that have typed rich
         // blocks. The earlier !HasRichBlocks gate forced every retrieved photo
         // into a separate rich-elements row after the entire explanation.
-        bool inlinePhotos = photos is { Count: > 0 and <= 4 } && source.Length >= 100 &&
+        bool inlinePhotos = photos is { Count: > 0 and <= 12 } && source.Length >= 100 &&
             photos.All(p => p.HasPreview && p.HasSourceUri && !p.IsGeneratedImage);
         var pendingPhotos = inlinePhotos ? photos!.Select(p => new
         {
@@ -372,6 +372,7 @@ public static class NIRAChatDocument
                 if (depth <= 2)
                     title.SetResourceReference(TextBlock.ForegroundProperty, "NIRACyanBrush");
                 root.Children.Add(title);
+                PlacePhotosThrough(currentLine);
                 continue;
             }
             Match bullet = Bullet.Match(line);
@@ -390,6 +391,9 @@ public static class NIRAChatDocument
                 Grid.SetColumn(body, 1);
                 grid.Children.Add(symbol); grid.Children.Add(body);
                 root.Children.Add(grid);
+                // Place retrieved reference images immediately after their
+                // matching explanatory bullet/caption, not after the summary.
+                PlacePhotosThrough(currentLine);
                 continue;
             }
             if (Regex.IsMatch(line, @"^\s*(?:-{3,}|\*{3,}|_{3,})\s*$"))
@@ -525,9 +529,9 @@ public static class NIRAChatDocument
         content.Children.Add(title);
         if (photo.HasSourceUri)
         {
-            string address = photo.SourceUri;
-            string host = Uri.TryCreate(address, UriKind.Absolute, out Uri? uri) ? uri.Host : "Source";
-            content.Children.Add(MakeText($"[Photo source · {host}]({address})", 12, 18,
+            // Keep provenance accessible without printing a source result
+            // paragraph underneath every embedded figure.
+            content.Children.Add(MakeText($"[Image credit]({photo.SourceUri})", 11, 16,
                 new Thickness(0, 0, 0, 0)));
         }
         return new Border
