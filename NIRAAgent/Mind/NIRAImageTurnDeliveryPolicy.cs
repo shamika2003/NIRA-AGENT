@@ -19,6 +19,11 @@ public static class NIRAImageTurnDeliveryPolicy
     public static int? ReadExplicitImageCount(string? userText)
     {
         if (string.IsNullOrWhiteSpace(userText)) return null;
+        // "one photo OF EACH subject" is a per-subject instruction, NOT a
+        // global one-photo quota. The Executive uses the actual independent
+        // image.search requests to determine the total deliverable count.
+        // The grammar is intentionally subject-neutral.
+        if (IsPerSubjectImageQuantity(userText)) return null;
         Match match = ExplicitCount.Match(userText);
         if (!match.Success) return null;
         return match.Groups["count"].Value.ToLowerInvariant() switch
@@ -29,6 +34,18 @@ public static class NIRAImageTurnDeliveryPolicy
             _ => null
         };
     }
+
+    // Per-item quantities cannot be collapsed into a single global budget.
+    // "a photo for each", "one image of each", "a picture per item" are
+    // distinct from "one photo of the group". Subject counting is delegated
+    // to the model's separate image.search proposals, not guessed from nouns.
+    private static readonly Regex PerSubjectImageQuantity = new(
+        @"\b(?:(?:one|1|a|an)\s+(?:(?:genuine|real|actual|original|clear)\s+){0,3}(?:photo|photograph|picture|image)\s+(?:of|for)\s+each\b|(?:one|1|a|an)\s+(?:(?:genuine|real|actual|original|clear)\s+){0,3}(?:photo|photograph|picture|image)\s+per\s+\w+\b)",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    public static bool IsPerSubjectImageQuantity(string? userText) =>
+        !string.IsNullOrWhiteSpace(userText) &&
+        PerSubjectImageQuantity.IsMatch(userText);
 
     // A very narrow, content-agnostic grammar for an image-ONLY delivery.
     // This is NOT an image search trigger: the first cognition call must have

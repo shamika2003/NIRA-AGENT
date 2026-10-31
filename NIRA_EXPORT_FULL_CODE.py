@@ -10,6 +10,23 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 
 OUTPUT_FILE = BASE_DIR / "NIRA_AGENT_FULL_CODE.md"
+ARCHITECTURE_FILE = BASE_DIR / "NIRA_ARCHITECTURE_RULES.md"
+ARCHITECTURE_FALLBACK = """MANDATORY NIRA THREE-BLOCK CONTRACT — FOLLOW FOR EVERY FIX
+Block 01: first user-facing cognition with optional shared Response Realization.
+Use one model round when response is complete, grounded, character ready.
+Block 02: INTERNAL reasoning, capability execution, verification and receipts.
+NO personality response, NO rich UI, NO displayBlocks, NO presentation module.
+Block 03: user-facing final response after internal work; uses the SAME shared
+Response Realization module as Block 01 (personality, mood, behavior, speech,
+rich UI). Runtime handles native rendering and fact/authority validation.
+Every mini-block has a single responsibility, typed boundaries and detachability:
+removing it never breaks unrelated cognition or permission/execution controls.
+Character identity and living particle form are continuous, not an excuse for
+repetitive orb narration, generic help-desk warmth or invented experience.
+No hardcoded response templates, arbitrary call counts, or mandatory card quota.
+Inspect the current actual source and logs before fixes, retain all RegressionChecks,
+use hash-gated CheckOnly/Launch package and rollback; never invent test success.
+"""
 
 
 # ============================================================
@@ -20,6 +37,8 @@ OUTPUT_FILE = BASE_DIR / "NIRA_AGENT_FULL_CODE.md"
 # They are NOT useful when giving NIRA source code to an AI.
 IGNORE_DIRS = {
     ".git",
+    ".nira-patch-backups",
+    "payload",
     ".vs",
     ".idea",
     ".vscode",
@@ -47,6 +66,7 @@ IGNORE_DIRS = {
 CONTENT_EXTENSIONS = {
     # C# / .NET
     ".cs",
+    ".py",
     ".csproj",
     ".sln",
     ".props",
@@ -141,6 +161,7 @@ IGNORE_FILES = {
 
 LANGUAGE_MAP = {
     ".cs": "csharp",
+    ".py": "python",
     ".csproj": "xml",
     ".sln": "text",
     ".props": "xml",
@@ -189,6 +210,10 @@ def should_ignore(path: Path) -> bool:
 
     for part in relative.parts:
         if part in IGNORE_DIRS:
+            return True
+        # Historical patch staging is not active project code and can inflate
+        # full exports with stale, conflicting copies of NIRAExecutive.cs.
+        if part.startswith("NIRA_") and part.endswith("_STAGE"):
             return True
 
     if path.name in IGNORE_FILES:
@@ -501,6 +526,23 @@ def main() -> None:
 
 
     # ========================================================
+    # MANDATORY ARCHITECTURE RULES (BEFORE TREE AND CODE)
+    # ========================================================
+
+    output.append("# 0. Mandatory NIRA Three-Block & Mini-Block Rules")
+    output.append("")
+    if ARCHITECTURE_FILE.is_file():
+        output.append(read_text_file(ARCHITECTURE_FILE).strip())
+    else:
+        # Even if the optional external document is removed, every exported
+        # full-code file must retain the essential safe architecture rules.
+        output.append(ARCHITECTURE_FALLBACK.strip())
+    output.append("")
+    output.append("---")
+    output.append("")
+
+
+    # ========================================================
     # PROJECT TREE
     # ========================================================
 
@@ -703,7 +745,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main() 
-    
-    
-    
+    main()

@@ -256,6 +256,15 @@ public static class NIRACapabilityIds
 
 public sealed record NIRACapabilityParameterDescriptor
 {
+    // R75: machine-readable constraints. The SAME declarations are shown to
+    // cognition and enforced before the capability is authorized/executed.
+    public IReadOnlyList<string> AllowedValues { get; init; } = Array.Empty<string>();
+    public IReadOnlyDictionary<string, string> ValueAliases { get; init; } =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    public string DefaultValue { get; init; } = string.Empty;
+    public int? Minimum { get; init; }
+    public int? Maximum { get; init; }
+
     public string Name
     {
         get;

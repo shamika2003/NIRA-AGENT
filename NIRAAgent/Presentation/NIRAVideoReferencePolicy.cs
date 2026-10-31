@@ -82,6 +82,29 @@ public static class NIRAVideoReferencePolicy
         return true;
     }
 
+    // Extract only actual individually supported watch URLs from a user-supplied
+    // message. No video title, listening result, transcript or verification is
+    // inferred from the URL. Duplicate references are collapsed by provider ID.
+    public static IReadOnlyList<NIRAVideoReference> UserSharedReferences(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return Array.Empty<NIRAVideoReference>();
+        var collected = new List<NIRAVideoReference>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (Match match in Regex.Matches(message.Length > 12000 ? message[..12000] : message,
+            @"https://[^\s<>\]\)""']+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        {
+            string candidate = match.Value.TrimEnd('.', ',', ';', ':', '!', '?', '*');
+            if (TryParse(candidate, out NIRAVideoReference? reference) &&
+                reference is not null && seen.Add(reference.Key))
+            {
+                collected.Add(reference);
+                if (collected.Count == 3) break;
+            }
+        }
+        return collected;
+    }
+
     // Standalone source/watch links from normal prose get the same UI as the
     // structured video block. Never promote an arbitrary inline URL to video.
     public static bool TryParseStandaloneLine(string? line, out NIRAVideoReference? reference,

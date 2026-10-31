@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using NIRAAgent.Diagnostics;
 
 namespace NIRAAgent.Presentation;
 
@@ -59,6 +60,10 @@ public static class NIRARichBlockJsonReader
         if (source == "none")
         {
             Debug.WriteLine("[RichPresentation] Source=none | Raw=none | Accepted=0 | Reason=NotProvided");
+            // Metadata only: the event log must distinguish model omission from
+            // malformed typed data without capturing any user/model text.
+            NIRADiagnosticTrace.Event("RICH-PRESENTATION-PARSE",
+                "Source=none Raw=0 Accepted=0 Reason=NotProvided");
             return Array.Empty<NIRARichBlock>();
         }
 
@@ -73,6 +78,11 @@ public static class NIRARichBlockJsonReader
         IReadOnlyList<NIRARichBlock> accepted = NIRAPresentationPolicy.Normalize(shaped);
         Debug.WriteLine($"[RichPresentation] Source={source} | Raw={raw} | Read={result.Count} | Adapted={adapted} | Accepted={accepted.Count} | Types={string.Join(",", accepted.Select(b => b.Type))}" +
             (accepted.Count == 0 && raw > 0 ? " | Reason=UnsupportedOrIncompleteShape" : ""));
+        NIRADiagnosticTrace.Event("RICH-PRESENTATION-PARSE",
+            $"Source={source} Raw={raw} Read={result.Count} " +
+            $"Accepted={accepted.Count} " +
+            $"Types={string.Join(",", accepted.Select(b => b.Type))} " +
+            $"Reason={(accepted.Count == 0 && raw > 0 ? "UnsupportedOrIncompleteShape" : "AcceptedOrEmpty")}");
         if (accepted.Count == 0 && result.Count > 0)
             Debug.WriteLine("[RichPresentation] REJECTED_SHAPES | " +
                 string.Join(";", shaped.Select(b =>

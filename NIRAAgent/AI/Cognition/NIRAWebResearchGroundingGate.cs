@@ -18,18 +18,6 @@ internal static class NIRAWebResearchGroundingGate
         @"\]\(\s*(?<url>https?://(?:[^\s()]|\([^)]*\))+)",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
-    // Decimal measurements only: not every free-standing integer, year, chapter,
-    // unit conversion, rounded paraphrase or arithmetic expression. If a measurement is newly asserted as a web-sourced
-    // fact, at least its precise numeric magnitude must appear in the excerpts.
-    // This is only a mismatch detector, not evidence of factual correctness.
-    private static readonly Regex Measurement = new(
-        @"(?<![\p{L}\d])(?<value>\d+[.,]\d+)\s*(?<unit>%|mph|kph|km/h|km|miles?|meters?|feet|ft|seconds?|secs?|milliseconds?|ms|minutes?|mins?|hours?|days?|kwh|kw|mw|gw|watts?|volts?|amps?|kg|lbs?|gb|tb)(?![\p{L}])",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
-
-    private static readonly Regex Extract = new(
-        @"(?ms)^EXTRACT:[ \t]*(?<text>.*?)(?=^SOURCE \(external extract|\z)",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
     internal static NIRAWebResearchGroundingVerdict Check(string? evidence, string? draft)
     {
         if (string.IsNullOrWhiteSpace(evidence) || string.IsNullOrWhiteSpace(draft))
@@ -51,22 +39,14 @@ internal static class NIRAWebResearchGroundingGate
                     "The researched reply cites a URL not present in the observed web sources.");
         }
 
-        string observedExtracts = string.Join(" ", Extract.Matches(evidence)
-            .Select(m => m.Groups["text"].Value));
-        if (string.IsNullOrWhiteSpace(observedExtracts))
-            return NIRAWebResearchGroundingVerdict.Pass;
-        foreach (Match number in Measurement.Matches(draft))
-        {
-            string magnitude = number.Groups["value"].Value;
-            // Thousands separators can be semantic separators in prose; keep
-            // only unambiguous magnitudes for a conservative, low-noise check.
-            if (magnitude.Contains(',') && !magnitude.Contains('.')) continue;
-            if (!Regex.IsMatch(observedExtracts, @"(?<![\d])" +
-                Regex.Escape(magnitude) + @"(?![\d])", RegexOptions.CultureInvariant))
-                return new(false, "UnobservedMeasurement",
-                    "A precise quantified claim in the researched draft is not " +
-                    "present in the observed source extracts.");
-        }
+        // Web excerpts are evidence of published claims, not a numerical whitelist.
+        // A calculated value, unit conversion, or explicit hypothetical assumption
+        // can correctly introduce numbers absent from any fetched page. Requiring
+        // every magnitude to occur literally in the source is unsound and caused
+        // repeated false rejections of otherwise useful quantitative explanations.
+        // The independent semantic reviewer checks whether *externally asserted*
+        // measurements and comparisons have support. Source URL identity remains
+        // an inexpensive deterministic preflight above.
         return NIRAWebResearchGroundingVerdict.Pass;
     }
 

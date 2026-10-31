@@ -47,7 +47,7 @@ public sealed class NIRACapabilityService
         {
             text.AppendLine($"- {descriptor.Id} | defaultRisk={descriptor.DefaultRisk} | {descriptor.Description}");
             foreach (NIRACapabilityParameterDescriptor parameter in descriptor.Parameters)
-                text.AppendLine($"  - {parameter.Name}: {parameter.Type} | required={parameter.Required} | {parameter.Description}");
+                text.AppendLine(NIRACapabilityContractCodec.Describe(parameter));
         }
         return text.ToString().Trim();
     }
@@ -106,6 +106,7 @@ public sealed class NIRACapabilityService
                     descriptor,
                     handler);
 
+            normalized = NIRACapabilityContractCodec.NormalizeAndValidate(normalized, descriptor);
             ValidateArguments(
                 normalized,
                 descriptor);
@@ -421,6 +422,7 @@ public sealed class NIRACapabilityService
             // then the validated raw request can refine dynamic risks (for
             // example HTTP POST or overwrite=true) before request preparation.
             risk = descriptor.DefaultRisk;
+            request = NIRACapabilityContractCodec.NormalizeAndValidate(request, descriptor);
             ValidateArguments(request, descriptor);
             // Run the same wire-contract checks for DIRECT capability callers;
             // Executive preflight is not the only entry point.

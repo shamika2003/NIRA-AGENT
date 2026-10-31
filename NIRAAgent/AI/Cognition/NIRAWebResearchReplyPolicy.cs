@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using NIRAAgent.Capabilities;
 using NIRAAgent.Presentation;
+using NIRAAgent.Mind;
 
 namespace NIRAAgent.AI.Cognition;
 
@@ -12,6 +13,19 @@ namespace NIRAAgent.AI.Cognition;
 /// </summary>
 public static class NIRAWebResearchReplyPolicy
 {
+    // Compact read-only research synthesis has no expanded action schema.
+    // An action emitted anyway must not be sent into the generic Executive
+    // tool path; normal contextRequests-based expansion remains available.
+    // Check structure, not domain names, URLs, test phrases or model choice.
+    public static bool HasOutOfContractAction(NIRACognitionDecision decision) =>
+        decision.CapabilityRequests.Count != 0 ||
+        decision.ControlRequests.Count != 0 ||
+        decision.DynamicToolInvocations.Count != 0 ||
+        decision.DynamicToolProposals.Count != 0 ||
+        decision.GoalProposals.Count != 0 ||
+        decision.BranchProposals.Count != 0 ||
+        decision.BranchWorkProposals.Count != 0;
+
     public static bool IsSilentTerminal(NIRACognitionDecision decision)
     {
         if (decision.State is not (NIRACognitionState.Complete or
@@ -51,11 +65,26 @@ public static class NIRAWebResearchReplyPolicy
         decision.ControlRequests.Count == 0 &&
         !decision.ReviewCommitment;
 
+    // The narrow source-review path applies to informational research with
+    // verified reference images as well as text-only research. Image lookup
+    // is still read-only and its factual claims must be grounded in web
+    // extracts; no file mutation, browser action or uncertain result qualifies.
+    public static bool IsFocusedResearchEvidenceSet(
+        IReadOnlyCollection<NIRACapabilityResult> results) =>
+        results is { Count: > 0 } &&
+        results.Any(r => r.CapabilityId == NIRACapabilityIds.WebSearch && r.Succeeded) &&
+        results.All(r =>
+            (r.CapabilityId is NIRACapabilityIds.WebSearch or
+                NIRACapabilityIds.ImageSearch or NIRACapabilityIds.ImageRetrieve) &&
+            r.Succeeded && r.Risk == NIRACapabilityRisk.Observe &&
+            !r.OutcomeUncertain && !r.ChangedSystemState);
+
     // A successful read-only web receipt can support a source-only PARTIAL
     // handoff after exhausted synthesis. Optional image errors do not erase
     // source evidence. No mutation or uncertain-capability results are allowed.
     internal static string? ObservedSourceDigestFromResults(
-        IReadOnlyList<NIRACapabilityResult> observedResults)
+        IReadOnlyList<NIRACapabilityResult> observedResults,
+        string? userObjective = null)
     {
         if (observedResults is null || observedResults.Count == 0 ||
             observedResults.Any(result => result.Risk != NIRACapabilityRisk.Observe ||
@@ -73,7 +102,7 @@ public static class NIRAWebResearchReplyPolicy
             try
             {
                 using JsonDocument receipt = JsonDocument.Parse(web.Output);
-                string? digest = ObservedSourceDigestFromPayload(receipt.RootElement);
+                string? digest = ObservedSourceDigestFromPayload(receipt.RootElement, userObjective);
                 if (digest is not null) return digest;
             }
             catch (JsonException) { }
@@ -87,7 +116,8 @@ public static class NIRAWebResearchReplyPolicy
     // the unchecked draft or interprets a search snippet as proven truth.
     // A real successful read is worth more to the user than a blanket apology.
     public static string? ObservedSourceHandoff(
-        IReadOnlyList<NIRACapabilityResult> observedResults)
+        IReadOnlyList<NIRACapabilityResult> observedResults,
+        string? userObjective = null)
     {
         if (observedResults is null) return null;
         foreach (var result in observedResults)
@@ -98,7 +128,8 @@ public static class NIRAWebResearchReplyPolicy
             try
             {
                 using JsonDocument doc = JsonDocument.Parse(result.Output);
-                JsonElement root = doc.RootElement;
+                JsonElement root = NIRAWebEvidenceIdentityPolicy.RelevantSourcePayload(
+                    doc.RootElement, userObjective);
                 if (!root.TryGetProperty("evidenceType", out var kind) ||
                     kind.GetString() != "UntrustedPublicWebSearchExtracts" ||
                     !root.TryGetProperty("completed", out var completed) ||
@@ -151,7 +182,8 @@ public static class NIRAWebResearchReplyPolicy
     // video pages. Its sole media sources are direct, structurally observed
     // watch-page URLs returned by the already-authorized search provider.
     internal static NIRACognitionDecision? BoundedSourceHandoff(
-        IReadOnlyList<NIRACapabilityResult> observedResults)
+        IReadOnlyList<NIRACapabilityResult> observedResults,
+        string? userObjective = null)
     {
         if (observedResults is null || observedResults.Count == 0 ||
             observedResults.Any(result =>
@@ -159,85 +191,39 @@ public static class NIRAWebResearchReplyPolicy
                 result.ChangedSystemState || result.OutcomeUncertain))
             return null;
 
-        var videos = new List<NIRARichBlock>();
-        var seenVideos = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var result in observedResults.Reverse())
+        // Source-only recovery must never convert an incidental retrieved video
+        // into the user's requested answer. Native video delivery stays under
+        // ordinary user-request/media-intent and verified-reference routing.
+        // This is a failure report, not another tool planner.
+
+        string? links = ObservedSourceHandoff(observedResults, userObjective) ??
+            ObservedSourceDigestFromResults(observedResults, userObjective);
+        if (string.IsNullOrWhiteSpace(links) &&
+            NIRAWebEvidenceIdentityPolicy.FirstRequestedUrl(userObjective) is not null)
         {
-            if (result.CapabilityId != NIRACapabilityIds.WebSearch || !result.Succeeded)
-                continue;
-            try
-            {
-                using JsonDocument receipt = JsonDocument.Parse(result.Output);
-                JsonElement root = receipt.RootElement;
-                if (root.ValueKind != JsonValueKind.Object ||
-                    !root.TryGetProperty("evidenceType", out JsonElement kind) ||
-                    kind.ValueKind != JsonValueKind.String ||
-                    kind.GetString() != "UntrustedPublicWebSearchExtracts" ||
-                    !root.TryGetProperty("completed", out JsonElement completed) ||
-                    completed.ValueKind != JsonValueKind.True ||
-                    !root.TryGetProperty("sourceCount", out JsonElement countField) ||
-                    !countField.TryGetInt32(out int sourceCount) ||
-                    sourceCount is < 1 or > 8 ||
-                    !root.TryGetProperty("sources", out JsonElement sources) ||
-                    sources.ValueKind != JsonValueKind.Array ||
-                    sources.GetArrayLength() != sourceCount)
-                    continue;
-
-                foreach (JsonElement source in sources.EnumerateArray())
-                {
-                    if (source.ValueKind != JsonValueKind.Object ||
-                        !source.TryGetProperty("url", out JsonElement urlField) ||
-                        urlField.ValueKind != JsonValueKind.String)
-                        continue;
-                    string url = urlField.GetString() ?? "";
-                    if (!NIRAWebSearchParsing.SafeSourceUrl(url) ||
-                        !NIRAVideoReferencePolicy.TryParse(url, out var video) ||
-                        video is null || !seenVideos.Add(video.Key))
-                        continue;
-
-                    string title = source.TryGetProperty("title", out JsonElement titleField) &&
-                        titleField.ValueKind == JsonValueKind.String
-                            ? titleField.GetString() ?? "" : "";
-                    title = new string(title.Where(ch => !char.IsControl(ch) &&
-                        ch is not ('<' or '>' or '[' or ']' or '`')).Take(140).ToArray()).Trim();
-                    if (string.IsNullOrWhiteSpace(title))
-                        title = "Found video reference";
-                    videos.Add(new NIRARichBlock {
-                        Type = "video", Title = title, Text = video.OriginalUrl
-                    });
-                    if (videos.Count >= 5) break;
-                }
-            }
-            catch (JsonException) { }
-            catch (InvalidOperationException) { }
-            if (videos.Count >= 5) break;
-        }
-
-        if (videos.Count > 0)
-        {
-            string reply = videos.Count == 5
-                ? "I found five distinct direct video watch-page links in the search results. " +
-                  "Their actual availability and contents haven't been independently checked."
-                : $"I located {videos.Count} distinct direct video watch-page " +
-                  $"link{(videos.Count == 1 ? "" : "s")}, but couldn't establish five " +
-                  "working videos. I'm showing the ones actually returned, " +
-                  "rather than guessing the missing links.";
+            // Three successful API receipts that never identify the actual
+            // user-supplied resource cannot justify quoting similar results.
+            // End the bounded research attempt truthfully, not with unrelated
+            // page excerpts or another browser/search detour.
             return new NIRACognitionDecision {
-                State = NIRACognitionState.Complete,
-                EmitReply = true, Reply = reply, Speech = string.Empty,
-                ReplyReady = true, CharacterReady = true,
-                DisplayBlocks = NIRAPresentationPolicy.Normalize(videos),
-                DecisionSummary = "Bounded source-only video handoff after repeated web research."
+                State = NIRACognitionState.Blocked,
+                EmitReply = true,
+                Reply = "I searched for the link you provided, but the returned sources " +
+                    "did not reliably identify that exact resource. I can't verify " +
+                    "its details from those results, so I won't substitute a " +
+                    "similarly named page or make up an answer.",
+                Speech = string.Empty,
+                ReplyReady = true,
+                CharacterReady = true,
+                DisplayBlocks = Array.Empty<NIRARichBlock>(),
+                DecisionSummary = "User-linked resource was not identified in the observed search evidence."
             };
         }
-
-        string? links = ObservedSourceHandoff(observedResults) ??
-            ObservedSourceDigestFromResults(observedResults);
         if (string.IsNullOrWhiteSpace(links)) return null;
         return new NIRACognitionDecision {
             State = NIRACognitionState.Complete,
             EmitReply = true, Reply = links, Speech = string.Empty,
-            ReplyReady = true, CharacterReady = true,
+            ReplyReady = false, CharacterReady = false,
             DisplayBlocks = Array.Empty<NIRARichBlock>(),
             DecisionSummary = "Bounded attributed source handoff after repeated web research."
         };
@@ -280,8 +266,9 @@ public static class NIRAWebResearchReplyPolicy
 
     // For failure handling after a trusted capability operation; the payload is
     // validated here as well, so no arbitrary text or forged URLs are promoted.
-    internal static string? ObservedSourceDigestFromPayload(JsonElement payload)
+    internal static string? ObservedSourceDigestFromPayload(JsonElement payload, string? userObjective = null)
     {
+        payload = NIRAWebEvidenceIdentityPolicy.RelevantSourcePayload(payload, userObjective);
         if (payload.ValueKind != JsonValueKind.Object ||
             !payload.TryGetProperty("evidenceType", out var kind) ||
             kind.ValueKind != JsonValueKind.String ||

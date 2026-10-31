@@ -15,7 +15,7 @@ public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDi
 {
     // Build/run identity: a source-level fix is not live until the UI actually
     // loads the matching core assembly. This marker is independent of queries.
-    public static string RuntimeWebContractRevision => "NIRA-WEB-QUERY-V2-8-R61";
+    public static string RuntimeWebContractRevision => "NIRA-WEB-FOCUSED-REVIEW-R78";
     private static int _runtimeIdentityLogged;
     private readonly HttpClient _client;
     private readonly bool _ownsClient;
@@ -29,29 +29,47 @@ public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDi
     private sealed record ProviderFetch(IReadOnlyList<NIRAWebSource> Sources,
         IReadOnlyList<NIRACommonsImageCandidate> Images);
 
-    public NIRACapabilityDescriptor Descriptor { get; } = new()
+    private static readonly NIRACapabilityDescriptor SearchDescriptor = new()
     {
         Id = NIRACapabilityIds.WebSearch,
         DefaultRisk = NIRACapabilityRisk.Observe,
-        Description = "Search the public web through authorized Brave LLM Context / Tavily / Exa APIs. Returns attributed, bounded source extracts with URLs, dates when available and provider provenance. No browser session, Google scraping or CAPTCHA solving. Prefer for general/current research before interactive browser navigation. API keys remain outside cognition. Accept up to 8 distinct search queries in a bounded request; zero-key configuration yields a clear setup error.",
+        Description = "Search the public web through configured Brave / Tavily / Exa APIs. Returns attributed source extracts. No browser session. Use provider=auto (the default) unless the user needs a particular provider. A requested provider without credentials automatically falls back to another configured provider for text-only research; the receipt discloses the substitution. API keys stay outside cognition. Request multiple distinct queries for multiple subjects; returned sources are distributed across subjects under the source limit.",
         Parameters = new[]
         {
             Param("query", "string", false, "One natural-language search query (1-400 chars). Specify query OR queries."),
             Param("queries", "array", false, "Optional array of 1-8 distinct search query strings (each 1-400 chars)."),
-            Param("provider", "string", false, "auto (default), brave, tavily or exa. Auto tries configured providers in Brave / Tavily / Exa order with failover."),
-            Param("maxSources", "integer", false, "Maximum distinct sources returned overall (1-8, default 5)."),
-            Param("freshness", "string", false, "any (default), day, week, month, year; use short freshness for current events."),
-            Param("evidenceDepth", "string", false, "brief (default): fast provider snippets; detailed: request richer extracted page text when Tavily is selected (may increase latency and Tavily credits). Use when primary-source release notes or detailed source verification matter. Neither mode verifies publisher identity by itself."),
+            Param("provider", "string", false, "Use auto unless a particular source provider is necessary. Runtime resolves configured providers; text-only search can transparently recover from an unavailable requested provider.",
+                allowed: new[] { "auto", "brave", "tavily", "exa" }, defaultValue: "auto"),
+            Param("maxSources", "integer", false, "Maximum distinct sources returned overall.",
+                defaultValue: "5", min: 1, max: 8),
+            Param("freshness", "string", false, "Use short freshness for current events.",
+                allowed: new[] { "any", "day", "week", "month", "year" }, defaultValue: "any"),
+            Param("evidenceDepth", "string", false,
+                "Detailed requests richer Tavily extracts (may use more credits); neither mode verifies identity.",
+                allowed: new[] { "brief", "detailed" }, defaultValue: "brief",
+                aliases: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+                    ["basic"] = "brief", ["standard"] = "brief", ["normal"] = "brief",
+                    ["advanced"] = "detailed", ["deep"] = "detailed", ["thorough"] = "detailed"
+                }),
             Param("country", "string", false, "Optional 2-letter search-region code (default US); not the user's location."),
             Param("useCache", "boolean", false, "Use a short memory-only evidence cache (default true). Set false for explicit refresh."),
             Param("includeImages", "boolean", false, "When both visual and text evidence are useful, use ONE Tavily request for text plus image candidates; default false."),
             Param("imageQuery", "string", false, "Specific subject for ranking images from this SAME Tavily research response (max 160). Not another network query."),
-            Param("retrieveCount", "integer", false, "Images to verify and show from the shared response (1-3; default 1)."),
+            Param("retrieveCount", "integer", false, "Images to verify and show from the shared response.",
+                defaultValue: "1", min: 1, max: 3),
         }
     };
 
-    private static NIRACapabilityParameterDescriptor Param(string name, string type, bool required, string description) =>
-        new() { Name = name, Type = type, Required = required, Description = description };
+    public NIRACapabilityDescriptor Descriptor => SearchDescriptor;
+
+    private static NIRACapabilityParameterDescriptor Param(string name, string type, bool required,
+        string description, string[]? allowed = null, string defaultValue = "", int? min = null,
+        int? max = null, IReadOnlyDictionary<string, string>? aliases = null) => new() {
+            Name = name, Type = type, Required = required, Description = description,
+            AllowedValues = allowed ?? Array.Empty<string>(), DefaultValue = defaultValue,
+            Minimum = min, Maximum = max,
+            ValueAliases = aliases ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        };
 
     // User-scoped environment keys written by PowerShell are stored in Windows,
     // but the process that launched NIRA may have inherited an older snapshot.
@@ -147,57 +165,81 @@ public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDi
         return queries;
     }
 
+    // R73: evidenceDepth is a read-only quality preference, not a permission
+    // or mutation setting. Accept common unambiguous model synonyms so normal
+    // public searches need not waste a repair round. Keep other invalid values
+    // rejected; synonyms never bypass the provider or authorization checks.
+    internal static string EffectiveEvidenceDepth(NIRACapabilityRequest request)
+    {
+        string proposed = (NIRACapabilityArguments.GetOptionalString(
+            request, "evidenceDepth", 12) ?? "brief").Trim();
+        string depth = NIRACapabilityContractCodec.ReadEnum(request,
+            SearchDescriptor, "evidenceDepth");
+        if (proposed is not ("brief" or "detailed"))
+            NIRADiagnosticTrace.Event("WEB-DEPTH-NORMALIZED",
+                $"Requested={proposed} Effective={depth} MappedToDetailed={depth == "detailed"}");
+        return depth;
+    }
+
     internal static void ValidateSearchArguments(NIRACapabilityRequest request)
     {
         _ = ReadSearchQueries(request);
-        string provider = (NIRACapabilityArguments.GetOptionalString(request, "provider", 12) ?? "auto").ToLowerInvariant();
-        if (provider is not ("auto" or "brave" or "tavily" or "exa"))
-            throw new InvalidOperationException("provider must be auto, brave, tavily or exa.");
-        string freshness = (NIRACapabilityArguments.GetOptionalString(request, "freshness", 10) ?? "any").ToLowerInvariant();
-        if (freshness is not ("any" or "day" or "week" or "month" or "year"))
-            throw new InvalidOperationException("freshness must be any, day, week, month or year.");
+        _ = NIRACapabilityContractCodec.ReadEnum(request, SearchDescriptor, "provider");
+        _ = NIRACapabilityContractCodec.ReadEnum(request, SearchDescriptor, "freshness");
         string country = (NIRACapabilityArguments.GetOptionalString(request, "country", 2) ?? "US").ToUpperInvariant();
         if (country.Length != 2 || !country.All(c => c is >= 'A' and <= 'Z'))
             throw new InvalidOperationException("country must be a two-letter country code.");
-        string depth = (NIRACapabilityArguments.GetOptionalString(request, "evidenceDepth", 12) ?? "brief").ToLowerInvariant();
-        if (depth is not ("brief" or "detailed"))
-            throw new InvalidOperationException("evidenceDepth must be brief or detailed.");
-        _ = NIRACapabilityArguments.GetInteger(request, "maxSources", 5, 1, 8);
+        _ = EffectiveEvidenceDepth(request);
+        _ = NIRACapabilityContractCodec.ReadInteger(request, SearchDescriptor, "maxSources");
         _ = NIRACapabilityArguments.GetBoolean(request, "useCache", true);
         bool images = NIRACapabilityArguments.GetBoolean(request, "includeImages");
         string visual = NIRACapabilityArguments.GetOptionalString(request, "imageQuery", 160) ?? "";
         if (visual.Any(char.IsControl) || (images && visual.Length == 0))
             throw new InvalidOperationException("Combined search requires a valid imageQuery.");
-        _ = NIRACapabilityArguments.GetInteger(request, "retrieveCount", 1, 1, 3);
+        _ = NIRACapabilityContractCodec.ReadInteger(request, SearchDescriptor, "retrieveCount");
     }
 
     public async Task<NIRACapabilityHandlerResult> ExecuteAsync(NIRACapabilityRequest request, CancellationToken cancellationToken = default)
     {
         ValidateSearchArguments(request);
         var queries = ReadSearchQueries(request);
-        string provider = (NIRACapabilityArguments.GetOptionalString(request, "provider", 12) ?? "auto").ToLowerInvariant();
-        if (provider is not ("auto" or "brave" or "tavily" or "exa"))
-            throw new InvalidOperationException("provider must be auto, brave, tavily or exa.");
-        string freshness = (NIRACapabilityArguments.GetOptionalString(request, "freshness", 10) ?? "any").ToLowerInvariant();
-        if (freshness is not ("any" or "day" or "week" or "month" or "year"))
-            throw new InvalidOperationException("freshness must be any, day, week, month or year.");
+        string provider = NIRACapabilityContractCodec.ReadEnum(request, SearchDescriptor, "provider");
+        string freshness = NIRACapabilityContractCodec.ReadEnum(request, SearchDescriptor, "freshness");
         string country = (NIRACapabilityArguments.GetOptionalString(request, "country", 2) ?? "US").ToUpperInvariant();
         if (country.Length != 2 || !country.All(c => c is >= 'A' and <= 'Z'))
             throw new InvalidOperationException("country must be a two-letter country code.");
-        string evidenceDepth = (NIRACapabilityArguments.GetOptionalString(request, "evidenceDepth", 12) ?? "brief").ToLowerInvariant();
-        if (evidenceDepth is not ("brief" or "detailed"))
-            throw new InvalidOperationException("evidenceDepth must be brief or detailed.");
-        int maxSources = NIRACapabilityArguments.GetInteger(request, "maxSources", 5, 1, 8);
+        string evidenceDepth = EffectiveEvidenceDepth(request);
+        int maxSources = NIRACapabilityContractCodec.ReadInteger(request, SearchDescriptor, "maxSources");
         bool useCache = NIRACapabilityArguments.GetBoolean(request, "useCache", true);
         bool includeImages = NIRACapabilityArguments.GetBoolean(request, "includeImages");
         string imageQuery = NIRACapabilityArguments.GetOptionalString(request, "imageQuery", 160) ?? "";
-        int retrieveCount = NIRACapabilityArguments.GetInteger(request, "retrieveCount", 1, 1, 3);
+        int retrieveCount = NIRACapabilityContractCodec.ReadInteger(request, SearchDescriptor, "retrieveCount");
+        string requestedProvider = provider;
         if (includeImages) provider = "tavily";
         string? braveKey = Key("NIRA_BRAVE_SEARCH_API_KEY", "BRAVE_SEARCH_API_KEY");
         string? tavilyKey = Key("NIRA_TAVILY_API_KEY", "TAVILY_API_KEY");
         string? exaKey = Key("NIRA_EXA_API_KEY", "EXA_API_KEY");
+        // A language model cannot inspect private Windows API-key state. Do not
+        // waste another model round when it chose an allowed provider with no
+        // credentials but another public-search provider IS configured. Preserve
+        // provider identity and disclose the substitution in the evidence receipt.
+        // Combined image search still requires Tavily; never fake image capability.
+        bool providerRecovered = !includeImages && (provider switch
+        {
+            "brave" => braveKey is null && (tavilyKey is not null || exaKey is not null),
+            "tavily" => tavilyKey is null && (braveKey is not null || exaKey is not null),
+            "exa" => exaKey is null && (braveKey is not null || tavilyKey is not null),
+            _ => false
+        });
+        if (providerRecovered)
+        {
+            NIRADiagnosticTrace.Event("WEB-PROVIDER-RECOVERY",
+                $"Requested={requestedProvider} Effective=auto Reason=RequestedKeyUnavailable " +
+                $"ConfiguredFallbackAvailable=True AuthorizationUnchanged=True");
+            provider = "auto";
+        }
         NIRADiagnosticTrace.Event("WEB-SEARCH-SETUP",
-            $"RequestedProvider={provider} BraveConfigured={braveKey is not null} " +
+            $"RequestedProvider={requestedProvider} EffectiveProvider={provider} BraveConfigured={braveKey is not null} " +
             $"TavilyConfigured={tavilyKey is not null} ExaConfigured={exaKey is not null} Queries={queries.Count} EvidenceDepth={evidenceDepth} IncludeImages={includeImages}");
         if ((provider == "brave" && braveKey is null) || (provider == "tavily" && tavilyKey is null) ||
             (provider == "exa" && exaKey is null) ||
@@ -207,6 +249,7 @@ public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDi
         var aggregate = new List<NIRAWebSource>();
         var imageCandidates = new List<NIRACommonsImageCandidate>();
         var traces = new List<object>();
+        var sourceGroups = new List<(string Query, IReadOnlyList<NIRAWebSource> Sources)>();
         string[] preference = provider switch
         {
             "brave" => new[] { "brave" }, "tavily" => new[] { "tavily" },
@@ -284,14 +327,30 @@ public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDi
             foreach (var candidate in foundImages)
                 if (!imageCandidates.Any(x => x.MediaUrl.Equals(candidate.MediaUrl, StringComparison.OrdinalIgnoreCase)))
                     imageCandidates.Add(candidate);
-            foreach (NIRAWebSource source in sources)
-            {
-                if (aggregate.Any(s => s.Url.Equals(source.Url, StringComparison.OrdinalIgnoreCase))) continue;
-                aggregate.Add(source with { Query = query });
-                if (aggregate.Count >= maxSources) break;
-            }
+            sourceGroups.Add((query, sources));
             traces.Add(new { query, provider = used, cached = cacheHit, sourcesFound = sources.Count, fallbacks = tried });
-            if (aggregate.Count >= maxSources) break;
+        }
+        // Keep each independently requested subject represented when possible;
+        // first query's first five hits must not erase other requested subjects.
+        // Source selection does not add provider calls or invent any evidence.
+        var cursors = new int[sourceGroups.Count];
+        while (aggregate.Count < maxSources)
+        {
+            bool progressed = false;
+            for (int i = 0; i < sourceGroups.Count && aggregate.Count < maxSources; i++)
+            {
+                var group = sourceGroups[i];
+                while (cursors[i] < group.Sources.Count)
+                {
+                    NIRAWebSource source = group.Sources[cursors[i]++];
+                    if (aggregate.Any(s => s.Url.Equals(source.Url, StringComparison.OrdinalIgnoreCase)))
+                        continue;
+                    aggregate.Add(source with { Query = group.Query });
+                    progressed = true;
+                    break;
+                }
+            }
+            if (!progressed) break;
         }
         // Explicitly opt-in developer source diagnostics. Ordinary event logs
         // keep only provider/status counts; the developer may inspect exact
@@ -368,6 +427,9 @@ public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDi
                 fetchedAtUtc = DateTimeOffset.UtcNow,
                 queries,
                 requestedEvidenceDepth = evidenceDepth,
+                requestedProvider,
+                effectiveProvider = provider,
+                providerFallbackApplied = providerRecovered,
                 completed = included.Length > 0,
                 sourceCount = included.Length,
                 sources = included,
@@ -405,7 +467,7 @@ public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDi
         {
             ChangedSystemState = false,
             Summary = aggregate.Count > 0
-                ? $"Web search returned {aggregate.Count} attributed public source(s) across {queries.Count} query/queries, with extract text. No browser interactions; confirm source claims independently."
+                ? $"Web search returned {aggregate.Count} attributed public source(s) across {queries.Count} query/queries, with extract text. Provider={provider}; RequestedProvider={requestedProvider}; Fallback={providerRecovered}. No browser interactions; confirm source claims independently."
                 : "Web search completed but produced no usable cited sources. Do not invent an answer. Provider attempts/status are in the result; change strategy or report access limits.",
             Output = payload,
             VisualArtifacts = displayed.ToArray()
@@ -559,8 +621,17 @@ internal static class NIRAWebSearchParsing
         {
             string url = String(entry, "url");
             if (!SafeSourceUrl(url) || result.Any(x => x.Url.Equals(url, StringComparison.OrdinalIgnoreCase))) continue;
+            // R78: A detailed raw page is not necessarily useful evidence. Some
+            // crawlers return site navigation, logos, tracking paths and menus
+            // before the article, and the 3,600-char truncation then hides the
+            // content entirely. Prefer the provider's own substantive snippet
+            // when the raw prefix is demonstrably dominated by page chrome.
+            // Neither branch invents text or changes source identity.
             string extracted = detailed ? Clean(String(entry, "raw_content"), 3600) : "";
-            string content = extracted.Length > 0 ? extracted : Clean(String(entry, "content"), 1300);
+            string snippet = Clean(String(entry, "content"), 1300);
+            if (snippet.Length > 0 && LooksLikePageChrome(extracted))
+                extracted = "";
+            string content = extracted.Length > 0 ? extracted : snippet;
             if (content.Length == 0) continue;
             result.Add(new NIRAWebSource(url, Clean(String(entry, "title"), 220), content,
                 "tavily", Clean(String(entry, "published_date"), 30),
@@ -568,6 +639,21 @@ internal static class NIRAWebSearchParsing
             if (result.Count >= 8) break;
         }
         return result;
+    }
+
+    // A domain-neutral structural test for leading website boilerplate.
+    // Multiple asset paths and URL fragments ahead of coherent prose indicate
+    // that the raw extract is a bad window into the source; use Tavily's own
+    // shorter source-attributed content instead, if present.
+    internal static bool LooksLikePageChrome(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return false;
+        string lead = raw[..Math.Min(1200, raw.Length)];
+        int assets = System.Text.RegularExpressions.Regex.Matches(lead,
+            @"(?i)(?:https?://|/(?:static|images|wiki|assets|uploads)/|\.(?:svg|png|jpg|webp)\b)").Count;
+        int sentences = System.Text.RegularExpressions.Regex.Matches(lead,
+            @"[.!?](?:\s|$)").Count;
+        return assets >= 4 && assets > sentences + 1;
     }
 
     // Exa search results can include short highlights, or the returned text

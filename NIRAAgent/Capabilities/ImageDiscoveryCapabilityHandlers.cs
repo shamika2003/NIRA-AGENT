@@ -16,11 +16,11 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
         DefaultRisk = NIRACapabilityRisk.Observe,
         Parameters = new[] {
             new NIRACapabilityParameterDescriptor { Name="query", Type="string", Required=true, Description="Specific visual subject, 2-160 characters; no URLs." },
-            new NIRACapabilityParameterDescriptor { Name="limit", Type="integer", Required=false, Description="Number of ranked candidates, 1-12; default 6." },
+            new NIRACapabilityParameterDescriptor { Name="limit", Type="integer", Required=false, Description="Number of ranked candidates.", Minimum=1, Maximum=12, DefaultValue="6" },
             new NIRACapabilityParameterDescriptor { Name="retrieveBest", Type="boolean", Required=false,
                 Description="Retrieve real image assets by default (for direct chat presentation OR as inputs to a separately requested saved file). Rights are not proven. Set false to inspect candidate metadata without downloading." },
-            new NIRACapabilityParameterDescriptor { Name="retrieveCount", Type="integer", Required=false,
-                Description="Optional count of distinct verified images to retrieve for the task, 1-3; default 1. Images are shown in chat only when chat presentation is the actual goal." },
+            new NIRACapabilityParameterDescriptor { Name="retrieveCount", Type="integer", Required=false, Minimum=1, Maximum=3, DefaultValue="1",
+                Description="Distinct verified images to retrieve for the task; shown in chat only when that is the actual goal." },
             new NIRACapabilityParameterDescriptor { Name="photographsOnly", Type="boolean", Required=false,
                 Description="When true, prefer authentic photos and exclude identifiable diagrams, illustrations, models and renderings; default false." }
         }
@@ -32,15 +32,27 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
         CancellationToken cancellationToken = default)
     {
         string query = NIRACapabilityArguments.RequireString(request, "query", 160);
-        int limit = NIRACapabilityArguments.GetInteger(request, "limit", 6, 1, 12);
+        int limit = NIRACapabilityContractCodec.ReadInteger(request, Descriptor, "limit");
         // Searching for photos normally means the user wants visible photos,
         // not a list of IDs. Direct model capabilityRequests may omit this
         // optional argument even when the resource planner explicitly sets it.
         // Preserve the ability to opt out with retrieveBest=false.
         bool retrieveBest = !request.Arguments.TryGetProperty("retrieveBest", out _) ||
             NIRACapabilityArguments.GetBoolean(request, "retrieveBest");
-        int retrieveCount = NIRACapabilityArguments.GetInteger(request, "retrieveCount", 1, 1, 3);
+        int retrieveCount = NIRACapabilityContractCodec.ReadInteger(request, Descriptor, "retrieveCount");
         bool photographsOnly = NIRACapabilityArguments.GetBoolean(request, "photographsOnly");
+        // R73: a model's limit=1 made image search brittle: one bad CDN
+        // content-type/403 lost the entire subject although Tavily returned
+        // dozens of candidates. Keep several ALTERNATES from the same API call;
+        // only retrieve the requested number of verified distinct images.
+        // This increases local selection depth, not paid provider requests.
+        int requestedLimit = limit;
+        if (retrieveBest)
+            limit = Math.Max(limit, Math.Min(8, retrieveCount + 5));
+        if (limit != requestedLimit)
+            NIRADiagnosticTrace.Event("IMAGE-CANDIDATE-DEPTH",
+                $"Original={requestedLimit} Effective={limit} " +
+                "Reason=AlternateDownloads SameSearchCall=True");
         string safeQuery = query.Replace('\r', ' ').Replace('\n', ' ');
         NIRADiagnosticTrace.Event("IMAGE-TOOL-REQUEST",
             $"Capability=image.search Query={safeQuery} Limit={limit} " +

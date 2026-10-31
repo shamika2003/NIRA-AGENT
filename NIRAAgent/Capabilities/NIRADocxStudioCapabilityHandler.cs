@@ -679,15 +679,15 @@ public sealed class NIRADocxStudioCapabilityHandler : INIRACapabilityHandler
             NIRADocx.Param("title", true, "Title of document; one line, maximum 180 characters."),
             new NIRACapabilityParameterDescriptor { Name = "blocksJson", Type = "array", Required = true,
                 Description = "MANDATORY native JSON ARRAY (not a quoted/double-encoded string), 1-120 blocks: paragraph, heading(level 1-3), bullet, number, table(rows 2-40 x 2-8), chart(data:[{label,value}], optional title/source), quote, divider, toc, pagebreak, link(text,url), image(altText,widthMm,caption,credit,imagePath). Text and runs may contain ordinary strings. Preserve all material source content; use the exact user-requested content length." },
-            NIRADocx.Param("paper", false, "A4 (default) or LETTER"),
-            NIRADocx.Param("orientation", false, "portrait (default) or landscape"),
+            NIRADocx.Param("paper", false, "A4 or LETTER") with { AllowedValues = new[] { "A4", "LETTER" }, DefaultValue = "A4" },
+            NIRADocx.Param("orientation", false, "portrait or landscape") with { AllowedValues = new[] { "portrait", "landscape" }, DefaultValue = "portrait" },
             NIRADocx.Param("marginMm", false, "10-35, default 20"),
             NIRADocx.Param("accentHex", false, "Six RGB hex digits; default 17365D"),
             NIRADocx.Param("headerText", false, "Optional one-line running header"),
             NIRADocx.Param("footerText", false, "Optional one-line running footer"),
             NIRADocx.Param("pageNumbers", false, "true for native Word PAGE field; default false"),
             NIRADocx.Param("imagePath", false, "Backward compatibility: local PNG/JPEG if exactly one image block lacks its own imagePath."),
-            NIRADocx.Param("profile", false, "general (default), academic (student/research writing), or business."),
+            NIRADocx.Param("profile", false, "General, academic or business document design") with { AllowedValues = new[] { "general", "academic", "business" }, DefaultValue = "general" },
             NIRADocx.Param("minimumBodyWords", false, "Optional word-count quality gate 0-12000, as a STRING integer; for explicit long-form tasks set from requested length. No output if insufficient substantive text."),
             NIRADocx.Param("minimumImages", false, "Optional 0-6 STRING quality gate for images when user requires them; only count verified local image blocks. Missing images cause a pre-write failure, not a false success.")
         ]

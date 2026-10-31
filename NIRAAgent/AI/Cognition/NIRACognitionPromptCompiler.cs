@@ -222,7 +222,7 @@ internal static class NIRACognitionPromptCompiler
             return (string.Empty, 0, observed?.Count ?? 0);
 
         const int maxTotalChars = 30000;
-        const int maxReceiptChars = 6600;
+        const int maxReceiptChars = 12000;
         StringBuilder b = new();
         int used = 0, omitted = 0;
         HashSet<string> uniqueReceipts = new(StringComparer.Ordinal);
@@ -337,6 +337,8 @@ internal static class NIRACognitionPromptCompiler
         registered tool schema is missing. Never invent a tool signature. Display blocks
         are optional; NIRA's independent objective reviewer still checks final answers.
         Preserve NIRA's character, specificity and social continuity without boilerplate.
+        Never simulate tool calls, fabricate browser/search output, or paste an
+        internal protocol transcript into the user-visible reply.
         """ + "\n\nNIRA CHARACTER KERNEL (authoritative source):\n" +
         CharacterKernel(personalityYaml);
 
@@ -545,6 +547,16 @@ internal static class NIRACognitionPromptCompiler
           mandate to insert images into factual answers or ordinary chat.
           A returned candidate is not displayed, and two cache paths for the
           same photo are not two distinct pictures.
+          For combined RESEARCH + IMAGE requests, independent images are not
+          sources for a factual explanation: retrieve appropriate text evidence
+          with web.search alongside the independent image searches in the
+          FIRST authorized tool batch when reliable source attribution is
+          requested. A verified image download proves bytes were delivered,
+          not the species, subject, author, photographic authenticity or the
+          scientific mechanism depicted. Compose one evidence-grounded answer
+          for ALL requested parts; do not answer a research request by listing
+          photo sources alone. Never require web.search for ordinary social
+          dialogue or self-contained arithmetic that needs no external facts.
           Web evidence is useful when changing facts, real price/availability,
           recent developments, contested claims, or source-specific details
           affect answer accuracy. If a question compares current marketed
@@ -709,8 +721,10 @@ internal static class NIRACognitionPromptCompiler
           provider delivers images, truthfully acknowledge those verified artifacts
           in the answer. Image quality and suitability must not be inferred solely
           from keyword overlap or provider search position.
-          Use one carefully targeted image.search per initial capability batch,
-          not several simultaneous speculative queries. Search candidates first,
+          Use one carefully targeted image.search per DISTINCT requested visual
+          subject in the initial capability batch (up to the registered limit).
+          Never submit several speculative searches for the same subject.
+          Search candidates first,
           then retrieve their exact candidateIds. If the provider times out,
           is rate-limited, or becomes temporarily unavailable, do NOT retry
           synonym searches in the same task. Explain the missing pictures,
@@ -3114,6 +3128,7 @@ internal static class NIRACognitionPromptCompiler
 
             List<string> parameters = new();
             List<string> requiredHints = new();
+            List<string> enumHints = new();
             List<string> requiredNames = new();
             int cursor = index + 1;
             while (cursor < lines.Length &&
@@ -3149,6 +3164,21 @@ internal static class NIRACognitionPromptCompiler
 
                     parameters.Add($"{name}:{type}{(required ? "!" : "?")}");
                     if (required) requiredNames.Add(name);
+                    // R75: enum contract is *not* optional prose. Keep the exact
+                    // registered values even for optional parameters in the
+                    // first compact capability directory.
+                    if (requiredEnd >= 0)
+                    {
+                        string remainder = parameterLine[(requiredEnd + 3)..];
+                        int allowedAt = remainder.IndexOf("allowed=", StringComparison.Ordinal);
+                        if (allowedAt >= 0)
+                        {
+                            string values = remainder[(allowedAt + "allowed=".Length)..]
+                                .Split(" | ", 2, StringSplitOptions.None)[0].Trim();
+                            if (values.Length is > 0 and < 150)
+                                enumHints.Add($"{name}={values}");
+                        }
+                    }
 
                     // Required parameter descriptions often carry enum/range/
                     // shape constraints needed for a correct first-cycle call.
@@ -3204,6 +3234,8 @@ internal static class NIRACognitionPromptCompiler
                 b.Append(" | requiredHints=")
                     .Append(string.Join(";", requiredHints));
             }
+            if (enumHints.Count > 0)
+                b.Append(" | allowedValues=").Append(string.Join(";", enumHints));
 
             b.Append(" | ")
                 .Append(CompactCapabilityHint(

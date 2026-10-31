@@ -790,7 +790,7 @@ public sealed class NIRAFileWriteCapabilityHandler
                 {
                     Parameter("path", "string", true, "Destination file path."),
                     Parameter("content", "string", true, "Text to write."),
-                    Parameter("mode", "string", false, "overwrite or append. Default overwrite."),
+                    Parameter("mode", "string", false, "overwrite or append") with { AllowedValues = new[] { "overwrite", "append" }, DefaultValue = "overwrite" },
                     Parameter("expectedLastWriteUtc", "string", false, "Optional optimistic-concurrency guard using prior ISO-8601 LastWriteUtc.")
                 }
         };

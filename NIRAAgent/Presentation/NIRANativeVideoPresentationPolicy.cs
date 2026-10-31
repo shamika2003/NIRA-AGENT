@@ -10,6 +10,32 @@ namespace NIRAAgent.Presentation;
 /// </summary>
 public static class NIRANativeVideoPresentationPolicy
 {
+    // A verified *format* from a user-shared supported video link is enough
+    // to offer a player; it is NOT evidence of what the content contains.
+    // Preserve model-authored player blocks and avoid additional WebView2
+    // instances for the same provider/video ID.
+    public static IReadOnlyList<NIRARichBlock> AttachUserSharedVideos(
+        IReadOnlyList<NIRARichBlock> blocks, string? userMessage)
+    {
+        var shared = NIRAVideoReferencePolicy.UserSharedReferences(userMessage);
+        if (shared.Count == 0) return blocks;
+        var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (NIRARichBlock existing in blocks)
+            if (existing.Type == "video" &&
+                NIRAVideoReferencePolicy.TryParse(existing.Text, out var video) && video is not null)
+                known.Add(video.Key);
+        var result = blocks.ToList();
+        foreach (NIRAVideoReference video in shared)
+            if (known.Add(video.Key))
+                result.Add(new NIRARichBlock
+                {
+                    Type = "video",
+                    Title = video.Provider + " video shared in this conversation",
+                    Text = video.OriginalUrl
+                });
+        return result;
+    }
+
     private static readonly Regex HttpsUrl = new(
         @"https://[^\s<>\]\)\(]+", RegexOptions.Compiled | RegexOptions.IgnoreCase |
         RegexOptions.CultureInvariant);

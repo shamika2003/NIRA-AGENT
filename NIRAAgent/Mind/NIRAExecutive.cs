@@ -109,6 +109,9 @@ public sealed class NIRAExecutive
     private readonly NIRAResponseRealizationService
         _responseRealization;
 
+    private readonly NIRAFinalResponseStage
+        _finalResponseStage;
+
     private readonly NIRATaskCompletionReviewService
         _taskCompletionReview;
 
@@ -268,6 +271,11 @@ public sealed class NIRAExecutive
         _taskCompletionReview =
             taskCompletionReview
             ?? throw new ArgumentNullException(nameof(taskCompletionReview));
+
+        _finalResponseStage =
+            new NIRAFinalResponseStage(
+                _responseRealization,
+                _taskCompletionReview);
 
         _contextBuilder =
             contextBuilder
@@ -1202,12 +1210,28 @@ public sealed class NIRAExecutive
             }
             else
             {
+                // Every post-entry cycle, including successful read-only web
+                // receipts, goes through the SAME modular internal-work call.
+                // No provider-specific synthesis preempts reasoning or invents
+                // completion; existing Executive retains all authority.
                 decision = await _cognition.ThinkAsync(
                     context,
                     cancellationToken,
                     expandedSections,
                     expandedCapabilityIds,
                     synthesizeFromEvidence);
+            }
+
+            // BLOCK 02 is internal execution only. Even if an LLM ignores its
+            // explicit contract and emits decorative typed UI, do not let that
+            // internal-stage output become public presentation. Block 03 owns
+            // new declarative UI for verified findings. No extra LLM calls.
+            if (cycle > 1 && decision.DisplayBlocks.Count > 0)
+            {
+                NIRADiagnosticTrace.Event("BLOCK02-PRESENTATION-REJECTED",
+                    $"Run={runId:D} Cycle={cycle} Submitted={decision.DisplayBlocks.Count} " +
+                    "PublicPresentationOwnedBy=Block03");
+                decision = decision with { DisplayBlocks = Array.Empty<NIRARichBlock>() };
             }
 
             // Advisory milestones keep the original goal visible across tools.
@@ -1351,80 +1375,17 @@ public sealed class NIRAExecutive
                 decision = planned;
             }
 
-            // NIRA can receive multiple valid public web.search receipts yet keep
-            // asking for fresh variations of the same search. The independent
-            // reviewer then rejects an incomplete draft, and the ten-cycle
-            // budget ends in a misleading "search failed" response even though
-            // results were returned. Limit this *read-only research* stalemate.
-            // Never apply this to branch work, commitments, user authorization,
-            // browser/desktop operations or other capability types.
-            if (cycle >= 3 &&
-                mindEvent.Source == NIRAMindEventSource.User &&
-                decision.State == NIRACognitionState.Continue &&
-                decision.CapabilityRequests.Count > 0 &&
-                decision.CapabilityRequests.All(request =>
-                    request.CapabilityId == NIRACapabilityIds.WebSearch) &&
-                decision.ContextRequests.Count == 0 &&
-                decision.ControlRequests.Count == 0 &&
-                decision.GoalProposals.Count == 0 &&
-                decision.BranchProposals.Count == 0 &&
-                decision.BranchWorkProposals.Count == 0 &&
-                decision.DynamicToolProposals.Count == 0 &&
-                decision.DynamicToolInvocations.Count == 0 &&
-                !decision.ReviewCommitment &&
-                !preReviewCommitmentSucceeded &&
-                !desktopActionNeedsObservation &&
-                capabilityResultsBySignature.Values.Count(result =>
-                    result.CapabilityId == NIRACapabilityIds.WebSearch &&
-                    result.Succeeded && result.Risk == NIRACapabilityRisk.Observe &&
-                    !result.ChangedSystemState && !result.OutcomeUncertain) >= 3)
-            {
-                // Ultra's final structured tool decision can fail even after
-                // several successful Tavily requests. Give it ONE constrained
-                // source-grounded technical synthesis, then let the *normal*
-                // independent review validate the produced answer. This is
-                // not a tool or permission bypass. A failed synthesis still
-                // falls back to mechanically attributed source links.
-                NIRADiagnosticTrace.Event("DEEP-RESEARCH-ESCALATE",
-                    $"Run={runId:D} Cycle={cycle} " +
-                    $"ObservedWebSearches={capabilityResultsBySignature.Values.Count(r => r.CapabilityId == NIRACapabilityIds.WebSearch && r.Succeeded)} " +
-                    $"DeepActive={_cognition.IsDeepReasoningRun(runId)} " +
-                    "Action=StopFurtherSearchAndRequestSynthesis");
-                NIRACognitionDecision? completedResearch =
-                    _cognition.IsDeepReasoningRun(runId)
-                        ? await _cognition.TryFinalizeDeepWebResearchAsync(
-                            context, capabilityResultsBySignature.Values.ToArray(),
-                            cancellationToken)
-                        : null;
-                if (completedResearch is not null)
-                {
-                    decision = completedResearch;
-                    NIRADiagnosticTrace.Event("WEB-SEARCH-LOOP-RECOVERY",
-                        $"Run={runId:D} Cycle={cycle} " +
-                        "Mode=DeepResearchDraft IndependentReview=Required " +
-                        "FurtherSearchDispatched=False");
-                }
-                else
-                {
-                    NIRACognitionDecision? handoff =
-                        NIRAWebResearchReplyPolicy.BoundedSourceHandoff(
-                            capabilityResultsBySignature.Values.ToArray());
-                    if (handoff is not null)
-                    {
-                        decision = handoff;
-                        // Source-only evidence contains no claims from a model.
-                        completionReviewConfirmedComplete = true;
-                        NIRADiagnosticTrace.Event("WEB-SEARCH-LOOP-RECOVERY",
-                            $"Run={runId:D} Cycle={cycle} " +
-                            $"ObservedWebSearches={capabilityResultsBySignature.Values.Count(r => r.CapabilityId == NIRACapabilityIds.WebSearch && r.Succeeded)} " +
-                            $"VideoBlocks={decision.DisplayBlocks.Count} Mode=SourceOnly " +
-                            "FurtherSearchDispatched=False");
-                    }
-                }
-            }
+            // Post-entry decisions now use the same internal-work prompt for every
+            // capability family. Previously a web-only recovery replaced the
+            // model's continuation with source excerpts after a fixed number
+            // of searches; that alternative reasoning route is retired.
 
             // The model controls media selection; the runtime controls actual
             // fulfillment. Preserve its first chosen quantity for implicit media.
+            // In "one image of each" requests, count distinct model-chosen
+            // subject searches rather than interpreting "one" as a global cap.
+            // This preserves image autonomy, the existing three-image ceiling,
+            // real-pixel deduplication and the downstream permission boundary.
             if (cycle == 1 && imageDeliveryTarget == 0)
                 imageDeliveryTarget = Math.Clamp(decision.CapabilityRequests
                     .Where(r => r.CapabilityId == NIRACapabilityIds.ImageSearch)
@@ -3924,6 +3885,20 @@ public sealed class NIRAExecutive
                         $"Run={runId:D} Cycle={cycle} Retrieved={verifiedDocumentImageAssets.Count} " +
                         $"Bound={boundImages} SchemaAndAuthorizationStillRequired=True");
                 }
+                // R74: when the user supplied a public URL, the first search
+                // must identify THAT resource, not a model-guessed topic.
+                // Still goes through the ordinary registered schema and authorizer.
+                if (mindEvent.Source == NIRAMindEventSource.User &&
+                    candidate.CapabilityId == NIRACapabilityIds.WebSearch)
+                {
+                    bool priorSource = capabilityResultsBySignature.Values.Any(r =>
+                        r.CapabilityId == NIRACapabilityIds.WebSearch && r.Succeeded);
+                    candidate = NIRAWebEvidenceIdentityPolicy.AnchorInitialSearch(
+                        candidate, mindEvent.Content, priorSource, out bool anchored);
+                    if (anchored)
+                        NIRADiagnosticTrace.Event("WEB-SOURCE-IDENTITY",
+                            $"Run={runId:D} Cycle={cycle} Action=AnchorFirstSearch ToUserUrl=True");
+                }
                 if (_capabilities.TryNormalizeAndValidateSchema(
                         candidate,
                         out NIRACapabilityRequest normalized,
@@ -4226,10 +4201,48 @@ public sealed class NIRAExecutive
             HashSet<int> scheduledProcessStops = new();
             HashSet<string> scheduledProcessStarts = new(StringComparer.OrdinalIgnoreCase);
             HashSet<long> scheduledNewDocumentTransitions = new();
+            // R73: the search API owns ordinary public information retrieval.
+            // A successful API receipt must not cause a spontaneous Playwright
+            // detour, and a first browser navigation must not replace the API
+            // without an actual site-interaction objective. Missing API evidence
+            // after a real search attempt still permits the model to fall back
+            // to browser observation under normal authorization.
+            bool apiResearchAttempted = capabilityResultsBySignature.Values.Any(r =>
+                r.CapabilityId == NIRACapabilityIds.WebSearch);
+            bool apiResearchHasSources = NIRAWebResearchReplyPolicy.ObservedSourceHandoff(
+                capabilityResultsBySignature.Values.ToArray()) is not null;
             foreach (NIRACapabilityRequest request in requestedCapabilities)
             {
                 string signature =
                     request.BuildSignature();
+
+                if (NIRAWebToolRoutingPolicy.ShouldDefer(
+                    request.CapabilityId, mindEvent.Content,
+                    mindEvent.Source == NIRAMindEventSource.User &&
+                    !internalBranchLifecycleEvent &&
+                    !branchOwnershipCommittedThisCycle &&
+                    decision.GoalProposals.Count == 0 &&
+                    decision.BranchProposals.Count == 0 &&
+                    decision.BranchWorkProposals.Count == 0,
+                    apiResearchHasSources, apiResearchAttempted))
+                {
+                    executedCapabilityRequests.Add(signature);
+                    capabilityEvidence.AppendLine(
+                        "R73 API-FIRST RESEARCH: The proposed read-only browser operation " +
+                        "was not dispatched. Use web.search for public information. " +
+                        (apiResearchHasSources
+                            ? "Verified API source receipts already exist in this turn; " +
+                              "synthesize them with attribution and present any native media. " +
+                              "Do not open another browser just to repeat research."
+                            : "No API research has been attempted yet; request a registered " +
+                              "web.search first. If it yields no usable sources, browser " +
+                              "observation may be reconsidered with a real rationale."));
+                    NIRADiagnosticTrace.Event("WEB-TOOL-ROUTING",
+                        $"Run={runId:D} Cycle={cycle} Action=DeferReadOnlyBrowser " +
+                        $"Capability={request.CapabilityId} " +
+                        $"ApiAttempted={apiResearchAttempted} Sources={apiResearchHasSources}");
+                    continue;
+                }
 
                 if (studioPaths.Blocks(request))
                 {
@@ -6723,6 +6736,18 @@ public sealed class NIRAExecutive
                         decision.Reply, decision.DisplayBlocks);
                     var grounding = NIRAWebResearchGroundingGate.Check(
                         webResearchReviewEvidence, visibleDraft);
+                    // A source list can be syntactically valid yet belong to
+                    // a different resource than the URL supplied by the user.
+                    // Do not certify claims from such unrelated results.
+                    if (grounding.Accepted &&
+                        NIRAWebEvidenceIdentityPolicy.FirstRequestedUrl(mindEvent.Content) is not null &&
+                        NIRAWebResearchReplyPolicy.ObservedSourceHandoff(
+                            capabilityResultsBySignature.Values.ToArray(), mindEvent.Content) is null)
+                        grounding = new NIRAWebResearchGroundingVerdict(false,
+                            "UnmatchedRequestedResource",
+                            "No observed source identified the specific user-supplied link. " +
+                            "Research the exact resource rather than a similar title, " +
+                            "or explicitly report that its identity could not be verified.");
                     NIRADiagnosticTrace.Event("WEB-GROUNDING-PREFLIGHT",
                         $"Run={runId:D} Cycle={cycle} Accepted={grounding.Accepted} " +
                         $"Code={grounding.Code} DraftChars={visibleDraft.Length} " +
@@ -6755,7 +6780,7 @@ public sealed class NIRAExecutive
                             !desktopActionNeedsObservation &&
                             NIRAWebResearchReplyPolicy.IsGroundedAnswerShape(decision)
                                 ? NIRAWebResearchReplyPolicy.ObservedSourceDigestFromResults(
-                                    capabilityResultsBySignature.Values.ToArray())
+                                    capabilityResultsBySignature.Values.ToArray(), mindEvent.Content)
                                 : null;
                         if (partial is not null)
                         {
@@ -6834,9 +6859,28 @@ public sealed class NIRAExecutive
                     $"ObservedCapabilities={capabilityResultsBySignature.Count} | " +
                     $"PriorObjections={taskCompletionReviewCount}");
 
+                // R71: The independent reviewer must inspect the SAME native
+                // user-shared video references that the terminal presentation
+                // will actually attach. Previously this happened only AFTER
+                // review, causing the reviewer to see an absent player and
+                // reject an otherwise complete research answer repeatedly.
+                // This is presentation evidence only. It does NOT prove that
+                // playback happened, or establish any claims about the video.
+                IReadOnlyList<NIRARichBlock> reviewDisplayBlocks = decision.DisplayBlocks;
+                if (mindEvent.Source == NIRAMindEventSource.User &&
+                    decision.ReplyPresentation == NIRAReplyPresentationMode.Natural &&
+                    decision.State is (NIRACognitionState.Complete or
+                        NIRACognitionState.Blocked or NIRACognitionState.NeedUser))
+                    reviewDisplayBlocks = NIRANativeVideoPresentationPolicy.AttachUserSharedVideos(
+                        reviewDisplayBlocks, mindEvent.Content);
+                int reviewVideoReferences = reviewDisplayBlocks.Count(block => block.Type == "video");
+                NIRADiagnosticTrace.Event("OBJECTIVE-REVIEW-PRESENTATION",
+                    $"Run={runId:D} Cycle={cycle} VideoReferences={reviewVideoReferences} " +
+                    "PlaybackVerified=False PresentationReferenceOnly=True");
+
                 var reviewRequest = new NIRATaskCompletionReviewRequest(
                             mindEvent.Content,
-                            NIRAPresentationPolicy.ForObjectiveReview(decision.Reply, decision.DisplayBlocks),
+                            NIRAPresentationPolicy.ForObjectiveReview(decision.Reply, reviewDisplayBlocks),
                             string.Join(Environment.NewLine + Environment.NewLine,
                                 surfaceEvidence,
                                 executiveEvidence.ToString(),
@@ -6867,6 +6911,22 @@ public sealed class NIRAExecutive
                             webResearchReviewEvidence,
                             _cognition.IsDeepReasoningRun(runId) &&
                                 webResearchReviewEvidence.Length > 0);
+                // Read-only, answer-shaped web research does not need a second
+                // copy of the whole social/memory history in the independent
+                // fact reviewer. Its current objective and source receipts are
+                // already authoritative. Stateful and action-bearing work
+                // retains the full general reviewer and all safety checks.
+                reviewRequest = reviewRequest with {
+                    SourceOnlyResearchReview =
+                        !string.IsNullOrWhiteSpace(webResearchReviewEvidence) &&
+                        NIRAWebResearchReplyPolicy.IsGroundedAnswerShape(decision) &&
+                        !preReviewCommitmentSucceeded &&
+                        !desktopActionNeedsObservation &&
+                        !decision.ReviewCommitment &&
+                        GetPendingTaskForEvent(mindEvent) == null &&
+                        NIRAWebResearchReplyPolicy.IsFocusedResearchEvidenceSet(
+                            capabilityResultsBySignature.Values.ToArray())
+                };
                 NIRATaskCompletionReview? taskReview =
                     await _taskCompletionReview.ReviewAsync(reviewRequest, cancellationToken);
                 // Recheck ONLY an unavailable verdict following real web evidence.
@@ -6888,6 +6948,84 @@ public sealed class NIRAExecutive
                     $"Run={runId:D} Cycle={cycle} " +
                     $"Verdict={taskReview?.Verdict ?? "Unavailable"} " +
                     $"Reconsideration={taskReview?.NeedsReconsideration == true}");
+
+                // One independent reviewer can both identify a source-specific
+                // error and provide a corrected, approved factual answer.
+                // Unlike a second repair/review loop this keeps the original
+                // evidence, preserves the normal NIRA final response pipeline,
+                // and grants NO new tool authority. The reviewer has to have
+                // been scoped to verified read-only web.search receipts.
+                if (reviewRequest.SourceOnlyResearchReview &&
+                    taskReview is { Verdict: "Complete", ApprovedReply.Length: > 0 } &&
+                    NIRAWebResearchReplyPolicy.IsGroundedAnswerShape(decision))
+                {
+                    decision = decision with {
+                        Reply = taskReview.ApprovedReply,
+                        Speech = string.Empty,
+                        ReplyReady = false,
+                        CharacterReady = false
+                    };
+                    NIRADiagnosticTrace.Event("WEB-REVIEW-APPROVED-REPLY",
+                        $"Run={runId:D} Cycle={cycle} " +
+                        $"Chars={decision.Reply.Length} Next=NormalFinalDelivery");
+                }
+
+                // R78: The first rejected web synthesis should not send NIRA
+                // back into a 100K+ full planning context, repeat a cached
+                // search, and throw away her revised prose. Try ONE focused
+                // evidence-only correction. It is not a review bypass: the
+                // revised prose receives the same independent objective gate.
+                bool focusedWebCorrectionAttempted = false;
+                bool ordinarySourceOnlyAnswer =
+                    taskReview is { Verdict: "NeedsWork" } &&
+                    taskCompletionReviewCount == 0 &&
+                    decision.State == NIRACognitionState.Complete &&
+                    decision.EmitReply &&
+                    NIRAWebResearchReplyPolicy.IsGroundedAnswerShape(decision) &&
+                    webResearchReviewEvidence.Length > 0 &&
+                    !_cognition.IsDeepReasoningRun(runId) &&
+                    !preReviewCommitmentSucceeded &&
+                    !desktopActionNeedsObservation &&
+                    !decision.ReviewCommitment &&
+                    NIRAWebResearchReplyPolicy.IsFocusedResearchEvidenceSet(
+                        capabilityResultsBySignature.Values.ToArray()) &&
+                    decision.DisplayBlocks.All(b => b.Type != "file") &&
+                    GetPendingTaskForEvent(mindEvent) == null;
+                if (ordinarySourceOnlyAnswer)
+                {
+                    focusedWebCorrectionAttempted = true;
+                    string? corrected = await _cognition.RefineWebResearchDraftAsync(
+                        runId, mindEvent.Content, decision.Reply,
+                        webResearchReviewEvidence, taskReview!.Gap,
+                        taskReview.NextStep, cancellationToken);
+                    if (!string.IsNullOrWhiteSpace(corrected))
+                    {
+                        var revisedDecision = decision with {
+                            Reply = corrected,
+                            Speech = string.Empty,
+                            ReplyReady = false,
+                            CharacterReady = false
+                        };
+                        completionReviewCalls++;
+                        NIRATaskCompletionReview? correctedReview =
+                            await _taskCompletionReview.ReviewAsync(
+                                reviewRequest with {
+                                    DraftReply = NIRAPresentationPolicy.ForObjectiveReview(
+                                        corrected, reviewDisplayBlocks)
+                                }, cancellationToken);
+                        bool accepted = NIRAProductionContinuityPolicy.AcceptsObjectiveReview(
+                            revisedDecision, correctedReview);
+                        NIRADiagnosticTrace.Event("WEB-REVIEW-FOCUSED-RESULT",
+                            $"Run={runId:D} Cycle={cycle} " +
+                            $"Verdict={correctedReview?.Verdict ?? "Unavailable"} " +
+                            $"Accepted={accepted} FurtherWebCalls=0");
+                        if (accepted)
+                        {
+                            decision = revisedDecision;
+                            taskReview = correctedReview;
+                        }
+                    }
+                }
 
                 // Deep Work's completed expert report is not the same thing as
                 // its final presentation. If only the USER-FACING draft was
@@ -6971,7 +7109,7 @@ public sealed class NIRAExecutive
                         capabilityResultsBySignature.Values.All(r => r.Risk == NIRACapabilityRisk.Observe) &&
                         webResearchReviewEvidence.Length > 0
                         ? NIRAWebResearchReplyPolicy.ObservedSourceHandoff(
-                            capabilityResultsBySignature.Values.ToArray())
+                            capabilityResultsBySignature.Values.ToArray(), mindEvent.Content)
                         : null;
                     NIRADiagnosticTrace.Event("OBJECTIVE-REVIEW-RECOVERY",
                         $"Run={runId:D} Cycle={cycle} Stage=Terminal " +
@@ -7021,7 +7159,16 @@ public sealed class NIRAExecutive
                         $"Objection={taskCompletionReviewCount} | " +
                         $"Gap={TrimLog(taskReview.Gap)}");
 
-                    if (taskCompletionReviewCount < 3)
+                    // R74: bounded revision for read-only research. A second
+                    // identical quality objection must not consume another
+                    // full-context research/planning round. State-changing
+                    // work keeps the normal three-review budget.
+                    bool sourceOnlyResearch = capabilityResultsBySignature.Values.Any(r =>
+                        r.CapabilityId == NIRACapabilityIds.WebSearch && r.Succeeded) &&
+                        capabilityResultsBySignature.Values.All(r =>
+                            r.Risk == NIRACapabilityRisk.Observe && !r.ChangedSystemState && !r.OutcomeUncertain);
+                    if (!focusedWebCorrectionAttempted &&
+                        taskCompletionReviewCount < (sourceOnlyResearch ? 2 : 3))
                     {
                         executiveEvidence.AppendLine();
                         executiveEvidence.AppendLine(
@@ -7156,8 +7303,8 @@ public sealed class NIRAExecutive
                     string? researchDigest = taskReview.Verdict == "NeedsWork" &&
                         !preReviewCommitmentSucceeded && !desktopActionNeedsObservation &&
                         NIRAWebResearchReplyPolicy.IsGroundedAnswerShape(decision)
-                            ? NIRAWebResearchReplyPolicy.ObservedSourceDigestFromResults(
-                                capabilityResultsBySignature.Values.ToArray())
+                            ? NIRAWebResearchReplyPolicy.ObservedSourceHandoff(
+                                capabilityResultsBySignature.Values.ToArray(), mindEvent.Content)
                             : null;
                     if (researchDigest is not null)
                     {
@@ -7165,9 +7312,10 @@ public sealed class NIRAExecutive
                         {
                             State = NIRACognitionState.Complete,
                             EmitReply = true, Reply = researchDigest,
-                            Speech = string.Empty, ReplyReady = true,
+                            Speech = string.Empty, ReplyReady = false,
+                            CharacterReady = false,
                             DisplayBlocks = Array.Empty<NIRARichBlock>(),
-                            DecisionSummary = "Observed read-only sources; partially answered with attributed excerpts."
+                            DecisionSummary = "Observed read-only sources; partial source links after exhausted independent review."
                         };
                         completionReviewConfirmedComplete = true;
                         NIRADiagnosticTrace.Event("WEB-RESEARCH-PARTIAL-DELIVERY",
@@ -7575,11 +7723,16 @@ public sealed class NIRAExecutive
                         reply, latestContext?.ConversationContext);
 
                 bool shouldRealize =
-                    NIRACharacterDeliveryPolicy.RequiresOptimizedFidelityPass(
-                        decision, reply, hasOutstandingCognitionWork,
-                        authoritativeCharacterShift: characterDelivery.RequiresRealization,
-                        independentlyReviewed: completionReviewConfirmedComplete ||
-                            directTemporalWakeVerified) || repeatsRecentOpening;
+                    NIRAFinalResponseStage.ShouldRealize(
+                        decision,
+                        reply,
+                        latestContext?.ConversationContext,
+                        hasOutstandingCognitionWork,
+                        characterDelivery.RequiresRealization,
+                        completionReviewConfirmedComplete || directTemporalWakeVerified,
+                        passedThroughInternalWork: cycle > 1 ||
+                            _cognition.GetAdditionalCognitionCallCount(runId) > 0,
+                        verifiedDirectFirstCall: directConversation);
 
                 bool directCharacterDelivery =
                     terminalNaturalReply && !shouldRealize;
@@ -7609,14 +7762,14 @@ public sealed class NIRAExecutive
                             newGoalProposals,
                             newBranchProposals);
 
-                    NIRAResponseRealizationResult realized =
-                        await _responseRealization.RealizeAsync(
-                            new NIRAResponseRealizationRequest
+                    NIRAFinalResponseStageResult realized =
+                        await _finalResponseStage.CompleteAsync(
+                            new NIRAFinalResponseStageRequest
                             {
-                                DraftReply =
+                                GroundedReply =
                                     reply,
 
-                                DraftSpeech =
+                                GroundedSpeech =
                                     decision.Speech,
 
                                 DecisionSummary =
@@ -7645,6 +7798,29 @@ public sealed class NIRAExecutive
                                     latestContext?.SocialCarryoverContext
                                     ?? string.Empty,
 
+                                OriginalUserObjective =
+                                    mindEvent.Content,
+
+                                PendingObjective =
+                                    GetPendingTaskForEvent(mindEvent)?.Objective ?? string.Empty,
+
+                                ReviewEvidence =
+                                    string.Join(Environment.NewLine + Environment.NewLine,
+                                        executiveEvidence.ToString(),
+                                        capabilityEvidence.ToString(),
+                                        dynamicToolEvidence.ToString()),
+
+                                ExternalAppId =
+                                    mindEvent.Metadata.TryGetValue("externalAppId", out string? reviewApp)
+                                        ? reviewApp : null,
+
+                                HasCapabilityResults =
+                                    capabilityResultsBySignature.Count > 0,
+
+                                RequiresPresentationReview =
+                                    mindEvent.Source == NIRAMindEventSource.User &&
+                                    completionReviewConfirmedComplete,
+
                                 Interaction =
                                     interaction,
 
@@ -7652,57 +7828,26 @@ public sealed class NIRAExecutive
                                     appliedSocialAppraisal,
 
                                 RequiredVerbatimFragments =
-                                    requiredReplyFragments
+                                    requiredReplyFragments,
+
+                                DisplayBlocks =
+                                    decision.DisplayBlocks
                             },
                             cancellationToken);
 
-                    // Independent reviewer approved the cognition draft earlier.
-                    // Realization is only expression: if it drops a verified
-                    // sub-result or authorization qualifier, restore that draft.
-                    if (capabilityResultsBySignature.Count > 0 &&
-                        !NIRAPublicCharacterDelivery.PreservesGroundedResult(
-                            groundedDraftBeforeRealization, realized.Reply))
-                    {
-                        Debug.WriteLine($"[NIRA-Fidelity-V3] EVIDENCE_REVERT | Run={runId:D} | " +
-                            "Reason=Concrete tool-result facts changed during expression");
-                        realized = realized with
-                        {
-                            Reply = groundedDraftBeforeRealization,
-                            Speech = groundedSpeechBeforeRealization
-                        };
-                    }
-                    else if (mindEvent.Source == NIRAMindEventSource.User &&
+                    if (mindEvent.Source == NIRAMindEventSource.User &&
                         completionReviewConfirmedComplete &&
+                        capabilityResultsBySignature.Count > 0 &&
                         !string.Equals(realized.Reply,
-                            groundedDraftBeforeRealization, StringComparison.Ordinal) &&
-                        capabilityResultsBySignature.Count > 0)
+                            groundedDraftBeforeRealization, StringComparison.Ordinal))
                     {
                         completionReviewCalls++;
-                        NIRATaskCompletionReview? presentationReview =
-                            await _taskCompletionReview.ReviewAsync(
-                                new NIRATaskCompletionReviewRequest(
-                                    mindEvent.Content,
-                                    NIRAPresentationPolicy.ForObjectiveReview(realized.Reply, decision.DisplayBlocks),
-                                    string.Join(Environment.NewLine + Environment.NewLine,
-                                        executiveEvidence.ToString(),
-                                        capabilityEvidence.ToString(),
-                                        dynamicToolEvidence.ToString()),
-                                    latestContext?.ConversationContext ?? string.Empty,
-                                    GetPendingTaskForEvent(mindEvent)?.Objective ?? string.Empty,
-                                    mindEvent.Metadata.TryGetValue("externalAppId", out string? reviewApp)
-                                        ? reviewApp : null),
-                                cancellationToken);
-                        if (presentationReview?.Verdict != "Complete")
-                        {
-                            Debug.WriteLine(
-                                $"[NIRA-Fidelity-V3] REALIZATION_REVERT | " +
-                                $"Run={runId:D} | Verdict={presentationReview?.Verdict ?? "Unavailable"}");
-                            realized = realized with
-                            {
-                                Reply = groundedDraftBeforeRealization,
-                                Speech = groundedSpeechBeforeRealization
-                            };
-                        }
+                    }
+
+                    if (realized.FallbackToGroundedDraft)
+                    {
+                        Debug.WriteLine(
+                            $"[NIRA-Fidelity-V3] BLOCK03_REVERT | Run={runId:D}");
                     }
 
                     reply =
@@ -7718,7 +7863,12 @@ public sealed class NIRAExecutive
                                 realized.Reply,
 
                             Speech =
-                                realized.Speech
+                                realized.Speech,
+
+                            // Block 03 owns new public presentation; preserve
+                            // existing validated blocks if already provided.
+                            DisplayBlocks = decision.DisplayBlocks.Count > 0
+                                ? decision.DisplayBlocks : realized.DisplayBlocks
                         };
 
                     expression =
@@ -7743,6 +7893,16 @@ public sealed class NIRAExecutive
                 blocks = NIRAVerifiedFilePresentation.Attach(
                     blocks, capabilityRequestsBySignature,
                     capabilityResultsBySignature, reply);
+                // Offer an already supported native player for references the
+                // user actually supplied, even when cognition chose an unhelpful
+                // browser path. This only presents an HTTPS watch reference;
+                // it NEVER certifies playback, research or listening.
+                if (mindEvent.Source == NIRAMindEventSource.User &&
+                    decision.ReplyPresentation == NIRAReplyPresentationMode.Natural &&
+                    decision.State is (NIRACognitionState.Complete or
+                        NIRACognitionState.Blocked or NIRACognitionState.NeedUser))
+                    blocks = NIRANativeVideoPresentationPolicy.AttachUserSharedVideos(
+                        blocks, mindEvent.Content);
                 (reply, spoken, blocks) = NIRAPresentationPolicy.RecoverCode(reply, spoken, blocks);
                 spoken = NIRAPresentationPolicy.EnsureInformativeSpeech(spoken, blocks);
                 // Trusted terminal delivery check: the LLM can lose track of

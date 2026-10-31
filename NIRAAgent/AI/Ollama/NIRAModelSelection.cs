@@ -15,14 +15,16 @@ public enum NIRAReasoningRole
 // resources, not separate agents or character/memory owners.
 public static class NIRAModelSelection
 {
-    public const string PrimaryDefault = "gemma4:31b-cloud";
+    public const string PrimaryDefault = "gpt-oss:120b-cloud";
+    public const string VisionDefault = "gemma4:31b-cloud";
     public const string DeepDefault = "nemotron-3-ultra:cloud";
 
     // Used only for identifying source/runtime alignment in diagnostics and tests.
-    public const string RoutingRevision = "NIRA-DEEP-WORK-V2-20261026";
+    public const string RoutingRevision = "NIRA-OSS120B-VISION-SILENT-RECOVERY-R68-20261029";
 
     public static string Primary => Resolve("NIRA_OLLAMA_PRIMARY_MODEL", PrimaryDefault);
     public static string Deep => Resolve("NIRA_OLLAMA_DEEP_MODEL", DeepDefault);
+    public static string Vision => Resolve("NIRA_OLLAMA_VISION_MODEL", VisionDefault);
 
     // Stable product/runtime role identities. Changing the underlying provider
     // or version never renames NIRA or changes her character and shared Executive.
@@ -58,7 +60,7 @@ public static class NIRAModelSelection
 
     // A request originates from the CURRENT main cognition JSON, never from
     // matching user phrases, web content, or a second classification model.
-    // The entire provisional Gemma decision is discarded if delegation occurs;
+    // The entire provisional primary decision is discarded if delegation occurs;
     // NIRA's Executive only receives the deep model's validated decision.
     public static bool TryReadDelegation(string response, out string focus)
     {

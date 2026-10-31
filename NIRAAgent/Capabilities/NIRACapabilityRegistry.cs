@@ -34,6 +34,8 @@ public sealed class NIRACapabilityRegistry
 
             NIRACapabilityDescriptor descriptor =
                 handler.Descriptor.Normalize();
+            // Validate the same registered contract used by cognition and execution.
+            NIRACapabilityContractCodec.ValidateDescriptor(descriptor);
 
 
             if (!map.TryAdd(

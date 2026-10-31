@@ -31,7 +31,7 @@ public sealed class NIRAVisualUnderstandingService
     public const string VisionModelEnvironmentVariable =
         "NIRA_OLLAMA_VISION_MODEL";
 
-    private static string DefaultVisionModel => NIRAModelSelection.Primary;
+    private static string DefaultVisionModel => NIRAModelSelection.VisionDefault;
 
     private const int MaximumRecentObservations = 32;
     private const int MaximumQuestionCharacters = 1200;
@@ -68,20 +68,9 @@ public sealed class NIRAVisualUnderstandingService
     }
 
 
-    public string VisionModel
-    {
-        get
-        {
-            string configured =
-                Environment.GetEnvironmentVariable(
-                    VisionModelEnvironmentVariable)?.Trim()
-                ?? string.Empty;
-
-            return string.IsNullOrWhiteSpace(configured)
-                ? DefaultVisionModel
-                : configured;
-        }
-    }
+    // The same vision-only resource serves desktop capture and chat attachments.
+    // It never owns NIRA's action/permission decisions.
+    public string VisionModel => NIRAModelSelection.Vision;
 
 
     public IReadOnlyList<NIRAVisualObservation> RecentObservations

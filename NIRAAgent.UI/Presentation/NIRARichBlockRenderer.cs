@@ -1024,13 +1024,19 @@ public static class NIRARichBlockRenderer
         return root;
     }
 
+    // Native WPF table: constrain the grid to the scroll viewport BEFORE star
+    // columns measure. An unconstrained Grid inside a horizontal ScrollViewer
+    // otherwise sizes to long cell text, defeating TextWrapping and clipping
+    // the right-hand columns. Only exceptionally narrow/wide tables scroll.
     private static UIElement Table(NIRARichBlock block)
     {
         var root = new StackPanel();
         var toolbar = new DockPanel { LastChildFill = true };
         var copy = ActionButton("Copy TSV", () =>
         {
-            static string EscapeCell(string value) => (value ?? "").Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ');
+            static string EscapeCell(string value) =>
+                NIRATableCellLayout.ScreenCellText(value)
+                    .Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ');
             var lines = new List<string> { string.Join("\t", block.Columns.Select(EscapeCell)) };
             lines.AddRange(block.Rows.Select(row => string.Join("\t", row.Select(EscapeCell))));
             Clipboard.SetText(string.Join(Environment.NewLine, lines));
@@ -1039,40 +1045,81 @@ public static class NIRARichBlockRenderer
         toolbar.Children.Add(copy);
         if (block.Title.Length > 0) toolbar.Children.Add(Text(block.Title, 15, true));
         root.Children.Add(toolbar);
-        var grid = new Grid { SnapsToDevicePixels = true,
-            HorizontalAlignment = HorizontalAlignment.Stretch };
-        foreach (var _ in block.Columns)
+
+        var grid = new Grid
+        {
+            SnapsToDevicePixels = true,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            MinWidth = 0,
+            Width = NIRATableCellLayout.MinimumGridWidth(block.Columns.Count)
+        };
+        var weights = NIRATableCellLayout.ColumnWeights(block.Columns, block.Rows);
+        for (int column = 0; column < block.Columns.Count; column++)
             grid.ColumnDefinitions.Add(new ColumnDefinition
-                { Width = new GridLength(1, GridUnitType.Star), MinWidth = 105 });
+            {
+                Width = new GridLength(weights[column], GridUnitType.Star),
+                MinWidth = 0
+            });
         for (int i = 0; i <= block.Rows.Count; i++)
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
         for (int column = 0; column < block.Columns.Count; column++)
             Cell(block.Columns[column], 0, column, true);
         for (int row = 0; row < block.Rows.Count; row++)
             for (int column = 0; column < block.Columns.Count; column++)
                 Cell(block.Rows[row][column], row + 1, column, false);
+
         void Cell(string value, int row, int column, bool header)
         {
-            var band = new Border { Padding = new Thickness(14, 13, 13, 13),
+            var band = new Border
+            {
+                Padding = new Thickness(10, 11, 10, 11),
                 Background = header ? Tint(Palette[0], 32) :
                     row % 2 == 0 ? Tint(Palette[0], 10) : Tint(Palette[0], 5),
                 BorderBrush = Tint(Palette[0], 23),
-                BorderThickness = new Thickness(0, 0, column == 0 ? 1 : 0, 1) };
-            var valueText = Text(value, header ? 12.7 : 12.6, header,
+                BorderThickness = new Thickness(0, 0, column == 0 ? 1 : 0, 1),
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            var valueText = Text(NIRATableCellLayout.ScreenCellText(value),
+                header ? 12.7 : 12.6, header || column == 0,
                 header ? "NIRACyanBrush" : "NIRATextBrush");
+            valueText.TextWrapping = TextWrapping.Wrap;
+            valueText.TextTrimming = TextTrimming.None;
             band.Child = valueText;
             Grid.SetRow(band, row);
             Grid.SetColumn(band, column);
             grid.Children.Add(band);
         }
-        root.Children.Add(ChainVerticalWheel(new ScrollViewer
+
+        var scroller = new ScrollViewer
         {
             Content = grid,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             MaxHeight = 400,
+            MinWidth = 0,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
             Margin = new Thickness(0, 9, 0, 0)
-        }));
+        };
+        void FitGridToViewport()
+        {
+            double available = scroller.ViewportWidth;
+            if (!double.IsFinite(available) || available < 1)
+                available = scroller.ActualWidth -
+                    (scroller.ComputedVerticalScrollBarVisibility == Visibility.Visible
+                        ? SystemParameters.VerticalScrollBarWidth : 0);
+            if (!double.IsFinite(available) || available < 1) return;
+            double desired = Math.Max(NIRATableCellLayout.MinimumGridWidth(block.Columns.Count),
+                Math.Floor(available - 1));
+            if (Math.Abs(grid.Width - desired) > 0.5) grid.Width = desired;
+        }
+        scroller.Loaded += (_, _) => FitGridToViewport();
+        scroller.SizeChanged += (_, _) => FitGridToViewport();
+        scroller.ScrollChanged += (_, e) =>
+        {
+            if (Math.Abs(e.ViewportWidthChange) > 0.5) FitGridToViewport();
+        };
+        root.Children.Add(ChainVerticalWheel(scroller));
         return root;
     }
 

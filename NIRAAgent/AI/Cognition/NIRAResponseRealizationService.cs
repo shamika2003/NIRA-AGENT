@@ -1,3 +1,4 @@
+using NIRAAgent.Presentation;
 /*
  * filename: NIRAResponseRealizationService.cs
  */
@@ -21,10 +22,11 @@ namespace NIRAAgent.AI.Cognition;
 // Executive cognition and visible expression are different jobs.
 //
 // Main cognition decides what is true, what NIRA should do, and the
-// semantic content of a possible reply. For each final Natural reply, this
-// service performs one bounded presentation-only pass AFTER the work and
-// authoritative character updates are complete, even when the social state
-// is stable. PreserveExact/nonterminal outputs are not rewritten.
+// semantic content of a possible reply. When the public-response routing
+// policy needs a final character presentation, this service performs a bounded
+// pass using the authoritative post-commit state. An already verified, ready
+// first-call public response may skip this pass; PreserveExact and nonterminal
+// outputs are not rewritten.
 //
 // It cannot request tools, create goals, mutate memory, or change any
 // authoritative state. If realization fails validation, the original
@@ -306,6 +308,14 @@ public sealed class NIRAResponseRealizationService
                     };
             }
 
+            // Only Block 03's final presentation route can attach new blocks.
+            // A new UI proposal cannot introduce concrete facts absent from the
+            // Executive's verified draft; reject ONLY that proposal, not speech.
+            if (!request.AllowPresentationComposition ||
+                !NIRAResponsePresentationModule.IsGroundedNewScreen(
+                    draftReply, realized.DisplayBlocks))
+                realized = realized with { DisplayBlocks = Array.Empty<NIRARichBlock>() };
+
             Debug.WriteLine(
                 $"[ResponseRealization] REALIZED | Time={stopwatch.ElapsedMilliseconds} ms | " +
                 $"DraftReplyChars={draftReply.Length} | FinalReplyChars={realized.Reply.Length} | " +
@@ -390,6 +400,7 @@ public sealed class NIRAResponseRealizationService
 
     private static string BuildSystemPrompt(string personalityPrompt, string realizationPrompt)
     {
+        personalityPrompt = NIRACharacterPromptModule.ForFinalDelivery(personalityPrompt);
         return $$"""
             You are the final expression stage inside NIRA's cognition runtime.
 
@@ -487,8 +498,9 @@ public sealed class NIRAResponseRealizationService
             headings, paragraph breaks, numbered/bulleted steps, useful emphasis,
             inline code and working website links while making NIRA's phrasing
             natural. Do not collapse the screen into a plain dense paragraph.
-            Typed data cards, tables and genuine image artifacts are owned by
-            the runtime and must never be invented by this expression stage.
+            The existing WPF renderer owns visual rendering and media artifacts;
+            this stage may propose declarative, grounded typed blocks only when
+            explicitly enabled by the Executive. Existing blocks are preserved.
             Casual social chat stays natural text without decorative structure.
 
             The draft is authoritative for concrete/task semantic content. Preserve
@@ -503,15 +515,20 @@ public sealed class NIRAResponseRealizationService
             different social stance. This is not permission to change facts, invent blame,
             add commitments, or intensify beyond the supplied state/appraisal.
 
-            Return ONLY one JSON object with exactly these user-facing channels:
-            {"reply":"final screen wording","speech":"final spoken wording or empty"}
+            Return one JSON object for final public delivery, with channels:
+            {"reply":"final screen wording","speech":"final spoken wording or empty", "displayBlocks":[]}
+            displayBlocks is optional. If the input already has authoritative
+            typed blocks, do not recreate or revise them. If the Executive
+            authorizes new presentation blocks, select them from grounded draft
+            facts alone. Rich UI is YOUR output decision, never Block 02's.
+            The renderer validates typed data. No invented facts or links.
 
             "reply" is required. If a distinct spoken draft is supplied, realize
             "speech" separately from the SAME established facts and preserve its
             useful spoken explanation. If no spoken draft is supplied, return
             "speech":"" so the runtime can reuse the realized reply. Do not add
             analysis, labels, Markdown fences, planning fields, tool fields or
-            internal-state commentary outside those two strings.
+            internal-state commentary outside those output channels.
 
             ==================================================
             NIRA IDENTITY / PERSONALITY
@@ -861,6 +878,12 @@ public sealed class NIRAResponseRealizationService
             same greeting, offer, question, or closing with different wording. Keep NIRA's
             conversational depth adaptive rather than defaulting to one-line minimalism.
 
+            FINAL SCREEN STRUCTURE BOUNDARY:
+            {(request.AllowPresentationComposition
+                ? "You MAY provide optional displayBlocks using existing registered renderer types. " +
+                  "Use only facts already present in the semantic draft. Avoid ornamental blocks."
+                : "Do not create new displayBlocks; existing layout stays with the Executive.")}
+
             IMMEDIATE SPEECH-ACT CHECK (DO THIS SILENTLY BEFORE WRITING):
             Interpret the CURRENT EVENT itself, not just numeric appraisal scores.
             Is the user socially teasing, inviting a small laugh, speaking seriously,
@@ -873,7 +896,7 @@ public sealed class NIRAResponseRealizationService
             user's observation; without detail, make a meaningful conversational
             response rather than pretending to have seen the code or result.
             Preserve every factual claim and every meaningful uncertainty.
-            Return only the required reply/speech JSON object.
+            Return only the documented final response JSON object.
             """;
     }
 
@@ -1116,14 +1139,13 @@ public sealed class NIRAResponseRealizationService
                 return false;
             }
 
+            IReadOnlyList<NIRARichBlock> blocks = NIRARichBlockJsonReader.Read(root);
             result =
                 new NIRAResponseRealizationResult
                 {
-                    Reply =
-                        reply,
-
-                    Speech =
-                        speech
+                    Reply = reply,
+                    Speech = speech,
+                    DisplayBlocks = blocks
                 };
 
             reason =
@@ -1313,6 +1335,9 @@ public sealed record NIRAResponseRealizationResult
 
     public string Speech { get; init; } =
         string.Empty;
+
+    public IReadOnlyList<NIRARichBlock> DisplayBlocks { get; init; } =
+        Array.Empty<NIRARichBlock>();
 }
 
 
@@ -1323,6 +1348,8 @@ public sealed record NIRAResponseRealizationRequest
 
     public string DraftSpeech { get; init; } =
         string.Empty;
+
+    public bool AllowPresentationComposition { get; init; }
 
     public string DecisionSummary { get; init; } =
         string.Empty;
