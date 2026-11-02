@@ -186,6 +186,17 @@ internal static class NIRAWorkContinuation
         request for an actual comparison or computed difference. If sources
         do not establish a claim, preserve the precise gap rather than
         repeatedly rephrasing the same unsupported answer.
+        RESEARCH SUFFICIENCY: Before requesting another web.search, compare the
+        CURRENT source receipts with the actual open factual requirements. If
+        they already contain sufficient attributable evidence for those facts,
+        complete a full factual synthesis NOW. Do not demand another near-
+        duplicate search, another source simply for variety, or browser
+        navigation just to reread adequate source extracts. Conversely, when
+        essential evidence is genuinely missing, search specifically for that
+        missing fact. Do not confuse publication of a source with verification
+        of claims beyond the extract. A verified image is an observed media
+        asset: keep its identity and metadata for Block 03, which owns inline
+        placement; do not demand image Markdown or layout in this stage.
         State=Complete only when the task's material requirements are satisfied
         by supplied facts, valid reasoning and actual receipts. For completed
         work return emitReply=true, reply=<full factual findings and verified

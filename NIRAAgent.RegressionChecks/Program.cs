@@ -2503,6 +2503,30 @@ Check("PHASE2 Tavily diversity avoids all-CDN candidates when matching other hos
         throw new Exception("Candidate ranking used only one CDN or selected concept artwork");
 });
 
+Check("PHASE2 distinguish subject photographs from images captured by the subject", () =>
+{
+    using var client = new HttpClient(new NIRAWebFakeTransport(req =>
+        throw new Exception("Offline metadata ranking must not contact the network")));
+    using var service = new NIRATavilyImageDiscoveryService(client,
+        key => key == "NIRA_TAVILY_API_KEY" ? "offline-only" : null);
+    using var document = JsonDocument.Parse("""
+        {"images":[
+          {"url":"https://www.observatory.edu/museum.jpg","description":"Lumen telescope museum photograph"},
+          {"url":"https://www.observatory.edu/archive.jpg","description":"Lumen telescope photographs from an exhibition"},
+          {"url":"https://www.observatory.edu/galaxy.jpg","description":"Lumen telescope photographs distant galaxies"},
+          {"url":"https://www.observatory.edu/nebula.jpg","description":"Lumen telescope captures a distant nebula"}
+        ]}
+        """);
+    var selected = service.AcceptTavilyResponse(document.RootElement,
+        "Lumen telescope", 4, photographsOnly: true);
+    if (selected.Count != 2 ||
+        !selected.Any(x => x.MediaUrl.EndsWith("/museum.jpg", StringComparison.Ordinal)) ||
+        !selected.Any(x => x.MediaUrl.EndsWith("/archive.jpg", StringComparison.Ordinal)) ||
+        selected.Any(x => x.MediaUrl.EndsWith("/galaxy.jpg", StringComparison.Ordinal) ||
+                          x.MediaUrl.EndsWith("/nebula.jpg", StringComparison.Ordinal)))
+        throw new Exception("An observed photograph was dropped or imagery by the instrument was accepted");
+});
+
 // P2.4: metadata describing the search topic must not override an actual
 // photograph title identifying a different subject. This was observed in
 // production when an anglerfish search displayed a clownfish photograph.

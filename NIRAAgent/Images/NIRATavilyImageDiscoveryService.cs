@@ -258,6 +258,39 @@ public sealed class NIRATavilyImageDiscoveryService : INIRAImageDiscoveryService
                     System.Text.RegularExpressions.RegexOptions.IgnoreCase |
                     System.Text.RegularExpressions.RegexOptions.CultureInvariant);
         }
+        // A photograph OF an instrument is not the same as a photograph
+        // TAKEN BY that instrument. Search metadata often labels the latter
+        // "instrument captures nebula", which matches query tokens but shows
+        // the subject only as photographer. This syntax check is generic:
+        // no named instrument, website or topic is hardcoded.
+        static bool IsImageMadeBySubject(NIRACommonsImageCandidate candidate, string[] terms)
+        {
+            if (terms.Length < 2) return false;
+            string lead = candidate.Title.Split(new[] { '.', '!', '?', ',', ';' }, 2)[0];
+            var action = System.Text.RegularExpressions.Regex.Match(lead,
+                @"\b(?:captures|reveals|observes|photographs|images|shows)\b",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase |
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+            if (!action.Success) return false;
+            // "Photographs of", "images from", and museum/archive captions
+            // identify image collections or photographs, not a subject acting
+            // as the photographer. Require a genuine subject-verb-object lead.
+            string afterVerb = lead[(action.Index + action.Length)..].TrimStart();
+            if (afterVerb.Length == 0 ||
+                System.Text.RegularExpressions.Regex.IsMatch(afterVerb,
+                    @"^(?:of|from|by|at|in|for|taken|captured|depicting|showing|featuring)\b",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase |
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+                return false;
+            string beforeVerb = lead[..action.Index];
+            return terms.Take(2).All(term =>
+                System.Text.RegularExpressions.Regex.IsMatch(beforeVerb,
+                    @"(?<![\p{L}\p{N}])" +
+                    System.Text.RegularExpressions.Regex.Escape(term) +
+                    @"(?![\p{L}\p{N}])",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase |
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant));
+        }
         // Phase 2 ranking: relevance is still mandatory, but do not let six
         // near-identical thumbnails from one blocked CDN crowd out otherwise
         // relevant original photographs hosted elsewhere. A photo's verified
@@ -284,6 +317,7 @@ public sealed class NIRATavilyImageDiscoveryService : INIRAImageDiscoveryService
             .Select(g => g.First())
             .Where(x => tokens.Length == 0 || MatchCount(x) > 0)
             .Where(x => SubjectInTitleOrFilename(x, tokens))
+            .Where(x => !photographsOnly || !IsImageMadeBySubject(x, tokens))
             .Where(x => !photographsOnly || !IsConceptArtwork(x.Title + " " + x.Description))
             .Where(x => !photographsOnly || !IsUnrequestedMiniatureOrRetail(x,
                 requestedVisualSubject))

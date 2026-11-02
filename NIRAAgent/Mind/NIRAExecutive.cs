@@ -7111,9 +7111,9 @@ public sealed class NIRAExecutive
                         decision.DynamicToolInvocations.Count == 0 &&
                         capabilityResultsBySignature.Values.All(r => r.Risk == NIRACapabilityRisk.Observe) &&
                         webResearchReviewEvidence.Length > 0
-                        ? NIRAWebResearchReplyPolicy.ObservedSourceDigestFromResults(
+                        ? NIRAWebResearchReplyPolicy.ObservedSourceHandoff(
                             capabilityResultsBySignature.Values.ToArray(), mindEvent.Content) ??
-                          NIRAWebResearchReplyPolicy.ObservedSourceHandoff(
+                          NIRAWebResearchReplyPolicy.ObservedSourceDigestFromResults(
                             capabilityResultsBySignature.Values.ToArray(), mindEvent.Content)
                         : null;
                     NIRADiagnosticTrace.Event("OBJECTIVE-REVIEW-RECOVERY",
@@ -7308,9 +7308,9 @@ public sealed class NIRAExecutive
                     string? researchDigest = taskReview.Verdict == "NeedsWork" &&
                         !preReviewCommitmentSucceeded && !desktopActionNeedsObservation &&
                         NIRAWebResearchReplyPolicy.IsGroundedAnswerShape(decision)
-                            ? NIRAWebResearchReplyPolicy.ObservedSourceDigestFromResults(
+                            ? NIRAWebResearchReplyPolicy.ObservedSourceHandoff(
                                 capabilityResultsBySignature.Values.ToArray(), mindEvent.Content) ??
-                              NIRAWebResearchReplyPolicy.ObservedSourceHandoff(
+                              NIRAWebResearchReplyPolicy.ObservedSourceDigestFromResults(
                                 capabilityResultsBySignature.Values.ToArray(), mindEvent.Content)
                             : null;
                     if (researchDigest is not null)

@@ -711,11 +711,17 @@ public sealed class NIRATaskCompletionReviewService
                 "knowledge, transparent arithmetic and explicitly illustrative " +
                 "assumptions do not need to appear word-for-word in a web page. " +
                 "Do not claim a seller's claim is an independent measurement. " +
-                "The runtime presents genuine verified images separately " +
-                "from the factual draft: if VERIFIED IMAGE CATALOG lists images, " +
-                "do not reject the answer merely because the draft text has " +
-                "no inline image Markdown. Do not invent images when the catalog " +
-                "is empty. This catalog does not prove scientific claims. " +
+                "This reviewer judges FACTS and EVIDENCE, never UI markup. " +
+                "Block 03 alone chooses image position and native blocks AFTER " +
+                "this review. A factual draft must NOT embed image Markdown, " +
+                "cache paths, or image URLs to pass review. The verified-image " +
+                "catalog is a read-only receipt for the separate renderer. " +
+                "If it contains a genuine image matching the user's subject, " +
+                "treat that visual requirement as available for Block 03. " +
+                "Reject an image-specific factual requirement only when the " +
+                "catalog is empty or its observed subject is the WRONG image; " +
+                "never reject only because no image appears in the draft prose. " +
+                "Do not invent images or infer scientific facts from a photo. " +
                 "A genuinely useful answer may qualify weak source coverage; " +
                 "do not demand unrequested details, photographs, or more web " +
                 "searches. When something essential is missing, identify the " +
@@ -831,6 +837,21 @@ public sealed class NIRATaskCompletionReviewService
             string approved = root.TryGetProperty("approvedReply", out JsonElement fixedAnswer) &&
                 fixedAnswer.ValueKind == JsonValueKind.String
                 ? fixedAnswer.GetString()?.Trim() ?? string.Empty : string.Empty;
+            // Optional reviewer corrections can accidentally introduce an
+            // unrelated URL even when the factual correction itself is useful.
+            // Strip ONLY unobserved links, then apply the same full evidence
+            // gate. Never certify a corrected claim by sanitizing its links.
+            if (request.SourceOnlyResearchReview && approved.Length > 0)
+            {
+                string cleaned = NIRAWebResearchGroundingGate.RemoveUnobservedCitationLinks(
+                    request.WebResearchSourceEvidence, approved);
+                if (!string.Equals(approved, cleaned, StringComparison.Ordinal))
+                    NIRAAgent.Diagnostics.NIRADiagnosticTrace.Event(
+                        "WEB-REVIEW-CITATION-SANITIZE",
+                        $"OriginalChars={approved.Length} CleanChars={cleaned.Length} " +
+                        "Stage=BeforeIndependentApproval");
+                approved = cleaned;
+            }
             bool correctedAnswerAllowed =
                 CanAcceptApprovedWebReply(request, verdict, approved);
             // A proposed corrected answer which fails mechanical source/wire
