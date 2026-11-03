@@ -139,10 +139,11 @@ public static class NIRAWebResearchReplyPolicy
                     !root.TryGetProperty("sourceCount", out var count) ||
                     !count.TryGetInt32(out int expected) || expected != sources.GetArrayLength() ||
                     expected is < 1 or > 8) continue;
+                if (!NIRAResearchPresentationPolicy.IsLinkDiscoveryRequest(userObjective))
+                    return "I found published sources, but my independent answer check didn't complete, so I won't present that as verified yet.";
                 StringBuilder reply = new(
-                    "I found published sources, but my independent answer check didn't complete. " +
-                    "I won't present unreviewed specifications as verified. " +
-                    "Here are the source pages I located:\n");
+                    "I found published sources, but my independent answer check didn't complete, so treat these as starting points rather than verified conclusions:
+");
                 int added = 0;
                 foreach (var source in sources.EnumerateArray())
                 {

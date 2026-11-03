@@ -175,8 +175,14 @@ public sealed class NIRACapabilityService
             NIRADiagnosticTrace.Event("TOOL-READ-BATCH", $"Mode=Concurrent Count={requests.Count}");
             // Await EVERY started task, including when cancellation occurs. This
             // leaves no unobserved background dispatch and preserves input order.
-            completed = await Task.WhenAll(requests.Select(request =>
-                ExecuteOneAsync(request, cancellationToken)));
+            using var concurrentReadSlots = new SemaphoreSlim(3, 3);
+            async Task<NIRACapabilityResult> ExecuteBoundedReadAsync(NIRACapabilityRequest request)
+            {
+                await concurrentReadSlots.WaitAsync(cancellationToken);
+                try { return await ExecuteOneAsync(request, cancellationToken); }
+                finally { concurrentReadSlots.Release(); }
+            }
+            completed = await Task.WhenAll(requests.Select(ExecuteBoundedReadAsync));
         }
         foreach (NIRACapabilityRequest request in requests)
         {
@@ -365,7 +371,7 @@ public sealed class NIRACapabilityService
     // because they may share a mutable user/browser session even when read-only.
     internal bool CanParallelizeIndependentResourceReads(IReadOnlyList<NIRACapabilityRequest> requests)
     {
-        if (requests is null || requests.Count < 2 || requests.Count > 3)
+        if (requests is null || requests.Count < 2 || requests.Count > 8)
             return false;
         var identities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (NIRACapabilityRequest request in requests)
@@ -377,7 +383,8 @@ public sealed class NIRACapabilityService
             // but different validated arguments. They are separate read-only
             // provider operations and can safely share the concurrent batch.
             // Other capability types retain their previous one-per-kind bound.
-            string identity = request.CapabilityId == NIRACapabilityIds.WebSearch
+            string identity = request.CapabilityId is
+                NIRACapabilityIds.WebSearch or NIRACapabilityIds.ImageSearch
                 ? request.BuildSignature()
                 : request.CapabilityId;
             if (!identities.Add(identity) ||

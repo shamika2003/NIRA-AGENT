@@ -89,7 +89,11 @@ internal static class NIRACapabilityPromptDirectory
         // smallest eligible contract, then spend the remaining finite prompt
         // budget on other inexpensive contracts. This is descriptor-driven:
         // no special tool IDs, topic words, or user-message phrases are used.
-        const int directBudget = 27000;
+        // On initial entry give the most relevant exact direct signatures,
+        // while leaving room for social/character and conversational context.
+        // All registered IDs remain discoverable, and continuation rounds
+        // retain the broader schema budget. No topic/keyword gating occurs.
+        int directBudget = c.Cycle <= 1 ? 14000 : 27000;
         var candidates = tools.Select(tool =>
         {
             bool requiredStructured = tool.Parameters.Any(p =>

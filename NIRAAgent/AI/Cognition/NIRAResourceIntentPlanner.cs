@@ -81,7 +81,7 @@ public static class NIRAResourceIntentPlanner
                     Arguments = JsonSerializer.SerializeToElement(new {
                         query = subject, limit = 8, retrieveBest = true,
                         retrieveCount = visualSubjects.Length > 1 ? 1 :
-                            Math.Clamp(decision.ResourceIntent.ImageCount, 1, 3),
+                            Math.Clamp(decision.ResourceIntent.ImageCount, 1, 5),
                         photographsOnly = decision.ResourceIntent.PhotographsOnly
                     }),
                     Reason = "Model-selected subject-specific verified image; independent from web article media."

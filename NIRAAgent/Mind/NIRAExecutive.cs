@@ -1384,15 +1384,17 @@ public sealed class NIRAExecutive
             // fulfillment. Preserve its first chosen quantity for implicit media.
             // In "one image of each" requests, count distinct model-chosen
             // subject searches rather than interpreting "one" as a global cap.
-            // This preserves image autonomy, the existing three-image ceiling,
+            // This preserves image autonomy, the per-search retrieval contract,
             // real-pixel deduplication and the downstream permission boundary.
             if (cycle == 1 && imageDeliveryTarget == 0)
                 imageDeliveryTarget = Math.Clamp(decision.CapabilityRequests
                     .Where(r => r.CapabilityId == NIRACapabilityIds.ImageSearch)
-                    .Sum(NIRAImageTurnDeliveryPolicy.SearchRetrieveCount), 0, 3);
+                    .Sum(NIRAImageTurnDeliveryPolicy.SearchRetrieveCount), 0,
+                    NIRAImageTurnDeliveryPolicy.MaximumImagesPerTurn);
             if (cycle == 1 && imageDeliveryTarget == 0 &&
                 decision.ResourceIntent is { ImageQuery.Length: > 0 } intent)
-                imageDeliveryTarget = Math.Clamp(intent.ImageCount, 1, 3);
+                imageDeliveryTarget = Math.Clamp(intent.ImageCount, 1,
+                    NIRAImageTurnDeliveryPolicy.MaximumImagesPerTurn);
 
             // A fulfilled, image-only continuation is not permission to chase
             // more candidate IDs. Terminalize using ACTUAL displayed pixels;
@@ -3870,7 +3872,18 @@ public sealed class NIRAExecutive
             List<(string CapabilityId, string Error)> capabilitySchemaRejections =
                 new();
 
-            foreach (NIRACapabilityRequest proposed in decision.CapabilityRequests)
+            // Batch independent image-search requests from the FIRST cognition
+            // plan before schema validation, so retrieveCount=12 is partitioned
+            // into three authorized 5/5/2 reads rather than rejected or spun
+            // through expensive follow-up model rounds. No new search intent is
+            // inferred; selected queries come only from the model's plan.
+            IReadOnlyList<NIRACapabilityRequest> proposedCapabilities =
+                cycle == 1 && mindEvent.Source == NIRAMindEventSource.User
+                    ? NIRAImageTurnDeliveryPolicy.PrepareInitialImageBatch(
+                        decision.CapabilityRequests, explicitImageCount,
+                        NIRAImageTurnDeliveryPolicy.ExplicitPhotographRequest(mindEvent.Content))
+                    : decision.CapabilityRequests;
+            foreach (NIRACapabilityRequest proposed in proposedCapabilities)
             {
                 // The model can select an illustration and write its caption,
                 // but only a prior trusted image receipt can supply a local path.
@@ -4029,17 +4042,8 @@ public sealed class NIRAExecutive
                 }
             }
 
-            // Retarget a first-call model-selected image search to an explicit
-            // requested quantity (e.g. "two photographs"). This fixes quantity
-            // without changing the model's query, provider or permission route.
-            if (cycle == 1 && mindEvent.Source == NIRAMindEventSource.User)
-            {
-                bool photographsOnly = NIRAImageTurnDeliveryPolicy.ExplicitPhotographRequest(mindEvent.Content);
-                if (explicitImageCount.HasValue || photographsOnly)
-                    schemaValidCapabilities = schemaValidCapabilities.Select(request =>
-                        NIRAImageTurnDeliveryPolicy.ApplyExplicitCount(
-                            request, explicitImageCount, photographsOnly)).ToList();
-            }
+            // The first-cycle batch was normalized before exact schema preflight.
+            // Never overwrite its independent per-request counts afterwards.
             if (cycle == 1)
                 NIRADiagnosticTrace.Event("IMAGE-TURN-BUDGET",
                     $"Run={runId:D} Target={imageDeliveryTarget} " +
@@ -5402,6 +5406,65 @@ public sealed class NIRAExecutive
                 dynamicToolCapabilityResults.Count >
                 0;
 
+            // A requested image-only task can be certified directly from the
+            // authorized retrieval receipts. Do not spend 6 continuation calls
+            // plus 3 reviewers debating how many images were really fetched.
+            // This never activates for web research, saved artifacts, branch
+            // work, uncertain/failed reads or a mixed user request.
+            bool verifiedImageOnlyTurn =
+                mindEvent.Source == NIRAMindEventSource.User &&
+                NIRAImageTurnDeliveryPolicy.IsSimpleImageOnlyRequest(mindEvent.Content) &&
+                imageDeliveryTarget > 0 && !artifactFirstRequest &&
+                !continueForRuntimeCorrection &&
+                capabilityResults.Count > 0 && dynamicToolCapabilityResults.Count == 0 &&
+                capabilityResults.All(result =>
+                    result.CapabilityId == NIRACapabilityIds.ImageSearch &&
+                    result.Succeeded && result.Risk == NIRACapabilityRisk.Observe &&
+                    !result.OutcomeUncertain && !result.ChangedSystemState) &&
+                decision.CapabilityRequests.All(request =>
+                    request.CapabilityId == NIRACapabilityIds.ImageSearch) &&
+                decision.ContextRequests.Count == 0 &&
+                decision.MemorySearches.Count == 0 &&
+                decision.ConversationSearches.Count == 0 &&
+                decision.GoalProposals.Count == 0 &&
+                decision.BranchProposals.Count == 0 &&
+                decision.BranchWorkProposals.Count == 0 &&
+                decision.DynamicToolInvocations.Count == 0 &&
+                decision.DynamicToolProposals.Count == 0 &&
+                decision.ControlRequests.Count == 0 &&
+                !decision.ReviewCommitment &&
+                !preReviewCommitmentSucceeded &&
+                capabilityResultsBySignature.Values.All(result =>
+                    result.CapabilityId == NIRACapabilityIds.ImageSearch &&
+                    result.Succeeded && !result.OutcomeUncertain);
+            if (verifiedImageOnlyTurn)
+            {
+                bool fulfilled = verifiedImageRetrievalCount >= imageDeliveryTarget;
+                string observedReply = fulfilled
+                    ? $"I found {verifiedImageRetrievalCount} distinct verified photographs."
+                    : verifiedImageRetrievalCount == 0
+                    ? "I couldn't verify any usable photographs for this request."
+                    : $"I found {verifiedImageRetrievalCount} distinct verified photographs " +
+                      $"out of the {imageDeliveryTarget} you requested. " +
+                      "The remaining images were not verified, so I won't pretend they were.";
+                decision = decision with {
+                    State = fulfilled ? NIRACognitionState.Complete : NIRACognitionState.Blocked,
+                    EmitReply = true, Reply = observedReply, Speech = string.Empty,
+                    ReplyReady = false, CharacterReady = false,
+                    CapabilityRequests = Array.Empty<NIRACapabilityRequest>(),
+                    DecisionSummary = "Verified image-only retrieval, no further model work required."
+                };
+                // Only the EXACT observed quantity is stated. The provider may
+                // have returned multiple search candidates, but none are claimed
+                // as images unless their bytes passed the trusted retrieval gate.
+                completionReviewConfirmedComplete = true;
+                continueForCapabilityResults = false;
+                NIRADiagnosticTrace.Event("IMAGE-RECEIPT-FASTPATH",
+                    $"Run={runId:D} Cycle={cycle} Target={imageDeliveryTarget} " +
+                    $"Verified={verifiedImageRetrievalCount} Complete={fulfilled} " +
+                    "InternalModelRoundsSaved=1 ReviewCallsSaved=1");
+            }
+
             // Image-only observe results do not need a second large cognition
             // pass when the reply is already complete. Queue the verified
             // visuals and finish the turn; objective review may still run.
@@ -6616,11 +6679,11 @@ public sealed class NIRAExecutive
                 decision.DynamicToolProposals.Count == 0 &&
                 decision.DynamicToolInvocations.Count == 0 &&
                 !decision.ReviewCommitment &&
-                capabilityResultsBySignature.Values.Count == 1 &&
+                capabilityResultsBySignature.Values.Count >= 1 &&
                 capabilityResultsBySignature.Values.All(result =>
                     result.CapabilityId == NIRACapabilityIds.ImageSearch &&
-                    result.Succeeded &&
-                    result.VisualArtifacts.Count(visual => visual.PresentToUser) >= requestedImages))
+                    result.Succeeded) &&
+                verifiedImageDeliveryPaths.Count == requestedImages)
             {
                 completionReviewConfirmedComplete = true;
                 NIRADiagnosticTrace.Event("IMAGE-RECEIPT-FASTPATH",
@@ -7738,6 +7801,7 @@ public sealed class NIRAExecutive
                         characterDelivery.RequiresRealization,
                         completionReviewConfirmedComplete || directTemporalWakeVerified,
                         passedThroughInternalWork: cycle > 1 ||
+                            capabilityResultsBySignature.Count > 0 ||
                             _cognition.GetAdditionalCognitionCallCount(runId) > 0,
                         verifiedDirectFirstCall: directConversation ||
                             (cycle == 1 && mindEvent.Source == NIRAMindEventSource.User &&
@@ -7923,6 +7987,14 @@ public sealed class NIRAExecutive
                     blocks = NIRANativeVideoPresentationPolicy.AttachUserSharedVideos(
                         blocks, mindEvent.Content);
                 (reply, spoken, blocks) = NIRAPresentationPolicy.RecoverCode(reply, spoken, blocks);
+                bool verifiedWebSearch = capabilityResultsBySignature.Values.Any(result =>
+                    result.CapabilityId == NIRACapabilityIds.WebSearch && result.Succeeded);
+                blocks = NIRAResearchPresentationPolicy.RemoveDecorativeSourceDump(
+                    blocks, mindEvent.Content, verifiedWebSearch);
+                reply = NIRAResearchPresentationPolicy.StripDecorativeReferenceSection(
+                    reply, mindEvent.Content, verifiedWebSearch);
+                spoken = NIRAResearchPresentationPolicy.StripDecorativeReferenceSection(
+                    spoken, mindEvent.Content, verifiedWebSearch);
                 spoken = NIRAPresentationPolicy.EnsureInformativeSpeech(spoken, blocks);
                 // Trusted terminal delivery check: the LLM can lose track of
                 // successful photos after a later failed/duplicate search. Fix

@@ -11,21 +11,7 @@ BASE_DIR = Path(__file__).resolve().parent
 
 OUTPUT_FILE = BASE_DIR / "NIRA_AGENT_FULL_CODE.md"
 ARCHITECTURE_FILE = BASE_DIR / "NIRA_ARCHITECTURE_RULES.md"
-ARCHITECTURE_FALLBACK = """MANDATORY NIRA THREE-BLOCK CONTRACT — FOLLOW FOR EVERY FIX
-Block 01: first user-facing cognition with optional shared Response Realization.
-Use one model round when response is complete, grounded, character ready.
-Block 02: INTERNAL reasoning, capability execution, verification and receipts.
-NO personality response, NO rich UI, NO displayBlocks, NO presentation module.
-Block 03: user-facing final response after internal work; uses the SAME shared
-Response Realization module as Block 01 (personality, mood, behavior, speech,
-rich UI). Runtime handles native rendering and fact/authority validation.
-Every mini-block has a single responsibility, typed boundaries and detachability:
-removing it never breaks unrelated cognition or permission/execution controls.
-Character identity and living particle form are continuous, not an excuse for
-repetitive orb narration, generic help-desk warmth or invented experience.
-No hardcoded response templates, arbitrary call counts, or mandatory card quota.
-Inspect the current actual source and logs before fixes, retain all RegressionChecks,
-use hash-gated CheckOnly/Launch package and rollback; never invent test success.
+ARCHITECTURE_FALLBACK = """
 """
 
 

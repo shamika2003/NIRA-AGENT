@@ -485,6 +485,11 @@ public sealed class NIRACognitionContextBuilder
                 mindEvent);
 
 
+        string priorSessionConversation = mindEvent.Source == NIRAMindEventSource.User
+            ? _conversationArchive.BuildRecentCrossSessionContext(
+                maximumMessages: 8, maximumCharacters: 2600)
+            : string.Empty;
+
         string conversationPulseContext =
             string.Join(
                 Environment.NewLine +
@@ -492,6 +497,9 @@ public sealed class NIRACognitionContextBuilder
                 new[]
                 {
                     externalAppScopeContext,
+                    string.IsNullOrWhiteSpace(priorSessionConversation) ? string.Empty :
+                        "PAST SESSION DIALOGUE (historical, not a new request):\n" +
+                        priorSessionConversation,
                     NIRAConversationCadencePolicy.DescribeRecentOpenings(conversation.Content),
                     conversationPulse.Content
                 }.Where(
@@ -543,6 +551,7 @@ public sealed class NIRACognitionContextBuilder
                 $"PulseIncluded={conversationPulse.IncludedMessages} | " +
                 $"PulseChars={conversationPulse.CharacterCount} | " +
                 $"SocialCarryoverChars={socialCarryoverContext.Length} | " +
+                $"PreviousSessionChars={priorSessionConversation.Length} | " +
                 $"CurrentUserExcluded={conversation.ExcludedCurrentUserMessage} | " +
                 $"Limited={conversation.WasLimited} | " +
                 $"Limits={ConversationManager.ContextMessageLimit}/" +
@@ -741,9 +750,10 @@ public sealed class NIRACognitionContextBuilder
         builder.AppendLine(
             "This envelope is HARD delivery policy derived from authoritative current state. " +
             "If this cognition call finishes the turn, its Natural wording must visibly obey it. " +
-            "The Executive applies a final character-expression pass to every Natural reply " +
-            "using the current authoritative state, even when mood is stable. This does NOT " +
-            "excuse generic wording in the initial cognition draft.");
+            "For a complete character-ready FIRST response, this model call IS the public " +
+            "character expression: do not rely on a subsequent rewrite. Block 03 uses the " +
+            "same full response package only after internal work or when direct delivery " +
+            "cannot be trusted. No generic placeholder wording is acceptable.");
 
         builder.AppendLine(
             $"Persisted mood: irritation={mood.Irritation:F2}; affection={mood.Affection:F2}; " +
@@ -798,6 +808,17 @@ public sealed class NIRACognitionContextBuilder
             "- NIRA's proud, observant, independent, dryly sharp attitude is a STABLE trait. " +
             "Warmth does not turn her into a compliant helper. Make relaxed social answers sound " +
             "like NIRA, not stock reassurance. Wit must fit the moment, never a forced insult.");
+
+        builder.AppendLine(
+            "- The current USER MESSAGE can be an immediate invitation to joke, tease, " +
+            "flirt lightly, compliment, or reconcile. Interpret that event in its recent " +
+            "social context even when PRE-INTERACTION amusement/playfulness is low. " +
+            "Respond from NIRA's independent character in THIS call; slow-changing " +
+            "mood controls intensity but must not turn a genuine playful exchange into " +
+            "service-chat filler. Respect emotional distance by avoiding unsupported " +
+            "intimacy, not by forbidding wit or natural surprises. A playful jab does " +
+            "not itself require NIRA to surrender her pride or apologize. " +
+            "Actual concern, disinterest or a request to stop teasing takes priority.");
 
         if (state.Situation.Mode == NIRAInteractionMode.Casual &&
             attitude.Playfulness >= 0.60 &&

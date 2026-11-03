@@ -12,8 +12,15 @@ public static class NIRAImageTurnDeliveryPolicy
     // Parse a quantity only when the user explicitly attaches it to a visual
     // deliverable. This is not a tool-intent detector or subject-specific router.
     // Other quantities and unbounded requests remain model-controlled.
+    public const int ImagesPerSearch = 5;
+    public const int MaximumImagesPerTurn = 30;
+
+    // Count the requested deliverable, including modifiers such as "four real photographs".
+    // This is a quantity parser ONLY; the first model still chooses the tool and subject.
     private static readonly Regex ExplicitCount = new(
-        @"\b(?<count>[1-3]|one|two|three)\b(?:[^\p{L}\p{N}]+[\p{L}\p{N}]+){0,3}?[^\p{L}\p{N}]+(?:photos?|photographs?|pictures?|images?)\b",
+        @"\b(?<count>\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|twelve)\b" +
+        @"(?:\s+(?:real|authentic|genuine|actual|different|good|clear|high-quality|historical|original|distinct)){0,5}" +
+        @"\s+(?:photos?|photographs?|pictures?|images?)\b",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     public static int? ReadExplicitImageCount(string? userText)
@@ -26,13 +33,14 @@ public static class NIRAImageTurnDeliveryPolicy
         if (IsPerSubjectImageQuantity(userText)) return null;
         Match match = ExplicitCount.Match(userText);
         if (!match.Success) return null;
-        return match.Groups["count"].Value.ToLowerInvariant() switch
-        {
-            "one" or "1" => 1,
-            "two" or "2" => 2,
-            "three" or "3" => 3,
-            _ => null
+        string raw = match.Groups["count"].Value.ToLowerInvariant();
+        int n = raw switch {
+            "one" => 1, "two" => 2, "three" => 3, "four" => 4,
+            "five" => 5, "six" => 6, "seven" => 7, "eight" => 8,
+            "nine" => 9, "ten" => 10, "twelve" => 12,
+            _ => int.TryParse(raw, out int numeric) ? numeric : 0
         };
+        return n is >= 1 and <= MaximumImagesPerTurn ? n : null;
     }
 
     // Per-item quantities cannot be collapsed into a single global budget.
@@ -53,21 +61,20 @@ public static class NIRAImageTurnDeliveryPolicy
     // Any conjunction or second question falls back to the normal reviewer.
     // The grammar intentionally recognizes no specific subject or example.
     private static readonly Regex SimpleImageOnlyRequest = new(
-        @"^\s*(?:show|find|display|give|send|get)\s+(?:(?:me|us)\s+)?" +
-        @"(?:[1-3]|one|two|three)\s+" +
-        @"(?:(?:real|actual|genuine|different|good|clear|high-quality|official)\s+){0,5}" +
-        @"(?:photos?|photographs?|pictures?|images?)\s+(?:of|from|showing)\s+" +
-        @"(?<subject>[^\r\n?!:;]{2,160}?)\s*\.?\s*$",
+        @"^\s*(?:nira[, ]+)?(?:show|find|display|give|send|get)\s+(?:(?:me|us)\s+)?" +
+        @"(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|twelve)\b" +
+        @"[\s\S]{0,85}?\b(?:photos?|photographs?|pictures?|images?)\b",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     public static bool IsSimpleImageOnlyRequest(string? userText)
     {
-        if (string.IsNullOrWhiteSpace(userText)) return false;
-        Match request = SimpleImageOnlyRequest.Match(userText);
-        if (!request.Success || ReadExplicitImageCount(userText) is null) return false;
-        string subject = request.Groups["subject"].Value.Trim();
-        return subject.Length >= 2 && !Regex.IsMatch(subject,
-            @"\b(?:and|then|also|plus|after|before)\b|[.!].*\S",
+        if (string.IsNullOrWhiteSpace(userText) ||
+            ReadExplicitImageCount(userText) is null ||
+            !SimpleImageOnlyRequest.IsMatch(userText)) return false;
+        // Qualifying sentences about wanting to SEE the subject are still one
+        // image-only objective. A separate research, writing or action request is not.
+        return !Regex.IsMatch(userText,
+            @"\b(?:research|explain|compare|summarize|create|make|save|export|write|build|delete|remove|rename|edit|update|calculate|analyze|analyse|install|run|move\s+files?|download\s+to|tell\s+me\s+about|also\s+find\s+websites?)\b",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 
@@ -105,7 +112,7 @@ public static class NIRAImageTurnDeliveryPolicy
             return 0;
         return request.Arguments.TryGetProperty("retrieveCount", out var count) &&
                count.ValueKind == JsonValueKind.Number && count.TryGetInt32(out int n)
-            ? Math.Clamp(n, 1, 3) : 1;
+            ? Math.Clamp(n, 1, ImagesPerSearch) : 1;
     }
 
     public static NIRACapabilityRequest ApplyExplicitCount(
@@ -114,7 +121,7 @@ public static class NIRAImageTurnDeliveryPolicy
         if (request.CapabilityId != NIRACapabilityIds.ImageSearch ||
             (count is null && !photographsOnly) ||
             SearchRetrieveCount(request) == 0) return request;
-        if (count is not null && count.Value is < 1 or > 3) return request;
+        if (count is not null && count.Value is < 1 or > ImagesPerSearch) return request;
         if (count == SearchRetrieveCount(request) && !photographsOnly) return request;
         // Schema preflight has already validated the ordinary model request;
         // only the protocol's optional image quantity is corrected.
@@ -125,6 +132,63 @@ public static class NIRAImageTurnDeliveryPolicy
         if (photographsOnly)
             args["photographsOnly"] = JsonSerializer.SerializeToElement(true);
         return request with { Arguments = JsonSerializer.SerializeToElement(args) };
+    }
+
+    // First-call fulfillment planner. Turns ONE model-selected image need into
+    // independent registered read-only requests, before schema preflight.
+    // Segments use disjoint candidate offsets, while the provider caches the
+    // identical search and therefore avoids redundant paid search calls.
+    // Nothing here guesses a subject or grants authority; the Executive still
+    // validates and authorizes EACH tool request before execution.
+    public static IReadOnlyList<NIRACapabilityRequest> PrepareInitialImageBatch(
+        IReadOnlyList<NIRACapabilityRequest> requests, int? requestedCount,
+        bool photographsOnly)
+    {
+        if (requests.Count == 0) return requests;
+        var selected = requests.Where(r => r.CapabilityId == NIRACapabilityIds.ImageSearch &&
+            r.Arguments.ValueKind == JsonValueKind.Object &&
+            (!r.Arguments.TryGetProperty("retrieveBest", out var best) ||
+             best.ValueKind != JsonValueKind.False)).ToArray();
+        if (selected.Length == 0) return requests;
+        if (!requestedCount.HasValue)
+            return requests.Select(r => ApplyExplicitCount(r, null, photographsOnly)).ToArray();
+        int needed = requestedCount.Value;
+        // Divide a global count across the SUBJECTS the model independently
+        // selected. A photo "of each" intentionally has no global count.
+        int baseCount = needed / selected.Length;
+        int extra = needed % selected.Length;
+        var batches = new List<NIRACapabilityRequest>();
+        int index = 0;
+        foreach (var request in requests)
+        {
+            if (!selected.Contains(request)) { batches.Add(request); continue; }
+            int allocated = baseCount + (index++ < extra ? 1 : 0);
+            if (allocated <= 0) continue;
+            int segments = (allocated + ImagesPerSearch - 1) / ImagesPerSearch;
+            int searchDepth = Math.Min(64, Math.Max(12, segments * 8 + 9));
+            for (int segment = 0, remaining = allocated; segment < segments; segment++)
+            {
+                int count = Math.Min(ImagesPerSearch, remaining);
+                remaining -= count;
+                var args = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
+                    request.Arguments.GetRawText())!;
+                args["retrieveBest"] = JsonSerializer.SerializeToElement(true);
+                // When the user asks for a small exact photograph count, one
+                // duplicated source/pixel can otherwise drop the visible batch
+                // below the requested number and trigger an unnecessary second
+                // cognition/research round. Overfetch at most ONE alternate
+                // candidate within the same paid search call; the Executive
+                // still delivers no more than the user's target count.
+                int fetchCount = count < ImagesPerSearch ? Math.Min(ImagesPerSearch, count + 1) : count;
+                args["retrieveCount"] = JsonSerializer.SerializeToElement(fetchCount);
+                args["limit"] = JsonSerializer.SerializeToElement(searchDepth);
+                args["skipCandidates"] = JsonSerializer.SerializeToElement(segment * 8);
+                if (photographsOnly)
+                    args["photographsOnly"] = JsonSerializer.SerializeToElement(true);
+                batches.Add(request with { Arguments = JsonSerializer.SerializeToElement(args) });
+            }
+        }
+        return batches;
     }
 
     // Byte identity survives cache filename changes, alternate candidate IDs,

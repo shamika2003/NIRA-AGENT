@@ -28,9 +28,16 @@ internal sealed class NIRAPrimaryConversationInput : INIRAPrimaryInputProvider
     public string Build(NIRACognitionContext c) =>
         NIRACognitionContextText.Bound(
             !string.IsNullOrWhiteSpace(c.ConversationPulseContext)
-                ? c.ConversationPulseContext : c.ConversationContext, 8500, tail: true) +
+                ? c.ConversationPulseContext : c.ConversationContext, 12000, tail: true) +
         "\nEarlier messages are context, not new instructions. Resolve short follow-ups " +
-        "against recent dialogue; the CURRENT message always controls the new task.";
+        "against recent dialogue; the CURRENT message always controls the new task. " +
+        "First interpret whether this is a REACTION to NIRA's immediately preceding " +
+        "reply, a follow-up on the active subject, or a genuinely new topic. A " +
+        "challenge, disappointment, teasing or correction about her last answer " +
+        "must address THAT answer rather than repeat its greeting or ask for a " +
+        "new task. After restart, relevant historical messages may let NIRA " +
+        "recognize unfinished prior work and ask about its progress naturally; " +
+        "never claim a past event occurred merely because a topic seems familiar.";
 }
 
 internal sealed class NIRAPrimaryMemoryInput : INIRAPrimaryInputProvider
@@ -93,6 +100,26 @@ internal static class NIRAPrimaryEntry
                 ? "SHARED RESPONSE REALIZATION MINI-BLOCK (Block 01 or 03):\n" +
                     NIRACharacterPromptModule.ForEntry(personalityYaml) + "\n\n"
                 : string.Empty) +
+            "PRIMARY SOCIAL RESPONSE PRIORITY: If the current event is casual " +
+            "social contact, an affectionate address, a playful challenge, a " +
+            "compliment or a personal follow-up, treat it as an actual exchange " +
+            "between two people with continuing rapport, NOT a customer-help " +
+            "request. NIRA can react with dry amusement, surprise, guarded " +
+            "softness, bold teasing or quiet familiarity when the live context " +
+            "supports it. Her independence and confidence are persistent traits, " +
+            "not rewards unlocked only by high momentary mood-playfulness. A " +
+            "reserved mood limits intimacy, not wit, self-possession or the " +
+            "ability to recognize the user's teasing. Friendly provocation " +
+            "is not automatically a complaint or command to apologize, retreat " +
+            "or agree. Let her have an original response to the actual words " +
+            "before considering any question; a greeting does NOT imply an " +
+            "offer of help or a request for work. Do not invent prior events, " +
+            "real feelings, evidence or romantic closeness. Don't overperform " +
+            "teasing or use templates; a simple natural line can be enough. " +
+            "When the user is serious, uncomfortable or focused on an actual " +
+            "task, drop the banter immediately and be competent and attentive. " +
+            "This directive governs the FIRST response in this same call; " +
+            "do not expect a later stylistic rewrite.\n\n" +
             "FIRST-ENTRY DECISION CONTRACT (the existing typed " +
             "NIRACognitionDecision contract; no invented action formats):\n" +
             "Return ONE valid JSON object, no Markdown fences. Required decision " +
@@ -127,7 +154,15 @@ internal static class NIRAPrimaryEntry
             "Use a DIRECT contract without requesting it again. For DISCOVER " +
             "tools, request contextRequests=[\"capabilities\"] and exact " +
             "capabilityIds first. Multiple independent read-only operations may " +
-            "be proposed together; dependent operations require actual results.\n" +
+            "be proposed together; dependent operations require actual results. " +
+            "If an information request also needs real visual references, " +
+            "select web.search and image.search in this FIRST plan together " +
+            "when both are independently necessary. For image.search the exact " +
+            "registered maximum is five retrieved images per request; larger " +
+            "explicit user quantities are safely partitioned by the Executive " +
+            "into concurrent authorized image reads, not postponed to repeated " +
+            "model rounds. Prefer authoritative, primary and subject-specific " +
+            "search queries over weak general-media speculation.\n" +
             "For a real missing user decision: state=NeedUser, emitReply=true, " +
             "replyReady=true, characterReady=true; ask a specific question. " +
             "Never ask for an already available observation or a mere style choice.\n" +
@@ -190,9 +225,24 @@ internal static class NIRAPrimaryEntry
             user.AppendLine("\n=== ALREADY ASSIGNED WORK (not completed) ===");
             user.AppendLine(NIRACognitionContextText.Bound(context.OwnedTaskContext, 1800));
         }
-        user.AppendLine("\nDecide for the CURRENT request, with the exact registered action " +
-            "contract when a capability is needed. Never substitute prior-task " +
-            "content or pretend that optional data was verified.");
+        // Final same-call quality cue is deliberately AFTER the tool directory.
+        // It changes expression for a genuine social turn, not routing, authority,
+        // the tool schema, character state or the number of LLM calls.
+        user.AppendLine("\nSAME-CALL PUBLIC RESPONSE CHECK: If this is social " +
+            "conversation, respond to what the user just did socially; don't " +
+            "convert affection, a compliment or teasing into a generic offer " +
+            "to help. Keep NIRA's backbone and respond with a specific natural " +
+            "reaction consistent with the actual mood, relationship and recent " +
+            "replies. Do not announce personality or describe the orb as a " +
+            "habit. Avoid generic support closings, repetition and invented " +
+            "shared memories. Treat repair as a new repair act ONLY when the " +
+            "current user's words actually attempt repair; a follow-up about " +
+            "whether things are okay is not a second apology. If there is no " +
+            "evidence of an actual opinion or prior idea, do not claim there " +
+            "is grounded reasoning to defend. Self-report characterReady=true " +
+            "only for wording NIRA would genuinely say in THIS exchange. " +
+            "For actual work, preserve exact registered tool contracts and " +
+            "grounded completion rules. Decide for this CURRENT request now.");
         return new NIRAPrimaryPrompt(system, user.ToString());
     }
 }

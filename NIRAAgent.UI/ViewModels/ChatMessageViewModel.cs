@@ -206,9 +206,10 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
     // Only verified source-backed images enter the paragraph-aware document.
     // Nonretrieved and generated assets keep their established gallery/viewer.
     public bool HasInlineVisuals =>
-        (Content.Length >= 100 || _richContentFrames.Any(frame => frame.Blocks.Any(block =>
-            !string.IsNullOrWhiteSpace(block.ImageSubject)))) &&
-        VisualArtifacts.Count is > 0 and <= 12 &&
+        (Content.Length >= 100 || VisualArtifacts.Count >= 4 ||
+         _richContentFrames.Any(frame => frame.Blocks.Any(block =>
+             !string.IsNullOrWhiteSpace(block.ImageSubject)))) &&
+        VisualArtifacts.Count is > 0 and <= 30 &&
         VisualArtifacts.All(v => v.HasPreview && v.HasSourceUri && !v.IsGeneratedImage);
     public int InlineVisualRevision => VisualArtifacts.Count;
 
@@ -321,12 +322,14 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
 
     private void RebuildUnplacedAssistantImages()
     {
+        bool imageOnlyInlineGallery = HasInlineVisuals && Content.Length < 100 &&
+            VisualArtifacts.Count >= 4;
         var unplaced = VisualArtifacts.Where(photo =>
-            !HasInlineVisuals ||
+            !imageOnlyInlineGallery && (!HasInlineVisuals ||
             !(photo.HasPreview && photo.HasSourceUri && !photo.IsGeneratedImage) ||
             (NIRAInlineImageAnchorPolicy.FindLine(Content,
                  string.IsNullOrWhiteSpace(photo.SubjectQuery) ? photo.Title : photo.SubjectQuery) < 0 &&
-             !_richPlacedPhotoIds.Contains(photo.ArtifactId))).ToArray();
+             !_richPlacedPhotoIds.Contains(photo.ArtifactId)))).ToArray();
         BuildGalleryTiles(UnplacedAssistantImageGalleryTiles, unplaced, assistant: true);
         OnPropertyChanged(nameof(HasUnplacedAssistantImages));
     }
@@ -342,7 +345,7 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
             return;
         }
         var photos = VisualArtifacts.Where(p => p.HasPreview && p.HasSourceUri && !p.IsGeneratedImage)
-            .Take(12).ToArray();
+            .Take(30).ToArray();
         if (photos.Length == 0)
         {
             RebuildUnplacedAssistantImages();

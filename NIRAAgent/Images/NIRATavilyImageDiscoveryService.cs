@@ -74,7 +74,7 @@ public sealed class NIRATavilyImageDiscoveryService : INIRAImageDiscoveryService
         query = (query ?? "").Trim();
         if (query.Length is < 2 or > 160 || query.Any(char.IsControl))
             throw new ArgumentException("Image query must have 2-160 visible characters.");
-        if (limit is < 1 or > 12) throw new ArgumentOutOfRangeException(nameof(limit));
+        if (limit is < 1 or > 64) throw new ArgumentOutOfRangeException(nameof(limit));
         string key = Key();
         if (key.Length == 0)
             throw new InvalidOperationException("NIRA_TAVILY_API_KEY is missing. Use the existing web search API key.");
@@ -326,7 +326,7 @@ public sealed class NIRATavilyImageDiscoveryService : INIRAImageDiscoveryService
             .ToList();
         var selected = new List<NIRACommonsImageCandidate>();
         var chosenHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        int target = Math.Clamp(limit, 1, 12);
+        int target = Math.Clamp(limit, 1, 64);
         while (selected.Count < target && pool.Count > 0)
         {
             var first = pool[0];

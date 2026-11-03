@@ -9,6 +9,7 @@ using NIRAAgent.Character.Dynamics;
 using NIRAAgent.Character.State;
 using NIRAAgent.Semantic;
 using NIRAAgent.Presentation;
+using NIRAAgent.Diagnostics;
 
 namespace NIRAAgent.Conversation;
 
@@ -392,6 +393,56 @@ public sealed class NIRAConversationArchiveStore
     // still be present after a restart. This is bounded historical
     // evidence only; archived user text never becomes a fresh command.
     // =========================================================
+
+    // Recent factual dialogue across application restarts. Significant social
+    // episodes alone are NOT enough to recall what the user was building or
+    // discussing. This bounded, read-only archive window supplies real earlier
+    // turns to Block 01 without a second LLM call or forged permanent memory.
+    // Past messages are always historical context, never fresh instructions.
+    public string BuildRecentCrossSessionContext(
+        int maximumMessages = 8, int maximumCharacters = 2600)
+    {
+        if (!Enabled) return string.Empty;
+        maximumMessages = Math.Clamp(maximumMessages, 1, 16);
+        maximumCharacters = Math.Clamp(maximumCharacters, 400, 5000);
+        lock (_gate)
+        {
+            using var db = Open();
+            using var query = db.CreateCommand();
+            query.CommandText = """
+                SELECT m.occurred_utc, m.role, m.content
+                FROM messages m
+                WHERE m.session_id <> $current
+                  AND m.occurred_utc >= $since
+                  AND m.role IN ('user','assistant')
+                ORDER BY m.occurred_utc DESC LIMIT 48;
+                """;
+            query.Parameters.AddWithValue("$current", _sessionId.ToString("D"));
+            query.Parameters.AddWithValue("$since",
+                DateTimeOffset.UtcNow.AddDays(-21).ToString("o", CultureInfo.InvariantCulture));
+            var selected = new List<string>();
+            int chars = 0;
+            using SqliteDataReader reader = query.ExecuteReader();
+            while (reader.Read() && selected.Count < maximumMessages)
+            {
+                string role = reader.GetString(1);
+                string raw = reader.GetString(2);
+                string text = Regex.Replace(raw, @"\s+", " ").Trim();
+                // Short greetings contain no durable project context, but
+                // actual meaningful past turns remain verbatim (bounded).
+                if (text.Length < 18) continue;
+                text = text.Length > 400 ? text[..400] + "…" : text;
+                string line = $"[{reader.GetString(0)}] {role}: {text}";
+                if (chars + line.Length > maximumCharacters) break;
+                selected.Add(line);
+                chars += line.Length + 1;
+            }
+            selected.Reverse();
+            NIRADiagnosticTrace.Event("CROSS-SESSION-CONTINUITY",
+                $"EarlierMessages={selected.Count} Chars={chars} HistoricalOnly=True");
+            return string.Join(Environment.NewLine, selected);
+        }
+    }
 
     public string BuildSocialCarryoverContext(
         int maximumEpisodes = 4,
@@ -1283,5 +1334,3 @@ public sealed record NIRAArchivedChatSession(Guid SessionId, DateTimeOffset Star
     DateTimeOffset? EndedAtUtc, int MessageCount, string Title);
 public sealed record NIRAArchivedChatTurn(Guid MessageId, string Role, string Content,
     DateTimeOffset OccurredAtUtc);
-
-

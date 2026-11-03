@@ -131,18 +131,21 @@ public static class NIRAChatDocument
         if (string.IsNullOrWhiteSpace(source)) return;
 
         // Preserve the original gallery for generated, local, unsupported or
-        // mixed artifact sets. Use inline cards only for 1-4 independently
-        // retrieved and decoded source-backed photographs in a substantive answer.
+        // mixed artifact sets. Verified source-backed requests of four or more
+        // photographs can also display the whole batch directly after a short
+        // introduction; otherwise keep conservative subject-anchored placement.
         var photos = GetInlineVisuals(element) as IReadOnlyList<VisualArtifactViewModel>;
         // Text-anchored photos also belong inside replies that have typed rich
         // blocks. The earlier !HasRichBlocks gate forced every retrieved photo
         // into a separate rich-elements row after the entire explanation.
-        bool inlinePhotos = photos is { Count: > 0 and <= 12 } && source.Length >= 100 &&
+        bool inlinePhotos = photos is { Count: > 0 and <= 30 } &&
+            (source.Length >= 100 || photos.Count >= 4) &&
             photos.All(p => p.HasPreview && p.HasSourceUri && !p.IsGeneratedImage);
+        bool imageOnlyGallery = inlinePhotos && source.Length < 100 && photos!.Count >= 4;
         var pendingPhotos = inlinePhotos ? photos!.Select(p => new
         {
             Artifact = p,
-            Anchor = NIRAInlineImageAnchorPolicy.FindLine(source,
+            Anchor = imageOnlyGallery ? 0 : NIRAInlineImageAnchorPolicy.FindLine(source,
                 string.IsNullOrWhiteSpace(p.SubjectQuery) ? p.Title : p.SubjectQuery)
         }).ToList() : null;
         var placedPhotos = new HashSet<Guid>();

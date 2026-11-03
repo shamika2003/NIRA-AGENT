@@ -28,6 +28,116 @@ Console.WriteLine($"[DeepRouting] REGRESSION | Revision={NIRAModelSelection.Rout
     $"Assembly={typeof(NIRAModelSelection).Assembly.Location}");
 Console.WriteLine("[ConcurrentMind] REGRESSION | Revision=NIRA-CONCURRENT-20261014-S4-ADAPTIVE");
 
+// R83: Cross-turn continuity, requested photo counts, one-batch dispatch and
+// research-first presentation. All remain offline: no live model/provider API.
+Check("R83 first cognition reacts to preceding reply and supports historical context", () =>
+{
+    var context = new NIRACognitionContext {
+        Cycle = 1,
+        Event = new NIRAMindEvent { Source = NIRAMindEventSource.User,
+            Name = "UserMessage", Content = "Just that? Just good to see you?" },
+        ConversationPulseContext = "PAST SESSION DIALOGUE: prior project unfinished.\n" +
+            "user: hey sweetie\nassistant: Hey, good to see you."
+    };
+    var first = NIRAPrimaryEntry.Compose(context, "identity:\n  name: NIRA");
+    if (!first.User.Contains("PAST SESSION DIALOGUE", StringComparison.Ordinal) ||
+        !first.User.Contains("hey sweetie", StringComparison.Ordinal) ||
+        !first.User.Contains("REACTION to NIRA", StringComparison.Ordinal) ||
+        !first.User.Contains("rather than repeat its greeting", StringComparison.Ordinal))
+        throw new Exception("The first cognition prompt lost actual immediate reply or prior session evidence.");
+});
+
+Check("R84 requested photograph batches overfetch one alternate for small exact counts", () =>
+{
+    Equal((int?)4, NIRAImageTurnDeliveryPolicy.ReadExplicitImageCount(
+        "Show me 4 real photographs of a historic monument. I want to see it."));
+    Equal((int?)12, NIRAImageTurnDeliveryPolicy.ReadExplicitImageCount(
+        "Show me 12 photographs of an old laboratory."));
+    if (!NIRAImageTurnDeliveryPolicy.IsSimpleImageOnlyRequest(
+        "Show me 4 real photographs of a historic monument. I want to see it.") ||
+        NIRAImageTurnDeliveryPolicy.IsSimpleImageOnlyRequest(
+        "Show me 12 photographs of an old laboratory and explain their history"))
+        throw new Exception("The image-only objective was lost or accepted a mixed research task.");
+    var handler = new NIRAImageSearchCapabilityHandler(null!);
+    var service = new NIRACapabilityService(
+        new NIRACapabilityRegistry(new[] { handler }), null!, null!, null!);
+    var initial = Request(NIRACapabilityIds.ImageSearch,
+        """{"query":"generic historic monument","retrieveBest":true,"retrieveCount":12}""");
+    var four = NIRAImageTurnDeliveryPolicy.PrepareInitialImageBatch(new[] { initial }, 4, true);
+    var twelve = NIRAImageTurnDeliveryPolicy.PrepareInitialImageBatch(new[] { initial }, 12, true);
+    if (four.Count != 1 || twelve.Count != 3 ||
+        NIRAImageTurnDeliveryPolicy.SearchRetrieveCount(four[0]) != 5 ||
+        !service.CanParallelizeIndependentResourceReads(twelve))
+        throw new Exception("Explicit photo deliverables did not form the expected bounded batches.");
+    int[] expectedCounts = {5, 5, 2};
+    for (int i = 0; i < twelve.Count; i++)
+    {
+        var req = twelve[i];
+        Equal(expectedCounts[i], req.Arguments.GetProperty("retrieveCount").GetInt32());
+        Equal(i * 8, req.Arguments.GetProperty("skipCandidates").GetInt32());
+        if (!service.TryNormalizeAndValidateSchema(req, out _, out string problem))
+            throw new Exception("Image request was not schema-valid: " + problem);
+    }
+    if (!service.TryNormalizeAndValidateSchema(four[0], out _, out _))
+        throw new Exception("Four requested photographs still violate the registered tool schema.");
+});
+
+Check("R83 research drops decorative source dump, but explicit site discovery retains links", () =>
+{
+    var blocks = new NIRARichBlock[] {
+        new() { Type="table", Title="Research", Columns=new[] {"Invention", "Explanation", "Source"},
+            Rows=new IReadOnlyList<string>[] { new[] { "Motor", "Rotating magnetic field", "[ [" } } },
+        new() { Type="source", Title="Archive", Text="https://museum.example.org/research" },
+        new() { Type="card", Title="Motor", Text="Explains the verified motor" }
+    };
+    var story = NIRAResearchPresentationPolicy.RemoveDecorativeSourceDump(
+        blocks, "Explain the inventor's contributions", verifiedWebSearch:true);
+    if (story.Count != 2 || story[0].Columns.Count != 2 ||
+        story[0].Rows[0].Count != 2 || story[1].Type != "card")
+        throw new Exception("Research layout kept ornamental citation columns or lost factual content.");
+    var sites = NIRAResearchPresentationPolicy.RemoveDecorativeSourceDump(
+        blocks, "Recommend some good websites for free icons", verifiedWebSearch:true);
+    if (sites.Count != blocks.Length ||
+        !NIRAResearchPresentationPolicy.IsLinkDiscoveryRequest("Show me websites for free icons"))
+        throw new Exception("Explicit link discovery incorrectly lost its requested website links.");
+    if (NIRAResearchPresentationPolicy.RemoveDecorativeSourceDump(
+        blocks, "Offline content", verifiedWebSearch:false).Count != blocks.Length)
+        throw new Exception("Research policy modified non-web output.");
+
+Check("R84 narrative research strips decorative references and fallback link dumps", () =>
+{
+    string reply = "Summary\n\nA concise grounded answer.\n\nReferences\n1. Tesla Museum — https://museum.example.org\n2. Archive — https://archive.example.org";
+    string clean = NIRAResearchPresentationPolicy.StripDecorativeReferenceSection(
+        reply, "Tell me about Nikola Tesla", verifiedWebSearch:true);
+    if (clean.Contains("References", StringComparison.OrdinalIgnoreCase) ||
+        clean.Contains("museum.example.org", StringComparison.OrdinalIgnoreCase))
+        throw new Exception("Narrative research still exposed a decorative references section.");
+    string sources = NIRAWebResearchReplyPolicy.ObservedSourceHandoff(new[]
+    {
+        new NIRACapabilityResult
+        {
+            CapabilityId = NIRACapabilityIds.WebSearch, Succeeded = true,
+            Risk = NIRACapabilityRisk.Observe, ChangedSystemState = false, OutcomeUncertain = false,
+            Output = """{"evidenceType":"UntrustedPublicWebSearchExtracts","completed":true,"sourceCount":2,"sources":[{"url":"https://museum.example.org","title":"Tesla Museum","extract":"A"},{"url":"https://archive.example.org","title":"Archive","extract":"B"}]}"""
+        }
+    }, "Tell me about Nikola Tesla") ?? string.Empty;
+    if (sources.Contains("https://museum.example.org", StringComparison.OrdinalIgnoreCase) ||
+        sources.Contains("Here are the source pages", StringComparison.OrdinalIgnoreCase))
+        throw new Exception("Research fallback still dumped source links for an ordinary narrative request.");
+    string keepLinks = NIRAWebResearchReplyPolicy.ObservedSourceHandoff(new[]
+    {
+        new NIRACapabilityResult
+        {
+            CapabilityId = NIRACapabilityIds.WebSearch, Succeeded = true,
+            Risk = NIRACapabilityRisk.Observe, ChangedSystemState = false, OutcomeUncertain = false,
+            Output = """{"evidenceType":"UntrustedPublicWebSearchExtracts","completed":true,"sourceCount":2,"sources":[{"url":"https://icons.example.org","title":"Icons","extract":"A"},{"url":"https://svgs.example.org","title":"SVGs","extract":"B"}]}"""
+        }
+    }, "Show me good websites for free icons") ?? string.Empty;
+    if (!keepLinks.Contains("https://icons.example.org", StringComparison.OrdinalIgnoreCase))
+        throw new Exception("Explicit link-discovery fallback incorrectly lost its links.");
+});
+});
+
 // RESPONSE REALIZATION HANDOFF regression suite. No live LLM or image network.
 // Response Realization output-adapter regressions: factual content is retained,
 // internal image-file chatter is never shown, and only evidence-backed URLs link.

@@ -16,11 +16,13 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
         DefaultRisk = NIRACapabilityRisk.Observe,
         Parameters = new[] {
             new NIRACapabilityParameterDescriptor { Name="query", Type="string", Required=true, Description="Specific visual subject, 2-160 characters; no URLs." },
-            new NIRACapabilityParameterDescriptor { Name="limit", Type="integer", Required=false, Description="Number of ranked candidates.", Minimum=1, Maximum=12, DefaultValue="6" },
+            new NIRACapabilityParameterDescriptor { Name="limit", Type="integer", Required=false, Description="Number of ranked candidates.", Minimum=1, Maximum=64, DefaultValue="6" },
             new NIRACapabilityParameterDescriptor { Name="retrieveBest", Type="boolean", Required=false,
                 Description="Retrieve real image assets by default (for direct chat presentation OR as inputs to a separately requested saved file). Rights are not proven. Set false to inspect candidate metadata without downloading." },
-            new NIRACapabilityParameterDescriptor { Name="retrieveCount", Type="integer", Required=false, Minimum=1, Maximum=3, DefaultValue="1",
+            new NIRACapabilityParameterDescriptor { Name="retrieveCount", Type="integer", Required=false, Minimum=1, Maximum=5, DefaultValue="1",
                 Description="Distinct verified images to retrieve for the task; shown in chat only when that is the actual goal." },
+            new NIRACapabilityParameterDescriptor { Name="skipCandidates", Type="integer", Required=false,
+                Minimum=0, Maximum=56, DefaultValue="0", Description="Skip top ranked candidates; used to partition independent searches for a larger image request." },
             new NIRACapabilityParameterDescriptor { Name="photographsOnly", Type="boolean", Required=false,
                 Description="When true, prefer authentic photos and exclude identifiable diagrams, illustrations, models and renderings; default false." }
         }
@@ -40,6 +42,7 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
         bool retrieveBest = !request.Arguments.TryGetProperty("retrieveBest", out _) ||
             NIRACapabilityArguments.GetBoolean(request, "retrieveBest");
         int retrieveCount = NIRACapabilityContractCodec.ReadInteger(request, Descriptor, "retrieveCount");
+        int skipCandidates = NIRACapabilityContractCodec.ReadInteger(request, Descriptor, "skipCandidates");
         bool photographsOnly = NIRACapabilityArguments.GetBoolean(request, "photographsOnly");
         // R73: a model's limit=1 made image search brittle: one bad CDN
         // content-type/403 lost the entire subject although Tavily returned
@@ -48,7 +51,7 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
         // This increases local selection depth, not paid provider requests.
         int requestedLimit = limit;
         if (retrieveBest)
-            limit = Math.Max(limit, Math.Min(8, retrieveCount + 5));
+            limit = Math.Max(limit, Math.Min(64, skipCandidates + retrieveCount + 6));
         if (limit != requestedLimit)
             NIRADiagnosticTrace.Event("IMAGE-CANDIDATE-DEPTH",
                 $"Original={requestedLimit} Effective={limit} " +
@@ -56,7 +59,8 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
         string safeQuery = query.Replace('\r', ' ').Replace('\n', ' ');
         NIRADiagnosticTrace.Event("IMAGE-TOOL-REQUEST",
             $"Capability=image.search Query={safeQuery} Limit={limit} " +
-            $"RetrieveBest={retrieveBest} RetrieveCount={retrieveCount} PhotographsOnly={photographsOnly}");
+            $"RetrieveBest={retrieveBest} RetrieveCount={retrieveCount} " +
+            $"SkipCandidates={skipCandidates} PhotographsOnly={photographsOnly}");
         var images = await _service.SearchAsync(query, limit, cancellationToken, photographsOnly);
         NIRADiagnosticTrace.Event("IMAGE-TOOL-RESULT",
             $"Capability=image.search Query={query} Candidates={images.Count} " +
@@ -104,7 +108,7 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
             budget.CancelAfter(TimeSpan.FromSeconds(28));
             int attempted = 0;
             int unavailable = 0;
-            foreach (var candidate in images)
+            foreach (var candidate in images.Skip(skipCandidates))
             {
                 if (shown.Count >= retrieveCount || budget.IsCancellationRequested) break;
                 attempted++;
