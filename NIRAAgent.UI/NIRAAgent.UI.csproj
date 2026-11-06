@@ -56,6 +56,11 @@
   <ItemGroup>
 
     <ProjectReference Include="..\NIRAAgent\NIRAAgent.csproj" />
+    <!-- V2 general runtime is hosted in-process; no independent chatbot process. -->
+    <ProjectReference Include="..\NIRA-V2\src\Nira.V2.General\Nira.V2.General.csproj" />
+    <ProjectReference Include="..\NIRA-V2\src\Nira.V2.Windows\Nira.V2.Windows.csproj" />
+    <ProjectReference Include="..\NIRA-V2\src\Nira.V2.Filesystem\Nira.V2.Filesystem.csproj" />
+    <ProjectReference Include="..\NIRA-V2\src\Nira.V2.LegacyAdapters\Nira.V2.LegacyAdapters.csproj" />
 
   </ItemGroup>
 

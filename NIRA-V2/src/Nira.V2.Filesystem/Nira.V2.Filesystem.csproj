@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Nira.V2.General/Nira.V2.General.csproj" />
+    <ProjectReference Include="../Nira.V2.Runtime/Nira.V2.Runtime.csproj" />
+  </ItemGroup>
+</Project>

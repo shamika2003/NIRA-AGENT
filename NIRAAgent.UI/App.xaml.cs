@@ -32,6 +32,7 @@ using NIRAAgent.Self.Model;
 using NIRAAgent.Settings;
 using NIRAAgent.UI.Companion;
 using NIRAAgent.UI.ViewModels;
+using NIRAAgent.UI.V2;
 using NIRAAgent.UI.Theming;
 using NIRAAgent.Voice;
 using NIRAAgent.Voice.Groq;
@@ -886,6 +887,9 @@ public partial class App : WpfApplication
             builder.Services.AddSingleton<
                 NIRAExecutive>();
 
+
+            // Explicit, read-only V2 migration canary. Normal NIRA stays authoritative.
+            builder.Services.AddSingleton<INIRAGeneralRuntimeBridge, NIRAWpfV2CanaryBridge>();
 
             builder.Services.AddSingleton<
                 NIRAMindRuntime>();

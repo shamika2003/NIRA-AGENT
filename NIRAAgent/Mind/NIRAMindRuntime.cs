@@ -18,6 +18,8 @@ public sealed class NIRAMindRuntime
     private readonly NIRAExecutive
         _executive;
 
+    private readonly INIRAGeneralRuntimeBridge? _v2Bridge;
+
 
     private readonly NIRAMindActivityTracker
         _activity;
@@ -55,8 +57,10 @@ public sealed class NIRAMindRuntime
         NIRAMindActivityTracker activity,
         NIRAStateService state,
         NIRASocialHistoryService socialHistory,
-        ConversationManager conversation)
+        ConversationManager conversation,
+        INIRAGeneralRuntimeBridge? v2Bridge = null)
     {
+        _v2Bridge = v2Bridge;
         _executive =
             executive
             ?? throw new ArgumentNullException(
@@ -446,15 +450,29 @@ public sealed class NIRAMindRuntime
 
         bool completed = false;
         bool publishedReply = false;
+        // Only user-selected canary messages may use V2. Background, proactive and
+        // ELVARA application work remain with the existing NIRAExecutive.
+        bool useV2 = !autonomous && mindEvent.Source == NIRAMindEventSource.User &&
+            _v2Bridge?.CanHandle(mindEvent) == true;
+        string? canaryFinalAnswer = null;
 
         try
         {
-            await foreach (
-                NIRAOutputChunk chunk
-                in _executive.RunAsync(
-                    mindEvent,
-                    cancellationToken))
+            IAsyncEnumerable<NIRAOutputChunk> source = useV2
+                ? _v2Bridge!.RunAsync(mindEvent, cancellationToken)
+                : _executive.RunAsync(mindEvent, cancellationToken);
+            await foreach (NIRAOutputChunk chunk in source)
             {
+                if (useV2 && chunk.Type == NIRAOutputChunkType.Text &&
+                    !string.IsNullOrWhiteSpace(chunk.Content))
+                    canaryFinalAnswer = chunk.Content;
+                if (useV2 && chunk.Type == NIRAOutputChunkType.Completed &&
+                    !string.IsNullOrWhiteSpace(canaryFinalAnswer))
+                {
+                    // One authoritative conversation archive; never create a V2 copy.
+                    // This records the validated final answer only, not progress/events.
+                    _conversation.AddAssistantMessage(canaryFinalAnswer, mindEvent.SocialEventId);
+                }
                 if (chunk.Type == NIRAOutputChunkType.Text &&
                     (!string.IsNullOrWhiteSpace(chunk.Content) || chunk.DisplayBlocks.Count > 0))
                     publishedReply = true;

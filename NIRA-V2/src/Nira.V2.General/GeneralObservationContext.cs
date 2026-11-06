@@ -67,7 +67,10 @@ internal static class GeneralObservationContext
                 }
                 continue;
             }
-            string result = Clean(body.GetRawText(), 1100);
+            // The delegated exact-text reader has a bounded, audited user-consented
+            // excerpt. Let the model use a useful slice without exposing the file path.
+            int maxChars = observation.ToolId == "legacy.filesystem.read_exact" ? 4500 : 1100;
+            string result = Clean(body.GetRawText(), maxChars);
             AddLimited(builder, "TOOL " + observation.ToolId + " succeeded; RESULT: " + result + "\n");
         }
         if (run.Observations.Count > MaxResults)
