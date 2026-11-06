@@ -29,6 +29,32 @@ public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDi
     private sealed record ProviderFetch(IReadOnlyList<NIRAWebSource> Sources,
         IReadOnlyList<NIRACommonsImageCandidate> Images);
 
+    // Authority is a DISCOVERY PRIORITY, not a claim that the publisher or
+    // excerpt was independently authenticated. Prevent social media posts and
+    // retail listings from outranking primary institutional collections in
+    // a bounded (eight-source) research receipt.
+    internal static int EvidencePriority(string? rawUrl)
+    {
+        if (!Uri.TryCreate(rawUrl, UriKind.Absolute, out Uri? uri) ||
+            uri.Scheme != Uri.UriSchemeHttps) return -100;
+        string host = uri.Host.ToLowerInvariant();
+        if (host == "facebook.com" || host.EndsWith(".facebook.com", StringComparison.Ordinal) ||
+            host == "ebay.com" || host.EndsWith(".ebay.com", StringComparison.Ordinal) ||
+            host == "instagram.com" || host.EndsWith(".instagram.com", StringComparison.Ordinal) ||
+            host == "reddit.com" || host.EndsWith(".reddit.com", StringComparison.Ordinal) ||
+            host == "pinterest.com" || host.EndsWith(".pinterest.com", StringComparison.Ordinal))
+            return -50;
+        if (host.EndsWith(".gov", StringComparison.Ordinal)) return 60;
+        if (host.EndsWith(".edu", StringComparison.Ordinal) ||
+            host.EndsWith(".ac.uk", StringComparison.Ordinal)) return 50;
+        if (host.EndsWith(".museum", StringComparison.Ordinal)) return 45;
+        if (host is "www.si.edu" or "si.edu" or "www.loc.gov" or "loc.gov" or
+            "www.thehenryford.org" or "thehenryford.org") return 45;
+        if (host.EndsWith(".wikipedia.org", StringComparison.Ordinal) ||
+            host == "wikipedia.org") return -5;
+        return 0;
+    }
+
     private static readonly NIRACapabilityDescriptor SearchDescriptor = new()
     {
         Id = NIRACapabilityIds.WebSearch,
@@ -327,7 +353,11 @@ public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDi
             foreach (var candidate in foundImages)
                 if (!imageCandidates.Any(x => x.MediaUrl.Equals(candidate.MediaUrl, StringComparison.OrdinalIgnoreCase)))
                     imageCandidates.Add(candidate);
-            sourceGroups.Add((query, sources));
+            // Search-provider ranking is not source quality. Within each
+            // independent query, offer institutional/primary sources first;
+            // preserve all remaining sources if authoritative ones are scarce.
+            sourceGroups.Add((query, sources.OrderByDescending(source =>
+                EvidencePriority(source.Url)).ToArray()));
             traces.Add(new { query, provider = used, cached = cacheHit, sourcesFound = sources.Count, fallbacks = tried });
         }
         // Keep each independently requested subject represented when possible;

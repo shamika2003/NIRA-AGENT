@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Nira.V2.Contracts/Nira.V2.Contracts.csproj" />
+  </ItemGroup>
+</Project>

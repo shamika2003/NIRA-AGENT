@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Nira.V2.Contracts/Nira.V2.Contracts.csproj" />
+    <ProjectReference Include="../../src/Nira.V2.Runtime/Nira.V2.Runtime.csproj" />
+    <ProjectReference Include="../../src/Nira.V2.Ollama/Nira.V2.Ollama.csproj" />
+    <ProjectReference Include="../../src/Nira.V2.Web/Nira.V2.Web.csproj" />
+  </ItemGroup>
+</Project>

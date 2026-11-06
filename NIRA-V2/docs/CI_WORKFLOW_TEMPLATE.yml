@@ -1,0 +1,19 @@
+name: NIRA V2 Foundation Checks
+on:
+  push:
+    paths:
+      - 'NIRA-V2/**'
+  pull_request:
+    paths:
+      - 'NIRA-V2/**'
+jobs:
+  dotnet:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build and run foundation tests
+        shell: pwsh
+        run: ./NIRA-V2/scripts/Verify-Foundation.ps1

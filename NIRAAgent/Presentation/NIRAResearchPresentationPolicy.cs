@@ -33,6 +33,64 @@ public static class NIRAResearchPresentationPolicy
 ?){2,})\s*$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    // An internal image-layout plan is not research content. Some models
+    // append this as an entire numbered final section; it used to become the
+    // strongest keyword match and pull ALL images into an unwanted end pile.
+    // Preserve normal prose and verified image links: remove only clearly
+    // labelled placement plans and their explicit positioning instructions.
+    public static string StripEditorialImagePlacement(string? reply)
+    {
+        if (string.IsNullOrEmpty(reply)) return reply ?? string.Empty;
+        string[] lines = reply.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        var keep = new List<string>(lines.Length);
+        bool insidePlan = false;
+        int planDepth = 7;
+        foreach (string line in lines)
+        {
+            var heading = Regex.Match(line,
+                @"^\s*(?<hash>#{1,6})\s*(?:\d{1,2}[.)]\s*)?(?<name>[^#\r\n]+?)\s*$",
+                RegexOptions.CultureInvariant);
+            string headingName = heading.Success ? heading.Groups["name"].Value.Trim() : "";
+            bool isPlan = Regex.IsMatch(headingName,
+                @"^(?:visual elements|image placement|photo placement|photograph placement|" +
+                @"suggested (?:visual|image|photo) placement|media placement plan)" +
+                @"(?:\s*\([^)]*\))?\s*:?\s*$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (heading.Success && isPlan)
+            {
+                insidePlan = true;
+                planDepth = heading.Groups["hash"].Length;
+                continue;
+            }
+            // Also recognize plain numbered headings, which earlier model
+            // completions used without Markdown '#' prefixes.
+            if (!insidePlan && Regex.IsMatch(line,
+                @"^\s*\d{1,2}[.)]\s+(?:visual elements|image placement)\s*" +
+                @"(?:\(suggested placement\))?\s*$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            {
+                insidePlan = true;
+                planDepth = 2;
+                continue;
+            }
+            if (insidePlan)
+            {
+                if (heading.Success && heading.Groups["hash"].Length <= planDepth)
+                    insidePlan = false;
+                else
+                    continue;
+            }
+            // Do not show user-facing prompts that tell a renderer where to
+            // insert a source-backed image. Actual image assets are separate.
+            if (Regex.IsMatch(line,
+                @"^\s*(?:[-*+]\s*)?\[Image\s*:[^\]]+\]\s*" +
+                @"(?:[-–—:]\s*)?(?:placed|positioned|beside|next to|in the|near the)\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)) continue;
+            keep.Add(line);
+        }
+        return string.Join("\n", keep).Trim();
+    }
+
     public static string StripDecorativeReferenceSection(
         string? reply, string? originalRequest, bool verifiedWebSearch)
     {

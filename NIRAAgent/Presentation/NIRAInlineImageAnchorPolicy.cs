@@ -19,7 +19,8 @@ public static class NIRAInlineImageAnchorPolicy
         "article", "news", "best", "latest", "2024", "2025", "2026", "with",
         "from", "that", "this", "there", "their", "about", "what", "where",
         "model", "shown", "file", "page", "more", "read", "media", "press",
-        "high", "resolution", "website", "https", "http", "www", "picture"
+        "high", "resolution", "website", "https", "http", "www", "picture",
+        "nasa", "museum", "archive", "gallery", "wikimedia"
     };
 
     // A photo may belong to a typed card or tab rather than a prose paragraph.
@@ -89,6 +90,29 @@ public static class NIRAInlineImageAnchorPolicy
             .Where(w => !Generic.Contains(w)).Distinct(StringComparer.Ordinal).Take(18).ToArray();
         if (terms.Length == 0) return -1;
         string[] lines = visibleText.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        // Prefer a named SECTION over incidental mentions or the article's
+        // shared overarching title. A photograph of the crew belongs under
+        // "The Crew", even if the full query also names the mission and archive.
+        int uniqueSectionAnchor = -1;
+        // When the query has several terms, its first term is usually the
+        // overarching subject. Only later discriminating terms may establish
+        // a single-term section anchor; this prevents every image appearing
+        // under the article's first general heading.
+        foreach (int i in Enumerable.Range(0, lines.Length))
+        {
+            string line = lines[i].Trim();
+            bool heading = line.StartsWith("#", StringComparison.Ordinal) ||
+                Regex.IsMatch(line, @"^\d{1,2}[.)]\s+\S", RegexOptions.CultureInvariant);
+            if (!heading || line.Length > 125) continue;
+            var tokens = Words.Matches(line).Select(m => m.Value.ToLowerInvariant())
+                .ToHashSet(StringComparer.Ordinal);
+            int overlap = terms.Count(tokens.Contains);
+            if (overlap >= Math.Min(2, terms.Length)) return i;
+            if (terms.Length > 1 && uniqueSectionAnchor < 0 &&
+                terms.Skip(1).Any(term => term.Length >= 4 && tokens.Contains(term)))
+                uniqueSectionAnchor = i;
+        }
+        if (uniqueSectionAnchor >= 0) return uniqueSectionAnchor;
         if (terms.Length == 1)
         {
             // A single exact named-section heading is an authoritative visual

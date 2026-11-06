@@ -6799,6 +6799,40 @@ public sealed class NIRAExecutive
                         decision.Reply, decision.DisplayBlocks);
                     var grounding = NIRAWebResearchGroundingGate.Check(
                         webResearchReviewEvidence, visibleDraft);
+                    if (!grounding.Accepted && grounding.Code == "UnobservedCitation")
+                    {
+                        // Repair a PRESENTATION/CITATION mistake without
+                        // throwing away the entire researched factual answer.
+                        // The semantic reviewer below still must verify facts;
+                        // deleting a fabricated URL does not prove a claim.
+                        string cleanReply = NIRAWebResearchGroundingGate.RemoveUnobservedCitationLinks(
+                            webResearchReviewEvidence, decision.Reply);
+                        var cleanBlocks = decision.DisplayBlocks.Select(block => block with {
+                            Title = NIRAWebResearchGroundingGate.RemoveUnobservedCitationLinks(
+                                webResearchReviewEvidence, block.Title),
+                            Text = NIRAWebResearchGroundingGate.RemoveUnobservedCitationLinks(
+                                webResearchReviewEvidence, block.Text),
+                            Items = block.Items.Select(item =>
+                                NIRAWebResearchGroundingGate.RemoveUnobservedCitationLinks(
+                                    webResearchReviewEvidence, item)).ToArray(),
+                            Panels = block.Panels.Select(panel =>
+                                NIRAWebResearchGroundingGate.RemoveUnobservedCitationLinks(
+                                    webResearchReviewEvidence, panel)).ToArray()
+                        }).ToArray();
+                        string repairedDraft = NIRAPresentationPolicy.ForObjectiveReview(
+                            cleanReply, cleanBlocks);
+                        var repairedCheck = NIRAWebResearchGroundingGate.Check(
+                            webResearchReviewEvidence, repairedDraft);
+                        if (repairedCheck.Accepted)
+                        {
+                            decision = decision with { Reply = cleanReply, DisplayBlocks = cleanBlocks };
+                            visibleDraft = repairedDraft;
+                            grounding = repairedCheck;
+                            NIRADiagnosticTrace.Event("WEB-GROUNDING-REPAIR",
+                                $"Run={runId:D} Cycle={cycle} Action=RemoveUnobservedLinks " +
+                                "Next=IndependentSemanticReview NewModelCalls=0");
+                        }
+                    }
                     // A source list can be syntactically valid yet belong to
                     // a different resource than the URL supplied by the user.
                     // Do not certify claims from such unrelated results.
@@ -7059,13 +7093,28 @@ public sealed class NIRAExecutive
                     GetPendingTaskForEvent(mindEvent) == null;
                 if (ordinarySourceOnlyAnswer)
                 {
+                    // Repair only observed, read-only research. A model's
+                    // repeated NeedsWork verdict is never factual approval.
+                    // Unlike R4.3, do not discard a stronger corrected draft
+                    // after the FIRST unsuccessful re-review. Feed the precise
+                    // latest reviewer objection into the next bounded attempt.
                     focusedWebCorrectionAttempted = true;
-                    string? corrected = await _cognition.RefineWebResearchDraftAsync(
-                        runId, mindEvent.Content, decision.Reply,
-                        webResearchReviewEvidence, taskReview!.Gap,
-                        taskReview.NextStep, cancellationToken);
-                    if (!string.IsNullOrWhiteSpace(corrected))
+                    string candidateDraft = decision.Reply;
+                    var candidateReview = taskReview!;
+                    var previousDrafts = new HashSet<string>(StringComparer.Ordinal)
                     {
+                        candidateDraft
+                    };
+                    for (int attempt = 1; attempt <= 3 &&
+                        candidateReview.Verdict == "NeedsWork"; attempt++)
+                    {
+                        string? corrected = await _cognition.RefineWebResearchDraftAsync(
+                            runId, mindEvent.Content, candidateDraft,
+                            webResearchReviewEvidence, candidateReview.Gap,
+                            candidateReview.NextStep, cancellationToken,
+                            conservativePass: attempt == 3);
+                        if (string.IsNullOrWhiteSpace(corrected) ||
+                            !previousDrafts.Add(corrected)) break;
                         var revisedDecision = decision with {
                             Reply = corrected,
                             Speech = string.Empty,
@@ -7082,14 +7131,20 @@ public sealed class NIRAExecutive
                         bool accepted = NIRAProductionContinuityPolicy.AcceptsObjectiveReview(
                             revisedDecision, correctedReview);
                         NIRADiagnosticTrace.Event("WEB-REVIEW-FOCUSED-RESULT",
-                            $"Run={runId:D} Cycle={cycle} " +
+                            $"Run={runId:D} Cycle={cycle} Attempt={attempt} " +
+                            $"DraftChars={corrected.Length} " +
                             $"Verdict={correctedReview?.Verdict ?? "Unavailable"} " +
                             $"Accepted={accepted} FurtherWebCalls=0");
                         if (accepted)
                         {
                             decision = revisedDecision;
                             taskReview = correctedReview;
+                            break;
                         }
+                        candidateDraft = corrected;
+                        if (correctedReview is null) break;
+                        candidateReview = correctedReview;
+                        taskReview = correctedReview;
                     }
                 }
 
@@ -7174,9 +7229,7 @@ public sealed class NIRAExecutive
                         decision.DynamicToolInvocations.Count == 0 &&
                         capabilityResultsBySignature.Values.All(r => r.Risk == NIRACapabilityRisk.Observe) &&
                         webResearchReviewEvidence.Length > 0
-                        ? NIRAWebResearchReplyPolicy.ObservedSourceHandoff(
-                            capabilityResultsBySignature.Values.ToArray(), mindEvent.Content) ??
-                          NIRAWebResearchReplyPolicy.ObservedSourceDigestFromResults(
+                        ? NIRAWebResearchReplyPolicy.FailedReviewSourceHandoff(
                             capabilityResultsBySignature.Values.ToArray(), mindEvent.Content)
                         : null;
                     NIRADiagnosticTrace.Event("OBJECTIVE-REVIEW-RECOVERY",
@@ -7371,9 +7424,7 @@ public sealed class NIRAExecutive
                     string? researchDigest = taskReview.Verdict == "NeedsWork" &&
                         !preReviewCommitmentSucceeded && !desktopActionNeedsObservation &&
                         NIRAWebResearchReplyPolicy.IsGroundedAnswerShape(decision)
-                            ? NIRAWebResearchReplyPolicy.ObservedSourceHandoff(
-                                capabilityResultsBySignature.Values.ToArray(), mindEvent.Content) ??
-                              NIRAWebResearchReplyPolicy.ObservedSourceDigestFromResults(
+                            ? NIRAWebResearchReplyPolicy.FailedReviewSourceHandoff(
                                 capabilityResultsBySignature.Values.ToArray(), mindEvent.Content)
                             : null;
                     if (researchDigest is not null)
@@ -7995,6 +8046,11 @@ public sealed class NIRAExecutive
                     reply, mindEvent.Content, verifiedWebSearch);
                 spoken = NIRAResearchPresentationPolicy.StripDecorativeReferenceSection(
                     spoken, mindEvent.Content, verifiedWebSearch);
+                // Remove internal visual planning instructions even when the
+                // final style pass was rejected for fidelity. They are never
+                // evidence, and they create false photo anchors at the end.
+                reply = NIRAResearchPresentationPolicy.StripEditorialImagePlacement(reply);
+                spoken = NIRAResearchPresentationPolicy.StripEditorialImagePlacement(spoken);
                 spoken = NIRAPresentationPolicy.EnsureInformativeSpeech(spoken, blocks);
                 // Trusted terminal delivery check: the LLM can lose track of
                 // successful photos after a later failed/duplicate search. Fix

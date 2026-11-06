@@ -660,6 +660,8 @@ public sealed class NIRACommonsImageDiscoveryService : IDisposable, INIRAImageDi
                 (orderedName ? 35 : 0) + consecutive * 12 -
                 specificityPenalty + pixelBonus - compositionPenalty + viewScore;
             return new { image, position, eligible = !conflictingYear &&
+                (!photographsOnly || NIRAReferenceImageQualityPolicy.MatchesRequestedScene(
+                    originalIntentQuery ?? query, image.Title, image.Description, image.MediaUrl)) &&
                 !documentPreview && !artificial && !producerCredit &&
                 !attributedOnly && (!wantsExterior || !interior || exterior) &&
                 (!wantsInterior || !exterior || interior) &&

@@ -607,7 +607,13 @@ public partial class App : WpfApplication
             builder.Services.AddSingleton<NIRATavilyImageDiscoveryService>();
             builder.Services.AddSingleton<INIRAImageDiscoveryService>(sp =>
                 sp.GetRequiredService<NIRATavilyImageDiscoveryService>());
-            builder.Services.AddSingleton<INIRACapabilityHandler, NIRAImageSearchCapabilityHandler>();
+            // R4.6: inject the existing Gemma vision resource explicitly.
+            // Merely having it available in DI did not inspect retrieved photos.
+            builder.Services.AddSingleton<INIRACapabilityHandler>(sp =>
+                new NIRAImageSearchCapabilityHandler(
+                    sp.GetRequiredService<INIRAImageDiscoveryService>(),
+                    sp.GetRequiredService<NIRACommonsImageDiscoveryService>(),
+                    sp.GetRequiredService<OllamaClient>()));
             builder.Services.AddSingleton<INIRACapabilityHandler, NIRAImageRetrieveCapabilityHandler>();
             // R37: native image generation, single Cloudflare 4B model, separate from Ollama.
             builder.Services.AddSingleton<NIRACloudflareImageGenerationService>();

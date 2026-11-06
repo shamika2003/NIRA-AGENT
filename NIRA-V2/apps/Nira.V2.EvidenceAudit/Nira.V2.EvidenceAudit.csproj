@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Nira.V2.Evidence/Nira.V2.Evidence.csproj" />
+  </ItemGroup>
+</Project>

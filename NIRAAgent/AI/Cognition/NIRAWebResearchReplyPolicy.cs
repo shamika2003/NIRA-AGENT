@@ -119,61 +119,88 @@ public static class NIRAWebResearchReplyPolicy
         IReadOnlyList<NIRACapabilityResult> observedResults,
         string? userObjective = null)
     {
-        if (observedResults is null) return null;
-        foreach (var result in observedResults)
+        if (observedResults is null || observedResults.Any(result =>
+                result.Risk != NIRACapabilityRisk.Observe || result.ChangedSystemState ||
+                result.OutcomeUncertain)) return null;
+        // Link lists are appropriate when explicitly requested; ordinary
+        // research answers must instead be written and independently checked.
+        // A source-only emergency handoff is separate from that normal path.
+        foreach (var result in observedResults.Reverse())
         {
-            if (result.CapabilityId != NIRACapabilityIds.WebSearch ||
-                !result.Succeeded || result.Risk != NIRACapabilityRisk.Observe ||
-                result.OutcomeUncertain || result.ChangedSystemState) continue;
+            if (result.CapabilityId != NIRACapabilityIds.WebSearch || !result.Succeeded)
+                continue;
             try
             {
                 using JsonDocument doc = JsonDocument.Parse(result.Output);
                 JsonElement root = NIRAWebEvidenceIdentityPolicy.RelevantSourcePayload(
                     doc.RootElement, userObjective);
-                if (!root.TryGetProperty("evidenceType", out var kind) ||
-                    kind.GetString() != "UntrustedPublicWebSearchExtracts" ||
-                    !root.TryGetProperty("completed", out var completed) ||
-                    completed.ValueKind != JsonValueKind.True ||
-                    !root.TryGetProperty("sources", out var sources) ||
-                    sources.ValueKind != JsonValueKind.Array ||
-                    !root.TryGetProperty("sourceCount", out var count) ||
-                    !count.TryGetInt32(out int expected) || expected != sources.GetArrayLength() ||
-                    expected is < 1 or > 8) continue;
-                if (!NIRAResearchPresentationPolicy.IsLinkDiscoveryRequest(userObjective))
+                if (!TryPublicSources(root, out var publicSources)) continue;
+                if (!NIRAResearchPresentationPolicy.IsLinkDiscoveryRequest(userObjective) &&
+                    !string.IsNullOrWhiteSpace(userObjective))
                     return "I found published sources, but my independent answer check didn't complete, so I won't present that as verified yet.";
                 StringBuilder reply = new(
-                    "I found published sources, but my independent answer check didn't complete, so treat these as starting points rather than verified conclusions:
-");
-                int added = 0;
-                foreach (var source in sources.EnumerateArray())
-                {
-                    if (source.ValueKind != JsonValueKind.Object ||
-                        !source.TryGetProperty("url", out var address) ||
-                        address.ValueKind != JsonValueKind.String ||
-                        !NIRAWebSearchParsing.SafeSourceUrl(address.GetString() ?? "") ||
-                        !source.TryGetProperty("extract", out var extract) ||
-                        extract.ValueKind != JsonValueKind.String ||
-                        string.IsNullOrWhiteSpace(extract.GetString())) continue;
-                    string url = address.GetString()!;
-                    string title = source.TryGetProperty("title", out var display) &&
-                        display.ValueKind == JsonValueKind.String ? display.GetString() ?? "" : "";
-                    // Escaping title control/Markdown makes untrusted provider
-                    // strings data, not user-facing instructions or forged links.
-                    title = new string(title.Where(c => !char.IsControl(c)).Take(100).ToArray());
-                    foreach (char marker in new[] { '[', ']', '(', ')', '*', '`' })
-                        title = title.Replace(marker.ToString(), "");
-                    if (string.IsNullOrWhiteSpace(title)) title = "Found source";
-                    reply.Append("- [").Append(title.Trim()).Append("](")
-                        .Append(url).AppendLine(")");
-                    if (++added == 3) break;
-                }
-                if (added > 0) return reply.ToString().TrimEnd();
+                    "I found published sources, but my independent answer check didn't complete, so treat these as starting points rather than verified conclusions:\n");
+                foreach (var source in publicSources.Take(3))
+                    reply.Append("- [").Append(source.Title).Append("](")
+                        .Append(source.Url).AppendLine(")");
+                return reply.ToString().TrimEnd();
             }
             catch (JsonException) { }
             catch (InvalidOperationException) { }
         }
         return null;
     }
+
+    // Validate the complete receipt before using any source; only safe public
+    // URLs with nonempty attributed extracts can cross the response boundary.
+    // Source titles are inert text, never Markdown/HTML markup from a publisher.
+    private static bool TryPublicSources(JsonElement root,
+        out List<(string Url, string Title, string Extract)> publicSources)
+    {
+        publicSources = new();
+        if (root.ValueKind != JsonValueKind.Object ||
+            !root.TryGetProperty("evidenceType", out var kind) ||
+            kind.ValueKind != JsonValueKind.String ||
+            kind.GetString() != "UntrustedPublicWebSearchExtracts" ||
+            !root.TryGetProperty("completed", out var complete) ||
+            complete.ValueKind != JsonValueKind.True ||
+            !root.TryGetProperty("sources", out var sources) ||
+            sources.ValueKind != JsonValueKind.Array ||
+            !root.TryGetProperty("sourceCount", out var count) ||
+            !count.TryGetInt32(out int number) ||
+            number is < 1 or > 8 || number != sources.GetArrayLength()) return false;
+        foreach (var source in sources.EnumerateArray())
+        {
+            if (source.ValueKind != JsonValueKind.Object ||
+                !source.TryGetProperty("url", out var url) ||
+                url.ValueKind != JsonValueKind.String ||
+                !NIRAWebSearchParsing.SafeSourceUrl(url.GetString() ?? "") ||
+                !source.TryGetProperty("extract", out var extract) ||
+                extract.ValueKind != JsonValueKind.String ||
+                string.IsNullOrWhiteSpace(extract.GetString())) continue;
+            string title = source.TryGetProperty("title", out var name) &&
+                name.ValueKind == JsonValueKind.String ? name.GetString() ?? "" : "";
+            string Clean(string value, int max) =>
+                new string(value.Where(c => !char.IsControl(c) || c == ' ')
+                    .Select(c => c is '[' or ']' or '(' or ')' or '<' or '>' or '`' or '*' or '#'
+                        ? ' ' : c).Take(max).ToArray()).Trim();
+            title = Clean(title, 95);
+            string text = Clean(extract.GetString() ?? "", 360);
+            if (text.Length == 0) continue;
+            publicSources.Add((url.GetString()!,
+                title.Length == 0 ? "Published reference" : title, text));
+        }
+        return publicSources.Count > 0;
+    }
+
+    // Select the appropriate reviewer-failure partial. Ordinary factual
+    // questions get attributed excerpts rather than a bare apology or a wall
+    // of links. A user specifically asking for websites gets the links.
+    internal static string? FailedReviewSourceHandoff(
+        IReadOnlyList<NIRACapabilityResult> results, string? userObjective) =>
+        NIRAResearchPresentationPolicy.IsLinkDiscoveryRequest(userObjective)
+            ? ObservedSourceHandoff(results, userObjective)
+            : ObservedSourceDigestFromResults(results, userObjective);
 
     // Regression guard: a successful source lookup must not vanish into a
     // long series of speculative web searches and a generic "search failed"
@@ -197,27 +224,32 @@ public static class NIRAWebResearchReplyPolicy
         // ordinary user-request/media-intent and verified-reference routing.
         // This is a failure report, not another tool planner.
 
-        string? links = ObservedSourceHandoff(observedResults, userObjective) ??
-            ObservedSourceDigestFromResults(observedResults, userObjective);
+        string? links = FailedReviewSourceHandoff(observedResults, userObjective);
         if (string.IsNullOrWhiteSpace(links) &&
             NIRAWebEvidenceIdentityPolicy.FirstRequestedUrl(userObjective) is not null)
         {
-            // Three successful API receipts that never identify the actual
-            // user-supplied resource cannot justify quoting similar results.
-            // End the bounded research attempt truthfully, not with unrelated
-            // page excerpts or another browser/search detour.
+            // A source provider can identify the precise URL without giving
+            // NIRA enough evidence to explain its content. Distinguish that
+            // situation from a search that only found unrelated pages.
+            bool foundTarget = HasObservedRequestedSource(observedResults, userObjective);
             return new NIRACognitionDecision {
                 State = NIRACognitionState.Blocked,
                 EmitReply = true,
-                Reply = "I searched for the link you provided, but the returned sources " +
-                    "did not reliably identify that exact resource. I can't verify " +
-                    "its details from those results, so I won't substitute a " +
-                    "similarly named page or make up an answer.",
+                Reply = foundTarget
+                    ? "I located the exact page you linked, but I couldn't " +
+                      "finish checking and explaining its contents reliably. " +
+                      "A raw search excerpt isn't a substitute for an answer."
+                    : "I searched for the link you provided, but the returned sources " +
+                      "did not reliably identify that exact resource. I can't verify " +
+                      "its details from those results, so I won't substitute a " +
+                      "similarly named page or make up an answer.",
                 Speech = string.Empty,
                 ReplyReady = true,
                 CharacterReady = true,
                 DisplayBlocks = Array.Empty<NIRARichBlock>(),
-                DecisionSummary = "User-linked resource was not identified in the observed search evidence."
+                DecisionSummary = foundTarget
+                    ? "Exact linked source observed; independent explanatory review incomplete."
+                    : "User-linked resource was not identified in the observed search evidence."
             };
         }
         if (string.IsNullOrWhiteSpace(links)) return null;
@@ -228,6 +260,35 @@ public static class NIRAWebResearchReplyPolicy
             DisplayBlocks = Array.Empty<NIRARichBlock>(),
             DecisionSummary = "Bounded attributed source handoff after repeated web research."
         };
+    }
+
+    // Check the originally observed trusted receipt before narrowing it.
+    // RelevantSourcePayload intentionally reconstructs a filtered JSON shape;
+    // validating the original first prevents an incomplete/unsafe payload
+    // from becoming "completed" merely because its URL matches the user text.
+    private static bool HasObservedRequestedSource(
+        IReadOnlyList<NIRACapabilityResult> results, string? userObjective)
+    {
+        if (NIRAWebEvidenceIdentityPolicy.FirstRequestedUrl(userObjective) is null)
+            return false;
+        foreach (var result in results)
+        {
+            if (result.CapabilityId != NIRACapabilityIds.WebSearch ||
+                !result.Succeeded || result.OutcomeUncertain ||
+                result.ChangedSystemState || result.Risk != NIRACapabilityRisk.Observe)
+                continue;
+            try
+            {
+                using JsonDocument receipt = JsonDocument.Parse(result.Output);
+                if (!TryPublicSources(receipt.RootElement, out _)) continue;
+                JsonElement matched = NIRAWebEvidenceIdentityPolicy.RelevantSourcePayload(
+                    receipt.RootElement, userObjective);
+                if (TryPublicSources(matched, out _)) return true;
+            }
+            catch (JsonException) { }
+            catch (InvalidOperationException) { }
+        }
+        return false;
     }
 
     // Only a syntax-repair-produced Blocked decision is treated as a failed
@@ -246,7 +307,8 @@ public static class NIRAWebResearchReplyPolicy
     // produced malformed JSON. Show the actual attributable source excerpts as
     // a PARTIAL, explicitly unverified result; never compose new factual claims.
     // The caller must have a structurally accepted Executive web.search receipt.
-    internal static string? ObservedSourceDigest(string capabilityEvidence)
+    internal static string? ObservedSourceDigest(
+        string capabilityEvidence, string? userObjective = null)
     {
         if (string.IsNullOrWhiteSpace(capabilityEvidence) ||
             !capabilityEvidence.Contains("CapabilityId: web.search", StringComparison.Ordinal) ||
@@ -259,7 +321,7 @@ public static class NIRAWebResearchReplyPolicy
         try
         {
             using JsonDocument doc = JsonDocument.Parse(capabilityEvidence[(start + 1)..].Trim());
-            return ObservedSourceDigestFromPayload(doc.RootElement);
+            return ObservedSourceDigestFromPayload(doc.RootElement, userObjective);
         }
         catch (JsonException) { return null; }
         catch (InvalidOperationException) { return null; }
@@ -269,56 +331,30 @@ public static class NIRAWebResearchReplyPolicy
     // validated here as well, so no arbitrary text or forged URLs are promoted.
     internal static string? ObservedSourceDigestFromPayload(JsonElement payload, string? userObjective = null)
     {
+        // A user-supplied URL is an exact research target. Even a correctly
+        // matched search excerpt is not an independent explanation of that
+        // page. Preserve the receipt for model synthesis/review, but NEVER
+        // promote provider snippets to a completed public response after a
+        // failed review. General topic research still has the explicitly
+        // provisional, source-attributed partial recovery below.
+        if (NIRAWebEvidenceIdentityPolicy.FirstRequestedUrl(userObjective) is not null)
+            return null;
         payload = NIRAWebEvidenceIdentityPolicy.RelevantSourcePayload(payload, userObjective);
-        if (payload.ValueKind != JsonValueKind.Object ||
-            !payload.TryGetProperty("evidenceType", out var kind) ||
-            kind.ValueKind != JsonValueKind.String ||
-            kind.GetString() != "UntrustedPublicWebSearchExtracts" ||
-            !payload.TryGetProperty("completed", out var completed) ||
-            completed.ValueKind != JsonValueKind.True ||
-            !payload.TryGetProperty("sourceCount", out var total) ||
-            !total.TryGetInt32(out int count) || count is < 1 or > 8 ||
-            !payload.TryGetProperty("sources", out var sources) ||
-            sources.ValueKind != JsonValueKind.Array ||
-            sources.GetArrayLength() != count) return null;
+        if (!TryPublicSources(payload, out var sources)) return null;
 
-        StringBuilder reply = new("I found published information relevant to your question. " +
-            "I couldn't independently settle every claim, so here are the " +
-            "specific source findings rather than an empty answer. " +
-            "These are attributed excerpts, not verified results:\n\n");
-        int added = 0;
-        foreach (JsonElement source in sources.EnumerateArray())
+        // Last-resort PARTIAL: independently observed extracts are quoted as
+        // publisher claims, not transformed into facts and not certified by a
+        // failed review. This must never be used as a normal finished answer.
+        StringBuilder reply = new(
+            "My independent answer check didn't complete. Here are attributable excerpts from the published material, not independently verified conclusions:\n\n");
+        foreach (var source in sources.Take(4))
         {
-            if (source.ValueKind != JsonValueKind.Object ||
-                !source.TryGetProperty("url", out var link) ||
-                link.ValueKind != JsonValueKind.String ||
-                !NIRAWebSearchParsing.SafeSourceUrl(link.GetString() ?? "") ||
-                !source.TryGetProperty("extract", out var excerpt) ||
-                excerpt.ValueKind != JsonValueKind.String ||
-                string.IsNullOrWhiteSpace(excerpt.GetString())) continue;
-            string url = link.GetString()!;
-            string title = source.TryGetProperty("title", out var heading) &&
-                heading.ValueKind == JsonValueKind.String ? heading.GetString() ?? "" : "";
-            string text = excerpt.GetString() ?? "";
-            // The API supplied these fields. Render them as inert, bounded text;
-            // remove Markdown control characters and whitespace injection.
-            static string Clean(string value, int max) =>
-                new string(value.Where(c => !char.IsControl(c) || c == ' ')
-                    .Select(c => c is '[' or ']' or '(' or ')' or '<' or '>' or '`' or '*' or '#' ? ' ' : c)
-                    .Take(max).ToArray()).Trim();
-            title = Clean(title, 95);
-            text = Clean(text, 360);
-            if (title.Length == 0) title = "Published reference";
-            if (text.Length == 0) continue;
-            reply.Append("**").Append(title).Append("** — [Source](")
-                .Append(url).Append(")\n");
-            reply.Append("Source excerpt: “").Append(text).AppendLine("”\n");
-            if (++added == 4) break;
+            reply.Append("**").Append(source.Title).Append("** — [Source](")
+                .Append(source.Url).Append(")\n");
+            reply.Append("Source excerpt: “").Append(source.Extract).AppendLine("”\n");
         }
-        if (added == 0) return null;
-        reply.Append("\nSome source claims may be proposed, advertised, or not " +
-            "independently verified. These extracts alone do not establish " +
-            "that a claimed outcome was demonstrated.");
+        reply.Append("These are attributed excerpts, not independently verified outcomes. " +
+            "A publisher's description or proposal alone does not establish a demonstrated result.");
         return reply.ToString();
     }
 

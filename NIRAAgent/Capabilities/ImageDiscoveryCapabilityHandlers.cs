@@ -1,13 +1,82 @@
 using NIRAAgent.Images;
 using NIRAAgent.Diagnostics;
+using NIRAAgent.AI.Ollama;
 using System.Text;
+using System.Text.Json;
 
 namespace NIRAAgent.Capabilities;
 
 public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
 {
     private readonly INIRAImageDiscoveryService _service;
-    public NIRAImageSearchCapabilityHandler(INIRAImageDiscoveryService service) => _service = service;
+    private readonly NIRACommonsImageDiscoveryService? _commonsFallback;
+    private readonly OllamaClient? _visionModel;
+    // Optional constructor parameters preserve older test integrations.
+    // Production DI supplies both Commons and NIRA's EXISTING Gemma vision model.
+    public NIRAImageSearchCapabilityHandler(INIRAImageDiscoveryService service,
+        NIRACommonsImageDiscoveryService? commonsFallback = null,
+        OllamaClient? visionModel = null)
+    {
+        _service = service;
+        _commonsFallback = commonsFallback;
+        _visionModel = visionModel;
+    }
+
+    // A correctly downloaded historical JPEG may depict a ticket, an indoor
+    // model or an unrelated scene. Independently inspect the PIXELS, not a
+    // search engine description or the source host. The vision model cannot
+    // authenticate a historical date or licence; provenance is checked above.
+    // Uncertain/malformed observations fail closed for documentary photos.
+    private async Task<bool> InspectDocumentaryPixelsAsync(
+        string query, NIRACommonsImageDownload photo, CancellationToken ct)
+    {
+        if (_visionModel is null) return true; // Standalone legacy unit fixtures.
+        const string system = "You are a visual scene verifier, not a web researcher. " +
+            "Only inspect the pixels of the attached image. Do not treat the " +
+            "search query, publisher or caption as proof of what is visible. " +
+            "Answer JSON only with boolean fields photographic and matchesScene, " +
+            "and a short reason. photographic=false for tickets, posters, scanned " +
+            "documents, drawings, diagrams, digital models or renders where a " +
+            "real-world documentary photograph was requested. matchesScene=true " +
+            "ONLY if the visible scene matches the requested subject, action " +
+            "and environment; a person near an event is not the event, and " +
+            "hardware in a factory is not on the Moon. If scene verification " +
+            "is uncertain, use false. Never guess historical identity from " +
+            "the pixels alone, and never claim source authenticity.";
+        try
+        {
+            string raw = await _visionModel.ChatWithImagesAsync(
+                NIRAModelSelection.Vision, system,
+                "Requested visible photograph/scene: " + query +
+                "\nDoes the attached image itself visibly depict it?",
+                new[] { photo.LocalPath }, jsonMode: true,
+                cancellationToken: ct);
+            using JsonDocument doc = JsonDocument.Parse(raw);
+            JsonElement root = doc.RootElement;
+            bool good = root.ValueKind == JsonValueKind.Object &&
+                root.TryGetProperty("photographic", out JsonElement photographic) &&
+                (photographic.ValueKind is JsonValueKind.True or JsonValueKind.False) &&
+                photographic.GetBoolean() &&
+                root.TryGetProperty("matchesScene", out JsonElement matching) &&
+                (matching.ValueKind is JsonValueKind.True or JsonValueKind.False) &&
+                matching.GetBoolean();
+            NIRADiagnosticTrace.Event("IMAGE-VISION-AUDIT",
+                $"Outcome={(good ? "Accepted" : "Rejected")} " +
+                $"Model={NIRAModelSelection.Vision} Query={query[..Math.Min(query.Length, 70)]}");
+            return good;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            NIRADiagnosticTrace.Event("IMAGE-VISION-AUDIT", "Outcome=Unavailable Reason=BudgetExpired");
+            return false;
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            NIRADiagnosticTrace.Event("IMAGE-VISION-AUDIT",
+                $"Outcome=Unavailable Reason={ex.GetType().Name} NoUnverifiedPhotoShown=True");
+            return false;
+        }
+    }
 
     public NIRACapabilityDescriptor Descriptor { get; } = new()
     {
@@ -43,7 +112,8 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
             NIRACapabilityArguments.GetBoolean(request, "retrieveBest");
         int retrieveCount = NIRACapabilityContractCodec.ReadInteger(request, Descriptor, "retrieveCount");
         int skipCandidates = NIRACapabilityContractCodec.ReadInteger(request, Descriptor, "skipCandidates");
-        bool photographsOnly = NIRACapabilityArguments.GetBoolean(request, "photographsOnly");
+        bool photographsOnly = NIRACapabilityArguments.GetBoolean(request, "photographsOnly") ||
+            NIRAReferenceImageQualityPolicy.RequireDocumentary(query, false);
         // R73: a model's limit=1 made image search brittle: one bad CDN
         // content-type/403 lost the entire subject although Tavily returned
         // dozens of candidates. Keep several ALTERNATES from the same API call;
@@ -62,11 +132,36 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
             $"RetrieveBest={retrieveBest} RetrieveCount={retrieveCount} " +
             $"SkipCandidates={skipCandidates} PhotographsOnly={photographsOnly}");
         var images = await _service.SearchAsync(query, limit, cancellationToken, photographsOnly);
+        INIRAImageDiscoveryService selectedProvider = _service;
+        if (images.Count == 0 && retrieveBest && _commonsFallback is not null &&
+            !ReferenceEquals(_service, _commonsFallback))
+        {
+            try
+            {
+                var alternatives = await _commonsFallback.SearchAsync(
+                    query, limit, cancellationToken, photographsOnly);
+                images = alternatives.Where(candidate =>
+                    NIRAReferenceImageQualityPolicy.Accept(candidate, query, photographsOnly) &&
+                    NIRAReferenceImageQualityPolicy.MatchesRequestedScene(query,
+                        candidate.Title, candidate.Description, candidate.MediaUrl)).ToArray();
+                selectedProvider = _commonsFallback;
+                NIRADiagnosticTrace.Event("IMAGE-ARCHIVE-FALLBACK",
+                    $"Stage=PrimaryEmpty Alternatives={images.Count} NoGeneratedImages=True");
+            }
+            catch (Exception ex) when (ex is NIRAImageProviderUnavailableException or
+                HttpRequestException or OperationCanceledException)
+            {
+                if (cancellationToken.IsCancellationRequested) throw;
+                NIRADiagnosticTrace.Event("IMAGE-ARCHIVE-FALLBACK",
+                    $"Stage=PrimaryEmpty Outcome=Unavailable Kind={ex.GetType().Name}");
+            }
+        }
         NIRADiagnosticTrace.Event("IMAGE-TOOL-RESULT",
             $"Capability=image.search Query={query} Candidates={images.Count} " +
             $"ProviderStatus={_service.LastSearchStatus}");
         var output = new StringBuilder();
-        output.AppendLine($"Provider=Tavily | Query={query} | Candidates={images.Count} | ResultsAreCandidatesOnly=True");
+        output.AppendLine($"Provider={(ReferenceEquals(selectedProvider, _commonsFallback) ? "Wikimedia Commons" : "Tavily")} " +
+            $"| Query={query} | Candidates={images.Count} | ResultsAreCandidatesOnly=True");
         foreach (var item in images)
         {
             output.AppendLine($"CandidateId={item.CandidateId}");
@@ -93,7 +188,7 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
             // Do not invent or promote an unrelated image-search page.
             output.AppendLine("ImageSearchPageIsNotVerifiedImage=True");
             return new NIRACapabilityHandlerResult {
-                Summary = "IMAGE_DISCOVERY_EMPTY: Tavily search completed, but no subject-relevant reference image was verified. No image was displayed.",
+                Summary = "IMAGE_DISCOVERY_EMPTY: Public image searches completed, but no subject-relevant reference image was verified. No image was displayed.",
                 Output = output.ToString(), ChangedSystemState = false
             };
         }
@@ -105,7 +200,8 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
             var shown = new List<NIRACapabilityVisualArtifact>();
             var hashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            budget.CancelAfter(TimeSpan.FromSeconds(28));
+            // Vision inspection requires a larger bounded budget than transport.
+            budget.CancelAfter(TimeSpan.FromSeconds(photographsOnly && _visionModel is not null ? 100 : 28));
             int attempted = 0;
             int unavailable = 0;
             foreach (var candidate in images.Skip(skipCandidates))
@@ -114,7 +210,20 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
                 attempted++;
                 try
                 {
-                    var image = await _service.RetrieveAsync(candidate.CandidateId, budget.Token);
+                    var image = await selectedProvider.RetrieveAsync(candidate.CandidateId, budget.Token);
+                    // Revalidate the returned image's own metadata, not only
+                    // the earlier search-result wrapper. A NASA gallery can
+                    // contain images of different missions and scenes.
+                    if (!NIRAReferenceImageQualityPolicy.MatchesRequestedScene(
+                        query, image.Title, image.Caption, null))
+                    {
+                        NIRADiagnosticTrace.Event("IMAGE-IDENTITY-REJECT",
+                            $"Stage=Downloaded Title={image.Title} Reason=WrongSceneOrIdentity");
+                        continue;
+                    }
+                    if (hashes.Contains(image.Sha256)) continue;
+                    if (photographsOnly && !await InspectDocumentaryPixelsAsync(
+                            query, image, budget.Token)) continue;
                     if (!hashes.Add(image.Sha256)) continue;
                     NIRADiagnosticTrace.Event("IMAGE-TOOL-SELECT",
                         $"Capability=image.search SelectedTitle={image.Title} " +
@@ -148,8 +257,65 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
                     break;
                 }
             }
+            // If the official-source CDN blocked every primary download,
+            // search a second independent public archive before reporting an
+            // image as unavailable. This changes only read-only image discovery.
+            if (shown.Count < retrieveCount && _commonsFallback is not null &&
+                !ReferenceEquals(selectedProvider, _commonsFallback) &&
+                !budget.IsCancellationRequested)
+            {
+                try
+                {
+                    var backup = await _commonsFallback.SearchAsync(query, limit,
+                        budget.Token, photographsOnly);
+                    int backupAttempts = 0;
+                    foreach (var candidate in backup)
+                    {
+                        if (shown.Count >= retrieveCount || budget.IsCancellationRequested ||
+                            backupAttempts >= 10) break;
+                        if (!NIRAReferenceImageQualityPolicy.Accept(candidate, query, photographsOnly) ||
+                            !NIRAReferenceImageQualityPolicy.MatchesRequestedScene(query,
+                                candidate.Title, candidate.Description, candidate.MediaUrl)) continue;
+                        backupAttempts++;
+                        attempted++;
+                        try
+                        {
+                            var archiveImage = await _commonsFallback.RetrieveAsync(
+                                candidate.CandidateId, budget.Token);
+                            if (!NIRAReferenceImageQualityPolicy.MatchesRequestedScene(
+                                query, archiveImage.Title, archiveImage.Caption, null)) continue;
+                            if (hashes.Contains(archiveImage.Sha256)) continue;
+                            if (photographsOnly && !await InspectDocumentaryPixelsAsync(
+                                    query, archiveImage, budget.Token)) continue;
+                            if (!hashes.Add(archiveImage.Sha256)) continue;
+                            shown.Add(new NIRACapabilityVisualArtifact {
+                                LocalPath = archiveImage.LocalPath, Title = archiveImage.Title,
+                                Caption = archiveImage.Caption, SubjectQuery = query,
+                                SourceUri = archiveImage.SourceUri,
+                                PresentToUser = true, Surface = "InlineOnly"
+                            });
+                            output.AppendLine($"VerifiedImageTitle={archiveImage.Title}");
+                            output.AppendLine($"VerifiedImageLocalPath={archiveImage.LocalPath}");
+                            output.AppendLine($"VerifiedImageSHA256={archiveImage.Sha256}");
+                            output.AppendLine($"VerifiedImageSourceUri={archiveImage.SourceUri}");
+                            output.AppendLine("VerifiedImageRights=Unverified; inspect source license before reuse/publication");
+                        }
+                        catch (NIRAImageRetrievalUnavailableException) { unavailable++; }
+                    }
+                    NIRADiagnosticTrace.Event("IMAGE-ARCHIVE-FALLBACK",
+                        $"Stage=PrimaryDownloadsFailed Attempted={backupAttempts} " +
+                        $"TotalDistinct={shown.Count} NoGeneratedImages=True");
+                }
+                catch (Exception ex) when (ex is NIRAImageProviderUnavailableException or
+                    HttpRequestException or OperationCanceledException)
+                {
+                    if (cancellationToken.IsCancellationRequested) throw;
+                    NIRADiagnosticTrace.Event("IMAGE-ARCHIVE-FALLBACK",
+                        $"Stage=PrimaryDownloadsFailed Outcome=Unavailable Kind={ex.GetType().Name}");
+                }
+            }
             NIRADiagnosticTrace.Event("IMAGE-RETRIEVE-BATCH",
-                $"Provider=Tavily Attempted={attempted} Unavailable={unavailable} " +
+                $"Provider=ArchiveAware Attempted={attempted} Unavailable={unavailable} " +
                 $"VerifiedDistinct={shown.Count} Requested={retrieveCount} " +
                 $"BudgetExpired={budget.IsCancellationRequested}");
             output.AppendLine($"ImageCandidateAttempts={attempted}");
@@ -169,7 +335,7 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
         }
         output.AppendLine("Candidates alone are NOT displayed images. Use image.retrieve with a returned candidateId if a different verified photo is needed.");
         return new NIRACapabilityHandlerResult {
-            Summary = $"Found {images.Count} Tavily image candidate(s); no verified image has been displayed.",
+            Summary = $"Found {images.Count} image candidate(s); no verified raster has been displayed.",
             Output = output.ToString(), ChangedSystemState = false
         };
     }

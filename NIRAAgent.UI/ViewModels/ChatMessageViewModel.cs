@@ -327,7 +327,8 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         var unplaced = VisualArtifacts.Where(photo =>
             !imageOnlyInlineGallery && (!HasInlineVisuals ||
             !(photo.HasPreview && photo.HasSourceUri && !photo.IsGeneratedImage) ||
-            (NIRAInlineImageAnchorPolicy.FindLine(Content,
+            (NIRAInlineImageAnchorPolicy.FindLine(
+                 NIRAResearchPresentationPolicy.StripEditorialImagePlacement(Content),
                  string.IsNullOrWhiteSpace(photo.SubjectQuery) ? photo.Title : photo.SubjectQuery) < 0 &&
              !_richPlacedPhotoIds.Contains(photo.ArtifactId)))).ToArray();
         BuildGalleryTiles(UnplacedAssistantImageGalleryTiles, unplaced, assistant: true);
@@ -441,7 +442,8 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
                     !string.IsNullOrWhiteSpace(b.ImageSubject) &&
                     string.Equals(b.ImageSubject.Trim(), photo.SubjectQuery.Trim(),
                         StringComparison.OrdinalIgnoreCase))) &&
-                NIRAInlineImageAnchorPolicy.FindLine(Content, subject) >= 0)
+                NIRAInlineImageAnchorPolicy.FindLine(
+                    NIRAResearchPresentationPolicy.StripEditorialImagePlacement(Content), subject) >= 0)
                 continue;
             // Block 03 owns placement: an imageSubject equals one ACTUALLY
             // returned image-search subject. No match => no model-directed
@@ -460,7 +462,8 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
                         b.Title,
                         b.Type == "tabs" ? b.Items : null,
                         b.Type == "tabs" ? b.Panels : null,
-                        b.Text))
+                        b.Text + " " + string.Join(" ",
+                            b.Rows.SelectMany(row => row).Take(80))))
             }).Where(x => x.Score > 0).OrderByDescending(x => x.Score).ToArray();
             // A rich block must actually identify the subject. Dropping an
             // unanchored image is safer than a fake visual placed at the end.
@@ -568,6 +571,12 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
                     };
                 if (NIRAImageCreditLayoutPolicy.IsDuplicatePhotoCredit(block, HasRetrievedCreditedImage))
                     continue;
+                if ((block.Type is "card" or "text" or "insight") &&
+                    !string.IsNullOrWhiteSpace(block.ImageSubject) &&
+                    System.Text.RegularExpressions.Regex.IsMatch(block.Text,
+                        @"(?im)^\s*imageSubject\s*:",
+                        System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+                    continue; // internal layout metadata, not explanatory content
                 // Dupes from model-authored displayBlocks and later batches must
                 // not generate new WebView2 processes or repeated players.
                 if (block.Type == "video" &&
@@ -702,6 +711,14 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         VisualArtifactViewModel visual =
             new(artifact);
 
+        // A true decoded visual fingerprint rejects rescaled/alternate-CDN
+        // copies as well as repeated exact URLs. Never render one picture twice.
+        if (!NIRAVisualDuplicateGuard.RegisterIfNovel(visual))
+        {
+            NIRAAgent.Diagnostics.NIRADiagnosticTrace.Event("IMAGE-VISUAL-DEDUP",
+                "Stage=ChatPresentation Action=DropNearDuplicate Scope=RecentChat");
+            return visual;
+        }
         VisualArtifacts.Add(
             visual);
 

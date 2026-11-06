@@ -661,6 +661,30 @@ public sealed class NIRACognitionService
         // corrections. There is no separate tool system or classifier.
         bool specialistActive = _deepReasoningRuns.TryGetValue(context.RunId,
             out DeepRunState? deepState);
+        // R4.6: clear, comprehensive research requests used to remain entirely
+        // on OSS because optional model delegation was never selected. The
+        // user's own first-turn objective may route to the EXISTING Ultra role;
+        // tool permissions, review, identity and memory ownership stay unchanged.
+        // This is never triggered by retrieved web text or capability receipts.
+        if (!specialistActive && context.Cycle == 1 &&
+            context.Event.Source == NIRAAgent.Mind.NIRAMindEventSource.User &&
+            NIRADeepResearchRoutePolicy.Enabled() &&
+            NIRADeepResearchRoutePolicy.ShouldRouteObjective(context.Event.Content))
+        {
+            const string autoResearchFocus = "Comprehensive source-grounded research: investigate " +
+                "the complete user objective, check precise claims, and produce " +
+                "a coherent original answer with correctly attributed images.";
+            var routed = new DeepRunState(autoResearchFocus, null, string.Empty,
+                NIRAVocalIntent.Default);
+            if (_deepReasoningRuns.TryAdd(context.RunId, routed))
+            {
+                deepState = routed;
+                specialistActive = true;
+                NIRADiagnosticTrace.Event("DEEP-RESEARCH-ROUTED",
+                    $"Run={context.RunId:D} Cycle=1 Role=DeepWork " +
+                    $"Model={NIRAModelSelection.Deep} Reason=ExplicitComprehensiveResearch");
+            }
+        }
         string selectedModel = NIRAModelSelection.ForCognition(specialistActive);
         string specialistUserPrompt = specialistActive
             ? userPrompt + "\n\nSPECIALIST FOCUS (proposed by primary " +
@@ -1442,6 +1466,18 @@ public sealed class NIRACognitionService
                 return null;
             }
             var sourceCheck = NIRAWebResearchGroundingGate.Check(sources, report);
+            if (!sourceCheck.Accepted && sourceCheck.Code == "UnobservedCitation")
+            {
+                // A bogus model-generated citation must not erase a useful
+                // research synthesis. Remove only that unsupported reference;
+                // the Executive reviewer still evaluates every factual claim.
+                report = NIRAWebResearchGroundingGate.RemoveUnobservedCitationLinks(
+                    sources, report);
+                sourceCheck = NIRAWebResearchGroundingGate.Check(sources, report);
+                NIRADiagnosticTrace.Event("DEEP-RESEARCH-SYNTHESIS",
+                    $"Run={context.RunId:D} CitationCleanup=True " +
+                    $"Grounding={sourceCheck.Code} IndependentReviewStillRequired=True");
+            }
             if (!sourceCheck.Accepted)
             {
                 NIRADiagnosticTrace.Event("DEEP-RESEARCH-SYNTHESIS",
@@ -1457,6 +1493,12 @@ public sealed class NIRACognitionService
                 handoff, report, cancellationToken);
             string answer = publicDraft ?? report;
             var finalCheck = NIRAWebResearchGroundingGate.Check(sources, answer);
+            if (!finalCheck.Accepted && finalCheck.Code == "UnobservedCitation")
+            {
+                answer = NIRAWebResearchGroundingGate.RemoveUnobservedCitationLinks(
+                    sources, answer);
+                finalCheck = NIRAWebResearchGroundingGate.Check(sources, answer);
+            }
             if (!finalCheck.Accepted)
             {
                 NIRADiagnosticTrace.Event("DEEP-RESEARCH-SYNTHESIS",
@@ -1555,6 +1597,16 @@ public sealed class NIRACognitionService
                 cancellationToken, jsonMode: false)).Trim();
             var grounding = NIRAWebResearchGroundingGate.Check(
                 collected.Evidence, answer);
+            if (!grounding.Accepted && grounding.Code == "UnobservedCitation")
+            {
+                answer = NIRAWebResearchGroundingGate.RemoveUnobservedCitationLinks(
+                    collected.Evidence, answer);
+                grounding = NIRAWebResearchGroundingGate.Check(
+                    collected.Evidence, answer);
+                NIRADiagnosticTrace.Event("WEB-OBSERVED-SYNTHESIS",
+                    $"Run={context.RunId:D} CitationCleanup=True " +
+                    $"Grounding={grounding.Code} IndependentReviewStillRequired=True");
+            }
             if (answer.Length is < 180 or > 16000 ||
                 answer.StartsWith("{", StringComparison.Ordinal) ||
                 answer.StartsWith("```", StringComparison.Ordinal) ||
@@ -1602,7 +1654,7 @@ public sealed class NIRACognitionService
         CancellationToken cancellationToken)
     {
         string? observedPartial = NIRAWebResearchReplyPolicy.ObservedSourceDigest(
-            context.CapabilityEvidence);
+            context.CapabilityEvidence, context.Event.Content);
         NIRADiagnosticTrace.Event("WEB-SYNTHESIS-RECOVERY",
             $"Run={context.RunId:D} Cycle={context.Cycle} Cause={cause} " +
             $"SourcesAvailable={observedPartial is not null} " +
@@ -1796,7 +1848,14 @@ public sealed class NIRACognitionService
         "unless actual support is present. Cite only sources that are supplied " +
         "in evidence, not links guessed from memory. Your job is to faithfully " +
         "COMMUNICATE and critically audit the already-completed findings, not " +
-        "pretend to run additional tools or silently drop important caveats.";
+        "pretend to run additional tools or silently drop important caveats. " +
+        "For historical or scientific research, write a connected explanation " +
+        "with a useful opening, timeline where appropriate, and section-by-section " +
+        "analysis. Search extracts are EVIDENCE, not the final writing style: " +
+        "never replace requested exposition with a list of quotations, " +
+        "publisher URLs or source excerpts. Use brief attributed citations " +
+        "near their supported claims. Never assert a photo was independently " +
+        "authenticated just because a file downloaded or a visual model answered.";
 
     internal static string DeepHandoffEvidence(string? evidence)
     {
@@ -1827,7 +1886,7 @@ public sealed class NIRACognitionService
     public async Task<string?> RefineWebResearchDraftAsync(
         Guid runId, string originalObjective, string previousDraft,
         string observedSourceEvidence, string reviewerGap, string reviewerNextStep,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, bool conservativePass = false)
     {
         if (string.IsNullOrWhiteSpace(originalObjective) ||
             string.IsNullOrWhiteSpace(previousDraft) ||
@@ -1852,6 +1911,17 @@ public sealed class NIRACognitionService
             "giving all useful supported facts. Do not design public UI, add " +
             "personality, or compose speech: shared Response Realization does " +
             "those jobs in Block 03 after verification. Output factual text only." +
+            (conservativePass
+                ? " FINAL SOURCE-STRICT REPAIR: The last two full drafts were " +
+                  "rejected. Cut or explicitly qualify EACH unsupported exact " +
+                  "date, person, quotation, attribution, sequence or statistic. " +
+                  "Prefer a shorter, correct, complete account of what the " +
+                  "observed extracts actually support over an impressive but " +
+                  "unverified essay. Provide citations using the exact observed " +
+                  "URLs immediately beside central factual claims. Keep the " +
+                  "user's major requested sections, including the explanation " +
+                  "and timeline, and do not substitute a list of sources."
+                : "") +
             NIRAPublicOutputContract.SynthesisInstructions;
         string user =
             "ORIGINAL USER OBJECTIVE:\n" + Bound(originalObjective, 5000) +

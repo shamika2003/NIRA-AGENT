@@ -763,6 +763,19 @@ public sealed class NIRATaskCompletionReviewService
         }
         try
         {
+            // Precise historical chronology is a factual claim, not stylistic
+            // decoration. The model must not infer time-of-day or UTC offsets
+            // from an event sequence or from a loosely related source extract.
+            if (!string.IsNullOrWhiteSpace(request.WebResearchSourceEvidence))
+                system += " For chronology, verify each exact date, clock time and " +
+                "time zone against an attributed source extract; do not approve " +
+                "a guessed timestamp merely because the event itself is real. " +
+                "Compare adjacent milestones for contradictions. If an exact " +
+                "time is unsupported, keep the event with a qualified date or " +
+                "no precise time; never replace it with invented precision. " +
+                "Source authority matters; a seller listing or a social media " +
+                "post is not independent evidence for historical measurements.";
+
             for (int reviewAttempt = 0; reviewAttempt < 2; reviewAttempt++)
             {
                 // R72: A repeat AwaitingUser/Complete disagreement is not a

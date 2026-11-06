@@ -115,7 +115,8 @@ public static class NIRAChatDocument
     {
         if (element is not StackPanel root) return;
         root.Children.Clear();
-        string source = raw.Replace("\r\n", "\n").Replace('\r', '\n');
+        string source = NIRAResearchPresentationPolicy.StripEditorialImagePlacement(
+            raw.Replace("\r\n", "\n").Replace('\r', '\n'));
         var knownVideoKeys = new HashSet<string>(
             GetEmbeddedVideoKeys(element).Split('|', StringSplitOptions.RemoveEmptyEntries),
             StringComparer.OrdinalIgnoreCase);
@@ -142,6 +143,7 @@ public static class NIRAChatDocument
             (source.Length >= 100 || photos.Count >= 4) &&
             photos.All(p => p.HasPreview && p.HasSourceUri && !p.IsGeneratedImage);
         bool imageOnlyGallery = inlinePhotos && source.Length < 100 && photos!.Count >= 4;
+        bool galleryPlaced = false;
         var pendingPhotos = inlinePhotos ? photos!.Select(p => new
         {
             Artifact = p,
@@ -153,6 +155,22 @@ public static class NIRAChatDocument
         void PlacePhotosThrough(int lastLine)
         {
             if (pendingPhotos is null) return;
+            if (imageOnlyGallery)
+            {
+                if (galleryPlaced) return;
+                var gallery = new WrapPanel { Orientation = Orientation.Horizontal,
+                    MaxWidth = 1040, Margin = new Thickness(0, 4, 0, 16) };
+                foreach (var item in pendingPhotos)
+                {
+                    var image = MakeInlinePhoto(item.Artifact, prominent: false, maxWidth: 232);
+                    image.Margin = new Thickness(0, 0, 12, 10);
+                    gallery.Children.Add(image);
+                    placedPhotos.Add(item.Artifact.ArtifactId);
+                }
+                root.Children.Add(gallery);
+                galleryPlaced = true;
+                return;
+            }
             foreach (var candidate in pendingPhotos)
             {
                 // Never manufacture a position for an unrelated/unmatched photo.
@@ -212,6 +230,10 @@ public static class NIRAChatDocument
                 continue;
             }
             if (inCode) { code.Add(line); continue; }
+            // imageSubject is a private structured binding to a verified
+            // artifact; no JSON/tool/cache metadata belongs in visible prose.
+            if (Regex.IsMatch(line, @"^\s*imageSubject\s*:",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)) continue;
             if (string.IsNullOrWhiteSpace(line)) { FlushParagraph(); continue; }
 
             // The model sometimes emits {'type':'video', 'title':'...',
@@ -484,18 +506,19 @@ public static class NIRAChatDocument
         return true;
     }
 
-    public static FrameworkElement MakeInlinePhoto(VisualArtifactViewModel photo, bool prominent)
+    public static FrameworkElement MakeInlinePhoto(VisualArtifactViewModel photo, bool prominent,
+        double? maxWidth = null)
     {
         // Plain image + quiet photo credit. No navy letterbox, no glass card,
         // outer border, badge or enclosing tinted panel.
-        double width = prominent ? 345 : 325;
+        double width = maxWidth ?? (prominent ? 345 : 325);
         var content = new StackPanel { MaxWidth = width };
         var picture = new Image
         {
             Source = photo.PreviewImage,
             Stretch = Stretch.Uniform,
             MaxWidth = width,
-            MaxHeight = prominent ? 275 : 240,
+            MaxHeight = maxWidth.HasValue ? 200 : prominent ? 275 : 240,
             HorizontalAlignment = HorizontalAlignment.Left
         };
         RenderOptions.SetBitmapScalingMode(picture, BitmapScalingMode.HighQuality);
@@ -521,8 +544,12 @@ public static class NIRAChatDocument
 
         // Editorial title supplied by search engines is not necessarily a
         // useful photograph caption; prefer the concrete search subject.
-        string label = string.IsNullOrWhiteSpace(photo.SubjectQuery)
-            ? photo.Title.Trim() : photo.SubjectQuery.Trim();
+        string label = !string.IsNullOrWhiteSpace(photo.Title) &&
+            photo.Title.Length <= 85 && !Regex.IsMatch(photo.Title,
+                @"(?i)^(?:https?://|[0-9a-f]{24,}|image[0-9]+\.)")
+            ? photo.Title.Trim()
+            : (string.IsNullOrWhiteSpace(photo.SubjectQuery)
+                ? "Reference photograph" : photo.SubjectQuery.Trim());
         if (Regex.IsMatch(label, @"(?:__PID:|^[0-9a-f]{24,}(?:\.|$)|^\d+(?:st|nd|rd|th) image)",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
             label = "Reference photograph";

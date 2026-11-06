@@ -69,7 +69,9 @@ Check("R84 requested photograph batches overfetch one alternate for small exact 
         NIRAImageTurnDeliveryPolicy.SearchRetrieveCount(four[0]) != 5 ||
         !service.CanParallelizeIndependentResourceReads(twelve))
         throw new Exception("Explicit photo deliverables did not form the expected bounded batches.");
-    int[] expectedCounts = {5, 5, 2};
+    // The last 2 requested photos fetch a 3rd alternate to survive a duplicate.
+    // Actual delivered count is still capped at 12 by the Executive.
+    int[] expectedCounts = {5, 5, 3};
     for (int i = 0; i < twelve.Count; i++)
     {
         var req = twelve[i];
@@ -103,6 +105,7 @@ Check("R83 research drops decorative source dump, but explicit site discovery re
     if (NIRAResearchPresentationPolicy.RemoveDecorativeSourceDump(
         blocks, "Offline content", verifiedWebSearch:false).Count != blocks.Length)
         throw new Exception("Research policy modified non-web output.");
+});
 
 Check("R84 narrative research strips decorative references and fallback link dumps", () =>
 {
@@ -116,7 +119,7 @@ Check("R84 narrative research strips decorative references and fallback link dum
     {
         new NIRACapabilityResult
         {
-            CapabilityId = NIRACapabilityIds.WebSearch, Succeeded = true,
+            CapabilityId = NIRACapabilityIds.WebSearch, Status = NIRACapabilityResultStatus.Succeeded,
             Risk = NIRACapabilityRisk.Observe, ChangedSystemState = false, OutcomeUncertain = false,
             Output = """{"evidenceType":"UntrustedPublicWebSearchExtracts","completed":true,"sourceCount":2,"sources":[{"url":"https://museum.example.org","title":"Tesla Museum","extract":"A"},{"url":"https://archive.example.org","title":"Archive","extract":"B"}]}"""
         }
@@ -128,7 +131,7 @@ Check("R84 narrative research strips decorative references and fallback link dum
     {
         new NIRACapabilityResult
         {
-            CapabilityId = NIRACapabilityIds.WebSearch, Succeeded = true,
+            CapabilityId = NIRACapabilityIds.WebSearch, Status = NIRACapabilityResultStatus.Succeeded,
             Risk = NIRACapabilityRisk.Observe, ChangedSystemState = false, OutcomeUncertain = false,
             Output = """{"evidenceType":"UntrustedPublicWebSearchExtracts","completed":true,"sourceCount":2,"sources":[{"url":"https://icons.example.org","title":"Icons","extract":"A"},{"url":"https://svgs.example.org","title":"SVGs","extract":"B"}]}"""
         }
@@ -136,6 +139,219 @@ Check("R84 narrative research strips decorative references and fallback link dum
     if (!keepLinks.Contains("https://icons.example.org", StringComparison.OrdinalIgnoreCase))
         throw new Exception("Explicit link-discovery fallback incorrectly lost its links.");
 });
+
+// R4.6: high-confidence photographic mismatches from the live Apollo run.
+// Authentic sources and successful downloads alone do NOT certify the subject.
+Check("R4.6 launch pass and post-launch people are not rocket launch photos", () =>
+{
+    string query = "Apollo 11 launch NASA official photo";
+    foreach (var wrong in new[] {
+        "Apollo 11 Launch Pass Signed by Charles Lindbergh.jpg",
+        "Invite to Apollo 11 launch.png",
+        "Apollo 11 mission officials relax after Apollo 11 liftoff.jpg" })
+        if (NIRAReferenceImageQualityPolicy.MatchesRequestedScene(
+                query, wrong, "NASA archive", "https://commons.wikimedia.org/file.jpg"))
+            throw new Exception("A genuine archive document/event attendee was mistaken for launch itself: " + wrong);
+    if (!NIRAReferenceImageQualityPolicy.MatchesRequestedScene(
+            query, "Apollo 11 launch (S69-39962).jpg", "Saturn V liftoff",
+            "https://commons.wikimedia.org/launch.jpg"))
+        throw new Exception("The authentic rocket launch was incorrectly rejected.");
+});
+Check("R4.6 astronaut photo rejects indoor assembly and non-surface portraits", () =>
+{
+    const string query = "Apollo 11 lunar landing crew on the Moon NASA";
+    foreach (var wrong in new[] {
+        "The Lunar Module for Apollo 11 moves from the landing gear fixture and mate to the spacecraft-lunar module adapter",
+        "Apollo 11 crew official portrait with Moon background",
+        "Apollo 11 astronauts in training simulator" })
+        if (NIRAReferenceImageQualityPolicy.MatchesRequestedScene(
+                query, wrong, "NASA", "https://www.nasa.gov/gallery/apollo-11"))
+            throw new Exception("A non-lunar-surface scene escaped photo identity review: " + wrong);
+    if (!NIRAReferenceImageQualityPolicy.MatchesRequestedScene(
+            query, "Apollo 11 astronaut Buzz Aldrin stands on the Moon",
+            "Original surface EVA photo", "https://www.nasa.gov/gallery/apollo-11"))
+        throw new Exception("Actual surface astronaut photo was rejected.");
+});
+Check("R4.6 specific interior photos reject 3D meshes and docking exteriors", () =>
+{
+    const string query = "Apollo 11 command module interior NASA";
+    foreach (var wrong in new[] {
+        "Command Module Apollo 11: Combined (Full resolution 3D mesh, obj)",
+        "AS11-36-5382 - Apollo 11 Lunar Module and Command Module drogue and probe docking assembly" })
+        if (NIRAReferenceImageQualityPolicy.MatchesRequestedScene(
+                query, wrong, "Original source", "https://airandspace.si.edu/photo.jpg"))
+            throw new Exception("Wrong command module scene passed the photo filter: " + wrong);
+    if (!NIRAReferenceImageQualityPolicy.MatchesRequestedScene(
+            query, "Apollo 11 - Command and Service Module interior - NARA - 16682938",
+            "Archival photograph", "https://commons.wikimedia.org/interior.jpg"))
+        throw new Exception("Documented command module interior rejected.");
+});
+Check("R4.6 substantial source-grounded research routes to existing Ultra role", () =>
+{
+    const string deep = "I want to understand a space mission in depth. " +
+        "Research the complete story using trustworthy historical sources and " +
+        "genuine photographs, with a mission timeline and major engineering challenges.";
+    if (!NIRADeepResearchRoutePolicy.ShouldRouteObjective(deep) ||
+        NIRADeepResearchRoutePolicy.ShouldRouteObjective("Hey little girl, how are you?") ||
+        NIRADeepResearchRoutePolicy.ShouldRouteObjective("Research the birthdate of an inventor."))
+        throw new Exception("Deep research routing accepted casual lookup or missed comprehensive research.");
+    if (NIRAModelSelection.DeepDefault != "nemotron-3-ultra:cloud")
+        throw new Exception("The existing NIRA Ultra reasoning resource was replaced.");
+});
+
+// R4.4: a publisher can publish genuine photographs of a DIFFERENT scene.
+// These are pure metadata/intent checks; they do not presume visual certainty.
+Check("R4.4 genuine archive image cannot silently substitute a different scene", () =>
+{
+    if (NIRAReferenceImageQualityPolicy.MatchesRequestedScene(
+            "Apollo mission lander on the Moon", "Lunar module photographed in lunar orbit",
+            "View from command module", "https://nasa.gov/orbit.jpg") ||
+        NIRAReferenceImageQualityPolicy.MatchesRequestedScene(
+            "Lunar module Eagle on the Moon", "Eagle spacecraft hovers against the black backdrop of space",
+            "Moon visible in background", "https://nasa.gov/space.jpg") ||
+        NIRAReferenceImageQualityPolicy.MatchesRequestedScene(
+            "Official crew portrait", "Crew answering questions at press conference",
+            "", "https://nasa.gov/interview.jpg") ||
+        NIRAReferenceImageQualityPolicy.MatchesRequestedScene(
+            "Historical rocket launch photo", "Crew answering questions at press conference",
+            "", "https://nasa.gov/interview.jpg") ||
+        !NIRAReferenceImageQualityPolicy.MatchesRequestedScene(
+            "Lander on the Moon", "Lunar module on the Moon surface",
+            "Original photograph of landed vehicle", "https://nasa.gov/landing.jpg"))
+        throw new Exception("A real but scene-mismatched image escaped documentary intent filtering.");
+});
+
+// R4.5: production Apollo test exposed a NASA-hosted Apollo 13 photo in an
+// Apollo 11 query, a candid breakfast picture labeled "official crew portrait",
+// and raw renderer placement instructions at the end of the public reply.
+// These rules are GENERIC: series identity, editorial-plan removal and section
+// anchoring must work for unrelated subjects as well.
+Check("R4.5 numbered identity conflict rejects unrelated official images", () =>
+{
+    var gif = new NIRACommonsImageCandidate {
+        Title = "Archive photograph", SourceUri = "https://images.nasa.gov/photo",
+        MediaUrl = "https://images.nasa.gov/educational-preview.gif"
+    };
+    if (NIRAReferenceImageQualityPolicy.Accept(gif, "Original historical photos", true) ||
+        !NIRAReferenceImageQualityPolicy.ConflictsWithNumberedIdentity(
+            "Mission 11 lunar lander photograph", "Mission 13 crew inside capsule") ||
+        !NIRAReferenceImageQualityPolicy.MatchesRequestedScene(
+            "Mission 11 lunar lander", "Mission 11 lander on the surface",
+            "Original museum photograph", "https://archive.gov/photo.jpg") ||
+        NIRAReferenceImageQualityPolicy.MatchesRequestedScene(
+            "Apollo 11 Eagle on the Moon", "Apollo 13 crew repairing air scrubber",
+            "Official archive photograph", "https://nasa.gov/gallery/apollo-11.jpg") ||
+        NIRAReferenceImageQualityPolicy.MatchesRequestedScene(
+            "Apollo 11 crew portrait official", "Apollo 11 crew having breakfast",
+            "Official image", "https://nasa.gov/breakfast.jpg") ||
+        NIRAReferenceImageQualityPolicy.ConflictsWithNumberedIdentity(
+            "Voyager 2 spacecraft", "Voyager 2 spacecraft near planetary target"))
+        throw new Exception("Cross-mission photographic attribution or candid portrait check failed.");
+});
+
+Check("R4.5 removes editorial image plan without deleting real research", () =>
+{
+    const string report = "# Apollo Exploration\nResearch introduction.\n\n" +
+        "## 6. Conclusions\nThe mission returned safely.\n\n" +
+        "## 7. Visual Elements (Suggested Placement)\n" +
+        "- [Image: Mission 11 launch - NASA official] — placed beside launch.\n" +
+        "- [Image: Mission 11 crew portrait] — positioned with crew.\n" +
+        "All images are drawn from the verified catalog.\n";
+    string clean = NIRAResearchPresentationPolicy.StripEditorialImagePlacement(report);
+    if (!clean.Contains("The mission returned safely", StringComparison.Ordinal) ||
+        clean.Contains("Suggested Placement", StringComparison.OrdinalIgnoreCase) ||
+        clean.Contains("Image: Mission", StringComparison.OrdinalIgnoreCase) ||
+        clean.Contains("verified catalog", StringComparison.OrdinalIgnoreCase))
+        throw new Exception("Editorial plan leaked into the public research report.");
+    string withLaterSection = "## 1. Background\nFacts.\n## 2. Image Placement\n- [Image: placeholder] — next to text.\n## 3. Outcome\nConfirmed.";
+    string retained = NIRAResearchPresentationPolicy.StripEditorialImagePlacement(withLaterSection);
+    if (!retained.Contains("## 3. Outcome", StringComparison.Ordinal) ||
+        !retained.Contains("Confirmed.", StringComparison.Ordinal) ||
+        retained.Contains("Image Placement", StringComparison.Ordinal))
+        throw new Exception("Visual plan removal swallowed subsequent actual findings.");
+});
+
+Check("R4.5 photo anchor prefers relevant named section over generic opening", () =>
+{
+    string answer = "# Apollo 11 – Human Moon Landing\n" +
+        "Apollo 11 made history in 1969.\n" +
+        "## 2. The Crew\n" +
+        "Three astronauts served on the mission.\n" +
+        "## 3. Mission Timeline\n" +
+        "Several major engineering milestones followed.";
+    int anchor = NIRAInlineImageAnchorPolicy.FindLine(answer,
+        "Apollo 11 crew portrait NASA official");
+    if (anchor != 2)
+        throw new Exception("Crew portrait anchored to article introduction rather than crew section.");
+    if (NIRAInlineImageAnchorPolicy.FindLine(answer,
+        "Apollo 13 lunar module image") >= 0)
+        throw new Exception("Unrelated entity must not gain an image anchor.");
+});
+
+Check("R4.5 web research prioritizes primary institutions over social or retail", () =>
+{
+    if (!(NIRAWebSearchCapabilityHandler.EvidencePriority("https://www.nasa.gov/missions/") >
+          NIRAWebSearchCapabilityHandler.EvidencePriority("https://en.wikipedia.org/wiki/Apollo_11")) ||
+        !(NIRAWebSearchCapabilityHandler.EvidencePriority("https://archive.example.edu/collection") >
+          NIRAWebSearchCapabilityHandler.EvidencePriority("https://www.ebay.com/item/123")) ||
+        NIRAWebSearchCapabilityHandler.EvidencePriority("https://www.facebook.com/whatever") >= 0)
+        throw new Exception("Web search source ranking still favors unreviewed public posts.");
+});
+
+// R4 regressions: documentary source provenance, synthetic/reconstruction
+// exclusion, and citation repair that preserves substantive independently
+// reviewable content. These tests use NO provider network or model call.
+Check("R4 photographic provenance excludes synthetic and noninstitutional images", () =>
+{
+    var primary = new NIRACommonsImageCandidate {
+        Title = "Original museum photograph of historical apparatus",
+        Description = "Archive glass plate photograph",
+        SourceUri = "https://www.loc.gov/item/2014684845/",
+        MediaUrl = "https://www.loc.gov/static/images/plate-1.jpg"
+    };
+    var synthetic = primary with { Title = "Generative AI illustration of historical apparatus" };
+    var commercial = primary with { SourceUri = "https://genericblog.example.net/famous-photo" };
+    if (!NIRAReferenceImageQualityPolicy.Accept(primary, "real historical photographs of apparatus", true) ||
+        NIRAReferenceImageQualityPolicy.Accept(synthetic, "real historical photographs of apparatus", true) ||
+        NIRAReferenceImageQualityPolicy.Accept(commercial, "real historical photographs of apparatus", true))
+        throw new Exception("Documentary image policy selected a fabricated/unattributed result or rejected a primary archive.");
+    if (!NIRAReferenceImageQualityPolicy.CreativeImageryRequested("Generate a 3d render of an invention") ||
+        NIRAReferenceImageQualityPolicy.LooksSynthetic(primary.Title, primary.Description, primary.MediaUrl) ||
+        !NIRAReferenceImageQualityPolicy.Accept(synthetic,
+            "AI-generated artistic illustration of apparatus", false))
+        throw new Exception("Explicit creative imagery request was blocked or an archival photograph was mistaken for synthetic art.");
+});
+
+Check("R4 image subjects support up to eight independent illustrated sections", () =>
+{
+    var intent = new NIRAResourceIntent {
+        ImageSubjects = new [] { "archive portrait", "historic motor", "alternating current station",
+            "high voltage laboratory", "remote-controlled boat", "wireless tower" },
+        PhotographsOnly = true,
+        WebQuery = "documented inventions and historical primary sources"
+    };
+    var planned = NIRAResourceIntentPlanner.Apply(new NIRACognitionDecision {
+        State = NIRACognitionState.Continue, ResourceIntent = intent
+    }, isInitialUserCycle: true);
+    int photos = planned.CapabilityRequests.Count(x => x.CapabilityId == NIRACapabilityIds.ImageSearch);
+    int research = planned.CapabilityRequests.Count(x => x.CapabilityId == NIRACapabilityIds.WebSearch);
+    if (photos != 6 || research != 1 || planned.EmitReply)
+        throw new Exception("Initial research call did not preserve the distinct image and web needs.");
+});
+
+Check("R4 unobserved source URL repair keeps the useful explanatory paragraph", () =>
+{
+    string evidence = "URL: https://archive.museum.org/invention\nEXTRACT: original archival research";
+    string text = "The documented mechanism uses a rotating field. " +
+        "[Read primary patent](https://wrong.example.net/fiction) " +
+        "The experiment was independently described.";
+    if (NIRAWebResearchGroundingGate.Check(evidence, text).Accepted)
+        throw new Exception("Fabricated source passed the grounding preflight.");
+    string repaired = NIRAWebResearchGroundingGate.RemoveUnobservedCitationLinks(evidence, text);
+    if (!NIRAWebResearchGroundingGate.Check(evidence, repaired).Accepted ||
+        !repaired.Contains("rotating field", StringComparison.Ordinal) ||
+        repaired.Contains("wrong.example.net", StringComparison.Ordinal))
+        throw new Exception("Citation repair discarded substantive content or retained a fabricated source.");
 });
 
 // RESPONSE REALIZATION HANDOFF regression suite. No live LLM or image network.
@@ -1035,6 +1251,34 @@ Check("Focused research correction removes only invented citation destinations",
     const string empty = "No usable evidence";
     if (NIRAWebResearchGroundingGate.RemoveUnobservedCitationLinks(empty, answer) != answer)
         throw new Exception("No-source cleanup fabricated trusted citation authority.");
+});
+
+// R4.1: this is a reviewer-failure-only fallback, never an ordinary
+// researched answer. Prefer observed excerpts for knowledge questions and
+// links only for explicit site discovery, without certifying publisher claims.
+Check("R4.1 failed-review handoff preserves evidence without a generic apology", () =>
+{
+    var result = new NIRACapabilityResult {
+        CapabilityId = NIRACapabilityIds.WebSearch,
+        Status = NIRACapabilityResultStatus.Succeeded,
+        Risk = NIRACapabilityRisk.Observe,
+        Output = """{"evidenceType":"UntrustedPublicWebSearchExtracts","completed":true,"sourceCount":1,"sources":[{"url":"https://science.example.edu/archive","title":"Published archive","extract":"A documented prototype was proposed but not independently tested."}]}"""
+    };
+    string research = NIRAWebResearchReplyPolicy.FailedReviewSourceHandoff(
+        new[] { result }, "Explain the historical prototype") ?? "";
+    if (!research.Contains("A documented prototype", StringComparison.Ordinal) ||
+        !research.Contains("https://science.example.edu/archive", StringComparison.Ordinal) ||
+        !research.Contains("not independently verified", StringComparison.OrdinalIgnoreCase) ||
+        research.Contains("Here are source pages", StringComparison.OrdinalIgnoreCase))
+        throw new Exception("Ordinary research recovered neither observed excerpts nor uncertainty.");
+    string sites = NIRAWebResearchReplyPolicy.FailedReviewSourceHandoff(
+        new[] { result }, "Show websites for scientific archives") ?? "";
+    if (!sites.Contains("https://science.example.edu/archive", StringComparison.Ordinal) ||
+        sites.Contains("Source excerpt:", StringComparison.Ordinal))
+        throw new Exception("Explicit site discovery did not retain the actual source link.");
+    if (NIRAWebResearchReplyPolicy.FailedReviewSourceHandoff(
+        new[] { result with { OutcomeUncertain = true } }, "Explain the prototype") is not null)
+        throw new Exception("Uncertain tool evidence escaped into public partial recovery.");
 });
 
 Check("Research partial handoff preserves attributable source extracts", () =>
@@ -3679,10 +3923,15 @@ Check("MEDIA multi-subject images are individually identifiable and bounded", ()
         ImageSubjects=new[] {"valid subject", "\nmalicious"} }};
     if (NIRAResourceIntentPlanner.Apply(invalid, true).CapabilityRequests.Count != 0)
         throw new Exception("Invalid subject caused a partial untrusted dispatch");
-    var tooMany = decision with { ResourceIntent = decision.ResourceIntent! with {
+    // R4 explicitly supports up to eight independent illustrated sections.
+    var allowedFour = decision with { ResourceIntent = decision.ResourceIntent! with {
         ImageSubjects = new[] {"one subject", "two subject", "three subject", "four subject"} } };
+    if (NIRAResourceIntentPlanner.Apply(allowedFour,true).CapabilityRequests.Count != 5)
+        throw new Exception("Four independent image subjects were incorrectly discarded");
+    var tooMany = decision with { ResourceIntent = decision.ResourceIntent! with {
+        ImageSubjects = Enumerable.Range(1, 9).Select(i => $"museum subject {i}").ToArray() } };
     if (NIRAResourceIntentPlanner.Apply(tooMany,true).CapabilityRequests.Count != 0)
-        throw new Exception("Visual subject budget was not enforced");
+        throw new Exception("Eight-subject visual budget was not enforced");
 });
 
 Check("MEDIA page headline cannot certify an unrelated photo", () =>
@@ -12296,16 +12545,71 @@ Check("R74 source-only results exclude unrelated search hits", () =>
     if (narrowed.GetProperty("sourceCount").GetInt32() != 1 ||
         narrowed.GetProperty("sources")[0].GetProperty("title").GetString() != "Matching original")
         throw new Exception("Unrelated provider hit survived exact source filtering.");
+    // A source excerpt is not a researched answer, even when a user supplies
+    // a particular URL. The evidence filter still narrows the observed
+    // provider receipt above, but no raw source digest can masquerade as
+    // the completed requested explanation.
     string? digest = NIRAWebResearchReplyPolicy.ObservedSourceDigestFromPayload(payload, objective);
-    if (digest is null || !digest.Contains("Matching original", StringComparison.Ordinal) ||
-        digest.Contains("Similar sounding", StringComparison.Ordinal))
-        throw new Exception("The partial answer included an unrelated source.");
+    if (digest is not null)
+        throw new Exception("A raw source excerpt replaced the requested independent explanation.");
     if (NIRAWebResearchReplyPolicy.ObservedSourceDigestFromPayload(payload,
         "Explain https://example.org/archive/item?record=999") is not null)
         throw new Exception("An unmatched source was promoted to an answer.");
     if (NIRAWebEvidenceIdentityPolicy.RelevantSourcePayload(payload,
         "Ordinary topic without URL").GetProperty("sourceCount").GetInt32() != 2)
         throw new Exception("Unrelated general research was filtered without a target URL.");
+});
+
+// R4.3: a specific public URL must be researched and reviewed, not silently
+// replaced with a provider snippet. Generic research can still recover an
+// explicitly provisional excerpt after a failed independent review.
+Check("R4.3 exact-URL failure does not masquerade as independently researched answer", () =>
+{
+    string target = "https://example.org/archive/item?record=814";
+    string objective = "Explain " + target;
+    NIRACapabilityResult Result(string url, string text) => new() {
+        CapabilityId = NIRACapabilityIds.WebSearch,
+        Status = NIRACapabilityResultStatus.Succeeded,
+        Risk = NIRACapabilityRisk.Observe,
+        Output = JsonSerializer.Serialize(new {
+            evidenceType = "UntrustedPublicWebSearchExtracts", completed = true, sourceCount = 1,
+            sources = new[] { new { url, title = "Published item", extract = text } }
+        })
+    };
+    var matched = Result(target, "Observed publisher text is not independently verified.");
+    var different = Result("https://example.org/archive/other", "An unrelated article.");
+    if (NIRAWebResearchReplyPolicy.ObservedSourceDigestFromResults(
+            new[] { matched }, objective) is not null ||
+        NIRAWebResearchReplyPolicy.FailedReviewSourceHandoff(
+            new[] { matched }, objective) is not null)
+        throw new Exception("Exact requested URL escaped through the raw-excerpt recovery path.");
+    string? generic = NIRAWebResearchReplyPolicy.ObservedSourceDigestFromResults(
+        new[] { matched }, "Explain the archive's published proposal");
+    if (generic is null || !generic.Contains("Observed publisher text", StringComparison.Ordinal))
+        throw new Exception("General-topic research lost its labeled partial evidence recovery.");
+    var found = NIRAWebResearchReplyPolicy.BoundedSourceHandoff(
+        new[] { matched }, objective);
+    if (found is null || found.State != NIRACognitionState.Blocked ||
+        !found.Reply.Contains("located the exact page", StringComparison.Ordinal) ||
+        found.Reply.Contains("Observed publisher text", StringComparison.Ordinal))
+        throw new Exception("An exact but unreviewed page was treated as an explained answer.");
+    var missed = NIRAWebResearchReplyPolicy.BoundedSourceHandoff(
+        new[] { different }, objective);
+    if (missed is null || missed.State != NIRACognitionState.Blocked ||
+        !missed.Reply.Contains("did not reliably identify", StringComparison.Ordinal) ||
+        missed.Reply.Contains("An unrelated article", StringComparison.Ordinal))
+        throw new Exception("An unrelated search hit was substituted for the requested URL.");
+    var incomplete = matched with {
+        Output = JsonSerializer.Serialize(new {
+            evidenceType = "UntrustedPublicWebSearchExtracts", completed = false,
+            sourceCount = 1,
+            sources = new[] { new {url=target, title="Partial", extract="Unchecked"} }
+        })
+    };
+    var invalid = NIRAWebResearchReplyPolicy.BoundedSourceHandoff(
+        new[] { incomplete }, objective);
+    if (invalid is null || invalid.Reply.Contains("located the exact page", StringComparison.Ordinal))
+        throw new Exception("Incomplete source evidence was falsely promoted as located/verified.");
 });
 
 Console.WriteLine($"REGRESSION CHECKS: {passed} passed, {failed} failed");

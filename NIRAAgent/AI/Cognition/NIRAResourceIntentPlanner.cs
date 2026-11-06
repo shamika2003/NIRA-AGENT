@@ -1,5 +1,6 @@
 using System.Text.Json;
 using NIRAAgent.Capabilities;
+using NIRAAgent.Images;
 
 namespace NIRAAgent.AI.Cognition;
 
@@ -44,11 +45,16 @@ public static class NIRAResourceIntentPlanner
             return trimmed;
         }
 
+        // Only the declared tool enum is emitted; invalid optional values
+        // fall back to a cheap brief read instead of wasting a schema retry.
+        string depth = decision.ResourceIntent.WebEvidenceDepth?.Trim().ToLowerInvariant() switch {
+            "detailed" => "detailed", "brief" => "brief", _ => "brief"
+        };
         string imageQuery = ValidQuery(decision.ResourceIntent.ImageQuery, 160);
         string webQuery = ValidQuery(decision.ResourceIntent.WebQuery, 250);
         string videoQuery = ValidQuery(decision.ResourceIntent.VideoQuery, 250);
         IReadOnlyList<string> nominated = decision.ResourceIntent.ImageSubjects ?? Array.Empty<string>();
-        if (nominated.Count > 3 || nominated.Any(q => ValidQuery(q, 160).Length == 0))
+        if (nominated.Count > 8 || nominated.Any(q => ValidQuery(q, 160).Length == 0))
             return decision;
         string[] visualSubjects = nominated.Count > 0
             ? nominated.Select(q => ValidQuery(q, 160)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
@@ -82,7 +88,8 @@ public static class NIRAResourceIntentPlanner
                         query = subject, limit = 8, retrieveBest = true,
                         retrieveCount = visualSubjects.Length > 1 ? 1 :
                             Math.Clamp(decision.ResourceIntent.ImageCount, 1, 5),
-                        photographsOnly = decision.ResourceIntent.PhotographsOnly
+                        photographsOnly = decision.ResourceIntent.PhotographsOnly ||
+                            NIRAReferenceImageQualityPolicy.RequireDocumentary(subject, false)
                     }),
                     Reason = "Model-selected subject-specific verified image; independent from web article media."
                 });
@@ -93,9 +100,8 @@ public static class NIRAResourceIntentPlanner
             requests.Add(new NIRACapabilityRequest {
                 CapabilityId = NIRACapabilityIds.WebSearch,
                 Arguments = JsonSerializer.SerializeToElement(new {
-                    queries = webQueries, maxSources = 6,
-                    evidenceDepth = string.Equals(decision.ResourceIntent.WebEvidenceDepth,
-                        "detailed", StringComparison.OrdinalIgnoreCase) ? "detailed" : "brief",
+                    queries = webQueries, maxSources = 8,
+                    evidenceDepth = depth,
                     includeImages = false, imageQuery = "", retrieveCount = 1,
                     provider = "auto"
                 }),
