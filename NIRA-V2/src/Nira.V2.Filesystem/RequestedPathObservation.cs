@@ -73,7 +73,17 @@ public static class RequestedPathObservationRegistration
                 // Never turn a rejected or partial quoted path into a grant.
                 if (quoted.Any(q => match.Index >= q.Index && match.Index < q.Index + q.Length))
                     continue;
-                if (TryParseAlias(match.Groups["path"].Value, rootResolver, out var s) &&
+                // An unquoted path followed immediately by a sentence-ending period
+                // is common in chat (e.g. "List Documents/TestFolder. Use the tool").
+                // The greedy alias regex includes that punctuation, but Windows
+                // rejects a path segment ending in a dot. Remove exactly ONE final
+                // period from unquoted matches only; quoted paths and double-dot
+                // suffixes retain the strict original validation.
+                string unquotedPath = match.Groups["path"].Value;
+                if (unquotedPath.EndsWith(".", StringComparison.Ordinal) &&
+                    !unquotedPath.EndsWith("..", StringComparison.Ordinal))
+                    unquotedPath = unquotedPath[..^1];
+                if (TryParseAlias(unquotedPath, rootResolver, out var s) &&
                     !candidates.Any(c => string.Equals(c.FullPath, s!.FullPath,
                         StringComparison.OrdinalIgnoreCase)))
                     candidates.Add(s!);

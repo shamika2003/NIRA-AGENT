@@ -113,6 +113,11 @@ public sealed class NIRAWpfV2CanaryBridge : INIRAGeneralRuntimeBridge
             capabilities.AddRange(LegacyDirectoryListRegistration.Create(vault,
                 new NIRALegacyDirectoryListExecutor(_authoritativeLegacyCapabilities),
                 Environment.GetEnvironmentVariable("NIRA_V2_LEGACY_DIRECTORY_LIST"), request));
+            // Phase 4E.3: first integrity prerequisite for verified actions.
+            // Host-held exact path, real legacy permission service, SHA-only output.
+            capabilities.AddRange(LegacyFileHashRegistration.Create(vault,
+                new NIRALegacyFileHashExecutor(_authoritativeLegacyCapabilities),
+                Environment.GetEnvironmentVariable("NIRA_V2_LEGACY_FILE_HASH"), request));
             var registry = new CapabilityRegistry(capabilities);
             // Personal legacy context is read ONLY after a separate explicit host consent.
             // It is not written to any V2 memory store. Model requests still leave the PC.

@@ -35,6 +35,24 @@ try
     Check("case-altered opt-in fails closed", LegacyDirectoryListRegistration.Create(vault,
         fake, consent.ToLowerInvariant(), ask, rootResolver: resolver).Count == 0);
     Check("opt-in constant is exact", LegacyDirectoryListRegistration.IsConsented(consent));
+    // Exact wording of the November 6 live failure; the final period is
+    // sentence punctuation, not part of the directory name. Before this fix
+    // no listing capability was registered even with owner opt-in.
+    const string sentenceRequest = "List the files and folders directly inside Documents/TestFolder. " +
+        "Use your real directory listing tool. Don't guess, and tell me if the listing is incomplete.";
+    Check("live prompt grants precisely one scoped directory tool",
+        LegacyDirectoryListRegistration.Create(vault, fake, consent, sentenceRequest,
+            rootResolver: resolver).Count == 1);
+    Check("quoted trailing-dot directory remains rejected",
+        LegacyDirectoryListRegistration.Create(vault, fake, consent,
+            "List `Documents/TestFolder.`", rootResolver: resolver).Count == 0);
+    Check("double-dot directory remains rejected",
+        LegacyDirectoryListRegistration.Create(vault, fake, consent,
+            "List Documents/TestFolder..", rootResolver: resolver).Count == 0);
+    Check("two sentence-terminated directory paths remain ambiguous",
+        LegacyDirectoryListRegistration.Create(vault, fake, consent,
+            "List Documents/TestFolder. Then list Documents/Other.",
+            rootResolver: resolver).Count == 0);
     Check("a remembered path gives no grant", LegacyDirectoryListRegistration.Create(vault,
         fake, consent, "List the directory we discussed earlier", rootResolver: resolver).Count == 0);
     Check("a plain directory-existence question does not grant listing", LegacyDirectoryListRegistration.Create(vault,

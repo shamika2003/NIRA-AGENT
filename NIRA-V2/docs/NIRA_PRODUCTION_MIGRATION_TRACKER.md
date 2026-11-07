@@ -5,7 +5,7 @@
 | Gate | Owner migration | Status on 2026-11-06 | Acceptance criteria |
 | --- | --- | --- | --- |
 | 1. Unified entry | Default natural chat → V2 engine | **LIVE PREVIEW VERIFIED** (4D); final cutover pending | Normal chat without `/v2`; legacy kill switch; no duplicate archive writes; WPF parity |
-| 2. Capabilities and authorizations | V2 tool contract → **existing** NIRA permission/audit/capability service | **IN PROGRESS** (4E.1 text read live verified; 4E.2 delegated directory listing pending Windows validation) | Read/list, create/edit, process, app, browser, document actions integrated; per-action approvals; no bypass or double execution |
+| 2. Capabilities and authorizations | V2 tool contract → **existing** NIRA permission/audit/capability service | **IN PROGRESS** (4E.1 text read live verified; 4E.2 delegated directory listing LIVE VERIFIED (empty-folder case)) | Read/list, create/edit, process, app, browser, document actions integrated; per-action approvals; no bypass or double execution |
 | 3. Durable multistep execution | V2 checkpoint → verification → recovery/reconciliation | **NOT VERIFIED FOR WRITES** | Multi-step workflows, crash/restart safety, no automatic replay of uncertain writes, independent read-back receipts |
 | 4. Multimodal / interaction | Existing voice, vision, screen, browser, companion orb | **NOT MIGRATED** | Same natural V2 run controls visual, vocal and PC capabilities; accurate action/observation |
 | 5. One personal lifecycle | Existing character, memories, goals, branches, autonomous time | **PARTIAL READ-ONLY** (4B/4B.2) | One authoritative state write-path; recall, formation, scheduler/goal fidelity and rollback |
@@ -30,3 +30,11 @@ Phase 4E.2: directory listing through the same authoritative legacy service (sou
 - Host validates request, receipt and output; shows only bounded immediate relative names. No absolute paths, secret-like or hidden entries.
 - 4E.1 read and 4E.2 list may be combined in one V2 run only when their *independent* consents and scopes exist.
 - This does not complete Gate 2 and does not enable PC writes.
+
+## Phase 4E.3 — first integrity prerequisite (read-only)
+
+- `legacy.filesystem.hash_exact` delegates the existing audited `filesystem.hash` to NIRA's single authoritative legacy capability service. The host selects ONE current-turn known-folder file; the model supplies NO path argument. Independent opt-in is required.
+- Eligible files are non-sensitive text/code names only, up to 64 MiB. The cloud receives the SHA-256 digest, byte count and safe relative label, not the file contents or absolute path.
+- This is NOT a write permission. The V2 agent loop and model currently reject modifying tools. Phase 4F must add: authorized create-only profile; atomic result; deterministic reconciliation; independent readback/hash and no replay after unknown outcomes; WPF consent handling; real negative/restart tests.
+- Acceptance: 4E.3 offline security tests, WPF/legacy regressions, one nonempty-folder live SHA test, and owner-visible hash comparison with PowerShell. Do not count Phase 4E.3 live verified before that test.
+- The permanent target is one NIRA runtime and one capability/authorization service; these are temporary adapters, never a second personality, memory database, or execution authority.

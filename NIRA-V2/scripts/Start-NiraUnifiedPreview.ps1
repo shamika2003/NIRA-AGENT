@@ -4,6 +4,7 @@ param(
     [switch]$AllowFileObservation,
     [switch]$AllowExplicitTextRead,
     [switch]$AllowDirectoryListing,
+    [switch]$AllowFileHash,
     [switch]$AllowAppObservation
 )
 $ErrorActionPreference = 'Stop'
@@ -18,7 +19,7 @@ if ($null -eq (Get-Command dotnet -ErrorAction SilentlyContinue)) {
 }
 # Scope consents to this process. Never persist changes with setx or log credentials.
 $names = @('NIRA_AGENT_RUNTIME', 'NIRA_V2_PERSONAL_CONTEXT',
-    'NIRA_V2_FILE_OBSERVATION', 'NIRA_V2_PC_OBSERVATION', 'NIRA_V2_LEGACY_TEXT_READ', 'NIRA_V2_LEGACY_DIRECTORY_LIST')
+    'NIRA_V2_FILE_OBSERVATION', 'NIRA_V2_PC_OBSERVATION', 'NIRA_V2_LEGACY_TEXT_READ', 'NIRA_V2_LEGACY_DIRECTORY_LIST', 'NIRA_V2_LEGACY_FILE_HASH')
 $before = @{}
 foreach ($name in $names) {
     $before[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
@@ -34,6 +35,8 @@ try {
         $(if (-not $LegacyOnly -and $AllowExplicitTextRead) { 'ALLOW_EXPLICIT_TEXT_READ' } else { $null }), 'Process')
     [Environment]::SetEnvironmentVariable('NIRA_V2_LEGACY_DIRECTORY_LIST',
         $(if (-not $LegacyOnly -and $AllowDirectoryListing) { 'ALLOW_EXPLICIT_DIRECTORY_LIST' } else { $null }), 'Process')
+    [Environment]::SetEnvironmentVariable('NIRA_V2_LEGACY_FILE_HASH',
+        $(if (-not $LegacyOnly -and $AllowFileHash) { 'ALLOW_EXPLICIT_FILE_HASH' } else { $null }), 'Process')
     [Environment]::SetEnvironmentVariable('NIRA_V2_PC_OBSERVATION',
         $(if (-not $LegacyOnly -and $AllowAppObservation) { 'ALLOW_APP_NAMES' } else { $null }), 'Process')
     Write-Host ('[NIRA HOST] ' + $(if ($LegacyOnly) { 'Legacy-only safe mode' } else { 'V2 default read-only preview' }))
@@ -43,6 +46,9 @@ try {
     }
     if ($AllowDirectoryListing -and -not $LegacyOnly) {
         Write-Warning 'Visible names of up to 30 immediate entries of one explicitly named directory may be sent to Ollama Cloud after NIRA authorization and audit.'
+    }
+    if ($AllowFileHash -and -not $LegacyOnly) {
+        Write-Warning 'The SHA-256 digest and size of one explicitly named text file may be sent to Ollama Cloud after NIRA authorization. File contents are not sent by this tool.'
     }
     Write-Host '[CLOUD] The general model sees submitted requests and any independently consented observations.'
     Push-Location $project

@@ -54,6 +54,32 @@ await Test("quoted known-folder path with spaces resolves as ONE scope", () =>
         scope!.ChildSegments.SequenceEqual(new[] { "My Project", "Notes" }));
     return Task.CompletedTask;
 });
+await Test("unquoted sentence punctuation is not part of a known-folder path", () =>
+{
+    const string request = "List the files and folders directly inside Documents/TestFolder. " +
+        "Use your real directory listing tool. Don't guess, and tell me if the listing is incomplete.";
+    Check(RequestedPathObservationRegistration.TryCreateScope(request, resolver, out var scope) &&
+        scope!.UserLabel == "Documents/TestFolder" &&
+        scope.ChildSegments.SequenceEqual(new[] { "TestFolder" }));
+    Check(RequestedPathObservationRegistration.TryCreateScope(
+        "Check Documents/report.md. Then explain.", resolver, out var fileScope) &&
+        fileScope!.ChildSegments.SequenceEqual(new[] { "report.md" }));
+    return Task.CompletedTask;
+});
+await Test("quoted trailing dots and double dots remain invalid", () =>
+{
+    Check(!RequestedPathObservationRegistration.TryCreateScope(
+        "List `Documents/TestFolder.`", resolver, out _));
+    Check(!RequestedPathObservationRegistration.TryCreateScope(
+        "List Documents/TestFolder..", resolver, out _));
+    return Task.CompletedTask;
+});
+await Test("two period-terminated distinct paths never widen scope", () =>
+{
+    Check(!RequestedPathObservationRegistration.TryCreateScope(
+        "List Documents/A. Then list Documents/B.", resolver, out _));
+    return Task.CompletedTask;
+});
 await Test("two different paths are ambiguous and authorize neither", () =>
 {
     Check(!RequestedPathObservationRegistration.TryCreateScope(

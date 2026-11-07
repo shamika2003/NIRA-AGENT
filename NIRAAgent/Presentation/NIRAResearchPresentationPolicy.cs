@@ -22,15 +22,11 @@ public static class NIRAResearchPresentationPolicy
 
 
     private static readonly Regex DecorativeReferenceHeading = new(
-        @"(?is)(?:^|
-)\s{0,3}(?:#{1,6}\s*)?(?:references?|sources?|citations?|further\s+reading)\s*:?\s*
-[\s\S]*$",
+        @"(?im)^[ \t]{0,3}(?:#{1,6}[ \t]*)?(?:references?|sources?|citations?|further[ \t]+reading)[ \t]*:?[ \t]*(?:\r?\n|\z)[\s\S]*\z",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static readonly Regex TrailingReferenceDirectory = new(
-        @"(?is)(?:
-|^)(?:(?:\s*(?:[-*]|\d+\.)\s+.*https?://\S+.*
-?){2,})\s*$",
+        @"(?im)(?:\A|\r?\n)(?:[ \t]*(?:[-*]|\d+[.)])[ \t]+[^\r\n]*https?://[^\s\r\n]+[^\r\n]*(?:\r?\n|\z)){2,}[ \t]*\z",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     // An internal image-layout plan is not research content. Some models
