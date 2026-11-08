@@ -174,6 +174,10 @@ public sealed class NIRABrowserService : IAsyncDisposable
     {
         Channel = channel,
         Headless = !headed,
+        // The NIRA-only persistent profile may be marked unclean after a prior
+        // forced shutdown. Suppress Chromium's restore-pages banner where this
+        // supported switch is honored; never erase the user's browser state.
+        Args = ["--disable-session-crashed-bubble"],
         AcceptDownloads = true,
         DownloadsPath = _downloadsRoot,
         ArtifactsDir = _artifactsRoot,

@@ -45,6 +45,9 @@ public sealed record AgentToolReceipt(bool Succeeded, bool OutcomeConfirmed,
         new(true, true, resultReference);
     public static AgentToolReceipt ReadOnlyResult(string? resultReference = null) =>
         new(true, false, resultReference);
+    // Distinguish audited DEFINITE no-effect from an unconfirmed mutation.
+    // This never authorizes a replay; the loop terminates the run as incomplete.
+    public static AgentToolReceipt ConfirmedNoChange(string code) => new(false, true, null, code);
     public static AgentToolReceipt Uncertain(string code) => new(false, false, null, code);
 }
 

@@ -177,6 +177,21 @@ public sealed class AgentLoopEngine
         {
             AgentToolReceipt receipt = await tool.ExecuteAsync(pending.ArgumentReference, ct);
             if (pending.Access != AccessLevel.Observe &&
+                !receipt.Succeeded && receipt.OutcomeConfirmed)
+            {
+                // The authoritative executor proved that NO mutation occurred.
+                // Never replay an attempted write, but do not falsely request
+                // reconciliation of a change that definitively did not happen.
+                state.Observations.Add(new AgentObservation(pending.ToolId,
+                    null, false, receipt.OutcomeCode, DateTimeOffset.UtcNow));
+                state.PendingTool = null;
+                state.Status = AgentRunStatus.Incomplete;
+                state.LastErrorCode = receipt.OutcomeCode;
+                await LogAsync(state, "TOOL_CONFIRMED_NO_EFFECT", pending.ToolId,
+                    receipt.OutcomeCode, CancellationToken.None);
+                return true;
+            }
+            if (pending.Access != AccessLevel.Observe &&
                 (!receipt.Succeeded || !receipt.OutcomeConfirmed))
             {
                 state.Status = AgentRunStatus.NeedsReconciliation;

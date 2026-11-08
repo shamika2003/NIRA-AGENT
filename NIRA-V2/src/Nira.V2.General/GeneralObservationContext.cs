@@ -17,6 +17,9 @@ internal static class GeneralObservationContext
     private const int MaxContext = 12_000;
     private const int MaxResults = 10;
     private const int MaxSources = 12;
+    private static readonly Regex CurrentTurnHttpsUrls = new(
+        @"https://[^\s""'<>]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+        TimeSpan.FromMilliseconds(250));
 
     public static async Task<Snapshot> BuildAsync(AgentRunSnapshot run,
         AgentPayloadVault vault, CancellationToken ct)
@@ -43,6 +46,28 @@ internal static class GeneralObservationContext
                 continue;
             }
             success++;
+            // Browser navigation is an audited observation of an exact URL chosen by
+            // the current user and fixed in the HOST, not a research citation. It is
+            // safe to mention that URL; untrusted page links remain unapproved.
+            if (observation.ToolId == "legacy.browser.navigate_exact" &&
+                body.ValueKind == JsonValueKind.Object &&
+                body.TryGetProperty("observed", out JsonElement observedFlag) &&
+                observedFlag.ValueKind == JsonValueKind.True &&
+                body.TryGetProperty("capability", out JsonElement sourceCapability) &&
+                sourceCapability.ValueKind == JsonValueKind.String &&
+                sourceCapability.GetString() == "browser.navigate" &&
+                body.TryGetProperty("source", out JsonElement originNode) &&
+                originNode.ValueKind == JsonValueKind.String &&
+                originNode.GetString() == "existing_NIRA_capability_service" &&
+                body.TryGetProperty("verifiedTargetUrl", out JsonElement targetNode) &&
+                targetNode.ValueKind == JsonValueKind.String &&
+                Uri.TryCreate(targetNode.GetString(), UriKind.Absolute, out Uri? target) &&
+                target.Scheme == Uri.UriSchemeHttps && string.IsNullOrEmpty(target.UserInfo) &&
+                IsUrlInCurrentTurn(run.UserRequest, target))
+            {
+                urlSet.Add(target.AbsoluteUri);
+                AddLimited(builder, "HOST-VERIFIED VISITED URL: " + target.AbsoluteUri + "\n");
+            }
             if (observation.ToolId == "web.search" && body.ValueKind == JsonValueKind.Object &&
                 body.TryGetProperty("sources", out JsonElement items) && items.ValueKind == JsonValueKind.Array)
             {
@@ -69,13 +94,32 @@ internal static class GeneralObservationContext
             }
             // The delegated exact-text reader has a bounded, audited user-consented
             // excerpt. Let the model use a useful slice without exposing the file path.
-            int maxChars = observation.ToolId == "legacy.filesystem.read_exact" ? 4500 : 1100;
+            int maxChars = observation.ToolId switch
+            {
+                "legacy.filesystem.read_exact" => 4500,
+                "legacy.docx.inspect_exact" => 3000,
+                _ => 1100
+            };
             string result = Clean(body.GetRawText(), maxChars);
             AddLimited(builder, "TOOL " + observation.ToolId + " succeeded; RESULT: " + result + "\n");
         }
         if (run.Observations.Count > MaxResults)
             AddLimited(builder, "Earlier tool outputs are retained in the vault but not displayed here.\n");
         return new Snapshot(builder.ToString(), sources, urlSet, success, failed);
+    }
+
+    private static bool IsUrlInCurrentTurn(string userRequest, Uri target)
+    {
+        foreach (Match match in CurrentTurnHttpsUrls.Matches(userRequest))
+        {
+            string candidate = match.Value.TrimEnd('.', ',', ';', ')', ']', '}');
+            if (Uri.TryCreate(candidate, UriKind.Absolute, out Uri? requested) &&
+                requested.Scheme == Uri.UriSchemeHttps &&
+                string.IsNullOrEmpty(requested.UserInfo) &&
+                requested.AbsoluteUri.Equals(target.AbsoluteUri, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
     }
 
     private static bool AddLimited(StringBuilder result, string text)

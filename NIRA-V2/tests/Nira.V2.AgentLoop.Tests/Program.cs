@@ -115,6 +115,30 @@ await Test("an uncertain mutation is not treated as success", async () =>
     finally { Directory.Delete(dir, true); }
 });
 
+await Test("confirmed no-effect mutation stops without false reconciliation or replay", async () =>
+{
+    string dir = NewFolder();
+    try
+    {
+        var tool = new FakeTool("desktop.activate", AccessLevel.Modify,
+            AgentToolReceipt.ConfirmedNoChange("ACTIVATION_NO_EFFECT"));
+        var engine = new AgentLoopEngine(new ScriptReasoner(_ => AgentDecision.Tool(
+            "desktop.activate", "vault:activated-window", "idempotency-no-change")),
+            new FileAgentStateStore(dir), new AlwaysAllow(), new[] { tool });
+        AgentRunSnapshot state = await engine.StartAsync("Activate the selected window");
+        Expect(state.Status == AgentRunStatus.Incomplete &&
+            state.LastErrorCode == "ACTIVATION_NO_EFFECT" &&
+            state.PendingTool is null && tool.Calls == 1 &&
+            state.Observations.Count == 1 && !state.Observations[0].Succeeded &&
+            state.Activity.Any(e => e.Code == "TOOL_CONFIRMED_NO_EFFECT"),
+            "definite no-change falsely entered reconciliation or replay");
+        AgentRunSnapshot resumed = await engine.ResumeAsync(state.Id);
+        Expect(resumed.Status == AgentRunStatus.Incomplete && tool.Calls == 1,
+            "confirmed failure was replayed on resume");
+    }
+    finally { Directory.Delete(dir, true); }
+});
+
 await Test("read-only provider failure is observable and recoverable", async () =>
 {
     string dir = NewFolder();

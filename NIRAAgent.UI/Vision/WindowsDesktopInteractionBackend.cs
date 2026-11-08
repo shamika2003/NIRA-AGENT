@@ -139,7 +139,24 @@ public sealed class WindowsDesktopInteractionBackend : INIRADesktopInteractionBa
         string kind = a.Kind.Trim().ToLowerInvariant();
         if (kind == "activate")
         {
+            // Foreground locks can reject an activation issued from a worker
+            // thread even after NIRA's UI broker granted Allow Once. Try the
+            // normal Windows API once more on NIRA's own UI thread. This does
+            // not bypass OS focus policy, simulate an input event, or activate
+            // a different HWND. Every attempt revalidates the original PID.
             bool focused = BringForward(hwnd);
+            if (!focused && !ct.IsCancellationRequested &&
+                System.Windows.Application.Current?.Dispatcher is { HasShutdownStarted: false } dispatcher &&
+                !dispatcher.CheckAccess())
+            {
+                focused = (bool)dispatcher.Invoke(new Func<bool>(() =>
+                {
+                    Root(hwnd, pid);
+                    return BringForward(hwnd);
+                }));
+            }
+            Root(hwnd, pid);
+            focused = focused && GetForegroundWindow() == hwnd;
             return new NIRADesktopActionResult
             {
                 ActionDispatched = focused, PostconditionVerified = focused,

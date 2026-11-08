@@ -1,4 +1,4 @@
-# NIRA production cutover tracker
+﻿# NIRA production cutover tracker
 
 **Baseline:** source export `NIRA_AGENT_FULL_CODE(20261106-090935).md` (~522 source/config files and 16 resources); NIRA V2 Phase 4D running via WPF; source of truth for gates, not a percentage guessed from offline tests.
 
@@ -38,3 +38,24 @@ Phase 4E.2: directory listing through the same authoritative legacy service (sou
 - This is NOT a write permission. The V2 agent loop and model currently reject modifying tools. Phase 4F must add: authorized create-only profile; atomic result; deterministic reconciliation; independent readback/hash and no replay after unknown outcomes; WPF consent handling; real negative/restart tests.
 - Acceptance: 4E.3 offline security tests, WPF/legacy regressions, one nonempty-folder live SHA test, and owner-visible hash comparison with PowerShell. Do not count Phase 4E.3 live verified before that test.
 - The permanent target is one NIRA runtime and one capability/authorization service; these are temporary adapters, never a second personality, memory database, or execution authority.
+
+## Phase 4H read-only authoritative lifecycle bridge — candidate (2026-11-08)
+
+- V2 uses the existing singletons `NIRAGoalService`, `NIRABranchService` and
+  `NIRASelfModelService` to observe active goals, branches and commitments.
+- Independent `-AllowLifecycleContext` AND `-AllowPersonalContext` flags and a
+  lifecycle-related current turn are required. 1,750-character snapshot; bounded
+  total personal model context 4,400 characters. No new persistence or writes.
+- Live Windows acceptance is required before counting this read bridge verified.
+- This does NOT complete Gate 5: memory formation, goal/branch mutations,
+  scheduler wake/resume, character lifecycle and exactly-once ownership remain.
+- Phase 4G browser source/citation followthrough is parked at user request,
+  NOT counted as production passing. Desktop activation and DOCX inspection
+  have positive real-tool receipts from November 8, 2026.
+- Gate 6 remains blocked; legacy retirement is forbidden before full parity.
+
+## Phase 4H.2 — exact owner-approved goal creation vertical slice (2026-11-08)
+
+- One strict current-turn `Create goal "..." with success criterion "...".` profile may use existing `NIRAGoalService`. Three distinct process opt-ins and the existing trusted owner `Allow Once` broker are required; the model supplies `{}`.
+- New goal starts **Waiting** without background execution. Verify authoritative ID, content, evidence source and status by independent readback; unreconciled writes must not replay. No new goal store, branch runner, commitment timer, memory writer or authorization broker was added.
+- **CANDIDATE / Windows gate pending:** AuditOnly, full V2/legacy regressions, WPF compile, approval denial, persistence after restart, no duplicate on repeat. This does not complete lifecycle Gate 5 or authorize legacy retirement.

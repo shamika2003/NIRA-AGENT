@@ -92,6 +92,177 @@ await Test("unrecognized argument field is rejected before vault save", async ()
         new AgentRunSnapshot{Id=Guid.NewGuid(), UserRequest="Compute"}, Specs(registry),default);
     Check(result.ReasonCode == "TOOL_ARGUMENT_SCHEMA_INVALID", "unexpected argument accepted");
 });
+await Test("malformed browser tool arguments receive one safe correction without URL execution", async () => {
+    using var tmp = new TempFolder(); var vault = new AgentPayloadVault(tmp.Path);
+    var browser = new BrowserProbe(vault);
+    var registry = new CapabilityRegistry(new IGeneralCapability[]{browser});
+    int calls=0;
+    using var model = Http((req,_) => (++calls) switch {
+        1 => Native("nira_browser_inspect_active", new { url = "https://untrusted.invalid/path" }),
+        2 => Native("nira_browser_inspect_active", new { }),
+        _ => Plain("The bounded browser tool returned a verified observation.")
+    });
+    var reasoner = Reasoner(model, vault, registry);
+    AgentRunSnapshot run = await EngineFromReasoner(reasoner,registry,tmp.Path).StartAsync("Inspect browser");
+    Check(run.Status == AgentRunStatus.Completed && calls == 3 &&
+        reasoner.RecoveryRequests == 1 && run.ToolCallCount == 1 && browser.Calls == 1,
+        "browser invalid arguments were executed or bounded correction failed");
+});
+await Test("malformed browser arguments cannot bypass schema after recovery", async () => {
+    using var tmp = new TempFolder(); var vault = new AgentPayloadVault(tmp.Path);
+    var browser = new BrowserProbe(vault);
+    var registry = new CapabilityRegistry(new IGeneralCapability[]{browser});
+    int calls=0;
+    using var model = Http((_,_) => { calls++; return Native("nira_browser_inspect_active",
+        new { url = "https://different.invalid/" }); });
+    AgentRunSnapshot run = await Engine(model,vault,registry,tmp.Path).StartAsync("Inspect browser");
+    Check(run.Status == AgentRunStatus.Incomplete &&
+        run.LastErrorCode == "TOOL_ARGUMENT_SCHEMA_INVALID" &&
+        calls == 2 && browser.Calls == 0 && run.ToolCallCount == 0,
+        "invalid second browser proposal was accepted");
+});
+
+await Test("host-verified exact browser navigation URL survives answer grounding", async () => {
+    using var tmp = new TempFolder(); var vault = new AgentPayloadVault(tmp.Path);
+    var browser = new VerifiedBrowserProbe(vault);
+    var registry = new CapabilityRegistry(new IGeneralCapability[]{browser});
+    int calls = 0;
+    using var model = Http((_, _) => ++calls == 1
+        ? Native("nira_browser_visit_exact_url", new { })
+        : Plain("I visited https://example.org/ and inspected its content."));
+    AgentRunSnapshot run = await Engine(model, vault, registry, tmp.Path).StartAsync(
+        "Visit https://example.org/ in the browser and report the result.");
+    Check(run.Status == AgentRunStatus.Completed && calls == 2 && browser.Calls == 1 &&
+        run.ToolCallCount == 1 && run.FinalAnswer!.Contains("https://example.org/"),
+        "the exact audited visited URL was incorrectly rejected as unobserved");
+});
+await Test("visit then inspect completes both host-scoped browser observations", async () => {
+    using var tmp = new TempFolder(); var vault = new AgentPayloadVault(tmp.Path);
+    var navigation = new VerifiedBrowserProbe(vault);
+    var inspection = new BrowserProbe(vault);
+    var registry = new CapabilityRegistry(new IGeneralCapability[]{navigation, inspection});
+    int calls = 0;
+    using var model = Http((_, _) => ++calls == 1
+        ? Native("nira_browser_visit_exact_url", new { })
+        : Plain("I visited https://example.org/ and inspected the active page. " +
+            "The observed page title was Test browser page."));
+    AgentRunSnapshot run = await Engine(model, vault, registry, tmp.Path).StartAsync(
+        "Visit https://example.org/ in the browser, then inspect the active page.");
+    Check(run.Status == AgentRunStatus.Completed && calls == 2 &&
+        navigation.Calls == 1 && inspection.Calls == 1 && run.ToolCallCount == 2 &&
+        run.Observations.Select(x=>x.ToolId).SequenceEqual(new[]{
+            "legacy.browser.navigate_exact", "legacy.browser.inspect_active"}),
+        "a browser visit incorrectly skipped the requested second observation");
+});
+await Test("an explicitly negated page inspection is never auto-invoked", async () => {
+    using var tmp = new TempFolder(); var vault = new AgentPayloadVault(tmp.Path);
+    var navigation = new VerifiedBrowserProbe(vault);
+    var inspection = new BrowserProbe(vault);
+    var registry = new CapabilityRegistry(new IGeneralCapability[]{navigation,inspection});
+    int calls=0;
+    using var model=Http((_,_)=>++calls==1
+        ? Native("nira_browser_visit_exact_url",new {})
+        : Plain("I visited https://example.org/. No inspection was performed."));
+    AgentRunSnapshot run=await Engine(model,vault,registry,tmp.Path).StartAsync(
+        "Visit https://example.org/ in the browser, but do not inspect the page.");
+    Check(run.Status==AgentRunStatus.Completed && calls==2 && navigation.Calls==1 &&
+        inspection.Calls==0 && run.ToolCallCount==1,
+        "a negated page inspection was treated as authorization to inspect");
+});
+await Test("browser final answer cannot use an untrusted page hyperlink after inspection", async () => {
+    using var tmp = new TempFolder(); var vault = new AgentPayloadVault(tmp.Path);
+    var navigation = new VerifiedBrowserProbe(vault);
+    var inspection = new BrowserProbe(vault);
+    var registry = new CapabilityRegistry(new IGeneralCapability[]{navigation,inspection});
+    int calls = 0;
+    using var model = Http((_, _) => ++calls == 1
+        ? Native("nira_browser_visit_exact_url", new { })
+        : Plain("Visit https://untrusted.example.invalid/path for more details."));
+    AgentRunSnapshot run = await Engine(model, vault, registry, tmp.Path).StartAsync(
+        "Visit https://example.org/ in the browser, then inspect the active page.");
+    Check(run.Status == AgentRunStatus.Incomplete && run.ToolCallCount == 2 &&
+        run.LastErrorCode == "UNOBSERVED_SOURCE_URL" && calls == 3 &&
+        navigation.Calls == 1 && inspection.Calls == 1,
+        "a page-supplied URL gained citation authority after a real inspection");
+});
+await Test("failed browser inspection is not silently retried or called verified", async () => {
+    using var tmp = new TempFolder(); var vault = new AgentPayloadVault(tmp.Path);
+    var navigation = new VerifiedBrowserProbe(vault);
+    var inspection = new FailedBrowserProbe();
+    var registry = new CapabilityRegistry(new IGeneralCapability[]{navigation,inspection});
+    int calls=0;
+    using var model = Http((_,_)=>++calls==1
+        ? Native("nira_browser_visit_exact_url",new {})
+        : Plain("I visited the URL; inspection was not completed."));
+    AgentRunSnapshot run=await Engine(model,vault,registry,tmp.Path).StartAsync(
+        "Visit https://example.org/ in the browser, then inspect the active page.");
+    Check(run.ToolCallCount==2 && navigation.Calls==1 && inspection.Calls==1 &&
+        !run.Observations.Any(x=>x.ToolId=="legacy.browser.inspect_active" && x.Succeeded),
+        "failed page inspection was replayed or falsely confirmed");
+});
+await Test("browser webpage links remain untrusted and cannot be cited", async () => {
+    using var tmp = new TempFolder(); var vault = new AgentPayloadVault(tmp.Path);
+    var browser = new VerifiedBrowserProbe(vault);
+    var registry = new CapabilityRegistry(new IGeneralCapability[]{browser});
+    int calls = 0;
+    using var model = Http((_, _) => ++calls == 1
+        ? Native("nira_browser_visit_exact_url", new { })
+        : Plain("Click https://untrusted.example.invalid/path to continue."));
+    var reasoner = Reasoner(model, vault, registry);
+    AgentRunSnapshot run = await EngineFromReasoner(reasoner, registry, tmp.Path).StartAsync(
+        "Visit https://example.org/ and inspect the page.");
+    Check(run.Status == AgentRunStatus.Incomplete &&
+        run.LastErrorCode == "UNOBSERVED_SOURCE_URL" && calls == 3 &&
+        reasoner.RecoveryRequests == 1 && browser.Calls == 1,
+        "a link supplied only by webpage text escaped the citation safeguard");
+});
+await Test("verified browser target from unrelated user turn cannot be cited", async () => {
+    using var tmp = new TempFolder(); var vault = new AgentPayloadVault(tmp.Path);
+    var browser = new VerifiedBrowserProbe(vault);
+    var registry = new CapabilityRegistry(new IGeneralCapability[]{browser});
+    int calls = 0;
+    using var model = Http((_, _) => ++calls == 1
+        ? Native("nira_browser_visit_exact_url", new { })
+        : Plain("I visited https://example.org/."));
+    AgentRunSnapshot run = await Engine(model, vault, registry, tmp.Path).StartAsync(
+        "Inspect the current browser session without navigating.");
+    Check(run.Status == AgentRunStatus.Incomplete &&
+        run.LastErrorCode == "UNOBSERVED_SOURCE_URL" && browser.Calls == 1,
+        "a visited URL from an unrelated turn was accepted");
+});
+
+await Test("registered create tool cannot be replaced by manual instructions", async () => {
+    using var tmp = new TempFolder(); var vault = new AgentPayloadVault(tmp.Path);
+    var fake = new FakeScopedCreate();
+    var registry = new CapabilityRegistry(new IGeneralCapability[]{ fake });
+    int calls=0;
+    using var model = Http((_,_) => ++calls==1 ? Plain("I cannot create files on your PC; use Explorer.") :
+        Native("nira_create_exact_text_file", new { }));
+    var reasoner = new GeneralOllamaReasoner(model, OllamaReasonerOptions.Cloud("gpt-oss:120b"),
+        registry, vault, 5, () => "FAKE_KEY", allowExactTextCreate: true);
+    var decision = await reasoner.DecideAsync(new AgentRunSnapshot {
+        Id=Guid.NewGuid(), UserRequest="Create Documents/TestFolder/newfile.txt containing \"Test\"."
+    }, Specs(registry), default);
+    Check(decision.Kind==AgentDecisionKind.InvokeTool &&
+        decision.ToolId=="legacy.filesystem.create_text_exact" && calls==2 &&
+        reasoner.RecoveryRequests==1 && fake.Calls==0,
+        "model manual instructions were wrongly accepted as a file-create completion");
+});
+await Test("repeated generic create answer fails without running an action", async () => {
+    using var tmp = new TempFolder(); var vault = new AgentPayloadVault(tmp.Path);
+    var fake = new FakeScopedCreate();
+    var registry = new CapabilityRegistry(new IGeneralCapability[]{fake});
+    int calls=0;
+    using var model = Http((_,_) => {calls++; return Plain("Please create the file manually.");});
+    var reasoner = new GeneralOllamaReasoner(model, OllamaReasonerOptions.Cloud("gpt-oss:120b"),
+        registry, vault, 5, () => "FAKE_KEY", allowExactTextCreate: true);
+    var decision = await reasoner.DecideAsync(new AgentRunSnapshot {
+        Id=Guid.NewGuid(), UserRequest="Create Documents/TestFolder/newfile.txt containing \"Test\"."
+    }, Specs(registry), default);
+    Check(decision.ReasonCode=="FILE_CREATION_NOT_DISPATCHED" &&
+        calls==2 && fake.Calls==0, "unobserved creation was falsely completed");
+});
+
 await Test("duplicate JSON argument keys are rejected", async () => {
     using var tmp = new TempFolder(); var vault = new AgentPayloadVault(tmp.Path);
     var registry = MakeRegistry(vault);
@@ -245,4 +416,76 @@ sealed class CustomProbe:IGeneralCapability {
     public JsonElement InputSchema {get;}=JsonSerializer.SerializeToElement(new{type="object",properties=new{},additionalProperties=false});
     public bool ValidateArguments(JsonElement _) =>true;
     public Task<AgentToolReceipt> ExecuteAsync(string _,CancellationToken ct)=>Task.FromResult(AgentToolReceipt.ReadOnlyResult());
+}
+sealed class BrowserProbe(AgentPayloadVault vault):IGeneralCapability {
+    public AgentToolSpec Spec {get;}=new("legacy.browser.inspect_active", "Host-scoped browser inspect", AccessLevel.Observe);
+    public string FunctionName=>"nira_browser_inspect_active";
+    public int Calls {get; private set;}
+    public JsonElement InputSchema {get;}=JsonSerializer.SerializeToElement(new {
+        type="object", properties=new {}, required=Array.Empty<string>(),additionalProperties=false});
+    public bool ValidateArguments(JsonElement x)=>x.ValueKind==JsonValueKind.Object && !x.EnumerateObject().Any();
+    public async Task<AgentToolReceipt> ExecuteAsync(string reference,CancellationToken ct) {
+        var runId = vault.RunIdFromArgument(reference);
+        var args = await vault.ReadToolArgumentAsync(Spec.Id,reference,ct);
+        if (!ValidateArguments(args)) return AgentToolReceipt.Uncertain("BROWSER_BAD_ARGUMENTS");
+        Calls++;
+        var observed=JsonSerializer.SerializeToElement(new { observed=true, pageTitle="Test browser page" });
+        string result = await vault.SaveResultAsync(runId,Spec.Id,observed,ct);
+        return AgentToolReceipt.ReadOnlyResult(result);
+    }
+}
+
+sealed class FailedBrowserProbe : IGeneralCapability {
+    public AgentToolSpec Spec {get;}=new("legacy.browser.inspect_active",
+        "Host-scoped browser inspect, simulated failure",AccessLevel.Observe);
+    public string FunctionName=>"nira_browser_inspect_active";
+    public int Calls{get;private set;}
+    public JsonElement InputSchema{get;}=JsonSerializer.SerializeToElement(new {
+        type="object",properties=new{},required=Array.Empty<string>(),additionalProperties=false});
+    public bool ValidateArguments(JsonElement x)=>x.ValueKind==JsonValueKind.Object &&
+        !x.EnumerateObject().Any();
+    public Task<AgentToolReceipt> ExecuteAsync(string _,CancellationToken ct) {
+        Calls++;
+        return Task.FromResult(AgentToolReceipt.Uncertain("SIMULATED_PAGE_INSPECTION_FAILED"));
+    }
+}
+
+sealed class VerifiedBrowserProbe(AgentPayloadVault vault) : IGeneralCapability {
+    public AgentToolSpec Spec {get;} = new("legacy.browser.navigate_exact",
+        "Audited host-selected navigation", AccessLevel.Observe);
+    public string FunctionName => "nira_browser_visit_exact_url";
+    public int Calls {get; private set;}
+    public JsonElement InputSchema {get;} = JsonSerializer.SerializeToElement(new {
+        type="object", properties=new {}, required=Array.Empty<string>(),
+        additionalProperties=false
+    });
+    public bool ValidateArguments(JsonElement args) => args.ValueKind == JsonValueKind.Object &&
+        !args.EnumerateObject().Any();
+    public async Task<AgentToolReceipt> ExecuteAsync(string reference, CancellationToken ct) {
+        Guid runId = vault.RunIdFromArgument(reference);
+        if (!ValidateArguments(await vault.ReadToolArgumentAsync(Spec.Id, reference, ct)))
+            return AgentToolReceipt.Uncertain("INVALID_ARGUMENTS");
+        Calls++;
+        var data = JsonSerializer.SerializeToElement(new {
+            capability="browser.navigate", source="existing_NIRA_capability_service",
+            verifiedTargetUrl="https://example.org/", observed=true,
+            output="Page is Example Domain. Untrusted page text: https://untrusted.example.invalid/path"
+        });
+        string token = await vault.SaveResultAsync(runId, Spec.Id, data, ct);
+        return AgentToolReceipt.ReadOnlyResult(token);
+    }
+}
+
+sealed class FakeScopedCreate:IGeneralCapability {
+    public AgentToolSpec Spec {get;}=new("legacy.filesystem.create_text_exact",
+        "Exact current-turn TXT creation, requires owner approval", AccessLevel.Modify);
+    public string FunctionName=>"nira_create_exact_text_file";
+    public int Calls {get; private set;}
+    public JsonElement InputSchema {get;}=JsonSerializer.SerializeToElement(new {
+        type="object",properties=new {},required=Array.Empty<string>(),additionalProperties=false});
+    public bool ValidateArguments(JsonElement args)=>args.ValueKind==JsonValueKind.Object &&
+        !args.EnumerateObject().Any();
+    public Task<AgentToolReceipt> ExecuteAsync(string _,CancellationToken ct){
+        Calls++; throw new InvalidOperationException("Never directly execute the fake create tool.");
+    }
 }
