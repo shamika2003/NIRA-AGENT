@@ -375,6 +375,7 @@ public sealed class MainWindowViewModel
         DateTimeOffset lastSpokenProgress = DateTimeOffset.UtcNow;
         bool hasSpokenProgress = false;
         string lastSpokenProgressText = string.Empty;
+        bool hasUnverifiedPreview = false;
 
         try
         {
@@ -386,6 +387,21 @@ public sealed class MainWindowViewModel
                     attachedPastChatSessionId,
                     imagePaths))
             {
+                if (chunk.Type == NIRAOutputChunkType.Preview)
+                {
+                    // Replace full provisional text, never append it to the final answer.
+                    // No SpeechContent is accepted and no preview is archived.
+                    assistantMessage.Content = chunk.Content;
+                    hasUnverifiedPreview = !string.IsNullOrEmpty(chunk.Content);
+                    if (hasUnverifiedPreview) assistantMessage.BeginProgressFadeOut();
+                    continue;
+                }
+                if (hasUnverifiedPreview &&
+                    chunk.Type is NIRAOutputChunkType.Text or NIRAOutputChunkType.Cancelled)
+                {
+                    assistantMessage.Content = string.Empty;
+                    hasUnverifiedPreview = false;
+                }
                 if (chunk.Type == NIRAOutputChunkType.Progress)
                 {
                     if (chunk.IsImageGenerationProgress)
@@ -430,6 +446,11 @@ public sealed class MainWindowViewModel
             }
 
 
+            if (hasUnverifiedPreview)
+            {
+                assistantMessage.Content = string.Empty;
+                hasUnverifiedPreview = false;
+            }
             FlushSpeech(
                 speechChunker,
                 speechState,

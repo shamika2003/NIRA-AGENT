@@ -16,9 +16,9 @@ This is ONE install/build/test candidate for *five Phase 4G concerns*, not a cla
 
 - The launcher is read-only by default. Every opt-in is process-local, independent and removed when the launcher exits.
 - `-AllowBrowserObservation` can launch dedicated browser pages and load the explicitly named HTTPS site. It can produce network traffic. No form submissions are included.
-- `-AllowDocxInspection` may transmit bounded real document text to Ollama Cloud; inspect only non-sensitive documents.
+- `-AllowDocxInspection` may transmit bounded real document text to selected cloud model provider; inspect only non-sensitive documents.
 - `-AllowDocxCreate` enables only a previously nonexistent `.docx` under an existing known-folder subdirectory, with content in a single `containing "..."` phrase and exact one-time WPF approval. There is no remembered approval path.
-- `-AllowDesktopUiInspection` can disclose UI Automation/window labels to Ollama Cloud for the one named application. It may additionally offer *activate only* when the user explicitly asks for focus/activation. Activation requires an exact HWND from a **same-run** existing-NIRA inspection and separate WPF Allow Once approval. No typing or clicking.
+- `-AllowDesktopUiInspection` can disclose UI Automation/window labels to selected cloud model provider for the one named application. It may additionally offer *activate only* when the user explicitly asks for focus/activation. Activation requires an exact HWND from a **same-run** existing-NIRA inspection and separate WPF Allow Once approval. No typing or clicking.
 - The only way to deny an action is to select **Deny** in the owner-approval UI. Writing the sentence `This request must be denied` as file content does not deny it.
 - The old Phase 4F `.txt` create-only path and its owner-approval gate are preserved. A modifying tool is never reoffered after a confirmed mutation in a run; uncertain dispatches require inspection rather than replay.
 - Browser and UIA outputs are untrusted observations. Their text is never permission or a new instruction.

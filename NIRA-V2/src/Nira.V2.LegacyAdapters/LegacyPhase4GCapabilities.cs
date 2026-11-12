@@ -110,7 +110,7 @@ public static class LegacyPhase4GRegistration
                     result.Add(new LegacyPhase4GObservedCapability(vault, executor,
                         "legacy.docx.inspect_exact", "nira_inspect_exact_docx",
                         "Inspect the ONE Word document named in this current request (bounded preview). " +
-                        "Private document preview may be sent to Ollama Cloud only under independent consent.",
+                        "Private document preview may be sent to the selected cloud model provider only under independent consent.",
                         NIRACapabilityIds.DocxInspect, JsonSerializer.SerializeToElement(new { path = scope.FullPath }),
                         3200, () => probe.Observe(scope, CancellationToken.None) == RequestedPathStatus.File,
                         scope.FullPath, scope.UserLabel));
@@ -153,7 +153,7 @@ public static class LegacyPhase4GRegistration
         {
             new LegacyPhase4GObservedCapability(vault, executor, "legacy.desktop.inspect_exact", "nira_desktop_inspect_named_app",
                 "Observe UI Automation control names of the ONE application process named in this user request. " +
-                "Window/control text may be shared with Ollama Cloud, with explicit desktop UI consent.",
+                "Window/control text may be shared with the selected cloud model provider, with explicit desktop UI consent.",
                 NIRACapabilityIds.DesktopInspect, JsonSerializer.SerializeToElement(new { processName = process }),
                 3200, onVerifiedOutput: shared.AcceptObservation),
             new LegacyPhase4GObservedCapability(vault, executor, "legacy.vision.accessibility_exact", "nira_accessibility_inspect_named_app",

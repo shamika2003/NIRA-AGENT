@@ -7,7 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
-using NIRAAgent.AI.Ollama;
+using NIRAAgent.AI.Models;
 using NIRAAgent.PC.Awareness;
 
 namespace NIRAAgent.Vision;
@@ -29,7 +29,7 @@ namespace NIRAAgent.Vision;
 public sealed class NIRAVisualUnderstandingService
 {
     public const string VisionModelEnvironmentVariable =
-        "NIRA_OLLAMA_VISION_MODEL";
+        "NIRA_MODEL_VISION";
 
     private static string DefaultVisionModel => NIRAModelSelection.VisionDefault;
 
@@ -37,7 +37,7 @@ public sealed class NIRAVisualUnderstandingService
     private const int MaximumQuestionCharacters = 1200;
 
     private readonly NIRAVisualEvidenceService _evidence;
-    private readonly OllamaClient _ollama;
+    private readonly NIRAModelClient _modelClient;
 
     private readonly object _sync = new();
     private readonly Dictionary<Guid, NIRAVisualObservation> _recent = new();
@@ -51,10 +51,10 @@ public sealed class NIRAVisualUnderstandingService
 
     public NIRAVisualUnderstandingService(
         NIRAVisualEvidenceService evidence,
-        OllamaClient ollama)
+        NIRAModelClient modelClient)
     {
         _evidence = evidence ?? throw new ArgumentNullException(nameof(evidence));
-        _ollama = ollama ?? throw new ArgumentNullException(nameof(ollama));
+        _modelClient = modelClient ?? throw new ArgumentNullException(nameof(modelClient));
 
         string? configured =
             Environment.GetEnvironmentVariable(
@@ -183,7 +183,7 @@ public sealed class NIRAVisualUnderstandingService
             try
             {
                 raw =
-                    await _ollama.ChatWithImagesAsync(
+                    await _modelClient.ChatWithImagesAsync(
                         model,
                         systemPrompt,
                         userPrompt,

@@ -36,14 +36,7 @@ public sealed class NIRAV2ReadOnlyContextBuilder
         ArgumentException.ThrowIfNullOrWhiteSpace(cleanRequest);
         cancellationToken.ThrowIfCancellationRequested();
 
-        string path = Path.Combine(AppContext.BaseDirectory, "Prompt", "nira_personality.yaml");
-        if (!File.Exists(path))
-            throw new InvalidOperationException("AUTHORITATIVE_CHARACTER_PROMPT_UNAVAILABLE");
-        var info = new FileInfo(path);
-        if (info.Length is < 500 or > 100_000)
-            throw new InvalidOperationException("AUTHORITATIVE_CHARACTER_PROMPT_INVALID");
-        string yaml = await File.ReadAllTextAsync(path, cancellationToken);
-        string identity = NIRAV2ReadOnlyContextPolicy.ExtractIdentity(yaml);
+        string identity = await LoadTrustedIdentityOnlyAsync(cancellationToken);
 
         // The current message is already present in the legacy archive. Exclude its last copy
         // rather than presenting the current request twice as if it were an older memory.
@@ -90,6 +83,26 @@ public sealed class NIRAV2ReadOnlyContextBuilder
         return new NIRAV2ReadOnlyContext(identity, history,
             previous.IncludedMessages, memories.Length);
     }
+
+    /// <summary>
+    /// Read ONLY the application-shipped NIRA personality definition. This method
+    /// never touches conversation, mood, relationship, archive, memory, or SQLite.
+    /// The V2 route sends this stable character definition to the selected model;
+    /// private personal history remains separately opt-in via BuildAsync.
+    /// </summary>
+    public static async Task<string> LoadTrustedIdentityOnlyAsync(
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        string path = Path.Combine(AppContext.BaseDirectory, "Prompt", "nira_personality.yaml");
+        if (!File.Exists(path))
+            throw new InvalidOperationException("AUTHORITATIVE_CHARACTER_PROMPT_UNAVAILABLE");
+        var info = new FileInfo(path);
+        if (info.Length is < 500 or > 100_000)
+            throw new InvalidOperationException("AUTHORITATIVE_CHARACTER_PROMPT_INVALID");
+        string yaml = await File.ReadAllTextAsync(path, cancellationToken);
+        return NIRAV2ReadOnlyContextPolicy.ExtractIdentity(yaml);
+    }
 }
 
 public sealed record NIRAV2ReadOnlyContext(
@@ -106,7 +119,7 @@ public sealed record NIRAV2MemoryExcerpt(string Content, double Confidence,
 public static class NIRAV2ReadOnlyContextPolicy
 {
     public const string ExactConsent = "ALLOW_READONLY_CONTEXT";
-    private const int MaximumIdentityCharacters = 12_000;
+    private const int MaximumIdentityCharacters = 32_000;
     private const int MaximumHistoryCharacters = 4_400;
 
     public static bool IsAllowed(string? consent) =>
@@ -115,10 +128,17 @@ public static class NIRAV2ReadOnlyContextPolicy
     public static string ExtractIdentity(string authoritativeYaml)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(authoritativeYaml);
-        // These are NIRA's *existing* personality sections copied by NIRAAgent.csproj.
-        // No alternate identity rules are authored by V2 or stored in a new database.
+        // Carry the WHOLE existing character contract into V2; never synthesize
+        // a substitute persona or a list of fixed replies. The exact root keys
+        // are an allowlist for this trusted local YAML schema, not dialogue rules.
+        // Private memories and mood still require separate host consent below.
         var requested = new HashSet<string>(StringComparer.Ordinal) {
-            "identity:", "brand_context:", "embodiment:", "core:", "character_signature:"
+            "identity:", "brand_context:", "legacy_identity_continuity:",
+            "embodiment:", "core:", "character_signature:", "independence:",
+            "relationship:", "emotion:", "social_style:", "sarcasm:",
+            "swearing:", "anger:", "work:", "curiosity:", "affection:",
+            "jealousy:", "ego:", "likes:", "dislikes:",
+            "self_description:", "autonomy:", "communication:", "truth:"
         };
         var selected = new StringBuilder();
         var found = new HashSet<string>(StringComparer.Ordinal);

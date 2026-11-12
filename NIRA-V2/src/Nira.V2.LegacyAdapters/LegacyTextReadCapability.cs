@@ -139,7 +139,7 @@ public sealed class LegacyTextReadCapability : IGeneralCapability
         "Read the beginning of exactly ONE allowlisted text file explicitly named in the CURRENT " +
         "user message. The host fixes the path and NIRA's existing permission/audit service " +
         "authorizes and performs the read. NO input arguments, file writes, directory listing " +
-        "or model-selected paths. Content may be sent to Ollama Cloud only under separate consent.",
+        "or model-selected paths. Content may be sent to the selected cloud model provider only under separate consent.",
         AccessLevel.Observe);
     public string FunctionName => "nira_read_exact_user_text_file";
     public JsonElement InputSchema { get; } = JsonSerializer.SerializeToElement(new

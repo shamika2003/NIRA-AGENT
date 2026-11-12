@@ -56,7 +56,7 @@ Check whether Documents/MULTI-LANG-PROJECT/NIRA-AGENT exists on my PC right now.
 ```
 
 Check UI answers and local runtime progress. Enabling `-AllowPersonalContext`
-permits selected history/memory/personality to reach the Ollama Cloud model.
+permits selected history/memory/personality to reach the selected cloud model provider model.
 `-AllowFileObservation` permits one current-turn path status to reach the model.
 No file contents, directory listings, shell or write operations are connected.
 

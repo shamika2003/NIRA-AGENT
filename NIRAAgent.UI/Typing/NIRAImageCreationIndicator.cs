@@ -62,7 +62,7 @@ public sealed class NIRAImageCreationIndicator : FrameworkElement
     private static readonly Brush TileShine = Freeze(Color.FromArgb(44, 255, 255, 255));
 
     // The four new skins are cached once; no per-frame brush creation and no
-    // extra timers, compositor subscribers, Ollama calls or Cloudflare work.
+    // extra timers, compositor subscribers, model provider calls or Cloudflare work.
     private static readonly TileVisual[][] SkinVisuals = BuildSkinVisuals();
 
     private readonly Stopwatch _clock = new();
@@ -515,7 +515,7 @@ public sealed class NIRAImageCreationIndicator : FrameworkElement
     internal static bool VerifyMotionInvariants(out string reason)
     {
         // Verify the four keyframes, staggered tiles, and D1 wave. This is
-        // deterministic: no UI, Ollama, Cloudflare, network or randomness.
+        // deterministic: no UI, model provider, Cloudflare, network or randomness.
         double d4s = 0.0;
         Motion hidden = SampleMotion(d4s, 0, 0);
         Motion entering = SampleMotion(CascadeSeconds * 0.155, 0, 0);

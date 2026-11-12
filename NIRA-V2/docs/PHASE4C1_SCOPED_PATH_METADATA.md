@@ -21,7 +21,7 @@ change her personality/memory, or modify the ELVARA bridge.
 * Results contain only the user-typed relative path, existence and whether
   it is a directory or file. No file content, size, modification time,
   directory names, shell command, or state-changing action is available.
-* Observations may be transmitted to Ollama Cloud in the next model decision;
+* Observations may be transmitted to selected cloud model provider in the next model decision;
   enable this switch only if comfortable sharing the requested path and result.
 * The existing legacy `NIRAScopedCapabilityAuthorizer` and WPF approval UI
   remain authoritative for legacy actions. This first read-only grant is

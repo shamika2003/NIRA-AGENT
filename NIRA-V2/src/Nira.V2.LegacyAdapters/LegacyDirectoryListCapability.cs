@@ -102,7 +102,7 @@ public sealed class LegacyDirectoryListCapability : IGeneralCapability
         "this current user message. The path and listing limits are fixed by the host. " +
         "The existing NIRA authorization/audit service executes the request. " +
         "This tool does not open file contents, recurse, select another path, or modify anything. " +
-        "Names may be sent to Ollama Cloud only with independent owner consent.",
+        "Names may be sent to the selected cloud model provider only with independent owner consent.",
         AccessLevel.Observe);
     public string FunctionName => "nira_list_exact_user_directory";
     public JsonElement InputSchema { get; } = JsonSerializer.SerializeToElement(new

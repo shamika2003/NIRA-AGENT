@@ -6,7 +6,7 @@ using NIRAAgent.Capabilities;
 using NIRAAgent.Browser;
 using NIRAAgent.Embodiment;
 using NIRAAgent.Presentation;
-using NIRAAgent.AI.Ollama;
+using NIRAAgent.AI.Models;
 using NIRAAgent.AI.Cognition;
 using NIRAAgent.Mind;
 using NIRAAgent.Authorization;
@@ -195,8 +195,8 @@ Check("R4.6 substantial source-grounded research routes to existing Ultra role",
         NIRADeepResearchRoutePolicy.ShouldRouteObjective("Hey little girl, how are you?") ||
         NIRADeepResearchRoutePolicy.ShouldRouteObjective("Research the birthdate of an inventor."))
         throw new Exception("Deep research routing accepted casual lookup or missed comprehensive research.");
-    if (NIRAModelSelection.DeepDefault != "nemotron-3-ultra:cloud")
-        throw new Exception("The existing NIRA Ultra reasoning resource was replaced.");
+    if (NIRAModelSelection.DeepDefault != "nvidia/nemotron-3.5-lightning-30b-a3b")
+        throw new Exception("The configured NIRA deep-work reasoning resource was replaced.");
 });
 
 // R4.4: a publisher can publish genuine photographs of a DIFFERENT scene.
@@ -1020,7 +1020,7 @@ Check("Current decision round is disclosed without a fake fixed LLM cap", () =>
         throw new Exception("Round guidance is inaccurate or conflicts with the internal stage.");
 });
 
-Check("Verified first-call social reply never gets a cadence-only model rewrite", () =>
+Check("Interpersonal first-call reply receives post-commit character expression", () =>
 {
     var social = new NIRACognitionDecision {
         State=NIRACognitionState.Complete, EmitReply=true,
@@ -1029,23 +1029,23 @@ Check("Verified first-call social reply never gets a cadence-only model rewrite"
     const string recent = "assistant: Hey there, it is good to see you again today.\nuser: Hey";
     if (!NIRAConversationFastPath.CanUseDirectReply(social, true, false, false, false) ||
         !NIRAConversationCadencePolicy.RepeatsOpening(social.Reply, recent) ||
-        NIRAFinalResponseStage.ShouldRealize(social, social.Reply, recent,
+        !NIRAFinalResponseStage.ShouldRealize(social, social.Reply, recent,
             false, false, false, false, verifiedDirectFirstCall:true))
-        throw new Exception("Ready first-call conversation spent a redundant character model call.");
-    if (NIRAFinalResponseStage.ShouldRealize(social, social.Reply, recent,
+        throw new Exception("A ready first-call interpersonal reply bypassed post-commit character expression.");
+    if (!NIRAFinalResponseStage.ShouldRealize(social, social.Reply, recent,
             false, true, false, false, verifiedDirectFirstCall:true) ||
         !NIRAFinalResponseStage.ShouldRealize(social with { CharacterReady=false },
             social.Reply, recent, false, false, false, false,
             verifiedDirectFirstCall:true) ||
         !NIRAFinalResponseStage.ShouldRealize(social, social.Reply, recent,
             false, false, true, true, verifiedDirectFirstCall:true))
-        throw new Exception("A ready first-call reply was rewritten, or nonready/internal work bypassed final realization.");
+        throw new Exception("Post-commit social state or nonready/internal work bypassed final realization.");
 });
 
-// The first cognition call may deliver a character-ready direct answer.
-// Any later internal-work round must instead hand its grounded outcome into
-// the public realization stage, even if another policy marked it ready.
-Check("Public response stage preserves direct first-call fast path", () =>
+// First cognition can settle the semantic content of a social turn, but its
+// readiness flags do not authorize skipping NIRA's committed character state.
+// Non-social self-contained answers retain their verified first-call fast path.
+Check("Public response stage realizes ready social turns after state commit", () =>
 {
     var direct = new NIRACognitionDecision
     {
@@ -1056,13 +1056,14 @@ Check("Public response stage preserves direct first-call fast path", () =>
         CharacterReady = true,
         ConversationOnly = true
     };
-    if (NIRAFinalResponseStage.ShouldRealize(
+    if (!NIRAFinalResponseStage.ShouldRealize(
         direct, direct.Reply, string.Empty,
         hasOutstandingWork: false,
         authoritativeCharacterShift: false,
         independentlyReviewed: false,
-        passedThroughInternalWork: false))
-        throw new Exception("The direct first-call answer triggered a redundant final LLM call.");
+        passedThroughInternalWork: false,
+        verifiedDirectFirstCall: true))
+        throw new Exception("A model-declared character-ready social reply bypassed post-commit expression.");
 });
 
 Check("Internal work never bypasses public character realization", () =>
@@ -6667,7 +6668,7 @@ Check("R34 persistent categorized gallery deduplicates and retains verified sour
     finally { if (Directory.Exists(temp)) Directory.Delete(temp, recursive: true); }
 });
 
-// R33: all following checks are offline; no Ollama calls or internet.
+// R33: all following checks are offline; no model provider calls or internet.
 Check("R33 bullet references render as resource rows without losing URL safety", () =>
 {
     string[] examples = {
@@ -7227,14 +7228,14 @@ Check("R68 silent direct-user terminal is recoverable without changing actions",
 
 Check("Runtime model assembly reports the synchronized routing revision", () =>
 {
-    Equal("NIRA-OSS120B-VISION-SILENT-RECOVERY-R68-20261029", NIRAModelSelection.RoutingRevision);
+    Equal("NIRA-PROVIDER-NEUTRAL-NVIDIA-R69-20261112", NIRAModelSelection.RoutingRevision);
 });
 
 Check("NIRA's primary and deep models have distinct default roles", () =>
 {
-    Equal("gpt-oss:120b-cloud", NIRAModelSelection.PrimaryDefault);
-    Equal("gemma4:31b-cloud", NIRAModelSelection.VisionDefault);
-    Equal("nemotron-3-ultra:cloud", NIRAModelSelection.DeepDefault);
+    Equal("nvidia/nemotron-3.5-lightning-30b-a3b", NIRAModelSelection.PrimaryDefault);
+    Equal("nvidia/nemotron-3.5-lightning-30b-a3b", NIRAModelSelection.VisionDefault);
+    Equal("nvidia/nemotron-3.5-lightning-30b-a3b", NIRAModelSelection.DeepDefault);
 });
 
 Check("Delegated runs use Ultra without a new classifier", () =>
@@ -7245,12 +7246,12 @@ Check("Delegated runs use Ultra without a new classifier", () =>
 
 Check("R67 text-first main, Gemma perception, Ultra deep stay separate", () =>
 {
-    Equal("gpt-oss:120b-cloud", NIRAModelSelection.PrimaryDefault);
-    Equal("gemma4:31b-cloud", NIRAModelSelection.VisionDefault);
-    Equal("nemotron-3-ultra:cloud", NIRAModelSelection.DeepDefault);
-    if (NIRAModelSelection.PrimaryDefault == NIRAModelSelection.VisionDefault ||
-        NIRAModelSelection.VisionDefault == NIRAModelSelection.DeepDefault ||
-        NIRAModelSelection.ForCognition(true) != NIRAModelSelection.Deep)
+    Equal("nvidia/nemotron-3.5-lightning-30b-a3b", NIRAModelSelection.PrimaryDefault);
+    Equal("nvidia/nemotron-3.5-lightning-30b-a3b", NIRAModelSelection.VisionDefault);
+    Equal("nvidia/nemotron-3.5-lightning-30b-a3b", NIRAModelSelection.DeepDefault);
+    if (NIRAModelSelection.ForCognition(true) != NIRAModelSelection.Deep ||
+        NIRAModelSelection.NameForRole(NIRAReasoningRole.Adaptive) ==
+        NIRAModelSelection.NameForRole(NIRAReasoningRole.DeepWork))
         throw new Exception("Vision or specialist model took the main routing slot.");
 });
 

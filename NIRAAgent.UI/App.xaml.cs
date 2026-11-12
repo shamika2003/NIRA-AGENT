@@ -7,7 +7,7 @@ using System.Net.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
-using NIRAAgent.AI.Ollama;
+using NIRAAgent.AI.Models;
 using NIRAAgent.AI.Cognition;
 using NIRAAgent.Capabilities;
 using NIRAAgent.Authorization;
@@ -35,7 +35,6 @@ using NIRAAgent.UI.ViewModels;
 using NIRAAgent.UI.V2;
 using NIRAAgent.UI.Theming;
 using NIRAAgent.Voice;
-using NIRAAgent.Voice.Groq;
 using NIRAAgent.Vision;
 using NIRAAgent.Embodiment;
 using NIRAAgent.Embodiment.Body;
@@ -145,7 +144,7 @@ public partial class App : WpfApplication
 
 
             builder.Services.AddSingleton<
-                NIRAOllamaApiKeyService>();
+                NIRAModelApiKeyService>();
 
 
             // =================================================
@@ -614,9 +613,9 @@ public partial class App : WpfApplication
                 new NIRAImageSearchCapabilityHandler(
                     sp.GetRequiredService<INIRAImageDiscoveryService>(),
                     sp.GetRequiredService<NIRACommonsImageDiscoveryService>(),
-                    sp.GetRequiredService<OllamaClient>()));
+                    sp.GetRequiredService<NIRAModelClient>()));
             builder.Services.AddSingleton<INIRACapabilityHandler, NIRAImageRetrieveCapabilityHandler>();
-            // R37: native image generation, single Cloudflare 4B model, separate from Ollama.
+            // R37: native image generation, single Cloudflare 4B model, separate from model provider.
             builder.Services.AddSingleton<NIRACloudflareImageGenerationService>();
             builder.Services.AddSingleton<INIRACapabilityHandler, NIRAImageGenerateCapabilityHandler>();
 
@@ -791,11 +790,11 @@ public partial class App : WpfApplication
 
 
             // =================================================
-            // OLLAMA
+            // MODEL PROVIDER
             // =================================================
 
             builder.Services.AddSingleton<
-                OllamaClient>();
+                NIRAModelClient>();
 
 
             // =================================================
@@ -959,10 +958,6 @@ public partial class App : WpfApplication
             // =================================================
 
             builder.Services.AddSingleton<
-                GroqOrpheusVoiceService>();
-
-
-            builder.Services.AddSingleton<
                 PiperVoiceService>();
 
 
@@ -1003,35 +998,35 @@ public partial class App : WpfApplication
                 PromptForWebsiteCredentialAsync);
 
 
-            NIRAOllamaApiKeyService ollamaApiKeys =
-                _host.Services.GetRequiredService<NIRAOllamaApiKeyService>();
+            NIRAModelApiKeyService modelApiKeys =
+                _host.Services.GetRequiredService<NIRAModelApiKeyService>();
 
 
-            ollamaApiKeys.SetPromptHandler(
-                PromptForOllamaCredentialAsync);
+            modelApiKeys.SetPromptHandler(
+                PromptForModelCredentialAsync);
 
 
-            if (!ollamaApiKeys.HasKey)
+            if (!modelApiKeys.HasKey)
             {
-                NIRAOllamaCredentialResolution? initialResolution =
-                    await PromptForOllamaCredentialAsync(
-                        new NIRAOllamaCredentialRequest
+                NIRAModelCredentialResolution? initialResolution =
+                    await PromptForModelCredentialAsync(
+                        new NIRAModelCredentialRequest
                         {
-                            Problem = NIRAOllamaCredentialProblem.Missing,
+                            Problem = NIRAModelCredentialProblem.Missing,
                             HasCurrentKey = false
                         },
                         CancellationToken.None);
 
 
                 if (initialResolution == null ||
-                    initialResolution.Kind != NIRAOllamaCredentialResolutionKind.ReplaceKey)
+                    initialResolution.Kind != NIRAModelCredentialResolutionKind.ReplaceKey)
                 {
                     Shutdown(0);
                     return;
                 }
 
 
-                ollamaApiKeys.SaveKey(
+                modelApiKeys.SaveKey(
                     initialResolution.ApiKey);
             }
 
@@ -1258,32 +1253,32 @@ public partial class App : WpfApplication
 
 
     // =========================================================
-    // OLLAMA CREDENTIAL UI
+    // MODEL PROVIDER CREDENTIAL UI
     // =========================================================
 
-    private async Task<NIRAOllamaCredentialResolution?>
-        PromptForOllamaCredentialAsync(
-            NIRAOllamaCredentialRequest request,
+    private async Task<NIRAModelCredentialResolution?>
+        PromptForModelCredentialAsync(
+            NIRAModelCredentialRequest request,
             CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
 
         if (Dispatcher.CheckAccess())
         {
-            return ShowOllamaCredentialDialog(request);
+            return ShowModelCredentialDialog(request);
         }
 
         return await Dispatcher.InvokeAsync(
-            () => ShowOllamaCredentialDialog(request),
+            () => ShowModelCredentialDialog(request),
             System.Windows.Threading.DispatcherPriority.Normal,
             cancellationToken);
     }
 
 
-    private NIRAOllamaCredentialResolution? ShowOllamaCredentialDialog(
-        NIRAOllamaCredentialRequest request)
+    private NIRAModelCredentialResolution? ShowModelCredentialDialog(
+        NIRAModelCredentialRequest request)
     {
-        OllamaApiKeyWindow dialog =
+        NIRAModelApiKeyWindow dialog =
             new(request);
 
         if (MainWindow is System.Windows.Window owner &&

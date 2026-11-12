@@ -37,7 +37,7 @@ private items are disclosed.
 Absent, diverging, malformed, disabled or unavailable reads fail closed and
 must never become a guessed success. No Modify tool is registered. No owner
 write-approval toast is needed: this is Observe-only with separate process
-consent. Read-only results may reach Ollama Cloud.
+consent. Read-only results may reach selected cloud model provider.
 
 ## Acceptance
 

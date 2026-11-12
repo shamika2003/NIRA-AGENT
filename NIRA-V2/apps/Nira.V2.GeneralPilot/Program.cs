@@ -1,7 +1,7 @@
 using System.Text;
 using Nira.V2.Contracts;
 using Nira.V2.General;
-using Nira.V2.Ollama;
+using Nira.V2.ModelProvider;
 using Nira.V2.Runtime.AgentLoop;
 using Nira.V2.Web;
 using Nira.V2.Windows;
@@ -16,9 +16,9 @@ if (string.IsNullOrWhiteSpace(request) || request.Length > 12_000)
     Console.Error.WriteLine("Provide a public/non-sensitive prompt under 12,000 characters.");
     return 2;
 }
-if (string.IsNullOrWhiteSpace(OllamaCloudCredentials.ReadExistingKey()))
+if (string.IsNullOrWhiteSpace(NvidiaCloudCredentials.ReadExistingKey()))
 {
-    Console.Error.WriteLine("Existing NIRA_OLLAMA_API_KEY not available. No request sent.");
+    Console.Error.WriteLine("Existing NIRA_NVIDIA_API_KEY not available. No request sent.");
     return 2;
 }
 string baseFolder = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -41,8 +41,8 @@ if (!string.IsNullOrWhiteSpace(TavilySearchTool.ReadKey()))
 string? pcConsent = Environment.GetEnvironmentVariable("NIRA_V2_PC_OBSERVATION");
 capabilities.AddRange(WindowsObservationRegistration.Create(vault, pcConsent));
 var registry = new CapabilityRegistry(capabilities);
-var model = Environment.GetEnvironmentVariable("NIRA_V2_MODEL") ?? "gpt-oss:120b";
-var reasoner = new GeneralOllamaReasoner(modelHttp, OllamaReasonerOptions.Cloud(model),
+var model = Environment.GetEnvironmentVariable("NIRA_V2_MODEL") ?? "nvidia/nemotron-3.5-lightning-30b-a3b";
+var reasoner = new GeneralModelReasoner(modelHttp, NiraModelEndpointOptions.Nvidia(model),
     registry, vault, maximumTools: 5);
 var engine = new AgentLoopEngine(reasoner, new FileAgentStateStore(root, protector),
     new ObserveOnlyPermissionGate(), registry.Tools, new AgentLoopLimits(9, 5),

@@ -1,0 +1,202 @@
+using System.Net;
+using System.Text;
+using System.Text.Json;
+using Nira.V2.Contracts;
+using Nira.V2.General;
+using Nira.V2.ModelProvider;
+using Nira.V2.Runtime.AgentLoop;
+
+int passed = 0, failed = 0;
+const string Model = "nvidia/nemotron-3.5-lightning-30b-a3b";
+
+await Test("NVIDIA endpoint and provider isolation", async () =>
+{
+    var nvidia = NiraModelEndpointOptions.Nvidia(Model);
+    nvidia.Validate();
+    Assert(nvidia.IsNvidia, "Provider boundary mismatch");
+    bool rejected = false;
+    try { new NiraModelEndpointOptions(new Uri("https://integrate.api.nvidia.com:444/v1/"),Model).Validate(); }
+    catch(ArgumentException) {rejected=true;}
+    Assert(rejected,"Untrusted NVIDIA port accepted");
+    await Task.CompletedTask;
+});
+
+await Test("NVIDIA selector process-scoped key and model", async () =>
+{
+    string? oldProvider=Environment.GetEnvironmentVariable("NIRA_V2_PROVIDER");
+    string? oldModel=Environment.GetEnvironmentVariable("NIRA_V2_MODEL");
+    string? oldKey=Environment.GetEnvironmentVariable("NIRA_NVIDIA_API_KEY");
+    try
+    {
+        Environment.SetEnvironmentVariable("NIRA_V2_PROVIDER","NVIDIA");
+        Environment.SetEnvironmentVariable("NIRA_V2_MODEL",null);
+        Environment.SetEnvironmentVariable("NIRA_NVIDIA_API_KEY","FAKE_NVIDIA_KEY");
+        var selection=NiraV2ProviderSelection.FromEnvironment();
+        Assert(selection.Options.Model==Model && selection.Options.IsNvidia &&
+            selection.IsReady,"NVIDIA selection invalid");
+    }
+    finally
+    {
+        Environment.SetEnvironmentVariable("NIRA_V2_PROVIDER",oldProvider);
+        Environment.SetEnvironmentVariable("NIRA_V2_MODEL",oldModel);
+        Environment.SetEnvironmentVariable("NIRA_NVIDIA_API_KEY",oldKey);
+    }
+    await Task.CompletedTask;
+});
+
+await Test("NVIDIA answer uses official HTTPS route and Bearer authentication", async () =>
+{
+    await WithReasoner(async(http,vault,registry) =>
+    {
+        var reasoner=NewReasoner(http,vault,registry);
+        var decision=await reasoner.DecideAsync(NewRun("Hey"),[],default);
+        Assert(decision.Kind==AgentDecisionKind.Answer && decision.Answer=="Hey from NVIDIA.",
+            "NVIDIA response not accepted");
+        Assert(reasoner.ModelRequests==1,"Unexpected request count");
+    }, req =>
+    {
+        Assert(req.RequestUri?.AbsoluteUri=="https://integrate.api.nvidia.com/v1/chat/completions",
+            "NVIDIA route mismatch");
+        Assert(req.Headers.Authorization?.Scheme=="Bearer" &&
+            req.Headers.Authorization.Parameter=="FAKE_NVIDIA_KEY","Missing NVIDIA auth");
+        using var doc=JsonDocument.Parse(req.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
+        var payload=doc.RootElement;
+        Assert(payload.GetProperty("model").GetString()==Model,"Wrong model");
+        Assert(payload.GetProperty("stream").ValueKind==JsonValueKind.False,"Unexpected streaming");
+        Assert(payload.GetProperty("max_tokens").GetInt32()==4096,"Unbounded output");
+        Assert(payload.GetProperty("reasoning_budget").GetInt32()==768,"Missing reasoning budget");
+        Assert(payload.GetProperty("chat_template_kwargs").GetProperty("enable_thinking").GetBoolean(),
+            "Thinking disabled unexpectedly");
+        Assert(!payload.TryGetProperty("options",out _),"Provider-native options leaked");
+        return Ok(new {choices=new[]{new{message=new{role="assistant",content="Hey from NVIDIA."},
+            finish_reason="stop"}}});
+    });
+});
+
+await Test("NVIDIA tool request still requires NIRA host validation", async () =>
+{
+    await WithReasoner(async(http,vault,_) =>
+    {
+        var cap=new FakeObserve();var registry=new CapabilityRegistry(new IGeneralCapability[]{cap});
+        var reasoner=NewReasoner(http,vault,registry);
+        var decision=await reasoner.DecideAsync(NewRun("Observe"),[cap.Spec],default);
+        Assert(decision.Kind==AgentDecisionKind.InvokeTool && decision.ToolId==cap.Spec.Id &&
+            !string.IsNullOrEmpty(decision.ToolArgumentReference),"Host tool validation bypassed");
+    },req =>
+    {
+        using var doc=JsonDocument.Parse(req.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
+        var root=doc.RootElement;
+        Assert(root.TryGetProperty("tools",out var tools) && tools.GetArrayLength()==1,
+            "Tools not advertised correctly");
+        var message=new {role="assistant",content=(string?)null,tool_calls=new[]{new{
+            id="call_1",type="function",function=new{name="test_observe",arguments="{}"}}}};
+        return Ok(new {choices=new[]{new{message,finish_reason="tool_calls"}}});
+    });
+});
+
+await Test("NVIDIA malformed tool arguments are rejected", async () =>
+{
+    await WithReasoner(async(http,vault,_) =>
+    {
+        var cap=new FakeObserve();var reasoner=NewReasoner(http,vault,
+            new CapabilityRegistry(new IGeneralCapability[]{cap}));
+        var decision=await reasoner.DecideAsync(NewRun("Observe"),[cap.Spec],default);
+        Assert(decision.ReasonCode=="TOOL_ARGUMENT_SCHEMA_INVALID","Unexpected tool acceptance");
+    },_ =>
+    {
+        var message=new {role="assistant",content=(string?)null,tool_calls=new[]{new{
+            id="call_1",type="function",function=new{name="test_observe",arguments="{\"path\":\"C:/private\"}"}}}};
+        return Ok(new {choices=new[]{new{message,finish_reason="tool_calls"}}});
+    });
+});
+
+await Test("NVIDIA 429 does not trigger automatic retries", async () =>
+{
+    int calls=0;
+    await WithReasoner(async(http,vault,registry) =>
+    {
+        var reasoner=NewReasoner(http,vault,registry);
+        var decision=await reasoner.DecideAsync(NewRun("Hey"),[],default);
+        Assert(decision.ReasonCode=="CLOUD_RATE_LIMITED" && calls==1,"429 retried");
+    },_=>{calls++;return new(HttpStatusCode.TooManyRequests);});
+});
+
+await Test("NVIDIA 202 pending is not presented as a completed answer", async () =>
+{
+    int calls=0;
+    await WithReasoner(async(http,vault,registry) =>
+    {
+        var reasoner=NewReasoner(http,vault,registry);
+        var decision=await reasoner.DecideAsync(NewRun("Hey"),[],default);
+        Assert(decision.ReasonCode=="MODEL_INFERENCE_PENDING" && calls==1,
+            "202 incorrectly retried or accepted");
+    },_=>{calls++;return new(HttpStatusCode.Accepted);});
+});
+
+await Test("NVIDIA missing key never sends a request", async () =>
+{
+    int calls=0;
+    await WithReasoner(async(http,vault,registry) =>
+    {
+        var reasoner=new GeneralModelReasoner(http,NiraModelEndpointOptions.Nvidia(Model),registry,vault,
+            cloudKey:()=>null);
+        var decision=await reasoner.DecideAsync(NewRun("Hey"),[],default);
+        Assert(decision.ReasonCode=="CLOUD_API_KEY_MISSING" && calls==0,"No-key network call");
+    },_=>{calls++;return Ok(new{});});
+});
+
+await Test("NVIDIA incomplete output is rejected", async () =>
+{
+    await WithReasoner(async(http,vault,registry) =>
+    {
+        var reasoner=NewReasoner(http,vault,registry);
+        var decision=await reasoner.DecideAsync(NewRun("Hey"),[],default);
+        Assert(decision.ReasonCode=="MODEL_RESPONSE_INCOMPLETE","Incomplete answer accepted");
+    },_=>Ok(new{choices=new[]{new{message=new{role="assistant",content="partial"},
+        finish_reason="length"}}}));
+});
+
+Console.WriteLine($"NIRA V2 NVIDIA PROVIDER: {passed} passed / {failed} failed");
+return failed == 0 ? 0 : 1;
+
+static GeneralModelReasoner NewReasoner(HttpClient http,AgentPayloadVault vault,CapabilityRegistry registry) =>
+    new(http,NiraModelEndpointOptions.Nvidia("nvidia/nemotron-3.5-lightning-30b-a3b"),registry,vault,
+        cloudKey:()=>"FAKE_NVIDIA_KEY");
+static AgentRunSnapshot NewRun(string text)=>new(){Id=Guid.NewGuid(),UserRequest=text};
+static HttpResponseMessage Ok(object body)=>new(HttpStatusCode.OK){Content=new StringContent(
+    JsonSerializer.Serialize(body),Encoding.UTF8,"application/json")};
+static void Assert(bool value,string message){if(!value)throw new Exception(message);}
+static async Task WithReasoner(Func<HttpClient,AgentPayloadVault,CapabilityRegistry,Task> test,
+    Func<HttpRequestMessage,HttpResponseMessage> respond)
+{
+    string folder=Path.Combine(Path.GetTempPath(),"nira-v2-nvidia-tests-"+Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        using var client=new HttpClient(new Stub(respond));
+        var vault=new AgentPayloadVault(folder);
+        await test(client,vault,new CapabilityRegistry(Array.Empty<IGeneralCapability>()));
+    }
+    finally{Directory.Delete(folder,true);}
+}
+async Task Test(string name,Func<Task> run)
+{
+    try{await run();passed++;Console.WriteLine("PASS "+name);}
+    catch(Exception ex){failed++;Console.Error.WriteLine("FAIL "+name+": "+ex.Message);}
+}
+sealed class Stub(Func<HttpRequestMessage,HttpResponseMessage> respond):HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)
+        =>Task.FromResult(respond(request));
+}
+sealed class FakeObserve:IGeneralCapability
+{
+    public AgentToolSpec Spec {get;}=new("test.observe","A harmless observation",AccessLevel.Observe);
+    public string FunctionName=>"test_observe";
+    public JsonElement InputSchema {get;}=JsonSerializer.SerializeToElement(new{
+        type="object",properties=new{},additionalProperties=false});
+    public bool ValidateArguments(JsonElement x)=>x.ValueKind==JsonValueKind.Object &&
+        !x.EnumerateObject().Any();
+    public Task<AgentToolReceipt> ExecuteAsync(string args,CancellationToken ct)=>
+        Task.FromResult(AgentToolReceipt.ReadOnlyResult());
+}

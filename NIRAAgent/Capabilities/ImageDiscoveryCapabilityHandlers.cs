@@ -1,6 +1,6 @@
 using NIRAAgent.Images;
 using NIRAAgent.Diagnostics;
-using NIRAAgent.AI.Ollama;
+using NIRAAgent.AI.Models;
 using System.Text;
 using System.Text.Json;
 
@@ -10,12 +10,12 @@ public sealed class NIRAImageSearchCapabilityHandler : INIRACapabilityHandler
 {
     private readonly INIRAImageDiscoveryService _service;
     private readonly NIRACommonsImageDiscoveryService? _commonsFallback;
-    private readonly OllamaClient? _visionModel;
+    private readonly NIRAModelClient? _visionModel;
     // Optional constructor parameters preserve older test integrations.
     // Production DI supplies both Commons and NIRA's EXISTING Gemma vision model.
     public NIRAImageSearchCapabilityHandler(INIRAImageDiscoveryService service,
         NIRACommonsImageDiscoveryService? commonsFallback = null,
-        OllamaClient? visionModel = null)
+        NIRAModelClient? visionModel = null)
     {
         _service = service;
         _commonsFallback = commonsFallback;

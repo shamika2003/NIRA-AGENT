@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using NIRAAgent.AI.Ollama;
+using NIRAAgent.AI.Models;
 using NIRAAgent.Temporal;
 
 namespace NIRAAgent.AI.Cognition;
@@ -13,7 +13,7 @@ namespace NIRAAgent.AI.Cognition;
 // capability results can establish that an action happened.
 public sealed class NIRATaskCompletionReviewService
 {
-    public const string ModelEnvironmentVariable = "NIRA_OLLAMA_COMPLETION_REVIEW_MODEL";
+    public const string ModelEnvironmentVariable = "NIRA_MODEL_COMPLETION_REVIEW";
     internal const string ReviewerSystemPrompt = """
             You are an independent user-objective fidelity reviewer for a persistent agent.
             This is NOT a user-facing answer, not a planner, and not permission to act.
@@ -534,7 +534,7 @@ public sealed class NIRATaskCompletionReviewService
     private const int MaxDraft = 29000;
     private const int MaxEvidence = 18000;
     private const int MaxHistoricalContext = 13000;
-    private readonly OllamaClient _ollama;
+    private readonly NIRAModelClient _modelClient;
     private readonly NIRATemporalContextService _temporal;
 
     // Never replicate a password embedded in a chat request in an auxiliary
@@ -545,10 +545,10 @@ public sealed class NIRATaskCompletionReviewService
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     public NIRATaskCompletionReviewService(
-        OllamaClient ollama,
+        NIRAModelClient modelClient,
         NIRATemporalContextService temporal)
     {
-        _ollama = ollama ?? throw new ArgumentNullException(nameof(ollama));
+        _modelClient = modelClient ?? throw new ArgumentNullException(nameof(modelClient));
         _temporal = temporal ?? throw new ArgumentNullException(nameof(temporal));
     }
 
@@ -810,7 +810,7 @@ public sealed class NIRATaskCompletionReviewService
                     Return a completion verdict for the CURRENT request, not a
                     new tool action or a request for unnecessary clarification.
                     """;
-                string raw = (await _ollama.ChatAsync(
+                string raw = (await _modelClient.ChatAsync(
                     model, activeSystem, activePrompt, cancellationToken, jsonMode: true)).Trim();
             if (raw.StartsWith("```", StringComparison.Ordinal))
             {

@@ -3,7 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Nira.V2.Contracts;
 using Nira.V2.General;
-using Nira.V2.Ollama;
+using Nira.V2.ModelProvider;
 using Nira.V2.Runtime.AgentLoop;
 using Nira.V2.Web;
 
@@ -21,7 +21,7 @@ await Test("normal conversation finishes without any tools", async () => {
     using var tmp = new TempFolder();
     var vault = new AgentPayloadVault(tmp.Path);
     var registry = MakeRegistry(vault);
-    using var model = Http((req, _) => { Check(req.RequestUri!.AbsoluteUri == "https://ollama.com/api/chat", "cloud path");
+    using var model = Http((req, _) => { Check(req.RequestUri!.AbsoluteUri == "https://integrate.api.nvidia.com/v1/chat/completions", "cloud path");
         return Plain("Hello. I'm ready to help with a conversation."); });
     var engine = Engine(model, vault, registry, tmp.Path);
     var run = await engine.StartAsync("Hello NIRA");
@@ -238,7 +238,7 @@ await Test("registered create tool cannot be replaced by manual instructions", a
     int calls=0;
     using var model = Http((_,_) => ++calls==1 ? Plain("I cannot create files on your PC; use Explorer.") :
         Native("nira_create_exact_text_file", new { }));
-    var reasoner = new GeneralOllamaReasoner(model, OllamaReasonerOptions.Cloud("gpt-oss:120b"),
+    var reasoner = new GeneralModelReasoner(model, NiraModelEndpointOptions.Nvidia("nvidia/nemotron-3.5-lightning-30b-a3b"),
         registry, vault, 5, () => "FAKE_KEY", allowExactTextCreate: true);
     var decision = await reasoner.DecideAsync(new AgentRunSnapshot {
         Id=Guid.NewGuid(), UserRequest="Create Documents/TestFolder/newfile.txt containing \"Test\"."
@@ -254,7 +254,7 @@ await Test("repeated generic create answer fails without running an action", asy
     var registry = new CapabilityRegistry(new IGeneralCapability[]{fake});
     int calls=0;
     using var model = Http((_,_) => {calls++; return Plain("Please create the file manually.");});
-    var reasoner = new GeneralOllamaReasoner(model, OllamaReasonerOptions.Cloud("gpt-oss:120b"),
+    var reasoner = new GeneralModelReasoner(model, NiraModelEndpointOptions.Nvidia("nvidia/nemotron-3.5-lightning-30b-a3b"),
         registry, vault, 5, () => "FAKE_KEY", allowExactTextCreate: true);
     var decision = await reasoner.DecideAsync(new AgentRunSnapshot {
         Id=Guid.NewGuid(), UserRequest="Create Documents/TestFolder/newfile.txt containing \"Test\"."
@@ -301,11 +301,11 @@ await Test("missing cloud credential stops before network", async () => {
     var outcome = await reasoner.DecideAsync(new AgentRunSnapshot {Id=Guid.NewGuid(),UserRequest="hello"},Specs(registry),default);
     Check(outcome.ReasonCode == "CLOUD_API_KEY_MISSING" && calls==0, "sent request without key");
 });
-await Test("bearer credential sent only to official HTTPS Ollama endpoint", async () => {
+await Test("bearer credential sent only to trusted HTTPS model endpoint", async () => {
     using var tmp = new TempFolder(); var vault = new AgentPayloadVault(tmp.Path);
     var registry = MakeRegistry(vault); int calls=0;
     using var http = Http((req,_) => { calls++;
-        Check(req.RequestUri!.AbsoluteUri == "https://ollama.com/api/chat" &&
+        Check(req.RequestUri!.AbsoluteUri == "https://integrate.api.nvidia.com/v1/chat/completions" &&
             req.Headers.Authorization?.Scheme == "Bearer" &&
             req.Headers.Authorization?.Parameter == "UNIT_TEST_ONLY", "insecure cloud authentication");
         Check(!req.Content!.ReadAsStringAsync().GetAwaiter().GetResult().Contains("UNIT_TEST_ONLY"),
@@ -373,16 +373,20 @@ return failed==0 ? 0 : 1;
 static CapabilityRegistry MakeRegistry(AgentPayloadVault vault)=>
     new(new IGeneralCapability[]{new CalculatorCapability(vault),new PlatformCapability(vault)});
 static AgentToolSpec[] Specs(CapabilityRegistry registry)=> registry.Tools.Select(t=>t.Spec).ToArray();
-static GeneralOllamaReasoner Reasoner(HttpClient http,AgentPayloadVault vault,CapabilityRegistry registry,
-    Func<string?>? key = null) => new(http,OllamaReasonerOptions.Cloud("gpt-oss:120b"),registry,vault,5,key??(()=>"FAKE_KEY"));
+static GeneralModelReasoner Reasoner(HttpClient http,AgentPayloadVault vault,CapabilityRegistry registry,
+    Func<string?>? key = null) => new(http,NiraModelEndpointOptions.Nvidia("nvidia/nemotron-3.5-lightning-30b-a3b"),registry,vault,5,key??(()=>"FAKE_KEY"));
 static AgentLoopEngine Engine(HttpClient http,AgentPayloadVault vault,CapabilityRegistry registry,string root)=>
     EngineFromReasoner(Reasoner(http,vault,registry),registry,root);
-static AgentLoopEngine EngineFromReasoner(GeneralOllamaReasoner reasoner,CapabilityRegistry registry,string root)=>
+static AgentLoopEngine EngineFromReasoner(GeneralModelReasoner reasoner,CapabilityRegistry registry,string root)=>
     new(reasoner,new FileAgentStateStore(Path.Combine(root,"runs")),new ObserveOnlyPermissionGate(),
         registry.Tools,new AgentLoopLimits(9,5));
-static HttpResponseMessage Plain(string answer) => Ok(new{done=true,message=new {role="assistant",content=answer}});
-static HttpResponseMessage Native(string fn,object args) => Ok(new{done=true,message=new{
-    role="assistant",content="",tool_calls=new[]{new{function=new{name=fn,arguments=args}}}}});
+static HttpResponseMessage Plain(string answer) => Ok(new { choices = new[] { new {
+    message = new { role = "assistant", content = answer }, finish_reason = "stop" } } });
+static HttpResponseMessage Native(string fn,object args) => Ok(new { choices = new[] { new {
+    message = new { role = "assistant", content = (string?)null, tool_calls = new[] { new {
+        id = "call_test", type = "function", function = new {
+        name = fn, arguments = args is string raw ? raw : JsonSerializer.Serialize(args) } } } },
+    finish_reason = "tool_calls" } } });
 static HttpResponseMessage WebSource()=>Ok(new{results=new[]{new {
     url="https://science.nasa.gov/mission/webb/",title="NASA Webb telescope",
     content="NASA Webb observes infrared wavelengths to study cool and distant astronomical sources."}}});

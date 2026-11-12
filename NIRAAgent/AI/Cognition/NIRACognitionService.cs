@@ -8,7 +8,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-using NIRAAgent.AI.Ollama;
+using NIRAAgent.AI.Models;
 using NIRAAgent.Diagnostics;
 using NIRAAgent.Conversation;
 using NIRAAgent.Capabilities;
@@ -186,7 +186,7 @@ public sealed class NIRACognitionService
         try
         {
             RecordAuxiliaryPrimaryCall(runId);
-            string focused = await _ollama.ChatAsync(
+            string focused = await _modelClient.ChatAsync(
                 NIRAModelSelection.Primary,
                 NIRAImageReasoningBridge.FocusSystem,
                 NIRAImageReasoningBridge.FocusUser(userTask, conversationPulse),
@@ -239,7 +239,7 @@ public sealed class NIRACognitionService
             try
             {
                 RecordVisionModelCall(runId);
-                answer = await _ollama.ChatWithImagesAsync(
+                answer = await _modelClient.ChatWithImagesAsync(
                     NIRAModelSelection.Vision,
                     visionSystem,
                     prompt,
@@ -365,8 +365,8 @@ public sealed class NIRACognitionService
         160;
 
 
-    private readonly OllamaClient
-        _ollama;
+    private readonly NIRAModelClient
+        _modelClient;
 
 
     private readonly string
@@ -388,12 +388,12 @@ public sealed class NIRACognitionService
 
 
     public NIRACognitionService(
-        OllamaClient ollama)
+        NIRAModelClient modelClient)
     {
-        _ollama =
-            ollama
+        _modelClient =
+            modelClient
             ?? throw new ArgumentNullException(
-                nameof(ollama));
+                nameof(modelClient));
 
 
         _personality =
@@ -442,7 +442,7 @@ public sealed class NIRACognitionService
         NIRACognitionContext context,
         IReadOnlyList<NIRACapabilityVisualArtifact> verifiedImageAssets,
         CancellationToken cancellationToken) =>
-        NIRAFocusedWorkComposer.RecoverAsync(_ollama, context,
+        NIRAFocusedWorkComposer.RecoverAsync(_modelClient, context,
             verifiedImageAssets, cancellationToken);
 
     public async Task<NIRACognitionDecision> ThinkAsync(
@@ -776,7 +776,7 @@ public sealed class NIRACognitionService
             $"Images={inputImages.Count} Batches={imageBatches.Count} " +
             $"Mode={(imageBatches.Count > 0 ? "Main-Vision-Main" : "Text")} " +
             $"Vision={NIRAModelSelection.Vision}");
-        string raw = await _ollama.ChatAsync(selectedModel, systemPrompt,
+        string raw = await _modelClient.ChatAsync(selectedModel, systemPrompt,
             specialistUserPrompt, cancellationToken, jsonMode: true);
 
         bool justDelegated = false;
@@ -832,7 +832,7 @@ public sealed class NIRACognitionService
                     "not authority or a permission grant):\n" + focus;
                 // Ultra receives the same already-observed visual evidence,
                 // never image bytes. Ultra remains a deep-reasoning resource.
-                raw = await _ollama.ChatAsync(selectedModel, fullDeepSystem,
+                raw = await _modelClient.ChatAsync(selectedModel, fullDeepSystem,
                     firstDeepUserPrompt, cancellationToken, jsonMode: true);
             }
             else
@@ -878,7 +878,7 @@ public sealed class NIRACognitionService
                 Interlocked.Increment(ref deepState!.JsonRepairCalls);
                 // Gemma is sufficient for syntax-only recovery; do not pay
                 // another Ultra reasoning call to fix one malformed bracket.
-                raw = await _ollama.ChatAsync(NIRAModelSelection.Primary,
+                raw = await _modelClient.ChatAsync(NIRAModelSelection.Primary,
                     repairSystem, repairUser, cancellationToken, jsonMode: true);
                 Debug.WriteLine($"[Cognition] DEEP_JSON_REPAIR_RETURNED | " +
                     $"Run={context.RunId:D} | Cycle={context.Cycle} | " +
@@ -917,7 +917,7 @@ public sealed class NIRACognitionService
                     "rather than pretending you visited sources. If the question " +
                     "can be answered from its stated assumptions, return a " +
                     "substantive Complete reply. Never request deepReasoningRequest.";
-                raw = await _ollama.ChatAsync(NIRAModelSelection.Deep,
+                raw = await _modelClient.ChatAsync(NIRAModelSelection.Deep,
                     correctedSystem, specialistUserPrompt, cancellationToken,
                     jsonMode: true);
             }
@@ -1029,7 +1029,7 @@ public sealed class NIRACognitionService
                 $"RawChars={raw.Length} Cause={ex.InnerException?.GetType().Name ?? ex.GetType().Name} " +
                 "Stage=SyntaxOnly Attempt=1");
             RecordAuxiliaryPrimaryCall(context.RunId);
-            string repaired = await _ollama.ChatAsync(NIRAModelSelection.Primary,
+            string repaired = await _modelClient.ChatAsync(NIRAModelSelection.Primary,
                 repairSystem, raw, cancellationToken, jsonMode: true);
             try
             {
@@ -1081,7 +1081,7 @@ public sealed class NIRACognitionService
                     RecordAuxiliaryPrimaryCall(context.RunId);
                     try
                     {
-                        string fresh = await _ollama.ChatAsync(
+                        string fresh = await _modelClient.ChatAsync(
                             NIRAModelSelection.Primary,
                             NIRAModularCognitionPrompt.CoreSystem(_personality) +
                                 "\n\n" + CanonicalJsonWireDirective +
@@ -1145,7 +1145,7 @@ public sealed class NIRACognitionService
                 expertSystem += "\n\nSCOPED ELVARA APPLICATION GUIDANCE:\n" + scoped.Guidance;
             NIRADiagnosticTrace.Event("DESKTOP-DRAFT-ESCALATE",
                 $"Run={context.RunId:D} Cycle={context.Cycle} Model={NIRAModelSelection.Deep} NoInputDispatched=True");
-            string expertRaw = await _ollama.ChatAsync(
+            string expertRaw = await _modelClient.ChatAsync(
                 NIRAModelSelection.Deep, expertSystem,
                 NIRACognitionPromptCompiler.DeepWorkUser(context, expandedSections,
                     expandedCapabilityIds) +
@@ -1335,7 +1335,7 @@ public sealed class NIRACognitionService
             try
             {
                 RecordAuxiliaryPrimaryCall(context.RunId);
-                string answer = await _ollama.ChatAsync(
+                string answer = await _modelClient.ChatAsync(
                     NIRAModelSelection.Primary,
                     NIRASilentTerminalRecovery.VisualReplySystem,
                     NIRASilentTerminalRecovery.VisualReplyUser(
@@ -1454,7 +1454,7 @@ public sealed class NIRACognitionService
             $"OmittedReceipts={collected.Omitted} ToolsAllowed=False Attempt=1");
         try
         {
-            string report = (await _ollama.ChatAsync(NIRAModelSelection.Deep,
+            string report = (await _modelClient.ChatAsync(NIRAModelSelection.Deep,
                 system, prompt, cancellationToken, jsonMode: false)).Trim();
             if (report.Length is < 500 or > 90000 ||
                 report.StartsWith("{", StringComparison.Ordinal) ||
@@ -1592,7 +1592,7 @@ public sealed class NIRACognitionService
         try
         {
             RecordAuxiliaryPrimaryCall(context.RunId);
-            string answer = (await _ollama.ChatAsync(
+            string answer = (await _modelClient.ChatAsync(
                 NIRAModelSelection.Primary, system, user,
                 cancellationToken, jsonMode: false)).Trim();
             var grounding = NIRAWebResearchGroundingGate.Check(
@@ -1679,7 +1679,7 @@ public sealed class NIRACognitionService
             // trusted-provider excerpts, unlike the isolated JSON syntax fix.
             string user = NIRACognitionPromptCompiler.WebResearchSynthesisUser(context);
             RecordAuxiliaryPrimaryCall(context.RunId);
-            string answer = (await _ollama.ChatAsync(NIRAModelSelection.Primary,
+            string answer = (await _modelClient.ChatAsync(NIRAModelSelection.Primary,
                 system, user, cancellationToken, jsonMode: false)).Trim();
             string evidence = NIRACognitionPromptCompiler.WebResearchReviewEvidence(context);
             var grounding = NIRAWebResearchGroundingGate.Check(evidence, answer);
@@ -1938,7 +1938,7 @@ public sealed class NIRACognitionService
         try
         {
             RecordAuxiliaryPrimaryCall(runId);
-            string reply = (await _ollama.ChatAsync(
+            string reply = (await _modelClient.ChatAsync(
                 NIRAModelSelection.Primary, system, user,
                 cancellationToken, jsonMode: false)).Trim();
             var initialGrounding = NIRAWebResearchGroundingGate.Check(
@@ -2050,7 +2050,7 @@ public sealed class NIRACognitionService
             // Plain text is the final presentation format. Do not make
             // Gemma serialize a second structured decision and then reject
             // its useful report for one extra JSON field or a missing brace.
-            string reply = (await _ollama.ChatAsync(NIRAModelSelection.Primary,
+            string reply = (await _modelClient.ChatAsync(NIRAModelSelection.Primary,
                 DeepFinalHandoffSystem(), userPrompt, cancellationToken,
                 jsonMode: false)).Trim();
             int minimum = 60; // Reject empty filler, not concise but valid analysis.
@@ -2117,7 +2117,7 @@ public sealed class NIRACognitionService
             "\n\nDEEP WORK FOCUS:\n" + state.Focus;
         try
         {
-            string report = (await _ollama.ChatAsync(NIRAModelSelection.Deep,
+            string report = (await _modelClient.ChatAsync(NIRAModelSelection.Deep,
                 system, userPrompt, cancellationToken, jsonMode: false)).Trim();
             if (string.IsNullOrWhiteSpace(report)) return null;
             // A small valid answer is still an answer, not a length-based
@@ -2202,7 +2202,7 @@ public sealed class NIRACognitionService
         Interlocked.Increment(ref state.TerminalRecoveryCalls);
         try
         {
-            string repaired = await _ollama.ChatAsync(NIRAModelSelection.Primary,
+            string repaired = await _modelClient.ChatAsync(NIRAModelSelection.Primary,
                 recoverySystem, recoveryUser, cancellationToken, jsonMode: true);
             if (!NIRAModelSelection.HasValidJsonObjectSyntax(repaired) ||
                 NIRAModelSelection.TryReadDelegation(repaired, out _))

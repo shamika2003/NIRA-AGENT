@@ -8,7 +8,7 @@ using NIRAAgent.Authorization;
 
 namespace NIRAAgent.Images;
 
-// R37: deliberately ONE model, ONE external generation per user action, ZERO Ollama calls.
+// R37: deliberately ONE model, ONE external generation per user action, ZERO model provider calls.
 // The ordinary NIRA cognition pass chooses/enhances the prompt; this service NEVER calls an LLM.
 public sealed record NIRAImageGenerationRequest(string Prompt, int Width = 1024, int Height = 768);
 public sealed record NIRAImageGenerationReceipt(string LocalPath, string Model, int Width, int Height,
@@ -78,7 +78,7 @@ public sealed class NIRACloudflareImageGenerationService : IDisposable
         new NIRACredentialStore().Save(CredentialOrigin, CredentialLabel, account, token);
     }
 
-    // Read-only Cloudflare verification: no Ollama calls and no image generation.
+    // Read-only Cloudflare verification: no model provider calls and no image generation.
     // A successful account-scoped Workers AI model search is stronger evidence
     // than a user-scoped token verify (which can reject account-owned tokens).
     public static async Task<NIRACloudflareAuthCheck> CheckCredentialsAsync(

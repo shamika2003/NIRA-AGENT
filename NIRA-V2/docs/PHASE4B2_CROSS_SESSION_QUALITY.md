@@ -15,7 +15,7 @@ verified facts about today's files, preferences, or application state.
 
 Both `NIRA_V2_WPF_CANARY=EXPLICIT_READONLY` and
 `NIRA_V2_PERSONAL_CONTEXT=ALLOW_READONLY_CONTEXT` are still required to
-send the context to Ollama Cloud. No filesystem reads, writes or desktop
+send the context to selected cloud model provider. No filesystem reads, writes or desktop
 control are introduced. The existing archive is read without copying it into
 another memory store. The existing archive provider may perform its normal
 lazy database/session initialization.

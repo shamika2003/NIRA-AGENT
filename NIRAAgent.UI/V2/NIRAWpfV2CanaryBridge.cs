@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Net.Http;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -10,11 +10,12 @@ using NIRAAgent.Self.Model;
 using NIRAAgent.Capabilities;
 using NIRAAgent.Authorization;
 using NIRAAgent.Conversation;
+using NIRAAgent.Diagnostics;
 using NIRAAgent.Memory.LongTerm;
 using NIRAAgent.Mind;
 using Nira.V2.Contracts;
 using Nira.V2.General;
-using Nira.V2.Ollama;
+using Nira.V2.ModelProvider;
 using Nira.V2.Runtime.AgentLoop;
 using Nira.V2.Web;
 using Nira.V2.Windows;
@@ -37,18 +38,23 @@ public sealed class NIRAWpfV2CanaryBridge : INIRAGeneralRuntimeBridge
     private readonly NIRAGoalService _authoritativeGoals;
     private readonly NIRAGoalStore _authoritativeGoalStore;
     private readonly NIRABranchService _authoritativeBranches;
+    private readonly NIRABranchWorkService _authoritativeBranchWork;
+    private readonly NIRABranchWorkStore _authoritativeBranchWorkStore;
 
     public NIRAWpfV2CanaryBridge(ConversationManager conversation,
         NIRACharacterStateService character, NIRALongTermMemoryService memories,
         NIRAConversationArchiveStore archive, NIRACapabilityService legacyCapabilities,
         NIRACapabilityApprovalBroker approvalBroker, NIRAGoalService goals,
-        NIRAGoalStore goalStore, NIRABranchService branches, NIRASelfModelService selfModel)
+        NIRAGoalStore goalStore, NIRABranchService branches, NIRASelfModelService selfModel,
+        NIRABranchWorkService branchWork, NIRABranchWorkStore branchWorkStore)
     {
         _authoritativeLegacyCapabilities = legacyCapabilities ?? throw new ArgumentNullException(nameof(legacyCapabilities));
         _approvalBroker = approvalBroker ?? throw new ArgumentNullException(nameof(approvalBroker));
         _authoritativeGoals = goals ?? throw new ArgumentNullException(nameof(goals));
         _authoritativeGoalStore = goalStore ?? throw new ArgumentNullException(nameof(goalStore));
         _authoritativeBranches = branches ?? throw new ArgumentNullException(nameof(branches));
+        _authoritativeBranchWork = branchWork ?? throw new ArgumentNullException(nameof(branchWork));
+        _authoritativeBranchWorkStore = branchWorkStore ?? throw new ArgumentNullException(nameof(branchWorkStore));
         _contextBuilder = new NIRAV2ReadOnlyContextBuilder(conversation, character, memories, archive);
         _lifecycleContextBuilder = new NIRAV2LifecycleContextBuilder(goals, branches, selfModel);
     }
@@ -86,9 +92,19 @@ public sealed class NIRAWpfV2CanaryBridge : INIRAGeneralRuntimeBridge
     {
         try
         {
-            if (string.IsNullOrWhiteSpace(OllamaCloudCredentials.ReadExistingKey()))
+            // Provider selection is a transport concern. The same V2 runtime,
+            // existing identity, tools, approvals and checkpoints remain authoritative.
+            // No automatic failover: never replay a partially completed agent action.
+            NiraV2ProviderSelection selection;
+            try { selection = NiraV2ProviderSelection.FromEnvironment(); }
+            catch (ArgumentException)
             {
-                WriteText(output, "NIRA V2 is unavailable: the cloud model key isn't configured for this Windows session.");
+                WriteText(output, "NIRA V2 model provider configuration is invalid. Use Start-NiraNvidia.ps1.");
+                return;
+            }
+            if (!selection.IsReady)
+            {
+                WriteText(output, "NIRA V2 is unavailable: the selected model provider's API key isn't configured for this Windows session.");
                 return;
             }
             string baseFolder = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -245,6 +261,42 @@ public sealed class NIRAWpfV2CanaryBridge : INIRAGeneralRuntimeBridge
                 WriteText(output, lifecycleInspectAdmission);
                 return;
             }
+            // The direct user's current exact readback is ALREADY checked by registration:
+            // process opt-in, lifecycle opt-in, user-event binding and strict GUID syntax.
+            // Use the same host-scoped read-only tool without relying on model selection.
+            // This is not an authorization bypass and never publishes unverified state.
+            if (lifecycleInspectTools.Count == 1)
+            {
+                if (!LegacyLifecycleInspectRegistration.TryParse(request, out var exactInspection) ||
+                    exactInspection is null)
+                {
+                    WriteText(output, "Exact lifecycle inspection request rejected; no state was changed.");
+                    return;
+                }
+                string verifiedReport = await InspectExactLifecycleAsync(vault,
+                    (LegacyLifecycleInspectCapability)lifecycleInspectTools[0], exactInspection, ct);
+                WriteText(output, verifiedReport);
+                return;
+            }
+            // Phase 4H.6: independent terminal branch-completion gate; all writes
+            // remain owned by existing NIRABranchService and its SQLite store.
+            var completionExecutor = new NIRALegacyBranchCompletionExecutor(
+                _authoritativeBranches, branchStore, _authoritativeBranchWork,
+                _authoritativeBranchWorkStore, _authoritativeGoals, _authoritativeGoalStore);
+            string? completionConsent = Environment.GetEnvironmentVariable(
+                "NIRA_V2_BRANCH_COMPLETION");
+            var completionTools = LegacyBranchCompletionRegistration.Create(vault,
+                completionExecutor, completionConsent, lifecycleConsented, request, mindEvent);
+            var completionTool = completionTools.OfType<LegacyBranchCompletionCapability>()
+                .SingleOrDefault();
+            capabilities.AddRange(completionTools);
+            string? completionAdmission = LegacyBranchCompletionRegistration.ExplainUnavailable(
+                request, completionConsent, lifecycleConsented, completionTool is not null);
+            if (completionAdmission is not null)
+            {
+                WriteText(output, completionAdmission);
+                return;
+            }
             var registry = new CapabilityRegistry(capabilities);
             // Personal legacy context is read ONLY after a separate explicit host consent.
             // It is not written to any V2 memory store. Model requests still leave the PC.
@@ -260,17 +312,32 @@ public sealed class NIRAWpfV2CanaryBridge : INIRAGeneralRuntimeBridge
                 Environment.GetEnvironmentVariable("NIRA_V2_PERSONAL_CONTEXT"), request);
             string combinedContext = NIRAV2LifecycleContextPolicy.MergeWithHistory(
                 continuity.UntrustedHistory, lifecycle);
-            string model = Environment.GetEnvironmentVariable("NIRA_V2_MODEL") ?? "gpt-oss:120b";
-            var reasoner = new GeneralOllamaReasoner(modelHttp, OllamaReasonerOptions.Cloud(model),
+            // Stable character definition is not a private SQLite/memory read.
+            // It MUST be present even when the owner did not opt into sharing
+            // personal mood, conversations, goals, or long-term memory.
+            string trustedIdentity = !string.IsNullOrWhiteSpace(continuity.TrustedIdentity)
+                ? continuity.TrustedIdentity
+                : await NIRAV2ReadOnlyContextBuilder.LoadTrustedIdentityOnlyAsync(ct);
+            // This is intentionally still the existing tested V2 general reasoner.
+            // Its historical class name does not select or restrict the provider.
+            var reasoner = new GeneralModelReasoner(modelHttp, selection.Options,
                 registry, vault, maximumTools: 8,
-                trustedIdentity: continuity.TrustedIdentity,
+                cloudKey: selection.KeySource,
+                trustedIdentity: trustedIdentity,
                 untrustedHistory: combinedContext,
                 allowExactTextCreate: createTools.Count == 1,
                 allowExactDocxCreate: docxCreateTool is not null,
                 allowExactDesktopActivate: desktopActivateTool is not null,
                 allowExactGoalCreate: goalCreateTool is not null,
                 allowExactBranchCreate: branchCreateTool is not null,
-                allowExactLifecycleMutation: lifecycleTool is not null);
+                allowExactLifecycleMutation: lifecycleTool is not null,
+                allowExactBranchCompletion: completionTool is not null,
+                previewText: draft => output.TryWrite(new NIRAOutputChunk
+                {
+                    Source = NIRAMindEventSource.User,
+                    Type = NIRAOutputChunkType.Preview,
+                    Content = draft
+                }));
             var progress = new DirectProgress(entry =>
             {
                 string? safeMessage = entry.Code switch
@@ -307,9 +374,59 @@ public sealed class NIRAWpfV2CanaryBridge : INIRAGeneralRuntimeBridge
             if (lifecycleTool is not null)
                 permissionGate = new NIRAV2LifecycleMutationPermissionGate(permissionGate,
                     vault, lifecycleTool, _approvalBroker);
+            if (completionTool is not null)
+                permissionGate = new NIRAV2BranchCompletionPermissionGate(permissionGate,
+                    vault, completionTool, _approvalBroker);
             var engine = new AgentLoopEngine(reasoner, new FileAgentStateStore(root, protector),
                 permissionGate, registry.Tools, new AgentLoopLimits(15, 8), progress);
             AgentRunSnapshot run = await engine.StartAsync(request, ct);
+            NIRADiagnosticTrace.Event("NVIDIA-V2-ROUND",
+                $"ModelRequests={reasoner.ModelRequests} " +
+                $"FirstTextMs={reasoner.LastFirstTextMilliseconds} " +
+                $"LastRoundMs={reasoner.LastRoundMilliseconds} " +
+                $"Status={run.Status}");
+            if (completionTool is not null)
+            {
+                AgentObservation? observed = run.Observations.LastOrDefault(o =>
+                    o.ToolId == "legacy.lifecycle.branch.complete_exact" && o.Succeeded &&
+                    !string.IsNullOrWhiteSpace(o.ResultReference));
+                if (observed is not null)
+                {
+                    try
+                    {
+                        JsonElement saved = await vault.ReadResultAsync(run.Id,
+                            "legacy.lifecycle.branch.complete_exact", observed.ResultReference!, ct);
+                        if (saved.GetProperty("outcome").GetString() !=
+                                "authoritative_sqlite_and_live_verified" ||
+                            saved.GetProperty("status").GetString() != "Completed")
+                            throw new InvalidDataException("Unverified branch completion receipt.");
+                        WriteText(output, "Verified COMPLETED in NIRA's existing SQLite store: " +
+                            saved.GetProperty("branchId").GetString() +
+                            Environment.NewLine + "Goal: " + saved.GetProperty("goalId").GetString() +
+                            Environment.NewLine + "Result: " + saved.GetProperty("result").GetString() +
+                            Environment.NewLine + "Evidence: " + saved.GetProperty("evidence").GetString() +
+                            Environment.NewLine + "Evidence count: " + saved.GetProperty("evidenceCount").GetInt32() +
+                            Environment.NewLine + "The text is user-attested; no separate real-world " +
+                            "proof or automatic goal completion is claimed.");
+                        return;
+                    }
+                    catch (Exception ex) when (ex is IOException or InvalidDataException or
+                        JsonException or ArgumentException or KeyNotFoundException)
+                    {
+                        // A modifying action may already have committed. Never claim no change.
+                        WriteText(output, "Branch completion may have committed but the receipt was " +
+                            "not verifiable. Inspect the branch using the exact SQLite readback " +
+                            "tool before doing anything else (NEEDS_RECONCILIATION).");
+                        return;
+                    }
+                }
+                if (run.Status == AgentRunStatus.NeedsReconciliation)
+                {
+                    WriteText(output, "Branch completion outcome is unknown (NEEDS_RECONCILIATION). " +
+                        "Do NOT repeat it; inspect authoritative SQLite status first.");
+                    return;
+                }
+            }
             if (lifecycleInspectTools.Count == 1)
             {
                 AgentObservation? observed = run.Observations.LastOrDefault(o =>
@@ -422,13 +539,87 @@ public sealed class NIRAWpfV2CanaryBridge : INIRAGeneralRuntimeBridge
         }
     }
 
-    private static void WriteText(ChannelWriter<NIRAOutputChunk> writer, string text) =>
+    // Deterministic host execution for one explicitly authorized read-only inspection.
+    // Preserve the same DPAPI-backed scoped tool receipt as the model-driven path.
+    private static async Task<string> InspectExactLifecycleAsync(
+        AgentPayloadVault vault, LegacyLifecycleInspectCapability tool,
+        ExactLifecycleInspectRequest expected, CancellationToken ct)
+    {
+        try
+        {
+            Guid runId = Guid.NewGuid();
+            JsonElement args = JsonSerializer.SerializeToElement(new { });
+            string reference = await vault.SaveArgumentAsync(runId, tool.Spec.Id, args, ct);
+            AgentToolReceipt observation = await tool.ExecuteAsync(reference, ct);
+            if (!observation.Succeeded || observation.OutcomeConfirmed ||
+                string.IsNullOrWhiteSpace(observation.ResultReference))
+            {
+                return "Saved lifecycle inspection did not verify (" +
+                    CleanCode(observation.OutcomeCode) +
+                    "). No saved status was claimed and no lifecycle state was modified.";
+            }
+
+            JsonElement record = await vault.ReadResultAsync(runId, tool.Spec.Id,
+                observation.ResultReference!, ct);
+            if (record.ValueKind != JsonValueKind.Object ||
+                record.GetProperty("source").GetString() != "authoritative_existing_nira_sqlite_store" ||
+                !record.GetProperty("verifiedAgainstLiveState").GetBoolean() ||
+                !record.GetProperty("inspectionOnly").GetBoolean() ||
+                record.GetProperty("itemId").GetString() != expected.Id.ToString("D") ||
+                record.GetProperty("itemType").GetString() != expected.Kind.ToString())
+            {
+                return "Saved lifecycle inspection returned an unverified or mismatched " +
+                    "receipt. No stored status was claimed and no state was modified.";
+            }
+
+            string kind = record.GetProperty("itemType").GetString() ?? "item";
+            string id = record.GetProperty("itemId").GetString() ?? "";
+            string status = record.GetProperty("status").GetString() ?? "unknown";
+            int count = record.GetProperty("evidenceCount").GetInt32();
+            if (count < 0 || count > 1_000_000)
+                return "Saved lifecycle evidence count invalid; no state was modified.";
+            string last = record.GetProperty("lastEvidenceSummary").GetString() ?? "";
+            JsonElement linkedField = record.GetProperty("goalId");
+            string linked = linkedField.ValueKind == JsonValueKind.String
+                ? linkedField.GetString() ?? "" : "";
+            return "Verified saved " + kind + " " + id +
+                " from NIRA's existing SQLite store." +
+                Environment.NewLine + "Status: " + status +
+                Environment.NewLine + "Evidence count: " + count +
+                Environment.NewLine + "Last stored progress: " +
+                (last.Length > 0 ? last : "(none)") +
+                (linked.Length > 0 ? Environment.NewLine + "Owning goal ID: " + linked : "") +
+                Environment.NewLine + "This records stored evidence; it does not " +
+                "independently prove the work occurred. No state was changed.";
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or
+            UnauthorizedAccessException or JsonException or InvalidOperationException or
+            ArgumentException or KeyNotFoundException)
+        {
+            return "The host attempted the read-only SQLite lifecycle inspection, " +
+                "but could not verify its receipt. No stored status was claimed " +
+                "and no lifecycle state was modified.";
+        }
+    }
+
+    // Direct host-verified outcomes must finish the SAME chat turn as model replies.
+    // Without Completed, they were visible but were not archived as completed turns.
+    private static void WriteText(ChannelWriter<NIRAOutputChunk> writer, string text)
+    {
         writer.TryWrite(new NIRAOutputChunk
         {
             Source = NIRAMindEventSource.User,
             Type = NIRAOutputChunkType.Text,
-            Content = text
+            Content = text,
+            SpeechContent = text
         });
+        writer.TryWrite(new NIRAOutputChunk
+        {
+            Source = NIRAMindEventSource.User,
+            Type = NIRAOutputChunkType.Completed
+        });
+    }
 
     private static string CleanCode(string? code) =>
         code is { Length: > 0 and <= 60 } &&

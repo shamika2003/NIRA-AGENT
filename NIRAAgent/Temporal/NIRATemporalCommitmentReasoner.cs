@@ -5,7 +5,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-using NIRAAgent.AI.Ollama;
+using NIRAAgent.AI.Models;
 using NIRAAgent.Self.Model;
 
 namespace NIRAAgent.Temporal;
@@ -38,15 +38,15 @@ public sealed class NIRATemporalCommitmentReasoner
 {
     private static string MainReasoningModel => NIRAModelSelection.Primary;
 
-    private readonly OllamaClient _ollama;
+    private readonly NIRAModelClient _modelClient;
     private readonly NIRATemporalContextService _temporal;
     private readonly JsonSerializerOptions _jsonOptions;
 
     public NIRATemporalCommitmentReasoner(
-        OllamaClient ollama,
+        NIRAModelClient modelClient,
         NIRATemporalContextService temporal)
     {
-        _ollama = ollama ?? throw new ArgumentNullException(nameof(ollama));
+        _modelClient = modelClient ?? throw new ArgumentNullException(nameof(modelClient));
         _temporal = temporal ?? throw new ArgumentNullException(nameof(temporal));
 
         _jsonOptions = new JsonSerializerOptions
@@ -151,7 +151,7 @@ public sealed class NIRATemporalCommitmentReasoner
             {_temporal.BuildCognitionContext()}
             """;
 
-        string raw = await _ollama.ChatAsync(
+        string raw = await _modelClient.ChatAsync(
             MainReasoningModel,
             system,
             user,

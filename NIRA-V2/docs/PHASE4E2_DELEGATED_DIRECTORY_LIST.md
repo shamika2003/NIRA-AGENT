@@ -9,7 +9,7 @@
 - Failed legacy authorization, uncertain receipts, unaudited results, changed-state flags, malformed listings, escaped paths or unsafe link traversal do not become successful observations.
 - No writes, browser operations, shell commands, recursion, pagination or access to a second directory are enabled. This is a limited first page and cannot prove directory completeness.
 - Text-file reads continue to require their own `-AllowExplicitTextRead` consent and existing path restrictions. A directory listing does not grant permission to read its files.
-- Existing NIRA memory/character, UI, ELVARA bridge and store owners are unchanged. Model calls and consented listing observations leave the computer for Ollama Cloud.
+- Existing NIRA memory/character, UI, ELVARA bridge and store owners are unchanged. Model calls and consented listing observations leave the computer for selected cloud model provider.
 
 ## Live gate
 

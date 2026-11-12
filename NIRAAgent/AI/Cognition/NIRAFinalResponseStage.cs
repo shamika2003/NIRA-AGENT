@@ -59,11 +59,19 @@ public sealed class NIRAFinalResponseStage
         if (passedThroughInternalWork)
             return true;
 
-        // The COMPLETE package already lives in Block 01's input. Once its
-        // first-call reply is verified and marked ready, delivering it does NOT
-        // require Block 03 (even if the committed mood changed this turn).
-        // If not ready or if tools/internal work occurred, Block 03 still owns
-        // the final public response.
+        // ConversationOnly is a model-proposed semantic classification, not
+        // an independent certificate that its wording embodies the authoritative
+        // POST-interaction character state. The first cognition round can
+        // complete the semantic turn and skip work review, but every genuine
+        // conversational Natural reply must pass through Block 03 exactly once.
+        // This policy uses the already validated decision shape; it never
+        // matches user phrases, inserts canned replies, or modifies saved state.
+        if (decision.ConversationOnly)
+            return true;
+
+        // For non-social, self-contained explanatory answers the COMPLETE
+        // shared realization package is already available to Block 01.
+        // A verified, character-ready first response may still skip Block 03.
         if (verifiedDirectFirstCall &&
             decision.ReplyReady && decision.CharacterReady)
             return false;

@@ -4,9 +4,9 @@ namespace NIRAAgent.Settings;
 
 public enum NIRAVoiceEngineMode
 {
-    Auto,
-    Groq,
-    Piper
+    Auto = 0,
+    // Retain persisted numeric value 2. Legacy value 1 is normalized to Piper.
+    Piper = 2
 }
 
 public sealed record NIRARuntimeSettings
@@ -186,6 +186,8 @@ public sealed class NIRARuntimeSettingsService
     private static NIRARuntimeSettings Normalize(NIRARuntimeSettings settings) =>
         settings with
         {
+            VoiceEngine = settings.VoiceEngine is NIRAVoiceEngineMode.Auto or NIRAVoiceEngineMode.Piper
+                ? settings.VoiceEngine : NIRAVoiceEngineMode.Piper,
             VoiceVolume = Math.Clamp(settings.VoiceVolume, 0.0, 1.0),
             IdleFadeDelaySeconds = Math.Clamp(settings.IdleFadeDelaySeconds, 15, 1800)
         };
@@ -195,11 +197,7 @@ public sealed class NIRARuntimeSettingsService
         NIRAVoiceEngineMode engine = NIRAVoiceEngineMode.Auto;
         string configured = Environment.GetEnvironmentVariable("NIRA_VOICE_ENGINE")?.Trim() ?? string.Empty;
 
-        if (configured.Equals("groq", StringComparison.OrdinalIgnoreCase))
-        {
-            engine = NIRAVoiceEngineMode.Groq;
-        }
-        else if (configured.Equals("piper", StringComparison.OrdinalIgnoreCase))
+        if (configured.Equals("piper", StringComparison.OrdinalIgnoreCase))
         {
             engine = NIRAVoiceEngineMode.Piper;
         }

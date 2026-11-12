@@ -14,7 +14,19 @@ for project in projects:
         ref = project.parent / reference.attrib['Include'].replace('\\', '/')
         assert ref.resolve().is_file(), f'Missing project reference: {project}: {ref}'
     assert not tree.findall('.//PackageReference'), f'Unexpected package dependency: {project}'
-    assert 'NIRAAgent' not in project.read_text(), f'Legacy dependency: {project}'
+    # Phase 4E-4H approved migration adapters/tests intentionally reuse the
+    # one authoritative NIRA capability, memory and state owner. These are
+    # temporary references, not a second agent. Reject any NEW unrelated use.
+    approved_legacy_references = {
+        'Nira.V2.LegacyAdapters',
+        'Nira.V2.Continuity.Tests',
+        'Nira.V2.ContinuityQuality.Tests',
+        'Nira.V2.Lifecycle.Tests',
+        'Nira.V2.WpfBridge.Tests',
+    }
+    if 'NIRAAgent' in project.read_text(encoding='utf-8'):
+        assert project.parent.name in approved_legacy_references, \
+            f'Unreviewed legacy dependency: {project}'
 
 for name in ('AgentLoopContracts.cs','AgentLoopEngine.cs','FileAgentStateStore.cs',
              'ResearchDocumentBuilder.cs','WorkflowEngine.cs'):
@@ -34,5 +46,5 @@ for name in required:
     assert (root/'docs'/name).is_file(), name
 assert (root/'scripts'/'Install-V2.ps1').is_file()
 assert (root/'scripts'/'Verify-Foundation.ps1').is_file()
-print(f'PASS static audit: {len(projects)} projects, {len(sources)} C# files, docs, references, no legacy dependencies.')
+print(f'PASS static audit: {len(projects)} projects, {len(sources)} C# files, docs and reviewed migration dependencies.')
 print('WARNING: static audit does not replace the Windows .NET 10 compiler or live agent evaluation.')

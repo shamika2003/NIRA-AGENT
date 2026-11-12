@@ -3,7 +3,7 @@
 ## What this integrates
 
 - Existing `NIRAAgent.UI` + `MainWindowViewModel` + `NIRAMindRuntime` continue to own the visible NIRA window, voice queue, orb, input/output, and the original conversation archive.
-- An optional `INIRAGeneralRuntimeBridge` implementation runs `AgentLoopEngine` **in the same UI process**, using existing `GeneralOllamaReasoner`, registered observable tools and Windows DPAPI-encrypted V2 checkpoints.
+- An optional `INIRAGeneralRuntimeBridge` implementation runs `AgentLoopEngine` **in the same UI process**, using existing `GeneralModelReasoner`, registered observable tools and Windows DPAPI-encrypted V2 checkpoints.
 - The V2 route is selected only when the host startup switch equals `EXPLICIT_READONLY`, AND the user's normal desktop message starts with `/v2 `, AND no unsupported attachments/past-chat scope are present. This is a temporary migration switch, **not semantic task routing**: once selected the model chooses tools through `CapabilityRegistry`.
 - ELVARA embedded messages, proactive/background work, and all normal NIRA messages stay on the existing NIRAExecutive.
 - The existing conversation manager records the one human message and one successful final V2 assistant reply. No copied memory store is created. No V2-generated reply is recorded as successful if the agent run is incomplete.

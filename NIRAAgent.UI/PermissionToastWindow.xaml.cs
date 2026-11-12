@@ -328,7 +328,7 @@ public partial class PermissionToastWindow : Window
         if (operation.Request.CapabilityId == NIRACapabilityIds.VisionInspect &&
             operation.RequiresExplicitAuthorization)
         {
-            return "Future grounded screenshots sent to the configured Ollama cloud vision model.";
+            return "Future grounded screenshots sent to the configured model provider cloud vision model.";
         }
 
         if (operation.Paths.Length > 0)

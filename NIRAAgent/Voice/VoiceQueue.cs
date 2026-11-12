@@ -64,7 +64,7 @@ public sealed class VoiceQueue
     // sequence 2 may sit prepared in the channel
     // while sequence 3 is already being synthesized.
     //
-    // That could waste Groq quota if the user interrupts.
+    // That could waste remote provider quota if the user interrupts.
     //
     // This permit means:
     //

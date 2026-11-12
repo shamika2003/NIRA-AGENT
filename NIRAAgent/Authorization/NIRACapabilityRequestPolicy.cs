@@ -508,7 +508,7 @@ public sealed class NIRACapabilityRequestPolicy
                     80);
 
             target =
-                $"Ollama cloud visual interpretation | EvidenceId={evidenceId}";
+                $"configured cloud model visual interpretation | EvidenceId={evidenceId}";
         }
 
         if (target.Length == 0) target = request.CapabilityId;
@@ -524,7 +524,7 @@ public sealed class NIRACapabilityRequestPolicy
             : secureCredentialUse
                 ? $"This allows NIRA's trusted credential broker to use an approved login for {origin}. The secret never enters model-visible capability arguments, cognition, or the normal action audit. A remembered site grant can permit future credential use on this exact origin until revoked."
             : externalVision
-                ? "This sends the grounded screenshot pixels to NIRA's configured Ollama cloud vision model for interpretation. Remembering this permission allows future vision.inspect captures to be sent for visual analysis until you revoke the permission."
+                ? "This sends the grounded screenshot pixels to NIRA's configured configured cloud model vision model for interpretation. Remembering this permission allows future vision.inspect captures to be sent for visual analysis until you revoke the permission."
                 : browserAction
                     ? $"This lets NIRA perform the listed browser action on {origin}. Remembering creates a permission for this browser capability on that website origin; it does not expose stored cookies/passwords to cognition and does not authorize other origins."
                     : browserStateChangingRequest

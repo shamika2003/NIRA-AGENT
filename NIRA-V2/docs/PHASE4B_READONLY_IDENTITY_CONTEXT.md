@@ -12,7 +12,7 @@ Both must be set **before launching WPF NIRA**:
 - `NIRA_V2_WPF_CANARY=EXPLICIT_READONLY` enables the existing explicit `/v2` routing.
 - `NIRA_V2_PERSONAL_CONTEXT=ALLOW_READONLY_CONTEXT` enables sending up to 12,000 characters
   of the **existing** `nira_personality.yaml` profile sections plus at most 4,400 characters
-  of character, recent conversation and up to four ranked memory candidates to Ollama Cloud.
+  of character, recent conversation and up to four ranked memory candidates to selected cloud model provider.
 
 Without the second gate, V2's behavior and privacy envelope remain as Phase 4A.
 `NIRA_V2_PERSONAL_CONTEXT` is a *separate permission*, not implied by `/v2`.
@@ -35,7 +35,7 @@ reinforcement or memory formation. Older user messages and retrieved memories ar
 - Context is captured once per canary run and provided to the same model-driven
   capability registry, not a keyword-routed specialist.
 - V2's checkpoints remain DPAPI-protected at rest; **selected personal context is still
-  transmitted to Ollama Cloud**, and the actual provider has its own privacy terms.
+  transmitted to selected cloud model provider**, and the actual provider has its own privacy terms.
 - Don't share raw model prompts or local diagnostics that may contain personal memory.
 
 ## Suggested live checks

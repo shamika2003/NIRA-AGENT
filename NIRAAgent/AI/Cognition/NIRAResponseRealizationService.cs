@@ -7,7 +7,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 
-using NIRAAgent.AI.Ollama;
+using NIRAAgent.AI.Models;
 using NIRAAgent.Character;
 using NIRAAgent.Character.Appraisal;
 using NIRAAgent.Character.History;
@@ -37,7 +37,7 @@ namespace NIRAAgent.AI.Cognition;
 public sealed class NIRAResponseRealizationService
 {
     public const string ResponseModelEnvironmentVariable =
-        "NIRA_OLLAMA_RESPONSE_MODEL";
+        "NIRA_MODEL_RESPONSE";
 
     private static string DefaultResponseModel => NIRAModelSelection.Primary;
 
@@ -53,7 +53,7 @@ public sealed class NIRAResponseRealizationService
     private const int MaximumConversationCharacters =
         7000;
 
-    private readonly OllamaClient _ollama;
+    private readonly NIRAModelClient _modelClient;
 
     private readonly NIRACharacterStateService _characterState;
 
@@ -66,15 +66,15 @@ public sealed class NIRAResponseRealizationService
     private readonly string _realizationPrompt;
 
     public NIRAResponseRealizationService(
-        OllamaClient ollama,
+        NIRAModelClient modelClient,
         NIRACharacterStateService characterState,
         NIRAAttitudeService attitude,
         NIRASocialHistoryService socialHistory)
     {
-        _ollama =
-            ollama
+        _modelClient =
+            modelClient
             ?? throw new ArgumentNullException(
-                nameof(ollama));
+                nameof(modelClient));
 
         _characterState =
             characterState
@@ -210,7 +210,7 @@ public sealed class NIRAResponseRealizationService
                 Stopwatch.StartNew();
 
             string raw =
-                await _ollama.ChatAsync(
+                await _modelClient.ChatAsync(
                     ResponseModel,
                     systemPrompt,
                     userPrompt,
@@ -346,7 +346,7 @@ public sealed class NIRAResponseRealizationService
     }
 
     public static async Task<NIRAResponseRealizationResult> RealizeIsolatedForLabAsync(
-        OllamaClient model,
+        NIRAModelClient model,
         NIRACharacterSnapshot snapshot,
         NIRAResponseRealizationRequest request,
         CancellationToken cancellationToken = default)
@@ -864,7 +864,7 @@ public sealed class NIRAResponseRealizationService
     }
 
     private static async Task<NIRAResponseRealizationResult> RepairTheatricalCueOnceAsync(
-        OllamaClient model,
+        NIRAModelClient model,
         string modelName,
         string systemPrompt,
         string userPrompt,

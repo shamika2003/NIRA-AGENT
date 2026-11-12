@@ -36,7 +36,7 @@ public sealed class SpeechChunker
 
 
     /*
-     * Groq Orpheus currently has a small input limit.
+     * previous remote speech engine currently has a small input limit.
      *
      * Leave room for:
      *
@@ -45,7 +45,7 @@ public sealed class SpeechChunker
      * [confidently]
      * [sarcastic]
      *
-     * which GroqVocalDirectionMapper adds later.
+     * which local voice mapper adds later.
      */
     private const int MaximumBatchCharacters =
         184;
@@ -167,10 +167,10 @@ public sealed class SpeechChunker
     // =========================================================
     // COMPLETE RESPONSE
     //
-    // Once Ollama has finished, whatever remains belongs to the
+    // Once model provider has finished, whatever remains belongs to the
     // final natural speech batch.
     //
-    // A short response therefore usually reaches Groq as ONE
+    // A short response therefore usually reaches the voice engine as ONE
     // complete utterance.
     // =========================================================
 
@@ -774,7 +774,7 @@ public sealed class SpeechChunker
     // SPEAKABLE CONTENT
     //
     // Also acts as the provider-level safety function used by
-    // Groq.
+    // speech engine.
     // =========================================================
 
     public static bool ContainsSpeakableContent(

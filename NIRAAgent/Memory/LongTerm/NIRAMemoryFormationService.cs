@@ -6,7 +6,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-using NIRAAgent.AI.Ollama;
+using NIRAAgent.AI.Models;
 using NIRAAgent.Self.Model;
 using NIRAAgent.Skills;
 
@@ -65,8 +65,8 @@ public sealed class NIRAMemoryFormationService
         500;
 
 
-    private readonly OllamaClient
-        _ollama;
+    private readonly NIRAModelClient
+        _modelClient;
 
 
     private readonly string
@@ -82,12 +82,12 @@ public sealed class NIRAMemoryFormationService
 
 
     public NIRAMemoryFormationService(
-        OllamaClient ollama)
+        NIRAModelClient modelClient)
     {
-        _ollama =
-            ollama
+        _modelClient =
+            modelClient
             ?? throw new ArgumentNullException(
-                nameof(ollama));
+                nameof(modelClient));
 
 
         _personality =
@@ -126,7 +126,7 @@ public sealed class NIRAMemoryFormationService
 
 
         string raw =
-            await _ollama.ChatAsync(
+            await _modelClient.ChatAsync(
                 MainReasoningModel,
                 BuildSystemPrompt(),
                 BuildUserPrompt(

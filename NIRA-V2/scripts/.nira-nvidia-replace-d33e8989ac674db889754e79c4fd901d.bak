@@ -1,0 +1,73 @@
+[CmdletBinding()]
+param(
+    [string]$Model = 'nvidia/nemotron-3.5-lightning-30b-a3b',
+    [switch]$AllowPersonalContext,
+    [switch]$AllowLifecycleContext,
+    [switch]$AllowGoalCreate,
+    [switch]$AllowBranchCreate,
+    [switch]$AllowLifecycleUpdate,
+    [switch]$AllowLifecycleInspect,
+    [switch]$AllowBranchCompletion,
+    [switch]$AllowFileObservation,
+    [switch]$AllowExplicitTextRead,
+    [switch]$AllowDirectoryListing,
+    [switch]$AllowFileHash,
+    [switch]$AllowTextCreate,
+    [switch]$AllowAppObservation,
+    [switch]$AllowBrowserObservation,
+    [switch]$AllowDocxInspection,
+    [switch]$AllowDocxCreate,
+    [switch]$AllowDesktopUiInspection
+)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$launcher = Join-Path $PSScriptRoot 'Start-NiraUnifiedPreview.ps1'
+if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
+    throw 'Original NIRA V2 unified launcher is missing.'
+}
+if ($Model -notmatch '^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$') {
+    throw 'Invalid NVIDIA model identifier.'
+}
+$oldProvider = [Environment]::GetEnvironmentVariable('NIRA_V2_PROVIDER','Process')
+$oldModel = [Environment]::GetEnvironmentVariable('NIRA_V2_MODEL','Process')
+$oldKey = [Environment]::GetEnvironmentVariable('NIRA_NVIDIA_API_KEY','Process')
+try {
+    $key = [Environment]::GetEnvironmentVariable('NIRA_NVIDIA_API_KEY','Process')
+    if ([string]::IsNullOrWhiteSpace($key)) {
+        $key = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY','Process')
+    }
+    if ([string]::IsNullOrWhiteSpace($key)) {
+        $secret = Read-Host 'NVIDIA API key (hidden; this launch only)' -AsSecureString
+        $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
+        try {
+            $key = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+        }
+        finally {
+            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
+            $secret.Dispose()
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($key)) { throw 'NVIDIA API key is empty.' }
+    [Environment]::SetEnvironmentVariable('NIRA_NVIDIA_API_KEY',$key.Trim(),'Process')
+    [Environment]::SetEnvironmentVariable('NIRA_V2_PROVIDER','NVIDIA','Process')
+    [Environment]::SetEnvironmentVariable('NIRA_V2_MODEL',$Model,'Process')
+    $key = $null
+    $forward = @{}
+    foreach ($name in @('AllowPersonalContext','AllowLifecycleContext','AllowGoalCreate',
+        'AllowBranchCreate','AllowLifecycleUpdate','AllowLifecycleInspect',
+        'AllowBranchCompletion','AllowFileObservation','AllowExplicitTextRead',
+        'AllowDirectoryListing','AllowFileHash','AllowTextCreate',
+        'AllowAppObservation','AllowBrowserObservation','AllowDocxInspection',
+        'AllowDocxCreate','AllowDesktopUiInspection')) {
+        if ($PSBoundParameters.ContainsKey($name)) { $forward[$name] = $PSBoundParameters[$name] }
+    }
+    Write-Host ('[NIRA V2] NVIDIA NIM provider | Model: ' + $Model)
+    Write-Host '[NIRA V2] Single identity and V2 host permissions unchanged.'
+    & $launcher @forward
+    if ($LASTEXITCODE -ne 0) { throw ('NIRA desktop exited with code ' + $LASTEXITCODE) }
+}
+finally {
+    [Environment]::SetEnvironmentVariable('NIRA_V2_PROVIDER',$oldProvider,'Process')
+    [Environment]::SetEnvironmentVariable('NIRA_V2_MODEL',$oldModel,'Process')
+    [Environment]::SetEnvironmentVariable('NIRA_NVIDIA_API_KEY',$oldKey,'Process')
+}

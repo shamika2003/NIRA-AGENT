@@ -2,7 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
-using NIRAAgent.AI.Ollama;
+using NIRAAgent.AI.Models;
 using NIRAAgent.Capabilities;
 using NIRAAgent.Diagnostics;
 
@@ -106,7 +106,7 @@ internal static class NIRAFocusedWorkComposer
     // The long-form writer operates on PLAIN prose sections, not an enormous
     // nested cognition JSON envelope. It never bypasses native DOCX validation.
     private static async Task<NIRACapabilityRequest?> ComposeDocumentAsync(
-        OllamaClient model, NIRACognitionContext context,
+        NIRAModelClient model, NIRACognitionContext context,
         NIRACapabilityRequest action, IReadOnlyList<NIRACapabilityVisualArtifact> images,
         CancellationToken cancellationToken)
     {
@@ -291,7 +291,7 @@ internal static class NIRAFocusedWorkComposer
     }
 
     internal static async Task<NIRACognitionDecision?> RecoverAsync(
-        OllamaClient model, NIRACognitionContext context,
+        NIRAModelClient model, NIRACognitionContext context,
         IReadOnlyList<NIRACapabilityVisualArtifact> images,
         CancellationToken cancellationToken)
     {

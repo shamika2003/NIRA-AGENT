@@ -11,6 +11,8 @@ namespace NIRAAgent.Mind;
 public enum NIRAOutputChunkType
 {
     Text,
+    // Ephemeral unverified provider text, UI only: never archive or speak.
+    Preview,
     // Ephemeral user-visible status; never a saved assistant reply.
     Progress,
     VisualArtifact,
