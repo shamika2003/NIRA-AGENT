@@ -7,15 +7,16 @@ namespace NIRAAgent.AI.Models;
 /// </summary>
 public static class NIRAActiveModelProvider
 {
-    public const string DefaultModel = "nvidia/nemotron-3.5-lightning-30b-a3b";
-    public const string ProcessCredentialName = "NIRA_NVIDIA_API_KEY";
-    public const string AlternateCredentialName = "NVIDIA_API_KEY";
+    public const string DefaultModel = "gemma4:31b";
+    public const string ProcessCredentialName = "NIRA_OLLAMA_API_KEY";
+    public const string AlternateCredentialName = "OLLAMA_API_KEY";
     public static Uri ChatEndpoint { get; } =
-        new("https://integrate.api.nvidia.com/v1/chat/completions");
+        new("https://ollama.com/v1/chat/completions");
     public static void ConfigureRequest(IDictionary<string,object> payload)
     {
-        payload["max_tokens"] = 4096;
-        payload["reasoning_budget"] = 768;
-        payload["chat_template_kwargs"] = new { enable_thinking = true };
+        // Ollama Cloud OpenAI-compatible chat. Reasoning is a model resource,
+        // not NIRA's identity or authority. Do not send NVIDIA NIM-only fields.
+        payload["max_tokens"] = 8192;
+        payload["reasoning_effort"] = "medium";
     }
 }

@@ -99,7 +99,7 @@ public sealed class NIRAWpfV2CanaryBridge : INIRAGeneralRuntimeBridge
             try { selection = NiraV2ProviderSelection.FromEnvironment(); }
             catch (ArgumentException)
             {
-                WriteText(output, "NIRA V2 model provider configuration is invalid. Use Start-NiraNvidia.ps1.");
+                WriteText(output, "NIRA V2 model provider configuration is invalid. Use Start-NiraOllama.ps1.");
                 return;
             }
             if (!selection.IsReady)
@@ -302,7 +302,8 @@ public sealed class NIRAWpfV2CanaryBridge : INIRAGeneralRuntimeBridge
             // It is not written to any V2 memory store. Model requests still leave the PC.
             NIRAV2ReadOnlyContext continuity = await _contextBuilder.BuildAsync(
                 submittedInput, request,
-                Environment.GetEnvironmentVariable("NIRA_V2_PERSONAL_CONTEXT"), ct);
+                Environment.GetEnvironmentVariable("NIRA_V2_PERSONAL_CONTEXT"), ct,
+                currentSourceEventId: mindEvent.SocialEventId);
             // Phase 4H: one read-only snapshot from the EXISTING goal, branch
             // and accepted-commitment services. This is never a new V2 state owner.
             // Both explicit per-process consents and a lifecycle-related current
@@ -380,7 +381,7 @@ public sealed class NIRAWpfV2CanaryBridge : INIRAGeneralRuntimeBridge
             var engine = new AgentLoopEngine(reasoner, new FileAgentStateStore(root, protector),
                 permissionGate, registry.Tools, new AgentLoopLimits(15, 8), progress);
             AgentRunSnapshot run = await engine.StartAsync(request, ct);
-            NIRADiagnosticTrace.Event("NVIDIA-V2-ROUND",
+            NIRADiagnosticTrace.Event("V2-MODEL-ROUND",
                 $"ModelRequests={reasoner.ModelRequests} " +
                 $"FirstTextMs={reasoner.LastFirstTextMilliseconds} " +
                 $"LastRoundMs={reasoner.LastRoundMilliseconds} " +

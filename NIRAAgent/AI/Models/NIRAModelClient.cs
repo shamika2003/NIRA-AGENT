@@ -67,7 +67,7 @@ public sealed class NIRAModelClient : IDisposable
             jsonMode,cancellationToken);
     }
 
-    // Legacy callers expect an enumerable. NVIDIA exposes SSE, but a bounded
+    // Legacy callers expect an enumerable. A bounded
     // non-streaming model turn is safer than losing an answer to partial events.
     public async IAsyncEnumerable<string> StreamChatAsync(string systemPrompt,string userMessage,
         [System.Runtime.CompilerServices.EnumeratorCancellation]
@@ -92,6 +92,7 @@ public sealed class NIRAModelClient : IDisposable
             ["model"]=model,["messages"]=messages,["stream"]=false
         };
         NIRAActiveModelProvider.ConfigureRequest(payload);
+        if (jsonMode) payload["response_format"] = new { type = "json_object" };
         try
         {
             using var response=await SendWithCredentialRecoveryAsync(JsonSerializer.Serialize(payload),ct);

@@ -195,7 +195,7 @@ Check("R4.6 substantial source-grounded research routes to existing Ultra role",
         NIRADeepResearchRoutePolicy.ShouldRouteObjective("Hey little girl, how are you?") ||
         NIRADeepResearchRoutePolicy.ShouldRouteObjective("Research the birthdate of an inventor."))
         throw new Exception("Deep research routing accepted casual lookup or missed comprehensive research.");
-    if (NIRAModelSelection.DeepDefault != "nvidia/nemotron-3.5-lightning-30b-a3b")
+    if (NIRAModelSelection.DeepDefault != "nemotron-3-ultra")
         throw new Exception("The configured NIRA deep-work reasoning resource was replaced.");
 });
 
@@ -7228,14 +7228,14 @@ Check("R68 silent direct-user terminal is recoverable without changing actions",
 
 Check("Runtime model assembly reports the synchronized routing revision", () =>
 {
-    Equal("NIRA-PROVIDER-NEUTRAL-NVIDIA-R69-20261112", NIRAModelSelection.RoutingRevision);
+    Equal("NIRA-PROVIDER-NEUTRAL-OLLAMA-R69-20261115", NIRAModelSelection.RoutingRevision);
 });
 
 Check("NIRA's primary and deep models have distinct default roles", () =>
 {
-    Equal("nvidia/nemotron-3.5-lightning-30b-a3b", NIRAModelSelection.PrimaryDefault);
-    Equal("nvidia/nemotron-3.5-lightning-30b-a3b", NIRAModelSelection.VisionDefault);
-    Equal("nvidia/nemotron-3.5-lightning-30b-a3b", NIRAModelSelection.DeepDefault);
+    Equal("gemma4:31b", NIRAModelSelection.PrimaryDefault);
+    Equal("gemma4:31b", NIRAModelSelection.VisionDefault);
+    Equal("nemotron-3-ultra", NIRAModelSelection.DeepDefault);
 });
 
 Check("Delegated runs use Ultra without a new classifier", () =>
@@ -7246,9 +7246,9 @@ Check("Delegated runs use Ultra without a new classifier", () =>
 
 Check("R67 text-first main, Gemma perception, Ultra deep stay separate", () =>
 {
-    Equal("nvidia/nemotron-3.5-lightning-30b-a3b", NIRAModelSelection.PrimaryDefault);
-    Equal("nvidia/nemotron-3.5-lightning-30b-a3b", NIRAModelSelection.VisionDefault);
-    Equal("nvidia/nemotron-3.5-lightning-30b-a3b", NIRAModelSelection.DeepDefault);
+    Equal("gemma4:31b", NIRAModelSelection.PrimaryDefault);
+    Equal("gemma4:31b", NIRAModelSelection.VisionDefault);
+    Equal("nemotron-3-ultra", NIRAModelSelection.DeepDefault);
     if (NIRAModelSelection.ForCognition(true) != NIRAModelSelection.Deep ||
         NIRAModelSelection.NameForRole(NIRAReasoningRole.Adaptive) ==
         NIRAModelSelection.NameForRole(NIRAReasoningRole.DeepWork))

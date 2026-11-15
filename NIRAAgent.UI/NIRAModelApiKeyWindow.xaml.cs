@@ -42,31 +42,31 @@ public partial class NIRAModelApiKeyWindow : Window
         switch (_request.Problem)
         {
             case NIRAModelCredentialProblem.Missing:
-                HeadingText.Text = "Connect NIRA to NVIDIA";
+                HeadingText.Text = "Connect NIRA to Ollama";
                 DescriptionText.Text =
-                    "NIRA needs an NVIDIA API key before her reasoning service can start. " +
-                    "Paste a key from your NVIDIA account.";
+                    "NIRA needs an Ollama API key before her reasoning service can start. " +
+                    "Paste a key from your Ollama account.";
                 WarningText.Visibility = Visibility.Collapsed;
                 RetryCurrentButton.Visibility = Visibility.Collapsed;
                 break;
 
             case NIRAModelCredentialProblem.InvalidOrRevoked:
-                HeadingText.Text = "NVIDIA API key needs attention";
+                HeadingText.Text = "Ollama API key needs attention";
                 DescriptionText.Text =
-                    "NVIDIA rejected the current credential. Paste a valid replacement key and NIRA will retry the failed reasoning request once.";
+                    "Ollama rejected the current credential. Paste a valid replacement key and NIRA will retry the failed reasoning request once.";
                 WarningText.Text =
-                    "The previous API key is not revoked at NVIDIA. This replacement is for the current NIRA process only.";
+                    "The previous API key is not revoked at Ollama. This replacement is for the current NIRA process only.";
                 WarningText.Visibility = Visibility.Visible;
                 RetryCurrentButton.Visibility = Visibility.Collapsed;
                 break;
 
             case NIRAModelCredentialProblem.UsageUnavailable:
-                HeadingText.Text = "NVIDIA API access is unavailable";
+                HeadingText.Text = "Ollama API access is unavailable";
                 DescriptionText.Text =
-                    "NVIDIA reported that the current account/key cannot continue cloud inference right now. " +
+                    "Ollama reported that the current account/key cannot continue cloud inference right now. " +
                     "You can add usage, retry the same key, or paste another valid key you are authorized to use.";
                 WarningText.Text =
-                    "Creating another key on the same exhausted NVIDIA account does not create new credits. " +
+                    "Creating another key on the same exhausted Ollama account does not create new credits. " +
                     "Use Retry current after adding usage, or replace the key only when you genuinely have another valid credential.";
                 WarningText.Visibility = Visibility.Visible;
                 RetryCurrentButton.Visibility = _request.HasCurrentKey
@@ -88,7 +88,7 @@ public partial class NIRAModelApiKeyWindow : Window
 
         if (key.Length < 16 || key.Any(char.IsWhiteSpace))
         {
-            ValidationText.Text = "That value does not look like a valid NVIDIA API key.";
+            ValidationText.Text = "That value does not look like a valid Ollama API key.";
             ValidationText.Visibility = Visibility.Visible;
             return;
         }
@@ -119,7 +119,7 @@ public partial class NIRAModelApiKeyWindow : Window
         try
         {
             Process.Start(
-                new ProcessStartInfo("https://build.nvidia.com/")
+                new ProcessStartInfo("https://ollama.com/settings/keys")
                 {
                     UseShellExecute = true
                 });

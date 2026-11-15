@@ -10,17 +10,27 @@ public sealed record NiraV2ProviderSelection(
 {
     public static NiraV2ProviderSelection FromEnvironment()
     {
-        string provider = (Environment.GetEnvironmentVariable("NIRA_V2_PROVIDER") ?? "NVIDIA")
+        string provider = (Environment.GetEnvironmentVariable("NIRA_V2_PROVIDER") ?? "OLLAMA")
             .Trim().ToUpperInvariant();
-        if (provider != "NVIDIA")
-            throw new ArgumentException("Unsupported model provider. The current installation uses NVIDIA.");
         string? requested = Environment.GetEnvironmentVariable("NIRA_V2_MODEL")?.Trim();
-        string model = string.IsNullOrWhiteSpace(requested)
-            ? "nvidia/nemotron-3.5-lightning-30b-a3b" : requested;
-        var options = NiraModelEndpointOptions.Nvidia(model);
-        options.Validate();
-        return new NiraV2ProviderSelection("NVIDIA", options,
-            NvidiaCloudCredentials.ReadExistingKey, true);
+        if (provider == "OLLAMA")
+        {
+            string model = string.IsNullOrWhiteSpace(requested) ? "gemma4:31b" : requested;
+            var ollama = NiraModelEndpointOptions.Ollama(model);
+            ollama.Validate();
+            return new NiraV2ProviderSelection("OLLAMA", ollama,
+                OllamaCloudCredentials.ReadExistingKey, true);
+        }
+        if (provider == "NVIDIA")
+        {
+            string model = string.IsNullOrWhiteSpace(requested)
+                ? "nvidia/nemotron-3.5-lightning-30b-a3b" : requested;
+            var nvidia = NiraModelEndpointOptions.Nvidia(model);
+            nvidia.Validate();
+            return new NiraV2ProviderSelection("NVIDIA", nvidia,
+                NvidiaCloudCredentials.ReadExistingKey, true);
+        }
+        throw new ArgumentException("Unsupported model provider. Use OLLAMA or NVIDIA.");
     }
 
     public bool IsReady => !RequiresCredential || !string.IsNullOrWhiteSpace(KeySource());

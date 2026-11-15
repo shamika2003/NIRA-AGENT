@@ -17,10 +17,10 @@ public static class NIRAModelSelection
 {
     public const string PrimaryDefault = NIRAActiveModelProvider.DefaultModel;
     public const string VisionDefault = NIRAActiveModelProvider.DefaultModel;
-    public const string DeepDefault = NIRAActiveModelProvider.DefaultModel;
+    public const string DeepDefault = "nemotron-3-ultra";
 
     // Used only for identifying source/runtime alignment in diagnostics and tests.
-    public const string RoutingRevision = "NIRA-PROVIDER-NEUTRAL-NVIDIA-R69-20261112";
+    public const string RoutingRevision = "NIRA-PROVIDER-NEUTRAL-OLLAMA-R69-20261115";
 
     public static string Primary => Resolve("NIRA_MODEL_PRIMARY", PrimaryDefault);
     public static string Deep => Resolve("NIRA_MODEL_DEEP", DeepDefault);

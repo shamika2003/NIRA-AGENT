@@ -120,8 +120,8 @@ try {
         Write-Warning 'Windows UI Automation can expose application window/control text to the selected cloud model provider. No desktop click or typing is enabled.'
     }
     if (-not $LegacyOnly) {
-        if ($env:NIRA_V2_PROVIDER -ne 'NVIDIA') {
-            throw 'Start NIRA V2 using Start-NiraNvidia.ps1.'
+        if ($env:NIRA_V2_PROVIDER -notin @('OLLAMA', 'NVIDIA')) {
+            throw 'Start NIRA V2 using Start-NiraOllama.ps1 (or the explicit NVIDIA compatibility launcher).'
         }
         Write-Warning "NIRA's installed character definition is sent to the selected cloud model on each request. Saved mood, memory, archived conversations and lifecycle state remain separately consent-gated."
     }
