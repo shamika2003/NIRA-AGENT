@@ -23,7 +23,7 @@ namespace NIRAAgent.Vision;
 // Flow:
 //   NIRAVisualEvidence -> image+grounding -> vision model
 //   -> strict structured observation -> runtime normalization
-//   -> normal NIRAExecutive cognition as capability evidence.
+//   -> the unified NIRA agent as capability evidence.
 // =============================================================
 
 public sealed class NIRAVisualUnderstandingService

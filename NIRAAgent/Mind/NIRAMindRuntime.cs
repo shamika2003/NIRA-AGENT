@@ -15,10 +15,8 @@ namespace NIRAAgent.Mind;
 
 public sealed class NIRAMindRuntime
 {
-    private readonly NIRAExecutive
-        _executive;
-
-    private readonly INIRAGeneralRuntimeBridge? _v2Bridge;
+    private readonly INIRAAgentExecutionHost _agent;
+    private readonly NIRACompletedExperienceService _experience;
 
 
     private readonly NIRAMindActivityTracker
@@ -39,7 +37,7 @@ public sealed class NIRAMindRuntime
 
     // Run slots bound concurrent user-turn reasoning without serializing an
     // entire long-running user task. Each run retains its own async context;
-    // the Executive remains the sole owner of tool authorization and effects.
+    // the authoritative capability service remains the sole owner of tool authorization and effects.
     // New messages may wait for a slot, but do not cancel existing work.
     internal const int MaximumConcurrentUserRuns = 3;
     private readonly SemaphoreSlim _userRunSlots =
@@ -53,18 +51,15 @@ public sealed class NIRAMindRuntime
 
 
     public NIRAMindRuntime(
-        NIRAExecutive executive,
+        INIRAAgentExecutionHost agent,
+        NIRACompletedExperienceService experience,
         NIRAMindActivityTracker activity,
         NIRAStateService state,
         NIRASocialHistoryService socialHistory,
-        ConversationManager conversation,
-        INIRAGeneralRuntimeBridge? v2Bridge = null)
+        ConversationManager conversation)
     {
-        _v2Bridge = v2Bridge;
-        _executive =
-            executive
-            ?? throw new ArgumentNullException(
-                nameof(executive));
+        _agent = agent ?? throw new ArgumentNullException(nameof(agent));
+        _experience = experience ?? throw new ArgumentNullException(nameof(experience));
 
 
         _activity =
@@ -90,7 +85,6 @@ public sealed class NIRAMindRuntime
             ?? throw new ArgumentNullException(
                 nameof(conversation));
 
-        _executive.AttachActiveWorkLedger(_activeUserWork);
         Debug.WriteLine($"[ConcurrentMind] READY | Revision=NIRA-CONCURRENT-20261014-S2 | UserRunSlots={MaximumConcurrentUserRuns}");
     }
 
@@ -450,28 +444,28 @@ public sealed class NIRAMindRuntime
 
         bool completed = false;
         bool publishedReply = false;
-        // Only user-selected canary messages may use V2. Background, proactive and
-        // ELVARA application work remain with the existing NIRAExecutive.
-        bool useV2 = !autonomous && mindEvent.Source == NIRAMindEventSource.User &&
-            _v2Bridge?.CanHandle(mindEvent) == true;
-        string? canaryFinalAnswer = null;
+        // All NIRA events use the same model/tool agent owner; never select
+        // a second reasoning pipeline by source, attachment or event type.
+        string? verifiedFinalAnswer = null;
 
         try
         {
-            IAsyncEnumerable<NIRAOutputChunk> source = useV2
-                ? _v2Bridge!.RunAsync(mindEvent, cancellationToken)
-                : _executive.RunAsync(mindEvent, cancellationToken);
-            await foreach (NIRAOutputChunk chunk in source)
+            await foreach (NIRAOutputChunk chunk in _agent.RunAsync(mindEvent, cancellationToken))
             {
-                if (useV2 && chunk.Type == NIRAOutputChunkType.Text &&
+                if (chunk.Type == NIRAOutputChunkType.Text &&
                     !string.IsNullOrWhiteSpace(chunk.Content))
-                    canaryFinalAnswer = chunk.Content;
-                if (useV2 && chunk.Type == NIRAOutputChunkType.Completed &&
-                    !string.IsNullOrWhiteSpace(canaryFinalAnswer))
+                    verifiedFinalAnswer = chunk.Content;
+                if (chunk.Type == NIRAOutputChunkType.Completed &&
+                    mindEvent.Source == NIRAMindEventSource.User &&
+                    !string.IsNullOrWhiteSpace(verifiedFinalAnswer))
                 {
-                    // One authoritative conversation archive; never create a V2 copy.
-                    // This records the validated final answer only, not progress/events.
-                    _conversation.AddAssistantMessage(canaryFinalAnswer, mindEvent.SocialEventId);
+                    // The existing conversation/archive store is the sole chat owner.
+                    // Only the final published response, not previews, is recorded.
+                    _conversation.AddAssistantMessage(verifiedFinalAnswer, mindEvent.SocialEventId);
+                    // Exactly one evidence-grounded review after a completed user turn.
+                    // The claim journal forbids duplicated state updates after a restart.
+                    await _experience.ReviewOnceAsync(mindEvent, verifiedFinalAnswer,
+                        cancellationToken);
                 }
                 if (chunk.Type == NIRAOutputChunkType.Text &&
                     (!string.IsNullOrWhiteSpace(chunk.Content) || chunk.DisplayBlocks.Count > 0))

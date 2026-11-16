@@ -2,4 +2,3 @@
   <Project Path="NIRAAgent/NIRAAgent.csproj" />
   <Project Path="NIRAAgent.UI/NIRAAgent.UI.csproj" />
 </Solution>
-

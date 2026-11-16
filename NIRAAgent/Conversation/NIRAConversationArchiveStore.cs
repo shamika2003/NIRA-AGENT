@@ -400,7 +400,8 @@ public sealed class NIRAConversationArchiveStore
     // turns to Block 01 without a second LLM call or forged permanent memory.
     // Past messages are always historical context, never fresh instructions.
     public string BuildRecentCrossSessionContext(
-        int maximumMessages = 8, int maximumCharacters = 2600)
+        int maximumMessages = 8, int maximumCharacters = 2600,
+        bool userOnly = false)
     {
         if (!Enabled) return string.Empty;
         maximumMessages = Math.Clamp(maximumMessages, 1, 16);
@@ -415,9 +416,11 @@ public sealed class NIRAConversationArchiveStore
                 WHERE m.session_id <> $current
                   AND m.occurred_utc >= $since
                   AND m.role IN ('user','assistant')
+                  AND ($userOnly=0 OR m.role='user')
                 ORDER BY m.occurred_utc DESC LIMIT 48;
                 """;
             query.Parameters.AddWithValue("$current", _sessionId.ToString("D"));
+            query.Parameters.AddWithValue("$userOnly", userOnly ? 1 : 0);
             query.Parameters.AddWithValue("$since",
                 DateTimeOffset.UtcNow.AddDays(-21).ToString("o", CultureInfo.InvariantCulture));
             var selected = new List<string>();
@@ -1135,7 +1138,8 @@ public sealed class NIRAConversationArchiveStore
 
 
     public IReadOnlyList<NIRAArchivedConversationHit> Search(
-        NIRAConversationSearchRequest raw, Guid? excludeSourceEventId = null)
+        NIRAConversationSearchRequest raw, Guid? excludeSourceEventId = null,
+        bool priorSessionUserTurnsOnly = false)
     {
         if (!Enabled) return Array.Empty<NIRAArchivedConversationHit>();
         var request = raw.Normalize();
@@ -1148,6 +1152,13 @@ public sealed class NIRAConversationArchiveStore
             catch (Exception ex) { Debug.WriteLine($"[ConversationArchive] SEARCH_EMBEDDING_UNAVAILABLE | {ex.GetType().Name}"); }
             var candidates = new Dictionary<Guid, Candidate>();
             string where = " WHERE ($from='' OR m.occurred_utc >= $from) AND ($to='' OR m.occurred_utc <= $to) AND ($session='' OR m.session_id=$session)";
+            // The ordinary archive Search API is unchanged by default. V2's opted-in
+            // conversational recall needs PRIOR USER utterances. Filtering after
+            // Top-12 ranking discards genuine older hits whenever newer assistant
+            // messages/current-session tests occupy those slots. Apply this scope
+            // in SQL BEFORE candidate ranking and Top-12 truncation.
+            if (priorSessionUserTurnsOnly)
+                where += " AND m.role='user' AND m.session_id<>$priorSessionCurrent";
             void Collect(string sql, bool lexical)
             {
                 using var query = db.CreateCommand();
@@ -1155,6 +1166,8 @@ public sealed class NIRAConversationArchiveStore
                 query.Parameters.AddWithValue("$from", request.FromUtc ?? "");
                 query.Parameters.AddWithValue("$to", request.ToUtc ?? "");
                 query.Parameters.AddWithValue("$session", request.SessionId ?? (request.CurrentSessionOnly ? _sessionId.ToString("D") : ""));
+                if (priorSessionUserTurnsOnly)
+                    query.Parameters.AddWithValue("$priorSessionCurrent", _sessionId.ToString("D"));
                 if (lexical) query.Parameters.AddWithValue("$match", BuildFtsQuery(request.Query));
                 using var reader = query.ExecuteReader();
                 while (reader.Read())
@@ -1275,7 +1288,8 @@ public sealed class NIRAConversationArchiveStore
                 if (Convert.ToInt64(count.ExecuteScalar(), CultureInfo.InvariantCulture) <= 1)
                 {
                     Debug.WriteLine("[ConversationArchive] SESSION_SCOPE_RECOVERY | Empty fresh session; searching earlier sessions.");
-                    return Search(request with { CurrentSessionOnly = false }, excludeSourceEventId);
+                    return Search(request with { CurrentSessionOnly = false }, excludeSourceEventId,
+                        priorSessionUserTurnsOnly);
                 }
             }
             return ranked;

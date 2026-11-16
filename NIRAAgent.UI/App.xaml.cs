@@ -32,7 +32,7 @@ using NIRAAgent.Self.Model;
 using NIRAAgent.Settings;
 using NIRAAgent.UI.Companion;
 using NIRAAgent.UI.ViewModels;
-using NIRAAgent.UI.V2;
+using NIRAAgent.UI.AgentRuntime;
 using NIRAAgent.UI.Theming;
 using NIRAAgent.Voice;
 using NIRAAgent.Vision;
@@ -801,8 +801,6 @@ public partial class App : WpfApplication
             // MAIN COGNITION
             // =================================================
 
-            builder.Services.AddSingleton<
-                NIRACognitionService>();
 
 
             builder.Services.AddSingleton<
@@ -812,8 +810,6 @@ public partial class App : WpfApplication
                 NIRATaskCompletionReviewService>();
 
 
-            builder.Services.AddSingleton<
-                NIRACognitionContextBuilder>();
 
 
             // =================================================
@@ -883,12 +879,12 @@ public partial class App : WpfApplication
                 NIRAMindActivityTracker>();
 
 
-            builder.Services.AddSingleton<
-                NIRAExecutive>();
 
 
-            // Explicit, read-only V2 migration canary. Normal NIRA stays authoritative.
-            builder.Services.AddSingleton<INIRAGeneralRuntimeBridge, NIRAWpfV2CanaryBridge>();
+            // One host-owned agent runtime bridge; original personal-state services remain authoritative.
+            builder.Services.AddSingleton<INIRAAgentExecutionHost, NIRAWpfAgentHost>();
+
+            builder.Services.AddSingleton<NIRACompletedExperienceService>();
 
             builder.Services.AddSingleton<
                 NIRAMindRuntime>();
