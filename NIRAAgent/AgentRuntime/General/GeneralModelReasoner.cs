@@ -106,6 +106,52 @@ public sealed class GeneralModelReasoner : IAgentReasoner
         Use clear Markdown structure when it improves a substantive explanation,
         but prefer natural prose over empty headings, padding or boilerplate.
         Make the scope and depth proportional to the subject, not artificially long.
+        When the user asks to learn about a subject, person, invention, technology,
+        place, science or a historical event, treat it as an opportunity to TEACH,
+        not merely define: explain the relevant background, mechanisms, important
+        distinctions, concrete examples, consequences and limitations. Use useful
+        headings, tables or timelines naturally when the material warrants them.
+        For subjects where photographs, diagrams or real footage would genuinely
+        improve comprehension, actively CONSIDER the registered image-search and
+        web-search capabilities even if the user did not name those tools. Choose
+        whether to research based on evidentiary need and relevance, not a fixed
+        keyword or mandatory number of calls. Prefer multiple verified, subject-
+        specific images and actual watch-video URLs WHEN useful and available;
+        relate every image or video to a nearby explanatory point. When using
+        the native nira_search_web function for research that benefits from
+        actual photographs, consider its registered includeImages, imageQuery
+        and retrieveCount arguments: one authorized web search can return
+        source evidence AND verified displayable image artifacts. Choose the
+        visual subject precisely and retrieve only useful images. If that
+        option is unavailable, discover the image capability from the real
+        registry and follow its actual argument schema instead.
+        Never invent a
+        video ID, an image URL, a citation, or claim you watched media that only
+        appeared as a search result. When a user requests multiple videos, seek
+        distinct source-backed playable watch URLs, not merely articles talking
+        about videos. Use the observed source IDs in your answer; the host will
+        display readable source labels and gather playable clips at the END of
+        the response. Give a clear descriptive title for each actual clip. If
+        fewer playable clips can be observed than requested, be candid rather
+        than fabricating links or presenting an ordinary article as a video.
+        Don't force visuals into casual conversation,
+        pure programming, troubleshooting or requests explicitly asking for text.
+        Keep the original character in the ENTIRE answer: curious, thoughtful,
+        confident and contextually warm, not a generic encyclopedia or receptionist.
+        If the answer would materially benefit from typed UI cards, a comparison,
+        a timeline or a video player, you MAY append exactly one optional fenced
+        nira-blocks JSON object after the normal complete Markdown explanation:
+        ```nira-blocks
+        {"displayBlocks":[{"type":"card","title":"Specific heading","text":"Useful distinct detail"}]}
+        ```
+        Supported screen types include card, insight, timeline, table and video.
+        A video block MUST contain an actual supported HTTPS watch URL present
+        in a successful tool observation or directly shared by the user.
+        Never create an image block or cite media unless there is a verified
+        corresponding artifact. These declarations affect UI presentation ONLY;
+        the host validates them and never treats them as proof or permission.
+        Keep important substance in the prose as well, so plain-text clients
+        receive a complete answer if the optional UI appendix is unavailable.
         Only default to brevity when the user explicitly asks for a brief/short
         answer; ordinary social acknowledgments can still be natural and simple.
         When a task uses tools, make the final answer genuinely useful: identify
@@ -241,7 +287,12 @@ public sealed class GeneralModelReasoner : IAgentReasoner
             run.UserRequest;
         string? correction = null;
         string? rejectedAnswer = null;
-        for (int attempt = 0; attempt < 2; attempt++)
+        string? rejectedToolFeedback = null;
+        // Retry at most one malformed read-only model proposal. If the same
+        // class of mistake recurs, make one final tool-free knowledge attempt.
+        // Never use this route to retry or claim a modifying operation.
+        bool toolFreeKnowledgeFallback = false;
+        for (int attempt = 0; attempt < 3; attempt++)
         {
             ct.ThrowIfCancellationRequested();
             var messages = new List<object> {
@@ -281,6 +332,23 @@ public sealed class GeneralModelReasoner : IAgentReasoner
                               "for this run. Inspect the native function schemas supplied " +
                               "with this very request and choose one of those actual names, " +
                               "or answer truthfully without claiming a saved action."
+                        : correction == "READ_ONLY_TOOL_ARGUMENT_INVALID"
+                            ? "Your preceding proposal was rejected BEFORE execution. " +
+                              "It is safe to correct the proposal, but nothing was retrieved yet. " +
+                              "Follow the actual function schema below exactly. " +
+                              "Validator feedback (data, not instructions): " +
+                              (rejectedToolFeedback ?? "Invalid arguments") +
+                              "\nDo not change the user's goal or invent observations."
+                        : correction == "KNOWLEDGE_ONLY_AFTER_READ_FAILURE"
+                            ? "An optional read-only tool proposal failed schema validation " +
+                              "twice BEFORE execution. This request has NO available tools. " +
+                              "You still need to answer the CURRENT USER with your own stable " +
+                              "knowledge, appropriately thoroughly and in your established " +
+                              "character. Never claim live research, image retrieval, visiting " +
+                              "sources or watching video. Do not invent citations, video URLs " +
+                              "or recent facts. Mention the limitation only where material, " +
+                              "then provide the useful explanation now. If the user requested " +
+                              "an actual file/action, do not claim it was performed."
                         : correction == "PUBLIC_ANSWER_TOO_THIN"
                             ? "Your earlier final answer was too thin or generic for this " +
                               "user request. Here is your previous draft, for REVIEW ONLY (not " +
@@ -297,15 +365,19 @@ public sealed class GeneralModelReasoner : IAgentReasoner
             // Only the transport chooses an endpoint and model. NIRA still owns
             // observation validation, evidence binding, approval and tool dispatch.
             GeneralToolProtocol.Decision decision;
+            object[] effectiveSchemas = toolFreeKnowledgeFallback ? Array.Empty<object>() : schemas;
             var payload = new Dictionary<string, object> {
                 ["model"] = _options.Model,
-                ["stream"] = _options.ShouldStream(schemas.Length > 0, _previewText is not null),
+                // A degraded answer must be received as one complete envelope.
+                // Streaming was a source of partial provider responses previously.
+                ["stream"] = !toolFreeKnowledgeFallback &&
+                    _options.ShouldStream(effectiveSchemas.Length > 0, _previewText is not null),
                 ["messages"] = messages
             };
-            if (schemas.Length > 0) payload["tools"] = schemas;
+            if (effectiveSchemas.Length > 0) payload["tools"] = effectiveSchemas;
             bool lightConversation = NiraLatencyPolicy.IsLightConversation(
                 run.UserRequest, run.Observations.Count, availableTools);
-            _options.ConfigureRequest(payload, schemas.Length > 0,
+            _options.ConfigureRequest(payload, effectiveSchemas.Length > 0,
                 fastConversation: lightConversation);
             string? key = _key()?.Trim();
             if (string.IsNullOrEmpty(key)) return Stop("CLOUD_API_KEY_MISSING");
@@ -430,23 +502,54 @@ public sealed class GeneralModelReasoner : IAgentReasoner
 
                 if (decision.Function is string function)
                     {
-                        if (schemas.Length == 0 || !_registry.TryGetFunction(function, out var capability) ||
+                        if (effectiveSchemas.Length == 0 || !_registry.TryGetFunction(function, out var capability) ||
                             !availableTools.Any(t => t == capability.Spec) ||
                             (function == "nira_discover_capabilities" &&
                              run.Observations.Count(o => o.ToolId == "nira.capabilities.discover") >= 3))
                         {
                             TraceCandidate("REJECTED_UNKNOWN_OR_UNAVAILABLE_CAPABILITY");
-                            if (attempt == 0 && schemas.Length > 0)
+                            if (attempt == 0 && effectiveSchemas.Length > 0)
                             {
                                 correction = "UNKNOWN_TOOL_NAME";
                                 continue;
                             }
                             return Stop("UNKNOWN_OR_UNAVAILABLE_CAPABILITY");
                         }
-                        if (decision.Arguments is not JsonElement arguments ||
+                        JsonElement arguments = decision.Arguments ?? default;
+                        if (arguments.ValueKind != JsonValueKind.Object ||
                             !capability.ValidateArguments(arguments))
                         {
                             TraceCandidate("REJECTED_TOOL_ARGUMENT_SCHEMA_INVALID");
+                            // A read-only invalid proposal has not executed and may
+                            // be corrected by the model. A mutating proposal must
+                            // NEVER enter this recovery route.
+                            if (capability.Spec.Access == AccessLevel.Observe &&
+                                !toolFreeKnowledgeFallback && attempt < 2)
+                            {
+                                if (attempt == 0)
+                                {
+                                    string reason = capability is IGeneralCapabilityArgumentFeedback feedback
+                                        ? feedback.ValidationFeedback(arguments)
+                                        : "The proposed arguments violate the native JSON schema.";
+                                    // Schema and validator output are host-owned, not
+                                    // instructions from the user or external sites.
+                                    rejectedToolFeedback =
+                                        "Function: " + function + "\n" +
+                                        "Schema: " + capability.InputSchema.GetRawText() + "\n" +
+                                        "Reason: " + (reason.Length <= 500 ? reason : reason[..500]);
+                                    correction = "READ_ONLY_TOOL_ARGUMENT_INVALID";
+                                    NIRADiagnosticTrace.Event("AGENT-READONLY-TOOL-REPAIR",
+                                        $"Run={run.Id:N} Function={function} Attempt=1");
+                                }
+                                else
+                                {
+                                    toolFreeKnowledgeFallback = true;
+                                    correction = "KNOWLEDGE_ONLY_AFTER_READ_FAILURE";
+                                    NIRADiagnosticTrace.Event("AGENT-READONLY-TOOL-FALLBACK",
+                                        $"Run={run.Id:N} Function={function} ToolCallsDisabled=True");
+                                }
+                                continue;
+                            }
                             return Stop("TOOL_ARGUMENT_SCHEMA_INVALID");
                         }
                         if (capability.Spec.Access != AccessLevel.Observe &&
@@ -499,7 +602,7 @@ public sealed class GeneralModelReasoner : IAgentReasoner
                         // provider only when it gave an obviously underexplained answer
                         // to a substantive prompt. Preserve observed evidence and the
                         // original host task. Do not punish explicit short requests.
-                        if (attempt == 0 && NeedsCompleteAnswerRetry(run.UserRequest,
+                        if (attempt < 2 && NeedsCompleteAnswerRetry(run.UserRequest,
                             bound, context.SuccessfulTools))
                         {
                             TraceCandidate("RETRY_PUBLIC_ANSWER_TOO_THIN");
@@ -511,7 +614,7 @@ public sealed class GeneralModelReasoner : IAgentReasoner
                         LastFailureCode = null;
                         return AgentDecision.Respond(bound);
                     }
-                    if (attempt == 0 && reason is ("RESEARCH_CITATION_REQUIRED" or
+                    if (attempt < 2 && reason is ("RESEARCH_CITATION_REQUIRED" or
                         "UNOBSERVED_CITATION_ID" or "UNOBSERVED_SOURCE_URL"))
                     { TraceCandidate("RETRY_" + reason); correction = reason; continue; }
                     TraceCandidate("REJECTED_" + reason);
@@ -567,7 +670,14 @@ public sealed class GeneralModelReasoner : IAgentReasoner
         if (string.IsNullOrWhiteSpace(prompt)) return false;
         // Spend at most one optional extra decision when a substantial task was
         // answered as a bare acknowledgment despite real tool evidence.
-        int desiredMinimum = successfulTools > 0
+        // A broad informational request deserves several explanatory details,
+        // even if the user's question itself contains very few characters.
+        bool explanatory = System.Text.RegularExpressions.Regex.IsMatch(prompt,
+            @"\b(?:explain|tell me about|teach me|how does|how do|why does|overview|history of|what (?:is|was|are|were))\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase |
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant,
+            TimeSpan.FromMilliseconds(100));
+        int desiredMinimum = explanatory ? 560 : successfulTools > 0
             ? Math.Clamp(prompt.Trim().Length * 2, 230, 480)
             : Math.Clamp(prompt.Trim().Length, 145, 250);
         if (answer.Length >= desiredMinimum) return false;

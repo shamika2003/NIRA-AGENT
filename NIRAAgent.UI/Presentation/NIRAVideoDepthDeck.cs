@@ -209,7 +209,7 @@ public sealed class NIRAVideoDepthDeck
             if (_items.Count == 0) return;
             if (_items.Count == 1)
             {
-                var single = NIRAVideoPlayer.Render(_items[0].Block, preloadYouTubePreview: true);
+                var single = NIRAVideoPlayer.Render(_items[0].Block, preloadYouTubePreview: false);
                 single.HorizontalAlignment = HorizontalAlignment.Center;
                 _host.Children.Add(single);
                 return;
@@ -443,7 +443,7 @@ public sealed class NIRAVideoDepthDeck
             Text = sourceBlock.Text
         };
         var active = NIRAVideoPlayer.Render(playerBlock,
-            preloadYouTubePreview: true,
+            preloadYouTubePreview: false,
             relatedYouTubeIds: _items.Where(entry => entry.Reference.Provider == "YouTube")
                 .Select(entry => entry.Reference.VideoId).ToArray());
         // Keep player logic, controls, and fullscreen ownership unchanged.

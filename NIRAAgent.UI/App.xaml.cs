@@ -24,6 +24,7 @@ using NIRAAgent.Goals;
 using NIRAAgent.Branches;
 using NIRAAgent.Browser;
 using NIRAAgent.Mind;
+using NIRAAgent.Presentation;
 using NIRAAgent.PC.Awareness;
 using NIRAAgent.Perception;
 using NIRAAgent.Semantic;
@@ -1051,6 +1052,43 @@ public partial class App : WpfApplication
                     _ = nativeRegistry.BuildProviderTools(nativeRegistry.Tools
                         .Select(x => x.Spec).ToArray(), allowWrite: true);
                     int protocolChecks = await NiraProtocolSelfCheck.RunAsync();
+                    int richChecks = NIRAUnifiedRichAnswerComposer.RunSelfCheck();
+                    if (richChecks != 3) throw new InvalidOperationException("Rich presenter checks incomplete.");
+                    // Validate the ACTUAL native web schema against the real
+                    // authoritative preflight, not a test-only mock handler.
+                    var searchTool = nativeTools.OfType<
+                        NIRAAuthoritativeCapabilityTools.BoundObservation>()
+                        .Single(x => x.FunctionName == "nira_search_web");
+                    var imageCountSchema = searchTool.InputSchema.GetProperty("properties")
+                        .GetProperty("retrieveCount");
+                    if (!imageCountSchema.TryGetProperty("minimum", out var imageMin) ||
+                        imageMin.GetInt32() != 1 ||
+                        !imageCountSchema.TryGetProperty("maximum", out var imageMax) ||
+                        imageMax.GetInt32() != 3)
+                        throw new InvalidOperationException("Native search numeric limits not advertised.");
+                    var invalidCount = System.Text.Json.JsonSerializer.SerializeToElement(new {
+                        queries = new[] { "historical inventor overview" },
+                        includeImages = true, imageQuery = "historical inventor",
+                        retrieveCount = 5 });
+                    var missingImageSubject = System.Text.Json.JsonSerializer.SerializeToElement(new {
+                        queries = new[] { "reusable rocket recovery" },
+                        includeImages = true, retrieveCount = 2 });
+                    var validCombinedSearch = System.Text.Json.JsonSerializer.SerializeToElement(new {
+                        queries = new[] { "reusable rocket recovery" },
+                        includeImages = true, imageQuery = "rocket recovery photograph",
+                        retrieveCount = 2 });
+                    if (searchTool.ValidateArguments(invalidCount) ||
+                        searchTool.ValidateArguments(missingImageSubject) ||
+                        !searchTool.ValidateArguments(validCombinedSearch))
+                        throw new InvalidOperationException(
+                            "Native read-only search contract validation disagrees with descriptor.");
+                    int readOnlySchemaChecks = 4;
+                    if (!NIRAVideoReferencePolicy.TryParse(
+                            "https://www.youtube.com/watch?v=dQw4w9WgXcQ", out var videoCheck) ||
+                        videoCheck?.Provider != "YouTube" ||
+                        NIRAVideoReferencePolicy.TryParse("https://example.com/watch?v=dQw4w9WgXcQ",
+                            out _))
+                        throw new InvalidOperationException("Video URL origin checks incomplete.");
                     if (protocolChecks < 8)
                         throw new InvalidOperationException("Provider protocol self-checks incomplete.");
                     // Exercise the real dynamic registry/query inventory through
@@ -1082,7 +1120,7 @@ public partial class App : WpfApplication
                             status = "PASS", capabilityCount = descriptors.Count,
                             nativeToolCount = nativeRegistry.Count,
                             nativeFunctionsChecked = requiredFunctions.Length,
-                            protocolChecks, discoveryChecks,
+                            protocolChecks, discoveryChecks, richChecks, readOnlySchemaChecks,
                             requiredCapabilities = required.Length,
                             unifiedHost = true, mindOwner = true, memoryReviewOwner = true,
                             hostedServicesStarted = false

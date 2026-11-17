@@ -263,6 +263,17 @@ public static class NIRAVideoPlayer
             catch (Exception ex) { Debug.WriteLine("[NIRA-VIDEO] Copy: " + ex.GetType().Name); }
         };
         actions.Children.Add(copy);
+        // Embedding can be refused by the video provider (including YouTube
+        // error 153), independently of WebView2's successful page navigation.
+        // The original validated provider URL is always available as a reliable
+        // user-initiated playback path; never imply an iframe actually played.
+        var openOriginal = ActionButton("↗  Open video");
+        openOriginal.Padding = new Thickness(8, 5, 8, 5);
+        openOriginal.MinHeight = 28;
+        openOriginal.Margin = new Thickness(0, 0, 6, 0);
+        openOriginal.ToolTip = "Watch this validated video in your default browser";
+        openOriginal.Click += (_, _) => OpenOriginal(video.OriginalUrl);
+        actions.Children.Add(openOriginal);
         root.Children.Add(footer);
 
         // Composition hosting follows WPF clipping/z-order, so videos no
@@ -679,11 +690,35 @@ public static class NIRAVideoPlayer
                 view.CoreWebView2.ProcessFailed += (_, args) =>
                     NIRADiagnosticTrace.Event("VIDEO-PLAYER-PROCESS-FAILED",
                         "Kind=" + args.ProcessFailedKind);
+                string playerPageUrlForMessages = PlayerOrigin +
+                    (video.Provider == "YouTube" ? "yt-" : "vimeo-") + video.VideoId + ".html";
                 view.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
                 view.CoreWebView2.Settings.AreDevToolsEnabled = false;
                 view.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = false;
                 view.CoreWebView2.Settings.IsStatusBarEnabled = false;
                 view.CoreWebView2.Settings.AreHostObjectsAllowed = false;
+                view.CoreWebView2.Settings.IsWebMessageEnabled = true;
+                view.CoreWebView2.WebMessageReceived += (_, evt) =>
+                {
+                    if (browser != view || thisPlayback != playbackVersion ||
+                        !string.Equals(evt.Source, playerPageUrlForMessages,
+                            StringComparison.OrdinalIgnoreCase)) return;
+                    string data;
+                    try { data = evt.TryGetWebMessageAsString(); }
+                    catch (Exception) { return; }
+                    if (data == "nira-video:provider-error")
+                    {
+                        status.Text = "EMBED REFUSED  ·  OPEN VIDEO";
+                        NIRADiagnosticTrace.Event("VIDEO-PLAYER-EMBED",
+                            "Provider=" + video.Provider + " State=ProviderRejected");
+                    }
+                    else if (data == "nira-video:provider-playing")
+                    {
+                        status.Text = "PLAYING  ·  " + video.Provider.ToUpperInvariant();
+                        NIRADiagnosticTrace.Event("VIDEO-PLAYER-EMBED",
+                            "Provider=" + video.Provider + " State=Playing");
+                    }
+                };
                 view.CoreWebView2.Settings.IsZoomControlEnabled = false;
                 // Allow the provider's own "Watch on YouTube" link to fall
                 // back to the original browser, but never open arbitrary popups.
@@ -722,13 +757,13 @@ public static class NIRAVideoPlayer
                             if (browser != view) return;
                             var fade = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(180));
                             playerSurface.BeginAnimation(UIElement.OpacityProperty, fade);
-                            status.Text = "READY  ·  " + video.Provider.ToUpperInvariant();
+                            status.Text = "EMBED PAGE LOADED  ·  " + video.Provider.ToUpperInvariant();
                             miniButton.Visibility = Visibility.Visible;
                         }));
                     }
                     else
                     {
-                        status.Text = "EMBED UNAVAILABLE  ·  OPEN ORIGINAL";
+                        status.Text = "EMBED PAGE FAILED  ·  OPEN VIDEO";
                     }
                     NIRADiagnosticTrace.Event("VIDEO-PLAYER-NAVIGATION",
                         "Provider=" + video.Provider +
@@ -797,11 +832,28 @@ public static class NIRAVideoPlayer
             {
                 Debug.WriteLine("[NIRA-VIDEO] Player initialization: " + ex);
                 NIRADiagnosticTrace.Event("VIDEO-PLAYER-FAILURE",
-                    "Provider=" + video.Provider + " Error=" + ex);
+                    "Provider=" + video.Provider + " Host=" +
+                    (legacyHost ? "Legacy" : "Composition") + " Error=" + ex.GetType().Name);
                 if (thisPlayback == playbackVersion)
                 {
+                    // WebView2 composition is not supported on every desktop/GPU.
+                    // After an explicit user Play click, try the native HWND host
+                    // ONCE if composition initialization fails. Never loop/retry
+                    // the same provider after it returns an embed-policy error.
+                    bool tryLegacy = !legacyHost && card.IsLoaded;
                     Reset();
-                    status.Text = "EMBED UNAVAILABLE  ·  OPEN ORIGINAL";
+                    if (tryLegacy)
+                    {
+                        legacyHost = true;
+                        status.Text = "RETRYING COMPATIBLE PLAYER";
+                        card.Dispatcher.BeginInvoke(DispatcherPriority.Normal,
+                            new Action(() =>
+                            {
+                                if (card.IsLoaded && play.IsEnabled)
+                                    play.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, play));
+                            }));
+                    }
+                    else status.Text = "EMBED FAILED  ·  OPEN VIDEO";
                 }
             }
         };
@@ -830,7 +882,7 @@ public static class NIRAVideoPlayer
         // Official standard YouTube iframe URL is used for compatibility; the
         // existing video/source parser is unchanged. Vimeo keeps its URL.
         string frameUrl = video.Provider == "YouTube"
-            ? $"https://www.youtube.com/embed/{video.VideoId}?rel=0&playsinline=1&fs=1&modestbranding=1"
+            ? $"https://www.youtube.com/embed/{video.VideoId}?rel=0&playsinline=1&fs=1&enablejsapi=1&origin=https%3A%2F%2Fnira-video.example"
             : video.EmbedUrl;
         string allowedFrameHost = video.Provider == "YouTube"
             ? "https://www.youtube.com" : "https://player.vimeo.com";
@@ -854,7 +906,7 @@ public static class NIRAVideoPlayer
               <meta name="viewport" content="width=device-width, initial-scale=1">
               <meta name="referrer" content="strict-origin-when-cross-origin">
               <meta http-equiv="Content-Security-Policy"
-                    content="default-src 'none'; style-src 'unsafe-inline'; frame-src {{allowedFrameHost}}; img-src https://i.ytimg.com https://img.youtube.com; base-uri 'none'; form-action 'none'">
+                    content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-src {{allowedFrameHost}}; img-src https://i.ytimg.com https://img.youtube.com; base-uri 'none'; form-action 'none'">
               <title>NIRA video</title>
               <style>
                 html,body { margin:0; width:100%; height:100%; overflow:hidden; background:#08142a; }
@@ -868,6 +920,27 @@ public static class NIRAVideoPlayer
                       referrerpolicy="strict-origin-when-cross-origin"
                       allow="fullscreen; accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture; web-share"
                       allowfullscreen></iframe>
+              <script>
+                // An embedded provider can fail after this local wrapper loads.
+                // Only provider-origin events can update playback status. The
+                // host executes NO commands based on these messages.
+                window.addEventListener('message', event => {
+                  if (event.origin !== '{{allowedFrameHost}}' &&
+                      event.origin !== 'https://www.youtube-nocookie.com') return;
+                  let payload = event.data;
+                  if (typeof payload === 'string') {
+                    try { payload = JSON.parse(payload); } catch { return; }
+                  }
+                  if (!payload || typeof payload !== 'object') return;
+                  if (payload.event === 'onError' || payload.event === 'error')
+                    window.chrome?.webview?.postMessage('nira-video:provider-error');
+                  else if (payload.event === 'onStateChange' &&
+                           (payload.info === 1 || payload.info === 'playing'))
+                    window.chrome?.webview?.postMessage('nira-video:provider-playing');
+                  else if (payload.event === 'play' || payload.event === 'playing')
+                    window.chrome?.webview?.postMessage('nira-video:provider-playing');
+                });
+              </script>
             </body>
             </html>
             """;

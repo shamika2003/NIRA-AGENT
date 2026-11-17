@@ -79,7 +79,7 @@ public sealed class NIRAWebSearchCapabilityHandler : INIRACapabilityHandler, IDi
                 }),
             Param("country", "string", false, "Optional 2-letter search-region code (default US); not the user's location."),
             Param("useCache", "boolean", false, "Use a short memory-only evidence cache (default true). Set false for explicit refresh."),
-            Param("includeImages", "boolean", false, "When both visual and text evidence are useful, use ONE Tavily request for text plus image candidates; default false."),
+            Param("includeImages", "boolean", false, "When true, imageQuery is REQUIRED and retrieveCount must obey its declared maximum. Uses ONE Tavily request for both text and image candidates; default false."),
             Param("imageQuery", "string", false, "Specific subject for ranking images from this SAME Tavily research response (max 160). Not another network query."),
             Param("retrieveCount", "integer", false, "Images to verify and show from the shared response.",
                 defaultValue: "1", min: 1, max: 3),

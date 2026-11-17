@@ -6,6 +6,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.RegularExpressions;
 
 using NIRAAgent.Artifacts;
 using NIRAAgent.Presentation;
@@ -190,6 +191,9 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
 
             _content =
                 value;
+            // One media deck per reply, regardless of whether the evidence
+            // arrived as prose URLs or typed video blocks.
+            SyncVideoDeckFromProse();
             if (VisualArtifacts.Count > 0) RefreshRichPhotoPlacement();
 
             OnPropertyChanged();
@@ -308,6 +312,79 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         new(StringComparer.OrdinalIgnoreCase);
     // Persists across structured rich-block batches for the SAME reply.
     private NIRAVideoDepthDeck? _videoDepthDeck;
+
+    // Use the same strict HTTPS/provider/ID policy as typed video blocks.
+    // A public response can contain ordinary Markdown references and native
+    // video blocks in separate batches. They must share ONE player/deck.
+    // The earlier independent prose renderer kept creating a single player,
+    // even when more suitable clips were present elsewhere in the reply.
+    private static readonly Regex AnswerVideoUrls = new(
+        @"https://[^\s<>\]\)""']+",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    private void AddToVideoDeck(NIRARichBlock block, NIRAVideoReference reference)
+    {
+        if (!_renderedRichVideoKeys.Add(reference.Key)) return;
+        _videoDepthDeck ??= new NIRAVideoDepthDeck();
+        if (_videoDepthDeck.TryAdd(block)) KeepVideoDeckLast();
+    }
+
+    private void KeepVideoDeckLast()
+    {
+        if (_videoDepthDeck is not { Count: > 0 }) return;
+        FrameworkElement view = _videoDepthDeck.View;
+        int existing = RichElements.IndexOf(view);
+        if (existing == RichElements.Count - 1) return;
+        if (existing >= 0) RichElements.RemoveAt(existing);
+        RichElements.Add(view);
+    }
+
+    private void SyncVideoDeckFromProse()
+    {
+        if (!IsAssistant || string.IsNullOrWhiteSpace(_content)) return;
+        // Avoid excessive scanning on large reports and prevent unbounded
+        // embedded media surfaces. The deck can still receive typed blocks.
+        string answer = _content.Length > 50000 ? _content[..50000] : _content;
+        var keys = new HashSet<string>(
+            EmbeddedVideoKeys.Split('|', StringSplitOptions.RemoveEmptyEntries),
+            StringComparer.OrdinalIgnoreCase);
+        int processed = 0;
+        foreach (Match match in AnswerVideoUrls.Matches(answer))
+        {
+            string url = match.Value.TrimEnd('.', ',', ';', ':', '!', '?', '*');
+            if (!NIRAVideoReferencePolicy.TryParse(url, out var video) || video is null)
+                continue;
+            if (!keys.Add(video.Key)) continue;
+
+            string title = "Watch " + video.Provider + " video";
+            // [Actual descriptive label](https://...) is a display label;
+            // content/identity is never inferred from it or from a thumbnail.
+            int labelEnd = match.Index - 2;
+            if (labelEnd >= 0 && answer.Substring(labelEnd, 2) == "](")
+            {
+                int labelStart = answer.LastIndexOf('[', labelEnd);
+                if (labelStart >= 0 && labelEnd - labelStart is > 1 and < 125)
+                {
+                    string candidate = answer[(labelStart + 1)..labelEnd]
+                        .Trim('*', '_', ' ', '\t');
+                    if (candidate.Length is > 0 and <= 110) title = candidate;
+                }
+            }
+            AddToVideoDeck(new NIRARichBlock
+            {
+                Type = "video", Title = title, Text = video.OriginalUrl
+            }, video);
+            if (++processed >= 8) break;
+        }
+        string updated = string.Join("|", keys.OrderBy(k => k,
+            StringComparer.OrdinalIgnoreCase));
+        if (updated != EmbeddedVideoKeys)
+        {
+            EmbeddedVideoKeys = updated;
+            OnPropertyChanged(nameof(EmbeddedVideoKeys));
+        }
+    }
+
     public ObservableCollection<FrameworkElement> RichElements { get; } = new();
     private readonly List<(FrameworkElement View, NIRARichBlock Block)> _photoCreditFrames = new();
     // Real rich-block views provide grounded target sections for verified photos.
@@ -583,10 +660,7 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
                     NIRAVideoReferencePolicy.TryParse(block.Text, out var richVideo) &&
                     richVideo != null)
                 {
-                    if (!_renderedRichVideoKeys.Add(richVideo.Key)) continue;
-                    _videoDepthDeck ??= new NIRAVideoDepthDeck();
-                    if (_videoDepthDeck.TryAdd(block) && _videoDepthDeck.Count == 1)
-                        RichElements.Add(_videoDepthDeck.View);
+                    AddToVideoDeck(block, richVideo);
                     continue;
                 }
                 FrameworkElement rendered = NIRARichBlockRenderer.Render(block, saved, persist, followUp);
@@ -597,6 +671,7 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
             }
         }
         RefreshRichPhotoPlacement();
+        KeepVideoDeckLast();
     }
 
     public bool IsUser =>
@@ -676,6 +751,7 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
                 OnPropertyChanged(
                     nameof(IsEmpty));
             };
+        SyncVideoDeckFromProse();
     }
 
 

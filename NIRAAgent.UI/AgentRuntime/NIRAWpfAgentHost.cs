@@ -15,6 +15,7 @@ using NIRAAgent.Diagnostics;
 using NIRAAgent.Goals;
 using NIRAAgent.Memory.LongTerm;
 using NIRAAgent.Mind;
+using NIRAAgent.Presentation;
 using NIRAAgent.Runtime.Contracts;
 using NIRAAgent.Runtime.General;
 using NIRAAgent.Runtime.HostAdapters;
@@ -230,18 +231,39 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
             {
                 Finish(writer, mindEvent.Source,
                     "An earlier action has an uncertain outcome. I stopped instead of replaying it. " +
-                    "Inspect the saved action and audit before resuming (NEEDS_RECONCILIATION).");
+                    "Inspect the saved action and audit before resuming.");
                 return;
             }
             if (run.Status == AgentRunStatus.Completed &&
                 !string.IsNullOrWhiteSpace(run.FinalAnswer))
             {
                 string? receipt = await VerifiedSelfGoalReceiptAsync(selfGoalTool, run, vault, ct);
-                string content = run.FinalAnswer + (receipt ?? "");
+                // The same model may provide an optional declarative screen appendix.
+                // Parsing is presentation-only: it NEVER creates tool authority, sources,
+                // or image artifacts; links are checked against observed receipts.
+                var evidenceTexts = new List<string>();
+                foreach (AgentObservation observation in run.Observations)
+                {
+                    if (!observation.Succeeded || string.IsNullOrWhiteSpace(observation.ResultReference))
+                        continue;
+                    try
+                    {
+                        JsonElement result = await vault.ReadResultAsync(run.Id,
+                            observation.ToolId, observation.ResultReference, ct);
+                        if (result.ValueKind == JsonValueKind.Object &&
+                            evidenceTexts.Sum(s => s.Length) < 100_000)
+                            evidenceTexts.Add(result.GetRawText());
+                    }
+                    catch (Exception ex) when (ex is IOException or InvalidDataException or
+                        UnauthorizedAccessException or JsonException) { }
+                }
+                NIRAUnifiedRichAnswer prepared = NIRAUnifiedRichAnswerComposer.Compose(
+                    run.FinalAnswer, request, evidenceTexts);
+                string content = prepared.Screen + (receipt ?? "");
                 writer.TryWrite(new NIRAOutputChunk {
                     RunId = run.Id, Source = mindEvent.Source, Type = NIRAOutputChunkType.Text,
-                    Content = content,
-                    SpeechContent = run.FinalAnswer + (receipt is null ? "" :
+                    Content = content, DisplayBlocks = prepared.Blocks,
+                    SpeechContent = prepared.Screen + (receipt is null ? "" :
                         " The saved work plan was verified.") });
                 await EmitVerifiedVisualsAsync(run, vault, writer, mindEvent.Source, ct);
                 bool disposableMath = await IsVerifiedDisposableMathAsync(mindEvent, run, vault, ct);
@@ -263,13 +285,12 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
                     "The action was not authorized. I did not dispatch it.");
             else if (run.LastErrorCode?.StartsWith("MODEL_PROTOCOL_", StringComparison.Ordinal) == true)
                 Finish(writer, mindEvent.Source,
-                    "The model service returned an invalid or incomplete response, so I couldn't " +
-                    "finish the task. Earlier tool receipts remain recorded; I won't claim " +
-                    "any unverified work was completed. Diagnostic: " + SafeCode(run.LastErrorCode));
+                    "I ran into a problem getting a reliable response. I won't pretend " +
+                    "I verified information or completed actions that I couldn't confirm.");
             else
                 Finish(writer, mindEvent.Source,
-                    "I could not verify completion of this task (" + SafeCode(run.LastErrorCode) +
-                    "). I will not claim actions were performed without tool evidence.");
+                    "I couldn't finish this request properly. I won't claim that I researched " +
+                    "something or changed anything without confirmation.");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

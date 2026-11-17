@@ -126,8 +126,10 @@ public static class NIRAChatDocument
         void AddVideo(NIRARichBlock videoBlock)
         {
             videoDeck ??= new NIRAVideoDepthDeck();
-            if (videoDeck.TryAdd(videoBlock) && videoDeck.Count == 1)
-                root.Children.Add(videoDeck.View);
+            // Queue players while parsing; prose and inline photos stay
+            // in their editorial positions. The deck is placed only after
+            // the final explanatory paragraph, never between sections.
+            videoDeck.TryAdd(videoBlock);
         }
         if (string.IsNullOrWhiteSpace(source)) return;
 
@@ -455,6 +457,8 @@ public static class NIRAChatDocument
                 Type = "video", Title = item.Title, Text = item.Video.OriginalUrl
             });
         }
+        if (videoDeck is { Count: > 0 })
+            root.Children.Add(videoDeck.View);
     }
 
     private static Border MakeReferenceRow(NIRAResourceLinkPresentation resource)

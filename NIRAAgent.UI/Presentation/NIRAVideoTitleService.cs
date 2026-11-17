@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -31,7 +32,11 @@ public static class NIRAVideoTitleService
     public static bool IsPlaceholder(string? value)
     {
         var text = (value ?? "").Trim().Trim('[', ']');
-        return text.Length == 0 || text.Equals("Source", StringComparison.OrdinalIgnoreCase) ||
+        return text.Length == 0 ||
+               // S1/S2 are internal research indices, never actual video titles.
+               Regex.IsMatch(text, @"^(?:S[1-9]\d*|Source\s+S[1-9]\d*)$",
+                   RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) ||
+               text.Equals("Source", StringComparison.OrdinalIgnoreCase) ||
                text.Equals("Video", StringComparison.OrdinalIgnoreCase) ||
                text.Equals("Video reference", StringComparison.OrdinalIgnoreCase) ||
                text.Equals("Watch YouTube video", StringComparison.OrdinalIgnoreCase) ||

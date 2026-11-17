@@ -76,7 +76,7 @@ public static class NIRAAuthoritativeCapabilityTools
     /// Execution is delegated to the SAME audited observation adapter; its
     /// provider-visible function name is never trusted as authority.
     /// </summary>
-    public sealed class BoundObservation : IGeneralCapability
+    public sealed class BoundObservation : IGeneralCapability, IGeneralCapabilityArgumentFeedback
     {
         private readonly AgentPayloadVault _vault;
         private readonly NIRACapabilityService _service;
@@ -112,6 +112,13 @@ public static class NIRAAuthoritativeCapabilityTools
                     ["type"] = type, ["description"] = description
                 };
                 if (type == "array") schema["items"] = new { type = "string" };
+                // Mirror authoritative numeric ranges into provider-native JSON Schema.
+                // These remain guidance: the original NIRACapabilityService is the
+                // sole enforcing validator and still rejects bad values before I/O.
+                if (param.Minimum.HasValue && type == "integer")
+                    schema["minimum"] = param.Minimum.Value;
+                if (param.Maximum.HasValue && type == "integer")
+                    schema["maximum"] = param.Maximum.Value;
                 if (type == "object") schema["additionalProperties"] = true;
                 if (param.AllowedValues.Count > 0 && type == "string")
                     schema["enum"] = param.AllowedValues.ToArray();
@@ -128,19 +135,37 @@ public static class NIRAAuthoritativeCapabilityTools
         public string FunctionName { get; }
         public JsonElement InputSchema { get; }
 
-        public bool ValidateArguments(JsonElement args)
+        public bool ValidateArguments(JsonElement args) =>
+            TryValidateReadOnlyArguments(args, out _);
+
+        // A malformed read-only proposal is a model reasoning mistake, not a
+        // machine action. Expose trusted descriptor feedback so the same model
+        // can correct it safely without relaxing the authoritative validator.
+        public string ValidationFeedback(JsonElement args) =>
+            TryValidateReadOnlyArguments(args, out string error) ? "" : error;
+
+        private bool TryValidateReadOnlyArguments(JsonElement args, out string error)
         {
+            error = "The arguments are not a JSON object or exceed the size limit.";
             if (args.ValueKind != JsonValueKind.Object || args.GetRawText().Length > 16000)
                 return false;
             NIRACapabilityRequest raw = new() {
                 CapabilityId = _descriptor.Id, Arguments = args.Clone(),
                 Reason = "Model-selected, host-registered read-only operation"
             };
-            if (!_service.TryNormalizeAndValidateSchema(raw, out var normalized, out _))
+            if (!_service.TryNormalizeAndValidateSchema(raw, out var normalized, out error))
                 return false;
-            try { return _handler.ResolveRisk(normalized) == NIRACapabilityRisk.Observe; }
+            try
+            {
+                if (_handler.ResolveRisk(normalized) != NIRACapabilityRisk.Observe)
+                {
+                    error = "This call is not a purely observational operation.";
+                    return false;
+                }
+                return true;
+            }
             catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
-            { return false; }
+            { error = "Operation risk could not be validated."; return false; }
         }
 
         public async Task<AgentToolReceipt> ExecuteAsync(string reference, CancellationToken ct)

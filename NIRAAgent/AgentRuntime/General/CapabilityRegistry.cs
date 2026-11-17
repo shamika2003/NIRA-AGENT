@@ -17,6 +17,13 @@ public interface IGeneralCapability : IAgentTool
     bool ValidateArguments(JsonElement arguments);
 }
 
+/// <summary>Optional read-only diagnostics for a rejected function proposal.
+/// This never normalizes, executes, authorizes or alters model arguments.</summary>
+public interface IGeneralCapabilityArgumentFeedback
+{
+    string ValidationFeedback(JsonElement arguments);
+}
+
 public sealed class CapabilityRegistry
 {
     private static readonly Regex FunctionPattern = new("^[a-z][a-z0-9_]{0,63}$",
