@@ -1055,6 +1055,17 @@ public partial class App : WpfApplication
                     int richChecks = NIRAUnifiedRichAnswerComposer.RunSelfCheck();
                     if (richChecks != 3) throw new InvalidOperationException("Rich presenter checks incomplete.");
                     int activityChecks = NIRAAgent.UI.Presentation.NIRAActivityPresentationPolicy.RunSelfCheck();
+                    int publicThinkingChecks = NiraPublicThinkingNote.RunSelfCheck();
+                    int streamingDraftChecks = NiraSafeStreamDraft.RunSelfCheck();
+                    if (streamingDraftChecks != 3 ||
+                        !NiraModelEndpointOptions.Ollama("gemma4:31b").ShouldStream(
+                            hasNativeTools: true, previewRequested: true) ||
+                        NiraModelEndpointOptions.Ollama("gemma4:31b").ShouldStream(
+                            hasNativeTools: true, previewRequested: false))
+                        throw new InvalidOperationException("Streaming transport safety checks incomplete.");
+                    int sourceLinkRecoveryChecks = GeneralModelReasoner.RunGroundingRecoverySelfCheck();
+                    if (sourceLinkRecoveryChecks != 4)
+                        throw new InvalidOperationException("Grounded source-link recovery tests incomplete.");
                     var activityPreview = new ChatMessageViewModel("assistant", string.Empty);
                     activityPreview.BeginJourney();
                     activityPreview.AddAgentActivity("REASONING_STARTED", "", DateTimeOffset.UtcNow);
@@ -1067,6 +1078,22 @@ public partial class App : WpfApplication
                         activityPreview.ActivityEntries[1].Detail != "Result received" ||
                         !activityPreview.ActivityHeader.StartsWith("Worked for", StringComparison.Ordinal))
                         throw new InvalidOperationException("Activity panel lifecycle verification failed.");
+                    activityChecks++;
+                    if (activityPreview.HasPublicThinking)
+                        throw new InvalidOperationException("Tool events were presented as NIRA's own thinking.");
+                    activityPreview.BeginJourney();
+                    activityPreview.AddAgentActivity("REASONING_STARTED", "", DateTimeOffset.UtcNow);
+                    activityPreview.AddPublicThinkingNote(
+                        "I want to check what really distinguishes a booster landing from a tower catch.");
+                    activityPreview.AddPublicThinkingNote(
+                        "Those two examples use different recovery hardware, so I should explain them separately.");
+                    if (!activityPreview.HasPublicThinking ||
+                        activityPreview.PublicThinkingNotes.Count != 2 ||
+                        activityPreview.PublicThinkingNotes[0].StartsWith("Searching the web", StringComparison.Ordinal))
+                        throw new InvalidOperationException("Public model-authored thinking notes were not displayed.");
+                    activityPreview.AddAgentActivity("RUN_COMPLETED", "", DateTimeOffset.UtcNow);
+                    if (activityPreview.IsActivityExpanded)
+                        throw new InvalidOperationException("Model thought panel did not collapse after completion.");
                     activityChecks++;
                     var failedPreview = new ChatMessageViewModel("assistant", string.Empty);
                     failedPreview.BeginJourney();
@@ -1145,7 +1172,9 @@ public partial class App : WpfApplication
                             status = "PASS", capabilityCount = descriptors.Count,
                             nativeToolCount = nativeRegistry.Count,
                             nativeFunctionsChecked = requiredFunctions.Length,
-                            protocolChecks, discoveryChecks, richChecks, activityChecks, readOnlySchemaChecks,
+                            protocolChecks, discoveryChecks, richChecks, activityChecks,
+                            publicThinkingChecks, streamingDraftChecks,
+                            sourceLinkRecoveryChecks, readOnlySchemaChecks,
                             requiredCapabilities = required.Length,
                             unifiedHost = true, mindOwner = true, memoryReviewOwner = true,
                             hostedServicesStarted = false

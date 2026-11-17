@@ -275,7 +275,7 @@ public static class NIRARichBlockJsonReader
             "feature" or "featured" or "spotlight" or "hero" => "hero",
             "takeaway" or "keyinsight" or "highlight" or "insight" => "insight",
             "resource" or "reference" or "sourcelink" or "source" => "source",
-            "videolink" or "videoreference" or "video" => "video",
+            "videolink" or "videoreference" or "videoplayer" or "youtube" or "vimeo" or "video" => "video",
             "stat" or "statcard" or "statistic" or "kpi" or "metriccard" or "metricpanel" => "metric",
             "math" or "latex" or "formula" or "mathequation" => "equation",
             _ => type
@@ -358,7 +358,7 @@ public static class NIRARichBlockJsonReader
         // A source card may use a conventional URL field. This only preserves
         // model-supplied link text; it does not fetch or verify the destination.
         if ((type is "source" or "video") && body.Length == 0)
-            body = First(element, "", "url", "href", "uri");
+            body = First(element, "", "url", "href", "uri", "watchUrl", "videoUrl", "video_url", "link");
         if (type == "card")
         {
             var details = new List<string>();

@@ -185,7 +185,10 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
                 allowNiraManagedGoals: selfGoalTool is not null,
                 quickCapabilityReference: NIRAAuthoritativeCapabilityTools.BuildQuickReference(_capabilityRegistry),
                 previewText: draft => writer.TryWrite(new NIRAOutputChunk {
-                    Source = mindEvent.Source, Type = NIRAOutputChunkType.Preview, Content = draft }));
+                    Source = mindEvent.Source, Type = NIRAOutputChunkType.Preview, Content = draft }),
+                publicThinkingUpdate: note => writer.TryWrite(new NIRAOutputChunk {
+                    RunId = mindEvent.Id, Source = mindEvent.Source,
+                    Type = NIRAOutputChunkType.PublicThinkingNote, Content = note }));
             var action = allTools.OfType<NIRAAuthoritativeCapabilityTools.CapabilityInvocation>()
                 .Single(x => x.Spec.Access == AccessLevel.Modify);
             IAgentPermissionGate permissions = new NIRAAuthoritativeCapabilityPermissionGate(vault, action);
@@ -210,18 +213,9 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
                         ActivityToolId = e.ToolId ?? string.Empty,
                         ActivityDetailCode = e.DetailCode ?? string.Empty
                     });
-                    string status = e.Code switch {
-                        "REASONING_STARTED" => "Working through the task...",
-                        "TOOL_DISPATCHED" => "Running an authorized capability...",
-                        "TOOL_SUCCEEDED" => "Reviewing the observed result...",
-                        "AUTHORIZATION_REQUIRED" => "Waiting for authorization...",
-                        _ => string.Empty
-                    };
-                    if (status.Length > 0)
-                        writer.TryWrite(new NIRAOutputChunk {
-                            RunId = mindEvent.Id, Source = mindEvent.Source,
-                            Type = NIRAOutputChunkType.Progress, Content = status
-                        });
+                    // Detailed activity remains in the durable run audit.
+                    // Never fabricate visible "thinking" by mapping event codes
+                    // to prewritten sentences. Only same-model public notes render.
                 }));
 
             // Trusted task identity comes only from the host-created mind event.
@@ -242,7 +236,8 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
             // never starts a new operation or silently retries a possibly committed write.
             AgentRunSnapshot run = await engine.RunOrResumeAsync(request, mindEvent.Id, ct);
             NIRADiagnosticTrace.Event("AGENT-MODEL-ROUND",
-                $"ModelRequests={reasoner.ModelRequests} FirstTextMs={reasoner.LastFirstTextMilliseconds} " +
+                $"ModelRequests={reasoner.ModelRequests} PublicNoteRequests={reasoner.PublicThinkingFallbackRequests} " +
+                $"FirstTextMs={reasoner.LastFirstTextMilliseconds} " +
                 $"LastRoundMs={reasoner.LastRoundMilliseconds} Status={run.Status}");
 
             if (run.Status == AgentRunStatus.NeedsReconciliation)

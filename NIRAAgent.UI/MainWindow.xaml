@@ -563,9 +563,9 @@
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
 
-                            <!-- Optional verified agent activity. This is not a
-                                 model reasoning trace: it is the same persisted
-                                 observe/act/result workflow used by the host. -->
+                            <!-- Genuine PUBLIC thinking-aloud notes authored by the SAME
+                                 active NIRA model during accepted tool decisions.
+                                 Never render raw provider reasoning_content or tool events here. -->
                             <Expander x:Name="AgentActivityPanel" Grid.Row="0"
                                       Margin="0,2,0,10" Visibility="Collapsed"
                                       HorizontalAlignment="Stretch"
@@ -579,35 +579,21 @@
                                                    FontWeight="SemiBold"/>
                                     </StackPanel>
                                 </Expander.Header>
-                                <Border Margin="4,6,10,0" Padding="12,11"
+                                <Border Margin="4,6,10,0" Padding="12,12"
                                         CornerRadius="12"
                                         Background="{DynamicResource NIRAGlassTintBrush}"
                                         BorderBrush="{DynamicResource NIRAGlassBorderBrush}"
                                         BorderThickness="1">
                                     <StackPanel>
-                                        <TextBlock Text="Task activity · verified runtime events"
-                                                   FontSize="10" Margin="2,0,0,10"
+                                        <TextBlock Text="NIRA · Thinking aloud"
+                                                   FontSize="10" Margin="2,0,0,12"
                                                    Foreground="{DynamicResource NIRASecondaryBrush}"/>
-                                        <ItemsControl ItemsSource="{Binding ActivityEntries}">
+                                        <ItemsControl ItemsSource="{Binding PublicThinkingNotes}">
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate>
-                                                    <Grid Margin="0,0,0,9">
-                                                        <Grid.ColumnDefinitions>
-                                                            <ColumnDefinition Width="25"/>
-                                                            <ColumnDefinition Width="*"/>
-                                                        </Grid.ColumnDefinitions>
-                                                        <TextBlock Text="{Binding Glyph}" Grid.Column="0"
-                                                                   FontSize="13" HorizontalAlignment="Center"
-                                                                   Foreground="{DynamicResource NIRATextBrush}"/>
-                                                        <StackPanel Grid.Column="1">
-                                                            <TextBlock Text="{Binding Title}" FontSize="12"
-                                                                       FontWeight="SemiBold" TextWrapping="Wrap"
-                                                                       Foreground="{DynamicResource NIRATextBrush}"/>
-                                                            <TextBlock Text="{Binding Detail}" FontSize="10.5"
-                                                                       Margin="0,3,0,0" TextWrapping="Wrap"
-                                                                       Foreground="{DynamicResource NIRASecondaryBrush}"/>
-                                                        </StackPanel>
-                                                    </Grid>
+                                                    <TextBlock Text="{Binding}" FontSize="12.5"
+                                                               TextWrapping="Wrap" Margin="2,0,2,12"
+                                                               Foreground="{DynamicResource NIRATextBrush}"/>
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
                                         </ItemsControl>
@@ -960,7 +946,7 @@
                 <DataTrigger Binding="{Binding HasReplySource}" Value="True">
                     <Setter TargetName="ReplySourceText" Property="Visibility" Value="Visible"/>
                 </DataTrigger>
-                <DataTrigger Binding="{Binding HasActivity}" Value="True">
+                <DataTrigger Binding="{Binding HasPublicThinking}" Value="True">
                     <Setter TargetName="AgentActivityPanel" Property="Visibility" Value="Visible"/>
                 </DataTrigger>
                 <DataTrigger Binding="{Binding HasRichElements}" Value="True">

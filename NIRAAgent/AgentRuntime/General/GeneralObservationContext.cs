@@ -346,7 +346,7 @@ internal static class GeneralObservationContext
     private static readonly Regex CitationIds = new(
         @"\[(?<ids>S[1-9][0-9]*(?:\s*,\s*S[1-9][0-9]*)*)\]",
         RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(250));
-    private static readonly Regex Urls = new(@"https?://[^\s\)\]\>]+",
+    private static readonly Regex Urls = new(@"https?://[^\s\)\]\>""'`\\]+",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(250));
 
     public static bool TryBindAnswer(string answer, Snapshot snapshot, out string bound, out string code)
@@ -402,6 +402,131 @@ internal static class GeneralObservationContext
             .Select(id => "[" + SourceDisplayLabel(id, snapshot) + "](" +
                 snapshot.Sources[id] + ")")));
         return true;
+    }
+
+    // LAST-RESORT, LOSSY recovery only after the model has exhausted its normal
+    // source-citation correction attempts. A fabricated link is NEVER promoted
+    // into the evidence ledger, a source citation, or a video-player reference.
+    // Preserve model-authored prose only if it still independently passes the
+    // normal authoritative source binder after every unsupported URL is removed.
+    private static readonly Regex MarkdownUrlLink = new(
+        @"\[(?<label>[^\]\r\n]{1,180})\]\((?<url>https?://[^\s\)\]]{1,1800})\)",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+        TimeSpan.FromMilliseconds(250));
+
+    internal static bool TryBindAnswerAfterLinkOmissions(string answer, Snapshot snapshot,
+        out string bound, out int omissions)
+    {
+        bound = string.Empty;
+        omissions = 0;
+        int removed = 0;
+        // Never turn an evidence-free or tiny draft into an apparently
+        // researched success. Do not apply to file operations or other tasks
+        // with no attributed source list.
+        if (string.IsNullOrWhiteSpace(answer) || answer.Length is < 160 or > 20_000 ||
+            snapshot.Sources.Count == 0 || snapshot.SuccessfulTools == 0) return false;
+        try
+        {
+            bool IsObserved(string value)
+            {
+                string candidate = value.TrimEnd('.', ',', ';', ':', '\'', '"', '`');
+                return Uri.TryCreate(candidate, UriKind.Absolute, out Uri? uri) &&
+                    uri.Scheme == Uri.UriSchemeHttps &&
+                    snapshot.SourceUrls.Contains(uri.AbsoluteUri);
+            }
+            // Remove the entire clickable Markdown link, not just its URL;
+            // otherwise the renderer would display a broken, misleading anchor.
+            string cleaned = MarkdownUrlLink.Replace(answer, match =>
+            {
+                if (IsObserved(match.Groups["url"].Value)) return match.Value;
+                removed++;
+                return match.Groups["label"].Value + " (link not verified)";
+            });
+            cleaned = Urls.Replace(cleaned, match =>
+            {
+                if (IsObserved(match.Value)) return match.Value;
+                removed++;
+                return "unverified link omitted";
+            });
+            omissions = removed;
+            if (removed == 0) return false;
+            // The appendix must remain at the very end or the WPF parser will
+            // discard legitimate non-video native cards. Insert the warning
+            // immediately BEFORE it, if present.
+            const string warning = "Some suggested links were omitted because " +
+                "they were not in the verified search results. Omitted video links " +
+                "are not playable or confirmed.";
+            int richAppendix = cleaned.LastIndexOf("\n```nira-blocks\n",
+                StringComparison.OrdinalIgnoreCase);
+            if (richAppendix >= 0)
+                cleaned = cleaned.Insert(richAppendix, "\n\n" + warning + "\n");
+            else cleaned += "\n\n" + warning;
+            // FULL ordinary validation still applies: genuine observed URLs,
+            // observed citation IDs, and mandatory citations where applicable.
+            if (!TryBindAnswer(cleaned, snapshot, out bound, out _))
+            {
+                bound = string.Empty;
+                return false;
+            }
+            return true;
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            bound = string.Empty;
+            return false;
+        }
+    }
+
+    internal static int RunLinkOmissionSelfCheck()
+    {
+        const string real = "https://www.spacex.com/vehicles/falcon-9/";
+        const string invented = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+        var snapshot = new Snapshot("Observed test fixture",
+            new Dictionary<string, string> { ["S1"] = real },
+            new Dictionary<string, string> { ["S1"] = "Falcon 9" },
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { real }, 1, 0);
+        string explanation = "Falcon 9 performs a controlled descent using engine burns and " +
+            "aerodynamic guidance. The landing hardware is different from the " +
+            "tower catch system. This is a source-backed comparison [S1]. ";
+        if (TryBindAnswer(explanation + "[Watch footage](" + invented + ")", snapshot,
+                out _, out _) )
+            throw new InvalidOperationException("Unobserved video unexpectedly passed strict binding.");
+        if (!TryBindAnswerAfterLinkOmissions(explanation +
+                "[Watch footage](" + invented + ")", snapshot,
+                out string recovered, out int removed) || removed != 1 ||
+            recovered.Contains(invented, StringComparison.OrdinalIgnoreCase) ||
+            !recovered.Contains(real, StringComparison.OrdinalIgnoreCase) ||
+            !recovered.Contains("link not verified", StringComparison.Ordinal))
+            throw new InvalidOperationException("Strict recovery did not omit the unobserved video.");
+        if (TryBindAnswerAfterLinkOmissions(explanation.Replace("[S1]", "") +
+                invented, snapshot, out _, out _))
+            throw new InvalidOperationException("Citation-free source claims passed fallback.");
+        if (TryBindAnswerAfterLinkOmissions(explanation, snapshot, out _, out _))
+            throw new InvalidOperationException("Recovery modified an already valid answer.");
+        string rich = explanation + "\n```nira-blocks\n" +
+            "{\"displayBlocks\":[{\"type\":\"video\",\"text\":\"" + invented +
+            "\"},{\"type\":\"insight\",\"title\":\"Landing\",\"text\":\"Guide\"}]}\n```";
+        if (!TryBindAnswerAfterLinkOmissions(rich, snapshot, out string cleanedRich,
+                out int richRemoved) || richRemoved != 1 ||
+            !cleanedRich.TrimEnd().EndsWith("```", StringComparison.Ordinal) ||
+            cleanedRich.Contains(invented, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Rich response recovery leaked an invented video.");
+        // JSON syntax around a rejected media URL must survive sanitization;
+        // otherwise the video gets dropped AND the valid insight card is lost.
+        int blockStart = cleanedRich.LastIndexOf("\n```nira-blocks\n",
+            StringComparison.OrdinalIgnoreCase);
+        if (blockStart < 0) throw new InvalidOperationException("Rich appendix disappeared.");
+        string appendix = cleanedRich[(blockStart + "\n```nira-blocks\n".Length)..];
+        if (!appendix.EndsWith("\n```", StringComparison.Ordinal))
+            throw new InvalidOperationException("Rich appendix was truncated.");
+        using (JsonDocument document = JsonDocument.Parse(appendix[..^4]))
+        {
+            JsonElement blocks = document.RootElement.GetProperty("displayBlocks");
+            if (blocks.GetArrayLength() != 2 ||
+                blocks[1].GetProperty("type").GetString() != "insight")
+                throw new InvalidOperationException("Valid presentation content was damaged.");
+        }
+        return 4;
     }
 
     private static string SourceDisplayLabel(string id, Snapshot snapshot)

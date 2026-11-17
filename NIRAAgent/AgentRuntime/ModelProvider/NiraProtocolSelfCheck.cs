@@ -94,9 +94,132 @@ public static class NiraProtocolSelfCheck
                 throw new InvalidDataException("JSON_MULTI_TOOL_DUPLICATE_ID: invalid batch accepted");
             passed++;
         }
+        string publicContent = NIRAAgent.Runtime.General.NiraPublicThinkingNote.Prefix +
+            "The evidence I need is about separate landing methods, so I'll check the two recovery systems.";
+        string annotatedTool = jsonTool.Replace("\"content\":null",
+            "\"content\":" + JsonSerializer.Serialize(publicContent));
+        using (var annotatedDoc = JsonDocument.Parse(annotatedTool))
+        {
+            var publicDecision = NIRAAgent.Runtime.General.GeneralToolProtocol.Decode(
+                annotatedDoc.RootElement.GetProperty("choices")[0].GetProperty("message"));
+            if (publicDecision.Kind != "tool" || publicDecision.PublicUpdate is null ||
+                !publicDecision.PublicUpdate.Contains("separate landing methods", StringComparison.Ordinal))
+                throw new InvalidDataException("PUBLIC_THINKING_NOTE: model-authored commentary was lost.");
+            passed++;
+        }
+        using (var rawDoc = JsonDocument.Parse(jsonTool.Replace("\"content\":null",
+            "\"content\":\"These are my private internal steps\"")))
+        {
+            var invalid = NIRAAgent.Runtime.General.GeneralToolProtocol.Decode(
+                rawDoc.RootElement.GetProperty("choices")[0].GetProperty("message"));
+            if (invalid.Kind != "invalid")
+                throw new InvalidDataException("PUBLIC_THINKING_NOTE: unmarked tool content was accepted.");
+            passed++;
+        }
         await Verify("SSE_TEXT", sseText, "text/event-stream", "stop");
         await Verify("SSE_SNIFF", sseText, "application/json", "stop");
         await Verify("SSE_TOOL_NO_DONE", sseTool, "text/event-stream", "tool_calls", "nira_list_directory");
+        // Multi-call SSE may interleave fragments for multiple indexes. No
+        // incomplete second call may reach the checkpointed one-tool executor.
+        string Frame(object delta, string? finish = null) => "data: " +
+            JsonSerializer.Serialize(new { choices = new[] { new {
+                index = 0, delta, finish_reason = finish
+            } } }) + "\n\n";
+        string ToolFragment(int index, string? id, string? name, string? args) =>
+            Frame(new { tool_calls = new[] { new {
+                index, id, function = new { name, arguments = args }
+            } } });
+        string sseBatch =
+            ToolFragment(0, "x", "nira_list_directory", "{\"path\":") +
+            ToolFragment(1, "y", "nira_file_metadata", "{\"path\":") +
+            ToolFragment(0, null, null, "\"Documents\"}") +
+            ToolFragment(1, null, null, "\"Documents\"}") +
+            Frame(new { }, "tool_calls") + "data: [DONE]\n\n";
+        using (var batchStream = new MemoryStream(Encoding.UTF8.GetBytes(sseBatch)))
+        {
+            var parsedBatch = await NiraChatProtocolReader.ReadAsync(batchStream,
+                "text/event-stream", 64 * 1024, null, ct);
+            if (parsedBatch.Message.GetProperty("tool_calls").GetArrayLength() != 2)
+                throw new InvalidDataException("SSE multi-tool batch was truncated.");
+            var firstOnly = NIRAAgent.Runtime.General.GeneralToolProtocol.Decode(parsedBatch.Message);
+            if (firstOnly.Kind != "tool" || firstOnly.Function != "nira_list_directory")
+                throw new InvalidDataException("SSE tool batch bypassed one-tool checkpoint.");
+            passed++;
+        }
+        // Some compatible providers emit a complete argument JSON object in
+        // one SSE delta instead of the usual arguments string fragments.
+        string objectArgs = Frame(new { tool_calls = new[] { new { index = 0,
+            function = new { name = "nira_list_directory", arguments = new { path = "Documents" } }
+        } } }) + Frame(new { }, "tool_calls");
+        await Verify("SSE_OBJECT_ARGUMENTS", objectArgs, "text/event-stream",
+            "tool_calls", "nira_list_directory");
+        string malformedSecond =
+            ToolFragment(0, "x", "nira_list_directory", "{\"path\":\"Documents\"}") +
+            ToolFragment(1, "y", "nira_file_metadata", "{\"path\":") +
+            Frame(new { }, "tool_calls");
+        await VerifyReject("SSE_SECOND_TOOL_TRUNCATED", malformedSecond, "text/event-stream");
+        string annotatedSse =
+            Frame(new { content = publicContent }) +
+            ToolFragment(0, "x", "nira_list_directory", "{\"path\":\"Documents\"}") +
+            Frame(new { }, "tool_calls");
+        using (var noteStream = new MemoryStream(Encoding.UTF8.GetBytes(annotatedSse)))
+        {
+            var parsedNote = await NiraChatProtocolReader.ReadAsync(noteStream,
+                "text/event-stream", 64 * 1024, null, ct);
+            var noteDecision = NIRAAgent.Runtime.General.GeneralToolProtocol.Decode(parsedNote.Message);
+            if (noteDecision.Kind != "tool" ||
+                !string.Equals(noteDecision.PublicUpdate,
+                    publicContent[NIRAAgent.Runtime.General.NiraPublicThinkingNote.Prefix.Length..],
+                    StringComparison.Ordinal))
+                throw new InvalidDataException("SSE public model commentary was discarded.");
+            passed++;
+        }
+        // Provisional answer previews are permitted, but must be withdrawn if
+        // the provider switches to a tool proposal and never used as evidence.
+        string provisional = Frame(new { content = "A preliminary unverified answer that may change before verification." }) +
+            ToolFragment(0, "x", "nira_list_directory", "{\"path\":\"Documents\"}") +
+            Frame(new { }, "tool_calls");
+        var previews = new List<string>();
+        await VerifyReject("SSE_ANSWER_AND_TOOL_AMBIGUOUS", provisional, "text/event-stream");
+        using (var streamPreview = new MemoryStream(Encoding.UTF8.GetBytes(provisional)))
+        {
+            try
+            {
+                _ = await NiraChatProtocolReader.ReadAsync(streamPreview,
+                    "text/event-stream", 64 * 1024, text => previews.Add(text), ct);
+            }
+            catch (InvalidDataException) { }
+        }
+        if (previews.Count < 2 || previews[0].Length == 0 || previews[^1].Length != 0)
+            throw new InvalidDataException("Streamed provisional answer was not withdrawn.");
+        passed++;
+        // The provider may stream ordinary final prose after a read-only tool;
+        // text shows up incrementally, while the final binding gate still runs.
+        string sseLong = Frame(new { content = "An introductory explanation of a reusable rocket. " }) +
+            Frame(new { content = "The landing and tower catch are different methods." }, "stop") +
+            "data: [DONE]\n\n";
+        var textUpdates = new List<string>();
+        using (var textStream = new MemoryStream(Encoding.UTF8.GetBytes(sseLong)))
+        {
+            var textResult = await NiraChatProtocolReader.ReadAsync(textStream,
+                "text/event-stream", 64 * 1024, text => textUpdates.Add(text), ct);
+            if (textResult.Message.GetProperty("content").GetString()?.Length < 70 ||
+                textUpdates.Count == 0 || textUpdates[^1].Length < 30)
+                throw new InvalidDataException("SSE text streaming did not emit a preview.");
+            passed++;
+        }
+        // Never allow model-private fields to flow into public text updates.
+        string hidden = Frame(new { reasoning_content = "PRIVATE_TRACE", content = "A verified-looking public explanation is being generated." }) +
+            Frame(new { }, "stop");
+        using (var hiddenStream = new MemoryStream(Encoding.UTF8.GetBytes(hidden)))
+        {
+            var received = new List<string>();
+            _ = await NiraChatProtocolReader.ReadAsync(hiddenStream,
+                "text/event-stream", 64 * 1024, text => received.Add(text), ct);
+            if (received.Any(t => t.Contains("PRIVATE_TRACE", StringComparison.Ordinal)))
+                throw new InvalidDataException("Model private trace leaked into streaming callback.");
+            passed++;
+        }
         await VerifyReject("NO_FINISH", "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n",
             "text/event-stream");
         await VerifyReject("JSON_LENGTH_FINISH", jsonText.Replace("\"stop\"", "\"length\""),

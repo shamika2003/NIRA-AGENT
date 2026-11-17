@@ -394,6 +394,11 @@ public sealed class MainWindowViewModel
                         chunk.ActivityToolId, chunk.ActivityAtUtc);
                     continue;
                 }
+                if (chunk.Type == NIRAOutputChunkType.PublicThinkingNote)
+                {
+                    assistantMessage.AddPublicThinkingNote(chunk.Content);
+                    continue;
+                }
                 if (chunk.Type == NIRAOutputChunkType.Preview)
                 {
                     // Replace full provisional text, never append it to the final answer.
@@ -558,6 +563,13 @@ public sealed class MainWindowViewModel
                 chunk.RunId, chunk.OriginPrompt);
             state.Message.AddAgentActivity(chunk.ActivityCode,
                 chunk.ActivityToolId, chunk.ActivityAtUtc);
+            return;
+        }
+        if (chunk.Type == NIRAOutputChunkType.PublicThinkingNote)
+        {
+            BackgroundResponseState note = GetOrCreateBackgroundResponse(
+                chunk.RunId, chunk.OriginPrompt);
+            note.Message.AddPublicThinkingNote(chunk.Content);
             return;
         }
         if (chunk.Type == NIRAOutputChunkType.Progress)

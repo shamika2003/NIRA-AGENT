@@ -25,12 +25,13 @@ public sealed record NiraModelEndpointOptions(Uri Endpoint, string Model)
     public Func<string?> CredentialSource => IsOllama
         ? OllamaCloudCredentials.ReadExistingKey : NvidiaCloudCredentials.ReadExistingKey;
 
-    // Native tool decisions are transactional boundaries: require one complete,
-    // validated provider envelope before permitting a capability invocation.
-    // Streaming remains available for final text-only turns with UI preview.
-    // This policy is independent of particular user requests or tool names.
+    // SSE is a transport, NOT authorization. Tools are assembled and validated
+    // to a complete finish boundary before any capability may execute. When the
+    // model instead emits prose, the UI may display a disposable draft; the
+    // existing grounded-answer gate still decides whether it is accepted.
+    // Never replay a failed provider decision merely to change protocols.
     public bool ShouldStream(bool hasNativeTools, bool previewRequested) =>
-        previewRequested && !hasNativeTools;
+        previewRequested;
 
     public void ConfigureRequest(IDictionary<string,object> payload, bool hasTools, bool fastConversation = false)
     {

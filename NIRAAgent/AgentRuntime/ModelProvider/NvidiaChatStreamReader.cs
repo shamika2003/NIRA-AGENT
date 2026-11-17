@@ -24,8 +24,10 @@ public static class NvidiaChatStreamReader
         using var reader = new StreamReader(bounded, new UTF8Encoding(false, true),
             detectEncodingFromByteOrderMarks: true, bufferSize: 4096, leaveOpen: true);
         var content = new StringBuilder();
-        var name = new StringBuilder();
-        var args = new StringBuilder();
+        // Tool fragments may be interleaved and can contain several proposed
+        // calls. Their entire batch must be assembled before the existing
+        // one-tool-per-checkpoint decoder chooses anything to execute.
+        var calls = new SortedDictionary<int, ToolFragments>();
         bool hasTool = false, done = false;
         string? finish = null;
         int lastPublishedLength = 0;
@@ -68,27 +70,58 @@ public static class NvidiaChatStreamReader
             if (delta.TryGetProperty("tool_calls", out JsonElement tools) &&
                 tools.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined)
             {
-                if (tools.ValueKind != JsonValueKind.Array || tools.GetArrayLength() > 1)
-                    throw new InvalidDataException("MODEL_SSE_MULTIPLE_TOOLS_UNSUPPORTED");
+                if (tools.ValueKind != JsonValueKind.Array || tools.GetArrayLength() > 8)
+                    throw new InvalidDataException("MODEL_SSE_TOO_MANY_TOOL_FRAGMENTS");
                 foreach (JsonElement tool in tools.EnumerateArray())
                 {
                     if (tool.ValueKind != JsonValueKind.Object)
                         throw new InvalidDataException("MODEL_SSE_TOOL_FRAGMENT_INVALID");
-                    if (tool.TryGetProperty("index", out JsonElement ti) &&
-                        (ti.ValueKind != JsonValueKind.Number || ti.GetInt32() != 0))
+                    int i = 0;
+                    if (tool.TryGetProperty("index", out JsonElement ti))
+                    {
+                        if (ti.ValueKind != JsonValueKind.Number || !ti.TryGetInt32(out i))
+                            throw new InvalidDataException("MODEL_SSE_TOOL_INDEX_INVALID");
+                    }
+                    if (i is < 0 or > 7)
                         throw new InvalidDataException("MODEL_SSE_TOOL_INDEX_INVALID");
-                    hasTool = true;
+                    if (!calls.TryGetValue(i, out ToolFragments? call))
+                    {
+                        if (calls.Count >= 8)
+                            throw new InvalidDataException("MODEL_SSE_TOO_MANY_TOOLS");
+                        call = new ToolFragments();
+                        calls.Add(i, call);
+                    }
+                    if (!hasTool)
+                    {
+                        hasTool = true;
+                        // An early text candidate is NEVER authoritative. A
+                        // provider that later switches to tools must withdraw
+                        // the provisional preview immediately.
+                        if (preview is not null)
+                            try { preview(string.Empty); } catch (Exception) { }
+                    }
+                    if (tool.TryGetProperty("id", out JsonElement id) &&
+                        id.ValueKind == JsonValueKind.String)
+                        call.Id.Append(id.GetString());
                     if (tool.TryGetProperty("function", out JsonElement fn) &&
                         fn.ValueKind == JsonValueKind.Object)
                     {
                         if (fn.TryGetProperty("name", out JsonElement n) &&
                             n.ValueKind == JsonValueKind.String)
-                            name.Append(n.GetString());
-                        if (fn.TryGetProperty("arguments", out JsonElement a) &&
-                            a.ValueKind == JsonValueKind.String)
-                            args.Append(a.GetString());
+                            call.Name.Append(n.GetString());
+                        if (fn.TryGetProperty("arguments", out JsonElement a))
+                        {
+                            if (a.ValueKind == JsonValueKind.String)
+                                call.Arguments.Append(a.GetString());
+                            else if (a.ValueKind == JsonValueKind.Object &&
+                                     call.Arguments.Length == 0)
+                                call.Arguments.Append(a.GetRawText());
+                            else if (a.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined)
+                                throw new InvalidDataException("MODEL_SSE_TOOL_ARGUMENT_FRAGMENT_INVALID");
+                        }
                     }
-                    if (name.Length > 300 || args.Length > 16_000)
+                    if (call.Id.Length > 256 || call.Name.Length > 300 ||
+                        call.Arguments.Length > 16_000)
                         throw new InvalidDataException("MODEL_SSE_TOOL_TOO_LARGE");
                 }
             }
@@ -100,7 +133,16 @@ public static class NvidiaChatStreamReader
                 if (content.Length > 20_000)
                     throw new InvalidDataException("MODEL_SSE_ANSWER_TOO_LARGE");
                 long now = Stopwatch.GetTimestamp();
-                if (!hasTool && preview is not null && content.Length > lastPublishedLength &&
+                // The provider's public tool-note marker is NOT a draft answer.
+                // Hold the first few characters so a fragmented marker cannot
+                // flash as chat text before tool_calls arrive.
+                string textSoFar = content.ToString();
+                bool possibleToolNote = NIRAAgent.Runtime.General.NiraPublicThinkingNote.Prefix
+                    .StartsWith(textSoFar, StringComparison.Ordinal) ||
+                    textSoFar.StartsWith(NIRAAgent.Runtime.General.NiraPublicThinkingNote.Prefix,
+                        StringComparison.Ordinal);
+                if (!hasTool && !possibleToolNote && preview is not null &&
+                    content.Length >= 24 && content.Length > lastPublishedLength &&
                     (lastPublishedLength == 0 || content.Length - lastPublishedLength >= 48 ||
                      Stopwatch.GetElapsedTime(lastPublishedAt, now) >= TimeSpan.FromMilliseconds(110)))
                 {
@@ -128,29 +170,53 @@ public static class NvidiaChatStreamReader
         if (finish is not ("stop" or "tool_calls"))
             throw new InvalidDataException(finish is null ?
                 "MODEL_SSE_MISSING_FINISH" : "MODEL_SSE_UNSAFE_FINISH");
-        if (hasTool && (name.Length == 0 || args.Length == 0 || content.Length != 0))
-            throw new InvalidDataException("MODEL_SSE_TOOL_INCOMPLETE_OR_AMBIGUOUS");
+        if (hasTool && (calls.Count == 0 || calls.Keys.First() != 0 ||
+            calls.Keys.Last() != calls.Count - 1))
+            throw new InvalidDataException("MODEL_SSE_TOOL_BATCH_INCOMPLETE");
         if (!hasTool && (finish == "tool_calls" || content.Length == 0))
             throw new InvalidDataException("MODEL_SSE_ANSWER_INCOMPLETE");
+        if (hasTool && content.Length > 0 &&
+            !NIRAAgent.Runtime.General.NiraPublicThinkingNote.TryParse(
+                content.ToString(), out _))
+            throw new InvalidDataException("MODEL_SSE_TOOL_CONTENT_AMBIGUOUS");
         if (hasTool)
         {
-            try
+            var ids = new HashSet<string>(StringComparer.Ordinal);
+            foreach (ToolFragments call in calls.Values)
             {
-                using JsonDocument parsedArgs = JsonDocument.Parse(args.ToString());
-                if (parsedArgs.RootElement.ValueKind != JsonValueKind.Object)
-                    throw new InvalidDataException("MODEL_SSE_TOOL_ARGUMENTS_INVALID");
+                if (call.Name.Length == 0 || call.Arguments.Length == 0)
+                    throw new InvalidDataException("MODEL_SSE_TOOL_INCOMPLETE");
+                if (call.Id.Length > 0 && !ids.Add(call.Id.ToString()))
+                    throw new InvalidDataException("MODEL_SSE_TOOL_DUPLICATE_ID");
+                try
+                {
+                    using JsonDocument parsed = JsonDocument.Parse(call.Arguments.ToString());
+                    if (parsed.RootElement.ValueKind != JsonValueKind.Object)
+                        throw new InvalidDataException("MODEL_SSE_TOOL_ARGUMENTS_INVALID");
+                }
+                catch (JsonException)
+                { throw new InvalidDataException("MODEL_SSE_TOOL_ARGUMENTS_INVALID"); }
             }
-            catch (JsonException) { throw new InvalidDataException("MODEL_SSE_TOOL_ARGUMENTS_INVALID"); }
         }
         JsonElement message = hasTool
             ? JsonSerializer.SerializeToElement(new {
-                content = (string?)null,
-                tool_calls = new[] { new { function = new {
-                    name = name.ToString(), arguments = args.ToString()
-                } } }
+                content = content.Length > 0 ? content.ToString() : (string?)null,
+                tool_calls = calls.Values.Select(call => new {
+                    function = new {
+                        name = call.Name.ToString(),
+                        arguments = call.Arguments.ToString()
+                    }
+                }).ToArray()
             })
             : JsonSerializer.SerializeToElement(new { content = content.ToString() });
         return new NvidiaStreamResponse(message, hasTool ? "tool_calls" : "stop");
+    }
+
+    private sealed class ToolFragments
+    {
+        public StringBuilder Id { get; } = new();
+        public StringBuilder Name { get; } = new();
+        public StringBuilder Arguments { get; } = new();
     }
 
     private sealed class ByteLimitReadStream(Stream inner, long maximum) : Stream

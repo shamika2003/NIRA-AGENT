@@ -20,7 +20,10 @@ public enum NIRAOutputChunkType
     Cancelled,
     // Append rather than renumber existing enum members.
     // Host-owned activity only; never speech or conversation archive content.
-    Activity
+    Activity,
+    // Same-model user-facing progress commentary, not hidden chain-of-thought,
+    // not a tool receipt, never a final answer or speech/archive entry.
+    PublicThinkingNote
 }
 
 public sealed record NIRAOutputChunk

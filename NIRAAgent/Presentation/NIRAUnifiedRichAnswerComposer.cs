@@ -250,6 +250,17 @@ public static class NIRAUnifiedRichAnswerComposer
         var untrusted = Compose(valid, "Show me", Array.Empty<string>());
         if (untrusted.Blocks.Count != 1 || untrusted.Blocks[0].Type != "insight")
             throw new InvalidOperationException("Unobserved video promoted into a trusted player.");
+        const string videoAlias = "Here is the demonstration.\n\n```nira-blocks\n" +
+            "{\"displayBlocks\":[{\"kind\":\"video_player\",\"title\":\"Launch and landing\",\"videoUrl\":\"" +
+            video + "\"}]}\n```";
+        var alias = Compose(videoAlias, "Watch the demonstration", new[] {
+            "{\"sources\":[{\"url\":\"" + video + "\",\"title\":\"Launch and landing\"}]}" });
+        if (alias.Blocks.Count != 1 || alias.Blocks[0].Type != "video" ||
+            alias.Blocks[0].Title != "Launch and landing")
+            throw new InvalidOperationException("Valid verified videoUrl block alias was discarded.");
+        var aliasDenied = Compose(videoAlias, "Explain launch sequence", Array.Empty<string>());
+        if (aliasDenied.Blocks.Count != 0)
+            throw new InvalidOperationException("Unobserved videoUrl alias promoted into a player.");
         var plain = Compose("Regular complete Markdown answer.", "hi", Array.Empty<string>());
         if (plain.Screen != "Regular complete Markdown answer." || plain.Blocks.Count != 0)
             throw new InvalidOperationException("Plain prose was modified by presentation.");
