@@ -403,7 +403,7 @@ public sealed class MainWindowViewModel
                 {
                     // Replace full provisional text, never append it to the final answer.
                     // No SpeechContent is accepted and no preview is archived.
-                    assistantMessage.Content = chunk.Content;
+                    assistantMessage.SetProvisionalText(chunk.Content);
                     hasUnverifiedPreview = !string.IsNullOrEmpty(chunk.Content);
                     if (hasUnverifiedPreview) assistantMessage.BeginProgressFadeOut();
                     continue;
@@ -411,7 +411,7 @@ public sealed class MainWindowViewModel
                 if (hasUnverifiedPreview &&
                     chunk.Type is NIRAOutputChunkType.Text or NIRAOutputChunkType.Cancelled)
                 {
-                    assistantMessage.Content = string.Empty;
+                    assistantMessage.EndProvisionalText();
                     hasUnverifiedPreview = false;
                 }
                 if (chunk.Type == NIRAOutputChunkType.Progress)
@@ -460,7 +460,7 @@ public sealed class MainWindowViewModel
 
             if (hasUnverifiedPreview)
             {
-                assistantMessage.Content = string.Empty;
+                assistantMessage.EndProvisionalText();
                 hasUnverifiedPreview = false;
             }
             FlushSpeech(

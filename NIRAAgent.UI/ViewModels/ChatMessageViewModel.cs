@@ -9,6 +9,7 @@ using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 
 using NIRAAgent.Artifacts;
+using NIRAAgent.Diagnostics;
 using NIRAAgent.Presentation;
 using NIRAAgent.UI.Presentation;
 using NIRAAgent.Conversation;
@@ -367,6 +368,26 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(HasReplySource));
     }
 
+    // Partial SSE output is NOT verified. Showing draft words is fine, but
+    // extracting playable URLs or rich media from those words is not.
+    private bool _contentIsProvisional;
+    public bool IsProvisionalPreview => _contentIsProvisional;
+    public void SetProvisionalText(string text)
+    {
+        if (!_contentIsProvisional)
+        {
+            _contentIsProvisional = true;
+            OnPropertyChanged(nameof(IsProvisionalPreview));
+        }
+        Content = text;
+    }
+    public void EndProvisionalText()
+    {
+        Content = string.Empty;
+        _contentIsProvisional = false;
+        OnPropertyChanged(nameof(IsProvisionalPreview));
+    }
+
     public string Content
     {
         get =>
@@ -384,8 +405,10 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
                 value;
             // One media deck per reply, regardless of whether the evidence
             // arrived as prose URLs or typed video blocks.
-            SyncVideoDeckFromProse();
-            if (VisualArtifacts.Count > 0) RefreshRichPhotoPlacement();
+            if (!_contentIsProvisional)
+                SyncVideoDeckFromProse();
+            if (!_contentIsProvisional && VisualArtifacts.Count > 0)
+                RefreshRichPhotoPlacement();
 
             OnPropertyChanged();
             OnPropertyChanged(
@@ -503,6 +526,12 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         new(StringComparer.OrdinalIgnoreCase);
     // Persists across structured rich-block batches for the SAME reply.
     private NIRAVideoDepthDeck? _videoDepthDeck;
+    public bool HasVideoDeck => _videoDepthDeck is { Count: > 0 };
+    public int VideoCount => _videoDepthDeck?.Count ?? 0;
+    public string VideoCollectionLabel => VideoCount == 1
+        ? "▶  1 video ready  ·  View player"
+        : $"▶  {VideoCount} videos ready  ·  View player";
+    public FrameworkElement? VideoDeckView => _videoDepthDeck?.View;
 
     // Use the same strict HTTPS/provider/ID policy as typed video blocks.
     // A public response can contain ordinary Markdown references and native
@@ -517,7 +546,16 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
     {
         if (!_renderedRichVideoKeys.Add(reference.Key)) return;
         _videoDepthDeck ??= new NIRAVideoDepthDeck();
-        if (_videoDepthDeck.TryAdd(block)) KeepVideoDeckLast();
+        if (_videoDepthDeck.TryAdd(block))
+        {
+            KeepVideoDeckLast();
+            OnPropertyChanged(nameof(HasVideoDeck));
+            OnPropertyChanged(nameof(VideoCount));
+            OnPropertyChanged(nameof(VideoCollectionLabel));
+            NIRADiagnosticTrace.Event("VIDEO-DECK-CHAT-BOUND",
+                "VisibleRichElement=" + RichElements.Contains(_videoDepthDeck.View) +
+                " Count=" + _videoDepthDeck.Count);
+        }
     }
 
     private void KeepVideoDeckLast()
@@ -525,7 +563,7 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         if (_videoDepthDeck is not { Count: > 0 }) return;
         FrameworkElement view = _videoDepthDeck.View;
         int existing = RichElements.IndexOf(view);
-        if (existing == RichElements.Count - 1) return;
+        if (existing >= 0 && existing == RichElements.Count - 1) return;
         if (existing >= 0) RichElements.RemoveAt(existing);
         RichElements.Add(view);
     }

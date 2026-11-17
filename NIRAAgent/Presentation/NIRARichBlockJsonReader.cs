@@ -357,7 +357,19 @@ public static class NIRARichBlockJsonReader
         if (type == "equation") body = NIRAMathMarkup.NormalizeEquationInput(body);
         // A source card may use a conventional URL field. This only preserves
         // model-supplied link text; it does not fetch or verify the destination.
-        if ((type is "source" or "video") && body.Length == 0)
+        if (type == "video")
+        {
+            // The model commonly supplies BOTH a user-facing description in
+            // "text" and a validated watch address in "url". A display block's
+            // Text is the native player's URL, not its description. Never
+            // discard valid video cards merely because description was set.
+            string watch = First(element, "", "url", "href", "uri",
+                "watchUrl", "videoUrl", "video_url", "link");
+            if (NIRAVideoReferencePolicy.TryParse(watch, out _)) body = watch;
+            // When URL is not a supported video destination, keep the existing
+            // text for Normalize() to reject. No website is auto-promoted.
+        }
+        else if (type == "source" && body.Length == 0)
             body = First(element, "", "url", "href", "uri", "watchUrl", "videoUrl", "video_url", "link");
         if (type == "card")
         {

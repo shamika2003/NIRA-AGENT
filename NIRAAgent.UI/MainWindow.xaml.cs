@@ -2788,6 +2788,34 @@ public partial class MainWindow : Window
 
     // Provenance links are opened only on a real user click. Never turn an
     // untrusted sourceUri into an automatic download or executable launch.
+    // Video cards remain under all narrative content and photographs. This
+    // dedicated shortcut makes them discoverable without moving or cloning the
+    // heavy WebView2 player (which can only have one WPF parent).
+    private void JumpToVideos_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: ChatMessageViewModel message } ||
+            message.VideoDeckView is not FrameworkElement deck ||
+            !message.HasVideoDeck) return;
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded,
+            new Action(() =>
+            {
+                if (!deck.IsLoaded || !ChatScroll.IsLoaded) return;
+                try
+                {
+                    Point location = deck.TransformToAncestor(ChatScroll)
+                        .Transform(new Point(0, 0));
+                    ChatScroll.ScrollToVerticalOffset(Math.Max(0,
+                        ChatScroll.VerticalOffset + location.Y - 36));
+                }
+                catch (InvalidOperationException)
+                {
+                    // Navigation or chat reload removed the reply. Do not
+                    // scroll to a different message or create a new player.
+                }
+            }));
+        e.Handled = true;
+    }
+
     private void VisualArtifactOpenSource_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not System.Windows.Controls.Button button ||

@@ -24,6 +24,9 @@ namespace NIRAAgent.UI.Presentation;
 /// </summary>
 public static class NIRAVideoThumbnailService
 {
+    // The WPF acceptance runner tests the real player/deck layout offline.
+    // Do not contact YouTube or read/write thumbnail caches during that test.
+    internal static bool DisableNetworkForOfflineAcceptance { get; set; }
     private const int MaxPosterBytes = 2_400_000;
     private static readonly string CacheDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -42,6 +45,7 @@ public static class NIRAVideoThumbnailService
 
     public static void Attach(Grid preview, NIRAVideoReference video)
     {
+        if (DisableNetworkForOfflineAcceptance) return;
         if (video.Provider != "YouTube" || !ValidId(video.VideoId)) return;
         var image = new Image
         {

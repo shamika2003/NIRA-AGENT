@@ -561,6 +561,7 @@
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
 
                             <!-- Genuine PUBLIC thinking-aloud notes authored by the SAME
@@ -605,22 +606,39 @@
                                  paragraph, title, bullet, link and code passage gets
                                  its own readable spacing without a white chat box. -->
                             <StackPanel x:Name="AssistantContentText"
-                                        Grid.Row="1" HorizontalAlignment="Stretch"
+                                        Grid.Row="2" HorizontalAlignment="Stretch"
                                         present:NIRAChatDocument.Text="{Binding Content}"
+                                        present:NIRAChatDocument.IsProvisionalPreview="{Binding IsProvisionalPreview}"
                                         present:NIRAChatDocument.EmbeddedVideoKeys="{Binding EmbeddedVideoKeys}"
                                         present:NIRAChatDocument.InlineVisuals="{Binding VisualArtifacts}"
                                         present:NIRAChatDocument.InlineVisualRevision="{Binding InlineVisualRevision}"
                                         present:NIRAChatDocument.HasRichBlocks="{Binding HasRichElements}"/>
 
-                            <ItemsControl x:Name="AssistantRichBlocks" Grid.Row="3"
+                            <ItemsControl x:Name="AssistantRichBlocks" Grid.Row="4"
                                           ItemsSource="{Binding RichElements}" Visibility="Collapsed"
                                           Margin="0,5,0,5"/>
+
+                            <!-- A verified collection exists even if its carousel is
+                                 beyond the current scroll viewport. Jump to the REAL deck,
+                                 not a second player or synthetic media placeholder. -->
+                            <Button x:Name="VideoJumpButton" Grid.Row="1"
+                                    Tag="{Binding}" Visibility="Collapsed"
+                                    HorizontalAlignment="Left" Margin="0,2,0,12"
+                                    Padding="14,9" MinHeight="35"
+                                    Cursor="Hand" Click="JumpToVideos_Click"
+                                    Foreground="{DynamicResource NIRACyanBrush}"
+                                    Background="{DynamicResource NIRAGlassTintBrush}"
+                                    BorderBrush="{DynamicResource NIRAGlassBorderBrush}"
+                                    BorderThickness="1">
+                                <TextBlock Text="{Binding VideoCollectionLabel}"
+                                           FontSize="12" FontWeight="SemiBold"/>
+                            </Button>
 
                             <!-- NIRA's OWN evidence-grounded image results. One sourced
                                  image is a rich horizontal card; multiple images become
                                  the same bounded, one-row gallery as user attachments. -->
                             <ItemsControl x:Name="AssistantVisualArtifacts"
-                                          Grid.Row="2"
+                                          Grid.Row="3"
                                           ItemsSource="{Binding UnplacedAssistantImageGalleryTiles}"
                                           Visibility="Collapsed"
                                           Margin="0,12,0,2">
@@ -951,6 +969,9 @@
                 </DataTrigger>
                 <DataTrigger Binding="{Binding HasRichElements}" Value="True">
                     <Setter TargetName="AssistantRichBlocks" Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding HasVideoDeck}" Value="True">
+                    <Setter TargetName="VideoJumpButton" Property="Visibility" Value="Visible"/>
                 </DataTrigger>
                 <DataTrigger Binding="{Binding HasUnplacedAssistantImages}" Value="True">
                     <Setter TargetName="AssistantVisualArtifacts" Property="Visibility" Value="Visible"/>

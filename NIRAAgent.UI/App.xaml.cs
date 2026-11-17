@@ -33,6 +33,7 @@ using NIRAAgent.Self.Model;
 using NIRAAgent.Settings;
 using NIRAAgent.UI.Companion;
 using NIRAAgent.UI.ViewModels;
+using NIRAAgent.UI.Presentation;
 using NIRAAgent.UI.AgentRuntime;
 using NIRAAgent.UI.Theming;
 using NIRAAgent.Voice;
@@ -1064,8 +1065,51 @@ public partial class App : WpfApplication
                             hasNativeTools: true, previewRequested: false))
                         throw new InvalidOperationException("Streaming transport safety checks incomplete.");
                     int sourceLinkRecoveryChecks = GeneralModelReasoner.RunGroundingRecoverySelfCheck();
+                    int boundedSearchChecks = GeneralModelReasoner.RunWebImageCountSafetySelfCheck();
+                    if (boundedSearchChecks != 4)
+                        throw new InvalidOperationException("Read-only search count clamp checks incomplete.");
                     if (sourceLinkRecoveryChecks != 4)
                         throw new InvalidOperationException("Grounded source-link recovery tests incomplete.");
+                     // Provisional SSE drafts must never create trusted players.
+                    var provisionalVideo = new ChatMessageViewModel("assistant", string.Empty);
+                    provisionalVideo.SetProvisionalText(
+                        "Unverified preview https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+                    if (provisionalVideo.HasVideoDeck || provisionalVideo.VideoCount != 0)
+                        throw new InvalidOperationException("Unverified SSE preview created a video player.");
+                    // Also exercise the ACTUAL text-document renderer, which
+                    // otherwise could create a second player from provisional
+                    // Markdown even when the view-model avoids promotion.
+                    var previewDocument = new System.Windows.Controls.StackPanel();
+                    NIRAChatDocument.SetIsProvisionalPreview(previewDocument, true);
+                    NIRAChatDocument.SetText(previewDocument,
+                        "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+                    if (previewDocument.Children.Count > 1 ||
+                        previewDocument.Children.OfType<System.Windows.Controls.Grid>().Any())
+                        throw new InvalidOperationException("Provisional prose embedded an unverified player.");
+                    provisionalVideo.EndProvisionalText();
+                    // Test that typed video blocks reach ONE actual WPF deck and
+                     // expose its visible jump shortcut. No provider call or
+                     // embedded WebView2 navigation is performed here.
+                    NIRAAgent.UI.Presentation.NIRAVideoThumbnailService.DisableNetworkForOfflineAcceptance = true;
+                    try
+                    {
+                     var videoPreview = new ChatMessageViewModel("assistant", "Research complete.");
+                     videoPreview.AddRichBlocks(new[] {
+                         new NIRARichBlock { Type = "video", Title = "Landing",
+                             Text = "https://www.youtube.com/watch?v=dQw4w9WgXcQ" },
+                         new NIRARichBlock { Type = "video", Title = "Recovery",
+                             Text = "https://www.youtube.com/watch?v=9bZkp7q19f0" }
+                     });
+                     if (!videoPreview.HasVideoDeck || videoPreview.VideoCount != 2 ||
+                         videoPreview.VideoDeckView is null ||
+                         !videoPreview.RichElements.Contains(videoPreview.VideoDeckView) ||
+                         !videoPreview.RichElements.Any())
+                         throw new InvalidOperationException("Video deck not visible in WPF reply.");
+                    }
+                    finally
+                    {
+                        NIRAAgent.UI.Presentation.NIRAVideoThumbnailService.DisableNetworkForOfflineAcceptance = false;
+                    }
                     var activityPreview = new ChatMessageViewModel("assistant", string.Empty);
                     activityPreview.BeginJourney();
                     activityPreview.AddAgentActivity("REASONING_STARTED", "", DateTimeOffset.UtcNow);
@@ -1174,7 +1218,7 @@ public partial class App : WpfApplication
                             nativeFunctionsChecked = requiredFunctions.Length,
                             protocolChecks, discoveryChecks, richChecks, activityChecks,
                             publicThinkingChecks, streamingDraftChecks,
-                            sourceLinkRecoveryChecks, readOnlySchemaChecks,
+                            sourceLinkRecoveryChecks, readOnlySchemaChecks, boundedSearchChecks,
                             requiredCapabilities = required.Length,
                             unifiedHost = true, mindOwner = true, memoryReviewOwner = true,
                             hostedServicesStarted = false

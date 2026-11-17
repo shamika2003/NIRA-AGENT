@@ -128,8 +128,15 @@ public sealed class GeneralModelReasoner : IAgentReasoner
         the native nira_search_web function for research that benefits from
         actual photographs, consider its registered includeImages, imageQuery
         and retrieveCount arguments: one authorized web search can return
-        source evidence AND verified displayable image artifacts. Choose the
-        visual subject precisely and retrieve only useful images. If that
+        source evidence AND verified displayable image artifacts. For the
+        current native web-search schema, retrieveCount MUST be an integer from
+        1 through 3 inclusive; 5 is INVALID and causes a wasted model retry.
+        Prefer 2-3 targeted search queries in the initial call, combining
+        explanatory and direct-video discovery when relevant. Do not make a
+        second overlapping web search unless the first observation contains
+        a specific, consequential information gap. A second call can be worth
+        it for missing footage, but avoid repeating already-covered topics.
+        Choose the visual subject precisely and retrieve only useful images. If that
         option is unavailable, discover the image capability from the real
         registry and follow its actual argument schema instead.
         Never invent a
@@ -138,8 +145,12 @@ public sealed class GeneralModelReasoner : IAgentReasoner
         distinct source-backed playable watch URLs, not merely articles talking
         about videos. Use the observed source IDs in your answer; the host will
         display readable source labels and gather playable clips at the END of
-        the response. Give a clear descriptive title for each actual clip. If
-        fewer playable clips can be observed than requested, be candid rather
+        the response. Give a clear descriptive title for each actual clip. In a
+        nira-blocks video, put the VERIFIED HTTPS watch URL in the `url` field
+        or in `text`; descriptive prose may be in `text` only when `url` is
+        also present. Do not paste citation labels or Video · titles inline
+        as if they were explanation. The host adds a visible video collection.
+        If fewer playable clips can be observed than requested, be candid rather
         than fabricating links or presenting an ordinary article as a video.
         Don't force visuals into casual conversation,
         pure programming, troubleshooting or requests explicitly asking for text.
@@ -580,6 +591,18 @@ public sealed class GeneralModelReasoner : IAgentReasoner
                             return Stop("UNKNOWN_OR_UNAVAILABLE_CAPABILITY");
                         }
                         JsonElement arguments = decision.Arguments ?? default;
+                        // A bounded, read-only retrieval count is not a write
+                        // request. Correct this ONE known model error before
+                        // preflight, then run the ORIGINAL authoritative schema
+                        // validator unchanged. Never normalize mutation or
+                        // unrelated capability parameters.
+                        if (TryClampWebImageCount(function, capability.Spec.Access,
+                            arguments, out JsonElement correctedArguments))
+                        {
+                            arguments = correctedArguments;
+                            NIRADiagnosticTrace.Event("AGENT-READONLY-COUNT-CLAMP",
+                                "Function=nira_search_web RequestedAboveMax=True ExecutedMax=3");
+                        }
                         if (arguments.ValueKind != JsonValueKind.Object ||
                             !capability.ValidateArguments(arguments))
                         {
@@ -716,6 +739,53 @@ public sealed class GeneralModelReasoner : IAgentReasoner
                 return Stop(decision.ErrorCode ?? "INVALID_MODEL_DECISION");
         }
         return Stop("INVALID_MODEL_DECISION");
+    }
+
+    // Pure model-argument normalization for the native, READ-ONLY web
+    // image count. This cannot grant authority or widen the descriptor's
+    // numeric range. All resulting arguments still pass the real handler's
+    // full ValidateArguments check before dispatch.
+    internal static bool TryClampWebImageCount(string function, AccessLevel access,
+        JsonElement supplied, out JsonElement corrected)
+    {
+        corrected = default;
+        if (function != "nira_search_web" || access != AccessLevel.Observe ||
+            supplied.ValueKind != JsonValueKind.Object ||
+            !supplied.TryGetProperty("retrieveCount", out JsonElement count) ||
+            count.ValueKind != JsonValueKind.Number ||
+            !count.TryGetInt32(out int requested) || requested <= 3 || requested > 20)
+            return false;
+        var values = new Dictionary<string, object?>();
+        foreach (JsonProperty property in supplied.EnumerateObject())
+        {
+            if (!values.TryAdd(property.Name,
+                property.NameEquals("retrieveCount") ? 3 : property.Value.Clone()))
+                return false; // Ambiguous duplicate JSON keys are not repaired.
+        }
+        corrected = JsonSerializer.SerializeToElement(values);
+        return true;
+    }
+
+    public static int RunWebImageCountSafetySelfCheck()
+    {
+        JsonElement invalid = JsonSerializer.SerializeToElement(new {
+            queries = new[] { "rocket recovery engineering" },
+            includeImages = true, imageQuery = "rocket landing photograph", retrieveCount = 5
+        });
+        if (!TryClampWebImageCount("nira_search_web", AccessLevel.Observe,
+                invalid, out JsonElement fixedArgs) ||
+            fixedArgs.GetProperty("retrieveCount").GetInt32() != 3 ||
+            fixedArgs.GetProperty("imageQuery").GetString() != "rocket landing photograph" ||
+            TryClampWebImageCount("nira_execute_capability", AccessLevel.Modify,
+                invalid, out _) ||
+            TryClampWebImageCount("nira_search_web", AccessLevel.Modify,
+                invalid, out _))
+            throw new InvalidOperationException("Read-only web image-count clamp violated scope.");
+        JsonElement valid = JsonSerializer.SerializeToElement(new { retrieveCount = 3 });
+        if (TryClampWebImageCount("nira_search_web", AccessLevel.Observe,
+            valid, out _))
+            throw new InvalidOperationException("Already valid web image count was altered.");
+        return 4;
     }
 
     private async Task TryPublishObservedThinkingAsync(AgentRunSnapshot run,

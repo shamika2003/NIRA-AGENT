@@ -35,6 +35,19 @@ public static class NIRAChatDocument
     public static string GetEmbeddedVideoKeys(DependencyObject element) =>
         (string)element.GetValue(EmbeddedVideoKeysProperty);
 
+    // The model's SSE preview has not passed grounding or tool verification.
+    // It may be drawn as text, but MUST NOT instantiate video WebViews or
+    // promote any link to a trusted native media player.
+    public static readonly DependencyProperty IsProvisionalPreviewProperty =
+        DependencyProperty.RegisterAttached("IsProvisionalPreview", typeof(bool),
+            typeof(NIRAChatDocument), new PropertyMetadata(false, OnPreviewChanged));
+    public static void SetIsProvisionalPreview(DependencyObject owner, bool value) =>
+        owner.SetValue(IsProvisionalPreviewProperty, value);
+    public static bool GetIsProvisionalPreview(DependencyObject owner) =>
+        (bool)owner.GetValue(IsProvisionalPreviewProperty);
+    private static void OnPreviewChanged(DependencyObject owner, DependencyPropertyChangedEventArgs _) =>
+        Build(owner, GetText(owner));
+
     // Rich blocks are rendered in a separate WPF row. Photos belonging to
     // those blocks are inserted there by ChatMessageViewModel, never before
     // the row simply because plain-text layout finished first.
@@ -115,6 +128,7 @@ public static class NIRAChatDocument
     {
         if (element is not StackPanel root) return;
         root.Children.Clear();
+        bool canEmbedVerifiedVideo = !GetIsProvisionalPreview(element);
         string source = NIRAResearchPresentationPolicy.StripEditorialImagePlacement(
             raw.Replace("\r\n", "\n").Replace('\r', '\n'));
         var knownVideoKeys = new HashSet<string>(
@@ -242,7 +256,7 @@ public static class NIRAChatDocument
             // 'text':'https://youtube.com/...'} in the answer itself.
             // Do not show raw UI metadata in the conversation, and do not
             // duplicate an existing typed or prose video player.
-            if (line.Length <= 2200 && RawVideoRecord.IsMatch(line))
+            if (canEmbedVerifiedVideo && line.Length <= 2200 && RawVideoRecord.IsMatch(line))
             {
                 Match urlField = RawVideoUrl.Match(line);
                 if (urlField.Success && IsYouTubePlaylist(urlField.Groups["url"].Value))
@@ -286,8 +300,10 @@ public static class NIRAChatDocument
             // paragraphs. Keep the original prose and links intact, but present
             // each distinct supported video once at the end of this reply.
             // Validation goes through the same strict video-reference policy.
-            foreach (Match hit in Regex.Matches(line, @"https://[^\s<>\]\)\(]+",
-                         RegexOptions.CultureInvariant | RegexOptions.IgnoreCase))
+            foreach (Match hit in (canEmbedVerifiedVideo
+                ? Regex.Matches(line, @"https://[^\s<>\]\)\(]+",
+                         RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)
+                : Regex.Matches(string.Empty, @"https://[^\s<>\]\)\(]+")))
             {
                 string candidate = hit.Value.TrimEnd('.', ',', ';', ':', '!', '?', '*');
                 if (!NIRAVideoReferencePolicy.TryParse(candidate, out var inlineVideo) ||
@@ -361,7 +377,7 @@ public static class NIRAChatDocument
             // repeated as a second player merely because NIRA cited its URL.
             // Ordinary video links receive the identical player without asking
             // cognition to change its existing answer construction.
-            if (NIRAVideoReferencePolicy.TryParseStandaloneLine(line,
+            if (canEmbedVerifiedVideo && NIRAVideoReferencePolicy.TryParseStandaloneLine(line,
                 out var video, out string videoTitle) && video != null)
             {
                 FlushParagraph();
@@ -449,6 +465,7 @@ public static class NIRAChatDocument
         FlushParagraph(); FlushCode();
         // Unmatched photos are NOT appended to the end of the response. The
         // rich block presenter may attach them to a strongly matching section.
+        if (canEmbedVerifiedVideo)
         foreach (var item in embeddedLinks)
         {
             if (!knownVideoKeys.Add(item.Video.Key)) continue;

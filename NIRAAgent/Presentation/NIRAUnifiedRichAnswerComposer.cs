@@ -30,6 +30,13 @@ public static class NIRAUnifiedRichAnswerComposer
         @"^(?:S[1-9]\d*|Source\s+S[1-9]\d*)$",
         RegexOptions.CultureInvariant | RegexOptions.IgnoreCase | RegexOptions.Compiled,
         TimeSpan.FromMilliseconds(100));
+    // The research binder uses this label for a verified VIDEO citation.
+    // It is not authored explanatory prose and must not be left inline when
+    // the real playable item is displayed once in the video collection.
+    private static readonly Regex BoundVideoCitationLabel = new(
+        @"^Video\s*[·:\-]\s*.+$",
+        RegexOptions.CultureInvariant | RegexOptions.IgnoreCase | RegexOptions.Compiled,
+        TimeSpan.FromMilliseconds(100));
 
     public static NIRAUnifiedRichAnswer Compose(string answer, string userRequest,
         IReadOnlyList<string>? successfulObservationReceipts)
@@ -111,7 +118,13 @@ public static class NIRAUnifiedRichAnswerComposer
                     !trustedVideos.Contains(video.Key)) return match.Value;
                 string label = match.Groups["label"].Value.Trim();
                 AddVideo(video, label);
-                return InternalSourceLabel.IsMatch(label) ? "video footage below" : label;
+                // The authoritative source binder has already verified this
+                // URL. The actual player with its descriptive title is rendered
+                // once at the bottom; don't leak "Video · ..." citations into
+                // engineering prose. Other authored link labels stay readable.
+                return InternalSourceLabel.IsMatch(label) ||
+                    BoundVideoCitationLabel.IsMatch(label)
+                    ? "(see video collection below)" : label;
             });
             // Also accept an actual standalone or inline plaintext watch URL.
             // Do not replace non-video web links or unsupported destinations.
@@ -121,7 +134,7 @@ public static class NIRAUnifiedRichAnswerComposer
                 if (!NIRAVideoReferencePolicy.TryParse(raw, out var video) ||
                     video is null || !trustedVideos.Contains(video.Key)) return match.Value;
                 AddVideo(video, null);
-                return "video below" + match.Value[raw.Length..];
+                return "(see video collection below)" + match.Value[raw.Length..];
             });
         }
 
@@ -164,6 +177,9 @@ public static class NIRAUnifiedRichAnswerComposer
     private static string CleanVideoLabel(string? proposed, NIRAVideoReference video)
     {
         string label = (proposed ?? "").Trim();
+        if (BoundVideoCitationLabel.IsMatch(label))
+            label = Regex.Replace(label, @"^Video\s*[·:\-]\s*", "",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         if (InternalSourceLabel.IsMatch(label) ||
             label.Equals("Source", StringComparison.OrdinalIgnoreCase) ||
             label.Equals("Video", StringComparison.OrdinalIgnoreCase) ||
@@ -258,6 +274,19 @@ public static class NIRAUnifiedRichAnswerComposer
         if (alias.Blocks.Count != 1 || alias.Blocks[0].Type != "video" ||
             alias.Blocks[0].Title != "Launch and landing")
             throw new InvalidOperationException("Valid verified videoUrl block alias was discarded.");
+        const string dualVideo = "Engineering discussion.\n\n```nira-blocks\n" +
+            "{\"displayBlocks\":[{\"type\":\"video\",\"title\":\"Actual footage\"," +
+            "\"text\":\"A meaningful description of the recovery sequence.\"," +
+            "\"url\":\"" + video + "\"}]}\n```";
+        var dualAccepted = Compose(dualVideo, "Explain recovery", new[] {
+            "{\"sources\":[{\"url\":\"" + video + "\",\"title\":\"Actual footage\"}]}" });
+        if (dualAccepted.Blocks.Count != 1 ||
+            dualAccepted.Blocks[0].Type != "video" ||
+            dualAccepted.Blocks[0].Text != video)
+            throw new InvalidOperationException("Model descriptive video + URL shape was discarded.");
+        var dualRejected = Compose(dualVideo, "Explain recovery", Array.Empty<string>());
+        if (dualRejected.Blocks.Count != 0)
+            throw new InvalidOperationException("Unobserved descriptive video was promoted.");
         var aliasDenied = Compose(videoAlias, "Explain launch sequence", Array.Empty<string>());
         if (aliasDenied.Blocks.Count != 0)
             throw new InvalidOperationException("Unobserved videoUrl alias promoted into a player.");
@@ -269,6 +298,14 @@ public static class NIRAUnifiedRichAnswerComposer
         if (inline.Blocks.Count != 1 || inline.Blocks[0].Title != "Falcon booster landing" ||
             inline.Screen.Contains(video, StringComparison.Ordinal))
             throw new InvalidOperationException("Inline video was not moved to end-of-reply deck.");
+        var boundCitation = Compose("Falcon 9 descent is explained [Video · Rocket descent](" +
+            video + ").", "Show video", new[] {
+            "{\"sources\":[{\"url\":\"" + video + "\"}]}" });
+        if (boundCitation.Blocks.Count != 1 ||
+            !boundCitation.Screen.Contains("video collection below", StringComparison.Ordinal) ||
+            boundCitation.Screen.Contains("Video ·", StringComparison.Ordinal) ||
+            boundCitation.Blocks[0].Title != "Rocket descent")
+            throw new InvalidOperationException("Internal video citation leaked into explanation.");
         var duplicate = Compose("[Landing](" + video + ") and [Landing again](" + video + ")",
             "Show videos", new[] { "{\"sources\":[{\"url\":\"" + video + "\"}]}" });
         if (duplicate.Blocks.Count != 1)
