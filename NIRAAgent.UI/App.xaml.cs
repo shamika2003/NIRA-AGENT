@@ -1054,6 +1054,31 @@ public partial class App : WpfApplication
                     int protocolChecks = await NiraProtocolSelfCheck.RunAsync();
                     int richChecks = NIRAUnifiedRichAnswerComposer.RunSelfCheck();
                     if (richChecks != 3) throw new InvalidOperationException("Rich presenter checks incomplete.");
+                    int activityChecks = NIRAAgent.UI.Presentation.NIRAActivityPresentationPolicy.RunSelfCheck();
+                    var activityPreview = new ChatMessageViewModel("assistant", string.Empty);
+                    activityPreview.BeginJourney();
+                    activityPreview.AddAgentActivity("REASONING_STARTED", "", DateTimeOffset.UtcNow);
+                    activityPreview.AddAgentActivity("TOOL_DISPATCHED", "nira.direct.web.search", DateTimeOffset.UtcNow);
+                    activityPreview.AddAgentActivity("TOOL_SUCCEEDED", "nira.direct.web.search", DateTimeOffset.UtcNow);
+                    activityPreview.AddAgentActivity("RUN_COMPLETED", "", DateTimeOffset.UtcNow);
+                    activityPreview.AddAgentActivity("REASONING_PRIVATE_TEXT", "SECRET", DateTimeOffset.UtcNow);
+                    if (!activityPreview.HasActivity || activityPreview.IsActivityExpanded ||
+                        activityPreview.ActivityEntries.Count != 2 ||
+                        activityPreview.ActivityEntries[1].Detail != "Result received" ||
+                        !activityPreview.ActivityHeader.StartsWith("Worked for", StringComparison.Ordinal))
+                        throw new InvalidOperationException("Activity panel lifecycle verification failed.");
+                    activityChecks++;
+                    var failedPreview = new ChatMessageViewModel("assistant", string.Empty);
+                    failedPreview.BeginJourney();
+                    failedPreview.AddAgentActivity("REASONING_STARTED", "", DateTimeOffset.UtcNow);
+                    failedPreview.AddAgentActivity("TOOL_DISPATCHED", "nira.direct.web.search", DateTimeOffset.UtcNow);
+                    failedPreview.AddAgentActivity("TOOL_FAILED", "nira.direct.web.search", DateTimeOffset.UtcNow);
+                    failedPreview.AddAgentActivity("RUN_INCOMPLETE", "", DateTimeOffset.UtcNow);
+                    if (failedPreview.ActivityEntries.Count != 3 ||
+                        failedPreview.ActivityEntries[1].Detail != "The operation failed" ||
+                        !failedPreview.ActivityHeader.StartsWith("Stopped after", StringComparison.Ordinal))
+                        throw new InvalidOperationException("Failed activity flow was presented incorrectly.");
+                    activityChecks++;
                     // Validate the ACTUAL native web schema against the real
                     // authoritative preflight, not a test-only mock handler.
                     var searchTool = nativeTools.OfType<
@@ -1120,7 +1145,7 @@ public partial class App : WpfApplication
                             status = "PASS", capabilityCount = descriptors.Count,
                             nativeToolCount = nativeRegistry.Count,
                             nativeFunctionsChecked = requiredFunctions.Length,
-                            protocolChecks, discoveryChecks, richChecks, readOnlySchemaChecks,
+                            protocolChecks, discoveryChecks, richChecks, activityChecks, readOnlySchemaChecks,
                             requiredCapabilities = required.Length,
                             unifiedHost = true, mindOwner = true, memoryReviewOwner = true,
                             hostedServicesStarted = false

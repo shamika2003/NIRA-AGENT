@@ -387,6 +387,13 @@ public sealed class MainWindowViewModel
                     attachedPastChatSessionId,
                     imagePaths))
             {
+                if (chunk.Type == NIRAOutputChunkType.Activity)
+                {
+                    assistantMessage.AssociateRun(chunk.RunId);
+                    assistantMessage.AddAgentActivity(chunk.ActivityCode,
+                        chunk.ActivityToolId, chunk.ActivityAtUtc);
+                    continue;
+                }
                 if (chunk.Type == NIRAOutputChunkType.Preview)
                 {
                     // Replace full provisional text, never append it to the final answer.
@@ -492,6 +499,8 @@ public sealed class MainWindowViewModel
         }
         finally
         {
+            assistantMessage.FinishAgentActivity(assistantMessage.HasContent ||
+                assistantMessage.HasRichElements || assistantMessage.HasVisualArtifacts);
             if (assistantMessage.HasContent ||
                 assistantMessage.HasRichElements ||
                 assistantMessage.HasVisualArtifacts)
@@ -543,6 +552,14 @@ public sealed class MainWindowViewModel
     private void HandleBackgroundChunk(
         NIRAOutputChunk chunk)
     {
+        if (chunk.Type == NIRAOutputChunkType.Activity)
+        {
+            BackgroundResponseState state = GetOrCreateBackgroundResponse(
+                chunk.RunId, chunk.OriginPrompt);
+            state.Message.AddAgentActivity(chunk.ActivityCode,
+                chunk.ActivityToolId, chunk.ActivityAtUtc);
+            return;
+        }
         if (chunk.Type == NIRAOutputChunkType.Progress)
         {
             if (string.IsNullOrWhiteSpace(chunk.Content)) return;
@@ -629,6 +646,8 @@ public sealed class MainWindowViewModel
 
 
                 state.SpeechState.Reset();
+                state.Message.FinishAgentActivity(state.Message.HasContent ||
+                    state.Message.HasRichElements || state.Message.HasVisualArtifacts);
                 // Transient progress fades away when a real result exists.
                 if (state.Message.HasContent ||
                     state.Message.HasRichElements ||

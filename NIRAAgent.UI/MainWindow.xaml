@@ -560,20 +560,73 @@
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
+
+                            <!-- Optional verified agent activity. This is not a
+                                 model reasoning trace: it is the same persisted
+                                 observe/act/result workflow used by the host. -->
+                            <Expander x:Name="AgentActivityPanel" Grid.Row="0"
+                                      Margin="0,2,0,10" Visibility="Collapsed"
+                                      HorizontalAlignment="Stretch"
+                                      IsExpanded="{Binding IsActivityExpanded, Mode=TwoWay}"
+                                      Foreground="{DynamicResource NIRASecondaryBrush}">
+                                <Expander.Header>
+                                    <StackPanel Orientation="Horizontal" Margin="1,1,0,1">
+                                        <TextBlock Text="✦" FontSize="13" Margin="0,0,9,0"
+                                                   Foreground="{DynamicResource NIRATextBrush}"/>
+                                        <TextBlock Text="{Binding ActivityHeader}" FontSize="12"
+                                                   FontWeight="SemiBold"/>
+                                    </StackPanel>
+                                </Expander.Header>
+                                <Border Margin="4,6,10,0" Padding="12,11"
+                                        CornerRadius="12"
+                                        Background="{DynamicResource NIRAGlassTintBrush}"
+                                        BorderBrush="{DynamicResource NIRAGlassBorderBrush}"
+                                        BorderThickness="1">
+                                    <StackPanel>
+                                        <TextBlock Text="Task activity · verified runtime events"
+                                                   FontSize="10" Margin="2,0,0,10"
+                                                   Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                                        <ItemsControl ItemsSource="{Binding ActivityEntries}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid Margin="0,0,0,9">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="25"/>
+                                                            <ColumnDefinition Width="*"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Text="{Binding Glyph}" Grid.Column="0"
+                                                                   FontSize="13" HorizontalAlignment="Center"
+                                                                   Foreground="{DynamicResource NIRATextBrush}"/>
+                                                        <StackPanel Grid.Column="1">
+                                                            <TextBlock Text="{Binding Title}" FontSize="12"
+                                                                       FontWeight="SemiBold" TextWrapping="Wrap"
+                                                                       Foreground="{DynamicResource NIRATextBrush}"/>
+                                                            <TextBlock Text="{Binding Detail}" FontSize="10.5"
+                                                                       Margin="0,3,0,0" TextWrapping="Wrap"
+                                                                       Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </Border>
+                            </Expander>
 
                             <!-- Structured prose stays on the background itself. Each
                                  paragraph, title, bullet, link and code passage gets
                                  its own readable spacing without a white chat box. -->
                             <StackPanel x:Name="AssistantContentText"
-                                        Grid.Row="0" HorizontalAlignment="Stretch"
+                                        Grid.Row="1" HorizontalAlignment="Stretch"
                                         present:NIRAChatDocument.Text="{Binding Content}"
                                         present:NIRAChatDocument.EmbeddedVideoKeys="{Binding EmbeddedVideoKeys}"
                                         present:NIRAChatDocument.InlineVisuals="{Binding VisualArtifacts}"
                                         present:NIRAChatDocument.InlineVisualRevision="{Binding InlineVisualRevision}"
                                         present:NIRAChatDocument.HasRichBlocks="{Binding HasRichElements}"/>
 
-                            <ItemsControl x:Name="AssistantRichBlocks" Grid.Row="2"
+                            <ItemsControl x:Name="AssistantRichBlocks" Grid.Row="3"
                                           ItemsSource="{Binding RichElements}" Visibility="Collapsed"
                                           Margin="0,5,0,5"/>
 
@@ -581,7 +634,7 @@
                                  image is a rich horizontal card; multiple images become
                                  the same bounded, one-row gallery as user attachments. -->
                             <ItemsControl x:Name="AssistantVisualArtifacts"
-                                          Grid.Row="1"
+                                          Grid.Row="2"
                                           ItemsSource="{Binding UnplacedAssistantImageGalleryTiles}"
                                           Visibility="Collapsed"
                                           Margin="0,12,0,2">
@@ -865,7 +918,7 @@
                                  only NIRA's living three-dot motion plus the current
                                  grounded progress line. No card, border, badge or label. -->
                             <Grid x:Name="JourneyIndicator"
-                                  Grid.Row="0" Grid.RowSpan="3"
+                                  Grid.Row="1" Grid.RowSpan="3"
                                   Margin="6,1,8,0"
                                   HorizontalAlignment="Left"
                                   Visibility="Collapsed"
@@ -906,6 +959,9 @@
             <DataTemplate.Triggers>
                 <DataTrigger Binding="{Binding HasReplySource}" Value="True">
                     <Setter TargetName="ReplySourceText" Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding HasActivity}" Value="True">
+                    <Setter TargetName="AgentActivityPanel" Property="Visibility" Value="Visible"/>
                 </DataTrigger>
                 <DataTrigger Binding="{Binding HasRichElements}" Value="True">
                     <Setter TargetName="AssistantRichBlocks" Property="Visibility" Value="Visible"/>

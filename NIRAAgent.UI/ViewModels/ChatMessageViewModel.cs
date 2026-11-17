@@ -15,6 +15,7 @@ using NIRAAgent.Conversation;
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Media;
+using System.Windows.Threading;
 
 namespace NIRAAgent.UI.ViewModels;
 
@@ -22,6 +23,165 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
 {
     private string
         _content;
+
+    // Live, read-only task activity. These entries are based ONLY on host
+    // events already persisted by AgentLoopEngine. They are not model thoughts.
+    public ObservableCollection<NIRAActivityTimelineEntry> ActivityEntries { get; } = new();
+    private readonly DispatcherTimer _activityClock = new() {
+        Interval = TimeSpan.FromSeconds(1)
+    };
+    private DateTimeOffset _activityStartedUtc;
+    private DateTimeOffset? _activityFinishedUtc;
+    private bool _hasActivity;
+    private bool _isActivityExpanded;
+    private bool _activityFailed;
+    private string _activityLiveLabel = "Thinking";
+    private string _lastActivityToolId = string.Empty;
+
+    public bool HasActivity
+    {
+        get => _hasActivity;
+        private set
+        {
+            if (_hasActivity == value) return;
+            _hasActivity = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool IsActivityExpanded
+    {
+        get => _isActivityExpanded;
+        set
+        {
+            if (_isActivityExpanded == value) return;
+            _isActivityExpanded = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string ActivityHeader
+    {
+        get
+        {
+            if (_activityStartedUtc == default) return "Activity";
+            var duration = (_activityFinishedUtc ?? DateTimeOffset.UtcNow) - _activityStartedUtc;
+            int seconds = Math.Max(0, (int)duration.TotalSeconds);
+            if (_activityFinishedUtc is null) return $"{_activityLiveLabel} · {seconds}s";
+            if (_activityFailed) return $"Stopped after {seconds}s";
+            return $"Worked for {seconds}s";
+        }
+    }
+
+    public void AddAgentActivity(string? code, string? toolId, DateTimeOffset atUtc)
+    {
+        if (!NIRAActivityPresentationPolicy.IsKnown(code) || _activityFinishedUtc is not null)
+            return;
+        if (_activityStartedUtc == default)
+            _activityStartedUtc = atUtc == default ? DateTimeOffset.UtcNow : atUtc;
+        if (!HasActivity)
+        {
+            HasActivity = true;
+            IsActivityExpanded = true;
+            if (!_activityClock.IsEnabled) _activityClock.Start();
+        }
+        string id = toolId ?? string.Empty;
+        switch (code)
+        {
+            case "RUN_ACTIVE":
+                // RUN_ACTIVE is a persisted lifecycle transition, not a model step.
+                break;
+            case "REASONING_STARTED":
+                _activityLiveLabel = "Thinking";
+                AddActivityEntry(ActivityEntries.Count == 0
+                    ? "Considering the request" : "Deciding what to do next",
+                    "Model decision in progress", "○");
+                break;
+            case "TOOL_PROPOSED":
+                // Tool selection is a model decision, NOT execution.
+                for (int i = ActivityEntries.Count - 1; i >= 0; i--)
+                {
+                    NIRAActivityTimelineEntry item = ActivityEntries[i];
+                    if (!item.IsTool && !item.IsFinal && item.Glyph == "○")
+                    {
+                        item.Complete("Selected a capability", true);
+                        break;
+                    }
+                }
+                break;
+            case "TOOL_DISPATCHED":
+                _activityLiveLabel = "Working";
+                _lastActivityToolId = id;
+                AddActivityEntry(NIRAActivityPresentationPolicy.ToolTitle(id),
+                    "Capability dispatched", "○");
+                break;
+            case "TOOL_SUCCEEDED":
+            case "TOOL_FAILED":
+            case "TOOL_CONFIRMED_NO_EFFECT":
+                // A failed observation may be recovered on a later model round;
+                // only terminal run status determines the overall outcome.
+                _activityLiveLabel = "Thinking";
+                CompleteLatestToolActivity(id,
+                    NIRAActivityPresentationPolicy.ResultLabel(code),
+                    code == "TOOL_SUCCEEDED");
+                break;
+            case "AUTHORIZATION_REQUIRED":
+            case "RECONCILIATION_REQUIRED":
+                _activityFailed = true;
+                AddActivityEntry(NIRAActivityPresentationPolicy.ResultLabel(code),
+                    "No further action was automatically executed", "!");
+                break;
+            case "RUN_COMPLETED":
+                FinishAgentActivity(true);
+                break;
+            case "RUN_CANCELLED":
+            case "RUN_INCOMPLETE":
+                _activityFailed = true;
+                AddActivityEntry(NIRAActivityPresentationPolicy.ResultLabel(code),
+                    "Task ended without verified completion", "!");
+                FinishAgentActivity(false);
+                break;
+        }
+        OnPropertyChanged(nameof(ActivityHeader));
+    }
+
+    private void AddActivityEntry(string title, string detail, string glyph)
+    {
+        if (ActivityEntries.Count >= 28) return;
+        ActivityEntries.Add(new NIRAActivityTimelineEntry(title, detail, glyph,
+            isTool: detail == "Capability dispatched",
+            toolIdentity: detail == "Capability dispatched" ? _lastActivityToolId : ""));
+    }
+
+    private void CompleteLatestToolActivity(string id, string result, bool succeeded)
+    {
+        for (int i = ActivityEntries.Count - 1; i >= 0; i--)
+        {
+            NIRAActivityTimelineEntry item = ActivityEntries[i];
+            if (item.IsTool && !item.IsFinal &&
+                string.Equals(item.ToolIdentity, id, StringComparison.Ordinal))
+            {
+                item.Complete(result, succeeded);
+                return;
+            }
+        }
+        // If an interrupted/restarted run has no matching dispatch in this
+        // current UI session, state only the outcome, not an invented action.
+        AddActivityEntry("Capability result", result, succeeded ? "✓" : "!");
+    }
+
+    public void FinishAgentActivity(bool completed)
+    {
+        _activityClock.Stop();
+        if (!HasActivity || _activityFinishedUtc is not null) return;
+        _activityFinishedUtc = DateTimeOffset.UtcNow;
+        if (!completed) _activityFailed = true;
+        foreach (var entry in ActivityEntries)
+            if (entry.Glyph == "○") entry.Complete(
+                completed ? "Decision returned" : "Interrupted before confirmation", completed);
+        IsActivityExpanded = false;
+        OnPropertyChanged(nameof(ActivityHeader));
+    }
 
     private string _progressText = string.Empty;
     private bool _isImageGenerationActive;
@@ -88,6 +248,16 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
     // Start with ONLY the living three dots. No fake/default status text.
     public void BeginJourney()
     {
+        _activityClock.Stop();
+        ActivityEntries.Clear();
+        _activityStartedUtc = DateTimeOffset.UtcNow;
+        _activityFinishedUtc = null;
+        _activityFailed = false;
+        _activityLiveLabel = "Thinking";
+        _lastActivityToolId = string.Empty;
+        HasActivity = false;
+        IsActivityExpanded = false;
+        OnPropertyChanged(nameof(ActivityHeader));
         IsImageGenerationActive = false;
         _journeyVersion++;
         _progressText = string.Empty;
@@ -717,6 +887,7 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
 
         _content =
             content;
+        _activityClock.Tick += (_, _) => OnPropertyChanged(nameof(ActivityHeader));
 
         UserImageAttachments.CollectionChanged += (_, _) =>
         {
@@ -866,4 +1037,40 @@ public sealed class NIRAUserImageGalleryTileViewModel
     public ImageSource? PreviewImage => Artifact.PreviewImage;
     public bool HasPreview => Artifact.HasPreview;
     public string OverflowLabel => HiddenCount > 0 ? $"+{HiddenCount}" : string.Empty;
+}
+
+// Each stage is based on the host-owned activity ledger. No model prose is
+// accepted here, and internal tool IDs never become visible UI text.
+public sealed class NIRAActivityTimelineEntry : INotifyPropertyChanged
+{
+    private string _detail;
+    private string _glyph;
+    public string Title { get; }
+    public string Detail { get => _detail; private set { _detail = value; OnPropertyChanged(); } }
+    public string Glyph { get => _glyph; private set { _glyph = value; OnPropertyChanged(); } }
+    public bool IsTool { get; }
+    public string ToolIdentity { get; }
+    public bool IsFinal { get; private set; }
+
+    public NIRAActivityTimelineEntry(string title, string detail, string glyph,
+        bool isTool = false, string toolIdentity = "")
+    {
+        Title = title;
+        _detail = detail;
+        _glyph = glyph;
+        IsTool = isTool;
+        ToolIdentity = toolIdentity;
+    }
+
+    public void Complete(string detail, bool succeeded)
+    {
+        if (IsFinal) return;
+        Detail = detail;
+        Glyph = succeeded ? "✓" : "!";
+        IsFinal = true;
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+    private void OnPropertyChanged([CallerMemberName] string? name = null) =>
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }

@@ -198,13 +198,31 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
             var engine = new AgentLoopEngine(reasoner,
                 new FileAgentStateStore(stateRoot, protector), permissions, registry.Tools,
                 new AgentLoopLimits(24, 12), new DirectProgress(e =>
-                writer.TryWrite(new NIRAOutputChunk { Source = mindEvent.Source,
-                    Type = NIRAOutputChunkType.Progress,
-                    Content = e.Code switch {
+                {
+                    // AgentLoopEngine writes each entry to the checkpoint before
+                    // notifying this observer. Model text and private reasoning
+                    // are NEVER emitted as activity events.
+                    writer.TryWrite(new NIRAOutputChunk {
+                        RunId = mindEvent.Id, Source = mindEvent.Source,
+                        Type = NIRAOutputChunkType.Activity,
+                        ActivityAtUtc = e.AtUtc,
+                        ActivityCode = e.Code,
+                        ActivityToolId = e.ToolId ?? string.Empty,
+                        ActivityDetailCode = e.DetailCode ?? string.Empty
+                    });
+                    string status = e.Code switch {
                         "REASONING_STARTED" => "Working through the task...",
                         "TOOL_DISPATCHED" => "Running an authorized capability...",
-                        "TOOL_SUCCEEDED" => "Checking the observed result...",
-                        _ => "" } })));
+                        "TOOL_SUCCEEDED" => "Reviewing the observed result...",
+                        "AUTHORIZATION_REQUIRED" => "Waiting for authorization...",
+                        _ => string.Empty
+                    };
+                    if (status.Length > 0)
+                        writer.TryWrite(new NIRAOutputChunk {
+                            RunId = mindEvent.Id, Source = mindEvent.Source,
+                            Type = NIRAOutputChunkType.Progress, Content = status
+                        });
+                }));
 
             // Trusted task identity comes only from the host-created mind event.
             // External-app content and archived text cannot become direct PC authority.

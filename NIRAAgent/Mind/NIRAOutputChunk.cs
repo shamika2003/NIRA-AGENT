@@ -17,7 +17,10 @@ public enum NIRAOutputChunkType
     Progress,
     VisualArtifact,
     Completed,
-    Cancelled
+    Cancelled,
+    // Append rather than renumber existing enum members.
+    // Host-owned activity only; never speech or conversation archive content.
+    Activity
 }
 
 public sealed record NIRAOutputChunk
@@ -66,6 +69,12 @@ public sealed record NIRAOutputChunk
     public bool IsProgressCorrection { get; init; }
     // Trusted runtime signal, never inferred from arbitrary model text.
     public bool IsImageGenerationProgress { get; init; }
+    // Only the host maps persisted AgentActivityEvent records to these fields.
+    // Tool identifiers are classification inputs, not displayed raw to the user.
+    public string ActivityCode { get; init; } = string.Empty;
+    public string ActivityToolId { get; init; } = string.Empty;
+    public string ActivityDetailCode { get; init; } = string.Empty;
+    public DateTimeOffset ActivityAtUtc { get; init; }
     public IReadOnlyList<NIRARichBlock> DisplayBlocks { get; init; } = Array.Empty<NIRARichBlock>();
 
     public NIRAVisualArtifact? VisualArtifact
