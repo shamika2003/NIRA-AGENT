@@ -4,7 +4,8 @@ param(
     [switch]$SessionOnlyKey,
     [switch]$ForgetSavedKey,
     [switch]$AllowPersonalContext,
-    [switch]$AllowLifecycleContext
+    [switch]$AllowLifecycleContext,
+    [switch]$CaptureAgentDecisions
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -34,6 +35,8 @@ function Convert-NiraSecretToPlainText([Security.SecureString]$secret) {
 $oldProvider = [Environment]::GetEnvironmentVariable('NIRA_MODEL_PROVIDER','Process')
 $oldModel = [Environment]::GetEnvironmentVariable('NIRA_MODEL_NAME','Process')
 $oldKey = [Environment]::GetEnvironmentVariable('NIRA_OLLAMA_API_KEY','Process')
+$oldDecisionCapture = [Environment]::GetEnvironmentVariable('NIRA_DEBUG_AGENT_DECISIONS','Process')
+$oldPublicCapture = [Environment]::GetEnvironmentVariable('NIRA_DEBUG_PUBLIC_RESPONSES','Process')
 try {
     $key = [Environment]::GetEnvironmentVariable('NIRA_OLLAMA_API_KEY','Process')
     if ([string]::IsNullOrWhiteSpace($key)) {
@@ -86,6 +89,11 @@ try {
     [Environment]::SetEnvironmentVariable('NIRA_MODEL_PROVIDER','OLLAMA','Process')
     [Environment]::SetEnvironmentVariable('NIRA_MODEL_NAME',$Model,'Process')
     $key = $null
+    if ($CaptureAgentDecisions) {
+        [Environment]::SetEnvironmentVariable('NIRA_DEBUG_AGENT_DECISIONS','1','Process')
+        [Environment]::SetEnvironmentVariable('NIRA_DEBUG_PUBLIC_RESPONSES','1','Process')
+        Write-Warning 'Full model responses and tool arguments will be logged locally for this launch. Keep the files private.'
+    }
     $forward = @{}
     if ($AllowPersonalContext) { $forward.AllowPersonalContext = $true }
     if ($AllowLifecycleContext) { $forward.AllowLifecycleContext = $true }
@@ -97,4 +105,6 @@ finally {
     [Environment]::SetEnvironmentVariable('NIRA_MODEL_PROVIDER',$oldProvider,'Process')
     [Environment]::SetEnvironmentVariable('NIRA_MODEL_NAME',$oldModel,'Process')
     [Environment]::SetEnvironmentVariable('NIRA_OLLAMA_API_KEY',$oldKey,'Process')
+    [Environment]::SetEnvironmentVariable('NIRA_DEBUG_AGENT_DECISIONS',$oldDecisionCapture,'Process')
+    [Environment]::SetEnvironmentVariable('NIRA_DEBUG_PUBLIC_RESPONSES',$oldPublicCapture,'Process')
 }

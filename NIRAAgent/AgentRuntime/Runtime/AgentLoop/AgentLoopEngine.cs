@@ -1,3 +1,4 @@
+using NIRAAgent.Diagnostics;
 using NIRAAgent.Runtime.Contracts;
 
 namespace NIRAAgent.Runtime.Runtime.AgentLoop;
@@ -211,6 +212,10 @@ public sealed class AgentLoopEngine
         try
         {
             AgentToolReceipt receipt = await tool.ExecuteAsync(pending.ArgumentReference, ct);
+            NIRADiagnosticTrace.Event("AGENT-TOOL-RESULT",
+                $"Run={state.Id:N} Tool={pending.ToolId} " +
+                $"Succeeded={receipt.Succeeded} OutcomeConfirmed={receipt.OutcomeConfirmed} " +
+                $"Code={receipt.OutcomeCode} HasReceipt={!string.IsNullOrWhiteSpace(receipt.ResultReference)}");
             if (pending.Access != AccessLevel.Observe &&
                 !receipt.Succeeded && receipt.OutcomeConfirmed)
             {
@@ -218,7 +223,7 @@ public sealed class AgentLoopEngine
                 // Never replay an attempted write, but do not falsely request
                 // reconciliation of a change that definitively did not happen.
                 state.Observations.Add(new AgentObservation(pending.ToolId,
-                    null, false, receipt.OutcomeCode, DateTimeOffset.UtcNow));
+                    receipt.ResultReference, false, receipt.OutcomeCode, DateTimeOffset.UtcNow));
                 state.PendingTool = null;
                 state.Status = AgentRunStatus.Incomplete;
                 state.LastErrorCode = receipt.OutcomeCode;

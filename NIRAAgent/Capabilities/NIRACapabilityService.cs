@@ -545,7 +545,8 @@ public sealed class NIRACapabilityService
             result = Make(dispatched ? NIRACapabilityResultStatus.Failed : NIRACapabilityResultStatus.Rejected,
                 ex.Message + (dispatched && risk != NIRACapabilityRisk.Observe && !preflightNoEffect
                     ? " Partial effects may remain; inspect before retrying." : "")) with
-            { OutcomeUncertain = dispatched && risk != NIRACapabilityRisk.Observe && !preflightNoEffect };
+            { OutcomeUncertain = dispatched && risk != NIRACapabilityRisk.Observe && !preflightNoEffect,
+              DefiniteNoEffect = preflightNoEffect };
             if (!attempt.HasValue)
             {
                 // Malformed/rejected attempts get a minimal record, without their

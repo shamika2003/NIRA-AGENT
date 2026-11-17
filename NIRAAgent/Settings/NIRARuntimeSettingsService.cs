@@ -29,6 +29,12 @@ public sealed record NIRARuntimeSettings
     public bool ProactiveCompanionEnabled { get; init; } = true;
     public bool PcContextReactionsEnabled { get; init; } = true;
 
+    // Private conversation and memory context is SENT to the selected model
+    // provider when explicitly enabled. null means not yet decided on this PC.
+    public bool? PersonalContextConsent { get; init; }
+    // Goal/branch/commitment snapshots also require personal-context consent.
+    public bool LifecycleContextEnabled { get; init; } = false;
+
     // Notifications
     public bool PermissionNotificationsEnabled { get; init; } = true;
 
@@ -103,6 +109,15 @@ public sealed class NIRARuntimeSettingsService
 
     public void SetPcContextReactionsEnabled(bool value) =>
         Update(current => current with { PcContextReactionsEnabled = value });
+
+    public void SetPersonalContextConsent(bool enabled) =>
+        Update(current => current with {
+            PersonalContextConsent = enabled,
+            LifecycleContextEnabled = enabled && current.LifecycleContextEnabled });
+
+    public void SetLifecycleContextEnabled(bool enabled) =>
+        Update(current => current with {
+            LifecycleContextEnabled = enabled && current.PersonalContextConsent == true });
 
     public void SetPermissionNotificationsEnabled(bool value) =>
         Update(current => current with { PermissionNotificationsEnabled = value });
@@ -189,7 +204,8 @@ public sealed class NIRARuntimeSettingsService
             VoiceEngine = settings.VoiceEngine is NIRAVoiceEngineMode.Auto or NIRAVoiceEngineMode.Piper
                 ? settings.VoiceEngine : NIRAVoiceEngineMode.Piper,
             VoiceVolume = Math.Clamp(settings.VoiceVolume, 0.0, 1.0),
-            IdleFadeDelaySeconds = Math.Clamp(settings.IdleFadeDelaySeconds, 15, 1800)
+            IdleFadeDelaySeconds = Math.Clamp(settings.IdleFadeDelaySeconds, 15, 1800),
+            LifecycleContextEnabled = settings.PersonalContextConsent == true && settings.LifecycleContextEnabled
         };
 
     private static NIRARuntimeSettings CreateDefaults()

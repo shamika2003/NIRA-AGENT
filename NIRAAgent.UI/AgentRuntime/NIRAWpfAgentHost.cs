@@ -1,6 +1,7 @@
 using System.IO;
 using System.Net.Http;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading.Channels;
 using NIRAAgent.AI.Cognition;
 using NIRAAgent.AI.Models;
@@ -20,6 +21,7 @@ using NIRAAgent.Runtime.HostAdapters;
 using NIRAAgent.Runtime.ModelProvider;
 using NIRAAgent.Runtime.Runtime.AgentLoop;
 using NIRAAgent.Self.Model;
+using NIRAAgent.Settings;
 
 namespace NIRAAgent.UI.AgentRuntime;
 
@@ -42,7 +44,9 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
     private readonly NIRAGoalStore _goalStore;
     private readonly NIRABranchService _branches;
     private readonly NIRABranchStore _branchStore;
+    private readonly NIRABranchWorkService _branchWork;
     private readonly NIRAVisualArtifactService _artifacts;
+    private readonly NIRARuntimeSettingsService _settings;
 
     public NIRAWpfAgentHost(ConversationManager conversation,
         NIRACharacterStateService character, NIRALongTermMemoryService memories,
@@ -50,8 +54,9 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
         NIRACapabilityService capabilityService,
         NIRAAuthorityExecutionContextAccessor authorityContext,
         NIRAModelClient visionModel, NIRAGoalService goals, NIRAGoalStore goalStore,
-        NIRABranchService branches, NIRABranchStore branchStore, NIRASelfModelService selfModel,
-        NIRAVisualArtifactService artifacts)
+        NIRABranchService branches, NIRABranchStore branchStore,
+        NIRABranchWorkService branchWork, NIRASelfModelService selfModel,
+        NIRAVisualArtifactService artifacts, NIRARuntimeSettingsService settings)
     {
         _context = new NIRAPersonalContextBuilder(conversation, character, memories, archive);
         _lifecycle = new NIRALifecycleContextBuilder(goals, branches, selfModel);
@@ -64,7 +69,9 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
         _goalStore = goalStore;
         _branches = branches;
         _branchStore = branchStore;
+        _branchWork = branchWork;
         _artifacts = artifacts;
+        _settings = settings;
     }
 
     public async IAsyncEnumerable<NIRAOutputChunk> RunAsync(NIRAMindEvent mindEvent,
@@ -128,11 +135,18 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
             // Never add a second Tavily-only path that bypasses capability audit.
             var allTools = NIRAAuthoritativeCapabilityTools.Create(vault, _capabilityRegistry, _capabilityService);
             var tools = new List<IGeneralCapability>(allTools);
-            bool personalConsent = NIRAPersonalContextPolicy.IsAllowed(
-                Environment.GetEnvironmentVariable("NIRA_PERSONAL_CONTEXT"));
-            bool lifecycleConsent = NIRALifecycleContextPolicy.IsAllowed(
-                Environment.GetEnvironmentVariable("NIRA_LIFECYCLE_CONTEXT"),
-                Environment.GetEnvironmentVariable("NIRA_PERSONAL_CONTEXT"));
+            // Preserve per-launch explicit flags while allowing durable consent
+            // set in the trusted NIRA desktop Settings panel.
+            bool personalConsent = _settings.Current.PersonalContextConsent == true ||
+                NIRAPersonalContextPolicy.IsAllowed(
+                    Environment.GetEnvironmentVariable("NIRA_PERSONAL_CONTEXT"));
+            bool lifecycleConsent = personalConsent &&
+                (_settings.Current.LifecycleContextEnabled ||
+                 NIRALifecycleContextPolicy.IsAllowed(
+                    Environment.GetEnvironmentVariable("NIRA_LIFECYCLE_CONTEXT"),
+                    Environment.GetEnvironmentVariable("NIRA_PERSONAL_CONTEXT")));
+            string personalGate = personalConsent ? NIRAPersonalContextPolicy.ExactConsent : "";
+            string lifecycleGate = lifecycleConsent ? NIRALifecycleContextPolicy.ExactConsent : "";
             NIRASelfGoalCapability? selfGoalTool = null;
             if (mindEvent.Source == NIRAMindEventSource.User &&
                 mindEvent.Name == "UserMessage" && lifecycleConsent)
@@ -143,17 +157,21 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
                     .OfType<NIRASelfGoalCapability>().SingleOrDefault();
                 if (selfGoalTool is not null) tools.Add(selfGoalTool);
             }
+            // One agent-loop lifecycle interface. Only internal events with an
+            // existing host-owned open goal may receive the mutation function.
+            var lifecycleTools = NIRALifecycleCapabilities.Create(vault, mindEvent,
+                _goals, _branches, _branchWork, lifecycleConsent);
+            tools.AddRange(lifecycleTools);
             var registry = new CapabilityRegistry(tools);
             NIRAPersonalContext continuity = await _context.BuildAsync(
                 mindEvent.Content, request,
-                Environment.GetEnvironmentVariable("NIRA_PERSONAL_CONTEXT"), ct,
+                personalGate, ct,
                 currentSourceEventId: mindEvent.SocialEventId);
             string identity = !string.IsNullOrWhiteSpace(continuity.TrustedIdentity)
                 ? continuity.TrustedIdentity
                 : await NIRAPersonalContextBuilder.LoadTrustedIdentityOnlyAsync(ct);
             string lifecycle = _lifecycle.Build(
-                Environment.GetEnvironmentVariable("NIRA_LIFECYCLE_CONTEXT"),
-                Environment.GetEnvironmentVariable("NIRA_PERSONAL_CONTEXT"),
+                lifecycleGate, personalGate,
                 request, allowTaskContinuation: true);
             string attached = LoadSelectedChat(mindEvent, personalConsent);
             string visual = await ObserveUserImagesAsync(mindEvent, request, ct);
@@ -164,6 +182,7 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
                 trustedIdentity: identity, untrustedHistory: context,
                 allowAuthoritativeCapabilities: true,
                 allowNiraManagedGoals: selfGoalTool is not null,
+                quickCapabilityReference: NIRAAuthoritativeCapabilityTools.BuildQuickReference(_capabilityRegistry),
                 previewText: draft => writer.TryWrite(new NIRAOutputChunk {
                     Source = mindEvent.Source, Type = NIRAOutputChunkType.Preview, Content = draft }));
             var action = allTools.OfType<NIRAAuthoritativeCapabilityTools.CapabilityInvocation>()
@@ -171,6 +190,10 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
             IAgentPermissionGate permissions = new NIRAAuthoritativeCapabilityPermissionGate(vault, action);
             if (selfGoalTool is not null)
                 permissions = new NIRASelfGoalPermissionGate(permissions, vault, selfGoalTool);
+            var lifecycleUpdate = lifecycleTools
+                .OfType<NIRALifecycleCapabilities.Change>().SingleOrDefault();
+            if (lifecycleUpdate is not null)
+                permissions = new NIRALifecyclePermissionGate(permissions, vault, lifecycleUpdate);
             var engine = new AgentLoopEngine(reasoner,
                 new FileAgentStateStore(stateRoot, protector), permissions, registry.Tools,
                 new AgentLoopLimits(24, 12), new DirectProgress(e =>
@@ -221,13 +244,28 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
                     SpeechContent = run.FinalAnswer + (receipt is null ? "" :
                         " The saved work plan was verified.") });
                 await EmitVerifiedVisualsAsync(run, vault, writer, mindEvent.Source, ct);
+                bool disposableMath = await IsVerifiedDisposableMathAsync(mindEvent, run, vault, ct);
                 writer.TryWrite(new NIRAOutputChunk { RunId = run.Id,
-                    Source = mindEvent.Source, Type = NIRAOutputChunkType.Completed });
+                    Source = mindEvent.Source, Type = NIRAOutputChunkType.Completed,
+                    SkipPostTurnExperienceReview = disposableMath });
                 return;
             }
-            if (run.Status == AgentRunStatus.AwaitingAuthorization)
+            if (run.LastErrorCode == "CAPABILITY_REJECTED_NO_EFFECT")
+            {
+                string rejection = await DescribeNoEffectAsync(run, vault, ct);
+                Finish(writer, mindEvent.Source,
+                    "The requested operation was rejected before it changed a file or " +
+                    "external state. I haven't completed the task. " + rejection +
+                    " You can ask me to correct the input and make a new authorized attempt.");
+            }
+            else if (run.Status == AgentRunStatus.AwaitingAuthorization)
                 Finish(writer, mindEvent.Source,
                     "The action was not authorized. I did not dispatch it.");
+            else if (run.LastErrorCode?.StartsWith("MODEL_PROTOCOL_", StringComparison.Ordinal) == true)
+                Finish(writer, mindEvent.Source,
+                    "The model service returned an invalid or incomplete response, so I couldn't " +
+                    "finish the task. Earlier tool receipts remain recorded; I won't claim " +
+                    "any unverified work was completed. Diagnostic: " + SafeCode(run.LastErrorCode));
             else
                 Finish(writer, mindEvent.Source,
                     "I could not verify completion of this task (" + SafeCode(run.LastErrorCode) +
@@ -245,6 +283,70 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
                 "NIRA encountered an execution error. No unverified external action will be retried automatically.");
         }
         finally { writer.TryComplete(); }
+    }
+
+    // Skip costly long-term experience *formation* for a disposable arithmetic
+    // exchange without personal or durable signals. This runs AFTER the model
+    // has finished: no calculation, answer or tool choice is hardcoded here.
+    // Personal details, goal work and uncertain or other tool outcomes retain review.
+    private static readonly Regex PlainArithmeticTurn = new(
+        @"^(?:(?:what(?:'s| is)|calculate|compute|evaluate)\s+)?[\d\s.,()+\-−×÷*/%]+[?!.]*$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+        TimeSpan.FromMilliseconds(150));
+
+    private static readonly Regex DurableTurnSignals = new(
+        @"\b(?:my|mine|our|ours|we|remember|memorize|save|store|next|tomorrow|" +
+        @"promise|goal|plan|prefer|love|hate|feel|relationship|health|salary|" +
+        @"income|rent|account|birthday)\b|\bi(?:'m| am|'ve| have| want| need| think| feel)\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+        TimeSpan.FromMilliseconds(150));
+
+    private static async Task<bool> IsVerifiedDisposableMathAsync(NIRAMindEvent mindEvent,
+        AgentRunSnapshot run, AgentPayloadVault vault, CancellationToken ct)
+    {
+        if (mindEvent.Source != NIRAMindEventSource.User ||
+            mindEvent.Name != "UserMessage" ||
+            mindEvent.Content.Length > 1600 ||
+            mindEvent.Metadata.Keys.Any(k => k is
+                "attachedPastChatSessionId" or "externalAppId" or "externalAppSurface" ||
+                k == NIRAImageInput.MetadataKey) ||
+            DurableTurnSignals.IsMatch(mindEvent.Content))
+            return false;
+        // Some ordinary, self-contained arithmetic questions can be answered
+        // directly by the model without invoking a tool. Their transient result
+        // does not justify a separate social-appraisal and memory-formation LLM
+        // call. This is NOT proof that a calculator was used or that the answer
+        // was externally verified; it only controls post-turn memory formation.
+        if (run.Observations.Count == 0)
+            return PlainArithmeticTurn.IsMatch(mindEvent.Content.Trim()) &&
+                mindEvent.Content.Any(c => c is '+' or '-' or '−' or '×' or '÷' or '*' or '/' or '%');
+        bool sawMath = false;
+        foreach (AgentObservation observation in run.Observations)
+        {
+            if (!observation.Succeeded || string.IsNullOrWhiteSpace(observation.ResultReference))
+                return false;
+            if (observation.ToolId == "nira.capabilities.discover") continue;
+            if (observation.ToolId != "nira.capabilities.observe" &&
+                observation.ToolId != "nira.direct.math.calculate") return false;
+            JsonElement receipt;
+            try
+            {
+                receipt = await vault.ReadResultAsync(run.Id, observation.ToolId,
+                    observation.ResultReference, ct);
+            }
+            catch (Exception ex) when (ex is IOException or JsonException or
+                InvalidDataException or UnauthorizedAccessException) { return false; }
+            if (receipt.ValueKind != JsonValueKind.Object ||
+                !receipt.TryGetProperty("capabilityId", out JsonElement id) ||
+                id.ValueKind != JsonValueKind.String || id.GetString() != NIRACapabilityIds.MathCalculate ||
+                !receipt.TryGetProperty("status", out JsonElement status) ||
+                status.ValueKind != JsonValueKind.String || status.GetString() != "Succeeded" ||
+                !receipt.TryGetProperty("auditRecorded", out JsonElement audit) ||
+                audit.ValueKind != JsonValueKind.True)
+                return false;
+            sawMath = true;
+        }
+        return sawMath;
     }
 
     private static string CleanRequest(NIRAMindEvent evt)
@@ -389,6 +491,28 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
         }
     }
 
+    private static async Task<string> DescribeNoEffectAsync(AgentRunSnapshot run,
+        AgentPayloadVault vault, CancellationToken ct)
+    {
+        AgentObservation? failure = run.Observations.LastOrDefault(o =>
+            o.OutcomeCode == "CAPABILITY_REJECTED_NO_EFFECT" &&
+            !string.IsNullOrWhiteSpace(o.ResultReference));
+        if (failure is null) return "The authoritative handler reported a definite no-effect rejection.";
+        try
+        {
+            JsonElement receipt = await vault.ReadResultAsync(run.Id,
+                failure.ToolId, failure.ResultReference!, ct);
+            string reason = ReadString(receipt, "summary");
+            reason = new string(reason.Where(c => !char.IsControl(c) || c is ' ' or '\t').ToArray()).Trim();
+            if (reason.Length > 380) reason = reason[..380] + "…";
+            return reason.Length == 0 ? "The handler rejected the submitted arguments." :
+                "The handler reported: " + reason;
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or
+            InvalidDataException or UnauthorizedAccessException)
+        { return "The handler rejected the attempted operation before any state change."; }
+    }
+
     private static string ReadString(JsonElement obj, string key) =>
         obj.TryGetProperty(key, out JsonElement v) && v.ValueKind == JsonValueKind.String
             ? v.GetString() ?? string.Empty : string.Empty;
@@ -402,8 +526,10 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
     {
         output.TryWrite(new NIRAOutputChunk { Source = source,
             Type = NIRAOutputChunkType.Text, Content = message, SpeechContent = message });
+        // A failed or unverified turn should not start social appraisal and
+        // memory formation model calls on top of the provider failure.
         output.TryWrite(new NIRAOutputChunk { Source = source,
-            Type = NIRAOutputChunkType.Completed });
+            Type = NIRAOutputChunkType.Completed, SkipPostTurnExperienceReview = true });
     }
     private sealed class DirectProgress(Action<AgentActivityEvent> callback) : IProgress<AgentActivityEvent>
     {

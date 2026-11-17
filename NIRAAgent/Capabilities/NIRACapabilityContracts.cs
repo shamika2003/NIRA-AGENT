@@ -820,6 +820,9 @@ public sealed record NIRACapabilityResult
     public Guid? AuditAttemptId { get; init; }
     public bool AuditRecorded { get; init; }
     public bool OutcomeUncertain { get; init; }
+    // Set ONLY when the authoritative service proved the handler had no
+    // published or external effect (e.g. documented prepublication rejection).
+    public bool DefiniteNoEffect { get; init; }
     public int? ExitCode { get; init; }
     public int? HttpStatusCode { get; init; }
 

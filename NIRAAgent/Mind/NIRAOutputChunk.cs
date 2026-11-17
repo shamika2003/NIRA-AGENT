@@ -43,6 +43,11 @@ public sealed record NIRAOutputChunk
     }
 
 
+    // Trusted host-only completion metadata. A fully audited, disposable
+    // arithmetic turn contains no durable user experience to form. Never
+    // infer this from model-authored text or from an unverified tool result.
+    public bool SkipPostTurnExperienceReview { get; init; }
+
     public string Content
     {
         get;

@@ -25,6 +25,13 @@ public sealed record NiraModelEndpointOptions(Uri Endpoint, string Model)
     public Func<string?> CredentialSource => IsOllama
         ? OllamaCloudCredentials.ReadExistingKey : NvidiaCloudCredentials.ReadExistingKey;
 
+    // Native tool decisions are transactional boundaries: require one complete,
+    // validated provider envelope before permitting a capability invocation.
+    // Streaming remains available for final text-only turns with UI preview.
+    // This policy is independent of particular user requests or tool names.
+    public bool ShouldStream(bool hasNativeTools, bool previewRequested) =>
+        previewRequested && !hasNativeTools;
+
     public void ConfigureRequest(IDictionary<string,object> payload, bool hasTools, bool fastConversation = false)
     {
         Validate();

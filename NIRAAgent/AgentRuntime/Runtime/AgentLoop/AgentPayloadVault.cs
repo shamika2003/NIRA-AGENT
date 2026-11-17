@@ -111,8 +111,25 @@ public sealed class AgentPayloadVault
         {
             byte[] sealedBytes = new byte[checked((int)file.Length)];
             await file.ReadExactlyAsync(sealedBytes, ct);
-            byte[] plain = _protector.Unprotect(sealedBytes,
-                ProtectionScope(runId, toolId, role, parsed.PayloadId));
+            // The protected envelope is bound to its run, tool, role and payload ID
+            // by DPAPI additional entropy. A different tool must receive the same
+            // fail-closed InvalidDataException contract as the unencrypted vault.
+            // A raw DPAPI exception otherwise escapes the caller's scoped-reference
+            // rejection path without granting access to the protected bytes.
+            byte[] plain;
+            try
+            {
+                plain = _protector.Unprotect(sealedBytes,
+                    ProtectionScope(runId, toolId, role, parsed.PayloadId));
+            }
+            catch (CryptographicException ex)
+            {
+                // This covers wrong-tool scope, corrupted ciphertext and a
+                // missing DPAPI key. Never retry, decrypt without scope, or
+                // expose partial data. Preserve the cause for diagnostics.
+                throw new InvalidDataException(
+                    "Private payload authentication failed for the requested scope.", ex);
+            }
             try
             {
                 using var json = JsonDocument.Parse(plain);

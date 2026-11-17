@@ -464,8 +464,24 @@ public sealed class NIRAMindRuntime
                     _conversation.AddAssistantMessage(verifiedFinalAnswer, mindEvent.SocialEventId);
                     // Exactly one evidence-grounded review after a completed user turn.
                     // The claim journal forbids duplicated state updates after a restart.
-                    await _experience.ReviewOnceAsync(mindEvent, verifiedFinalAnswer,
-                        cancellationToken);
+                    try
+                    {
+                        if (chunk.SkipPostTurnExperienceReview)
+                            NIRAAgent.Diagnostics.NIRADiagnosticTrace.Event("EXPERIENCE-REVIEW",
+                                "SkippedVerifiedDisposableCalculation=True");
+                        else
+                            await _experience.ReviewOnceAsync(mindEvent, verifiedFinalAnswer,
+                                cancellationToken);
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    { throw; }
+                    catch (Exception ex)
+                    {
+                        // A local review-outbox failure must not erase a successfully
+                        // completed, already-published agent answer.
+                        NIRAAgent.Diagnostics.NIRADiagnosticTrace.Event("EXPERIENCE-OUTBOX",
+                            "WriteFailed=" + ex.GetType().Name);
+                    }
                 }
                 if (chunk.Type == NIRAOutputChunkType.Text &&
                     (!string.IsNullOrWhiteSpace(chunk.Content) || chunk.DisplayBlocks.Count > 0))

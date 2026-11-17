@@ -88,7 +88,7 @@ public sealed class NIRAPersonalContextBuilder
                      NIRAPersonalContextPolicy.IsPriorSessionHistoryQuestion(cleanRequest)))
                 {
                     recentPastTurns = _archive.BuildRecentCrossSessionContext(
-                        maximumMessages: 4, maximumCharacters: 480,
+                        maximumMessages: 6, maximumCharacters: 1050,
                         userOnly: true);
                 }
                 earlierSessions = NIRAPersonalContextPolicy.JoinArchivedEvidence(

@@ -52,6 +52,73 @@ public static class NIRADiagnosticTrace
     public static string PublicResponseLogPath => Path.Combine(DirectoryPath,
         $"nira-public-{Environment.ProcessId}.jsonl");
 
+    // Full agent decisions (including candidates rejected by grounding and
+    // quality gates) may contain file paths, private answers or tool inputs.
+    // Default event log records ONLY metadata; complete text is opt-in locally.
+    public static bool AgentDecisionCaptureEnabled =>
+        Environment.GetEnvironmentVariable("NIRA_DEBUG_AGENT_DECISIONS") == "1";
+    public static string AgentDecisionLogPath => Path.Combine(DirectoryPath,
+        $"nira-agent-decisions-{Environment.ProcessId}.jsonl");
+
+    // Capture the ORIGINAL provider message before strict schema decoding. If
+    // a malformed tool call is rejected, this retains the evidence needed to
+    // diagnose it rather than merely reporting INVALID_MODEL_DECISION.
+    public static void AgentModelRawMessage(Guid runId, int requestNumber,
+        int decisionNumber, JsonElement message)
+    {
+        if (!AgentDecisionCaptureEnabled) return;
+        Append(AgentDecisionLogPath, JsonSerializer.Serialize(new {
+            TimestampUtc = DateTimeOffset.UtcNow,
+            Event = "AGENT-RAW-MODEL-MESSAGE", RunId = runId,
+            ModelRequest = requestNumber, Decision = decisionNumber,
+            Message = message
+        }));
+    }
+
+    // Protocol failures happen BEFORE a decodable agent decision exists. Keep the
+    // default event log metadata-only. The invalid raw response is kept in the
+    // SAME diagnostics folder, and only with explicit agent-decision capture.
+    public static void AgentModelProtocolFailure(Guid runId, int modelRequest,
+        string reasonCode, string phase, string? rawResponse)
+    {
+        string reason = OneLine(reasonCode, 110);
+        Event("AGENT-MODEL-PROTOCOL-FAILURE", "Run=" + runId.ToString("N") +
+            " Request=" + modelRequest + " Code=" + reason +
+            " Phase=" + OneLine(phase, 110));
+        if (!AgentDecisionCaptureEnabled) return;
+        Append(AgentDecisionLogPath, JsonSerializer.Serialize(new {
+            TimestampUtc = DateTimeOffset.UtcNow,
+            Event = "AGENT-PROVIDER-RESPONSE-REJECTED",
+            RunId = runId, ModelRequest = modelRequest,
+            ReasonCode = reasonCode, Phase = phase,
+            // Not present by default; opt-in includes potentially private data.
+            RawResponse = rawResponse is { Length: > 32000 }
+                ? rawResponse[..32000] : rawResponse
+        }));
+    }
+
+    public static void AgentModelDecision(Guid runId, int requestNumber, int decisionNumber,
+        string kind, string? function, JsonElement? arguments, string? answer,
+        string verdict)
+    {
+        string safeKind = OneLine(kind, 28);
+        string safeFunction = OneLine(function ?? "none", 70);
+        string safeVerdict = OneLine(verdict, 80);
+        Event("AGENT-DECISION", $"Run={runId:N} ModelRequest={requestNumber} " +
+            $"Decision={decisionNumber} Kind={safeKind} Function={safeFunction} " +
+            $"Verdict={safeVerdict} AnswerChars={answer?.Length ?? 0} " +
+            $"ArgsChars={(arguments?.GetRawText().Length ?? 0)}");
+        if (!AgentDecisionCaptureEnabled) return;
+        Append(AgentDecisionLogPath, JsonSerializer.Serialize(new {
+            TimestampUtc = DateTimeOffset.UtcNow, Event = "AGENT-MODEL-CANDIDATE",
+            RunId = runId, ModelRequest = requestNumber, Decision = decisionNumber,
+            Kind = kind, Function = function, Verdict = verdict,
+            Arguments = arguments, Answer = answer
+        }));
+    }
+
+
+
     public static void PublicResponse(Guid runId, string stage,
         string markdownReply, string speech, object? displayBlocks,
         object? verifiedImageMetadata)
@@ -203,6 +270,10 @@ public static class NIRADiagnosticTrace
                         $"DetailedToolCapture={DetailedToolCaptureEnabled}\n" +
                         $"PublicResponseCapture={PublicResponseCaptureEnabled}\n" +
                         $"PublicResponseLog={PublicResponseLogPath}\n" +
+                        $"AgentDecisionCapture={AgentDecisionCaptureEnabled}\n" +
+                        $"AgentDecisionLog={AgentDecisionLogPath}\n" +
+                        "To capture accepted/rejected model text and tool arguments: " +
+                        "NIRA_DEBUG_AGENT_DECISIONS=1\n" +
                         "To capture delivered Markdown and native blocks: NIRA_DEBUG_PUBLIC_RESPONSES=1\n" +
                         "To capture the raw model response: NIRA_DEBUG_LLM_RESPONSES=1\n" +
                         "To enable full LLM prompts/responses before launch: " +
@@ -215,6 +286,7 @@ public static class NIRADiagnosticTrace
                 // to stay intact during one ordinary debugging run.
                 long limit = string.Equals(filePath, LlmLogPath, StringComparison.OrdinalIgnoreCase)
                     || string.Equals(filePath, PublicResponseLogPath, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(filePath, AgentDecisionLogPath, StringComparison.OrdinalIgnoreCase)
                     ? 32_000_000 : 4_000_000;
                 if (File.Exists(filePath) && new FileInfo(filePath).Length > limit)
                     File.Move(filePath, filePath + ".previous", overwrite: true);

@@ -17,9 +17,16 @@ internal static class GeneralObservationContext
     private const int MaxContext = 18_000;
     private const int MaxResults = 12;
     private const int MaxSources = 12;
-    private static readonly Regex CurrentTurnHttpsUrls = new(
-        @"https://[^\s""'<>]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
-        TimeSpan.FromMilliseconds(250));
+    // Browser link targets are bound ONLY from the audited native interactive-
+    // element listing. Arbitrary text on a webpage is not trusted link evidence.
+    private static readonly Regex BrowserObservedHref = new(
+        @"(?m)^\s*- ref=[^\r\n]{1,600}?\| href='(?<url>https://[^'\r\n]{3,1100})'",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+        TimeSpan.FromMilliseconds(200));
+    private static readonly Regex CurrentTurnWebAddresses = new(
+        @"(?<![\w@./-])(?:(?:https?://)?[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+(?:/[^\s\[\]<>""']*)?)",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+        TimeSpan.FromMilliseconds(200));
 
     public static async Task<Snapshot> BuildAsync(AgentRunSnapshot run,
         AgentPayloadVault vault, CancellationToken ct)
@@ -46,11 +53,53 @@ internal static class GeneralObservationContext
                 continue;
             }
             success++;
+            // Discovery is an inventory, not a generic 1,100-character receipt.
+            // Include the complete bounded page of real tool IDs/schemas or the
+            // model can repeatedly discover without ever seeing a usable tool.
+            if (observation.ToolId == "nira.capabilities.discover")
+            {
+                if (body.ValueKind == JsonValueKind.Object &&
+                    body.TryGetProperty("capabilities", out JsonElement capabilities) &&
+                    capabilities.ValueKind == JsonValueKind.Array)
+                {
+                    AddExcerpt(builder, "REGISTERED CAPABILITY DISCOVERY | query=" +
+                        Clean(FieldString(body, "query"), 120) + " | prefix=" +
+                        Clean(FieldString(body, "prefix"), 48) +
+                        " | offset=" + FieldNumber(body, "offset") +
+                        " | matching=" + FieldNumber(body, "matching") + "\n");
+                    foreach (JsonElement c in capabilities.EnumerateArray())
+                    {
+                        if (c.ValueKind != JsonValueKind.Object) continue;
+                        AddExcerpt(builder, "- " + Clean(FieldString(c, "id"), 90) +
+                            " [" + Clean(FieldString(c, "operationLane"), 12) +
+                            "] " + Clean(FieldString(c, "description"), 190) + "\n");
+                        if (c.TryGetProperty("parameters", out JsonElement fields) &&
+                            fields.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (JsonElement param in fields.EnumerateArray())
+                            {
+                                if (param.ValueKind != JsonValueKind.Object) continue;
+                                AddExcerpt(builder, "    " + Clean(FieldString(param, "name"), 50) +
+                                    ":" + Clean(FieldString(param, "type"), 16) +
+                                    (FieldBoolean(param, "required") == "true" ? " required" : " optional") +
+                                    " — " + Clean(FieldString(param, "description"), 100) + "\n");
+                            }
+                        }
+                    }
+                    AddExcerpt(builder, "NEXT DISCOVERY OFFSET: " +
+                        (body.TryGetProperty("nextOffset", out JsonElement next) &&
+                         next.ValueKind == JsonValueKind.Number ? next.GetRawText() : "none") +
+                        "; do not repeat an already-observed page.\n");
+                }
+                else AddExcerpt(builder, "Discovery receipt invalid.\n");
+                continue;
+            }
             // The unified adapter stores the real capability output INSIDE an
             // audited envelope. Present the actual observed evidence, not the
             // first 1,100 chars of JSON metadata. Web sources must go through
             // the same citation-binding path as the native web.search tool.
-            if (observation.ToolId is "nira.capabilities.observe" or "nira.capabilities.execute")
+            if (observation.ToolId is "nira.capabilities.observe" or "nira.capabilities.execute" ||
+                observation.ToolId.StartsWith("nira.direct.", StringComparison.Ordinal))
             {
                 string capabilityId = FieldString(body, "capabilityId");
                 string status = FieldString(body, "status");
@@ -76,6 +125,20 @@ internal static class GeneralObservationContext
                     urlSet.Add(visitedUrl.AbsoluteUri);
                     AddExcerpt(builder, "HOST-VERIFIED VISITED URL: " +
                         visitedUrl.AbsoluteUri + "\n");
+                }
+                if (capabilityId is "browser.inspect" or "browser.navigate" or
+                    "browser.explore" or "browser.follow")
+                {
+                    // Only structural href fields from the authoritative browser
+                    // inspection are eligible to appear as page LINK DESTINATIONS.
+                    // These URLs are NOT evidence that NIRA visited those pages.
+                    foreach (Match link in BrowserObservedHref.Matches(observedOutput))
+                    {
+                        if (Uri.TryCreate(link.Groups["url"].Value, UriKind.Absolute,
+                            out Uri? href) && href.Scheme == Uri.UriSchemeHttps &&
+                            string.IsNullOrEmpty(href.UserInfo))
+                            urlSet.Add(href.AbsoluteUri);
+                    }
                 }
                 if (capabilityId == "web.search")
                 {
@@ -164,6 +227,11 @@ internal static class GeneralObservationContext
         return new Snapshot(builder.ToString(), sources, urlSet, success, failed);
     }
 
+    private static string FieldNumber(JsonElement value, string field) =>
+        value.ValueKind == JsonValueKind.Object &&
+        value.TryGetProperty(field, out JsonElement item) &&
+        item.ValueKind == JsonValueKind.Number ? item.GetRawText() : "unknown";
+
     private static string FieldString(JsonElement value, string field) =>
         value.ValueKind == JsonValueKind.Object &&
         value.TryGetProperty(field, out JsonElement item) &&
@@ -231,13 +299,21 @@ internal static class GeneralObservationContext
 
     private static bool IsUrlInCurrentTurn(string userRequest, Uri target)
     {
-        foreach (Match match in CurrentTurnHttpsUrls.Matches(userRequest))
+        // Users naturally say "open example.com" rather than spelling out
+        // https://example.com/. Match only a complete explicit hostname/URL
+        // token from THIS host task, never a link found inside a web page.
+        foreach (Match match in CurrentTurnWebAddresses.Matches(userRequest))
         {
             string candidate = match.Value.TrimEnd('.', ',', ';', ')', ']', '}');
-            if (Uri.TryCreate(candidate, UriKind.Absolute, out Uri? requested) &&
-                requested.Scheme == Uri.UriSchemeHttps &&
-                string.IsNullOrEmpty(requested.UserInfo) &&
-                requested.AbsoluteUri.Equals(target.AbsoluteUri, StringComparison.OrdinalIgnoreCase))
+            string absolute = candidate.Contains("://", StringComparison.Ordinal)
+                ? candidate : "https://" + candidate;
+            if (!Uri.TryCreate(absolute, UriKind.Absolute, out Uri? requested) ||
+                requested.Scheme is not ("http" or "https") ||
+                !string.IsNullOrEmpty(requested.UserInfo) ||
+                !requested.Host.Equals(target.Host, StringComparison.OrdinalIgnoreCase) ||
+                requested.Port != target.Port) continue;
+            if (requested.AbsolutePath == target.AbsolutePath ||
+                (requested.AbsolutePath == "/" && string.IsNullOrEmpty(requested.Query)))
                 return true;
         }
         return false;
@@ -261,7 +337,9 @@ internal static class GeneralObservationContext
         return sb.ToString().Trim();
     }
 
-    private static readonly Regex CitationIds = new(@"\[(S[1-9][0-9]*)\]",
+    // Accept both [S1] and natural combined source references [S1, S2].
+    private static readonly Regex CitationIds = new(
+        @"\[(?<ids>S[1-9][0-9]*(?:\s*,\s*S[1-9][0-9]*)*)\]",
         RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(250));
     private static readonly Regex Urls = new(@"https?://[^\s\)\]\>]+",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(250));
@@ -271,6 +349,30 @@ internal static class GeneralObservationContext
         bound = ""; code = "";
         if (string.IsNullOrWhiteSpace(answer) || answer.Length > 20_000)
         { code = "ANSWER_SIZE_INVALID"; return false; }
+        // Canonicalize only a harmless www/non-www spelling difference to
+        // the EXACT URL in an observed browser href or search receipt. Never
+        // accept a new destination by guessing its redirect behavior.
+        answer = Urls.Replace(answer, match =>
+        {
+            string target = match.Value.TrimEnd('.', ',', ';', ':', '\'', '"', '`');
+            if (!Uri.TryCreate(target, UriKind.Absolute, out Uri? uri) ||
+                uri.Scheme != Uri.UriSchemeHttps || snapshot.SourceUrls.Contains(uri.AbsoluteUri))
+                return match.Value;
+            string canonicalHost = uri.Host.StartsWith("www.", StringComparison.OrdinalIgnoreCase)
+                ? uri.Host[4..] : uri.Host;
+            string? observed = snapshot.SourceUrls.FirstOrDefault(original =>
+            {
+                if (!Uri.TryCreate(original, UriKind.Absolute, out Uri? known) ||
+                    known.Scheme != uri.Scheme || known.Port != uri.Port ||
+                    known.AbsolutePath != uri.AbsolutePath || known.Query != uri.Query ||
+                    known.Fragment != uri.Fragment) return false;
+                string host = known.Host.StartsWith("www.", StringComparison.OrdinalIgnoreCase)
+                    ? known.Host[4..] : known.Host;
+                return canonicalHost.Equals(host, StringComparison.OrdinalIgnoreCase);
+            });
+            return observed is null ? match.Value : observed +
+                match.Value[target.Length..];
+        });
         foreach (Match match in Urls.Matches(answer))
         {
             string target = match.Value.TrimEnd('.', ',', ';', ':', '\'', '"', '`');
@@ -282,13 +384,14 @@ internal static class GeneralObservationContext
         if (snapshot.Sources.Count > 0 && matches.Count == 0 && Urls.Matches(answer).Count == 0)
         { code = "RESEARCH_CITATION_REQUIRED"; return false; }
         foreach (Match match in matches)
-            if (!snapshot.Sources.ContainsKey(match.Groups[1].Value))
-            { code = "UNOBSERVED_CITATION_ID"; return false; }
-        bound = CitationIds.Replace(answer, match =>
-        {
-            string id = match.Groups[1].Value;
-            return "[" + id + "](" + snapshot.Sources[id] + ")";
-        });
+            foreach (string id in match.Groups["ids"].Value.Split(',',
+                StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+                if (!snapshot.Sources.ContainsKey(id))
+                { code = "UNOBSERVED_CITATION_ID"; return false; }
+        bound = CitationIds.Replace(answer, match => string.Join(", ",
+            match.Groups["ids"].Value.Split(',',
+                StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .Select(id => "[" + id + "](" + snapshot.Sources[id] + ")")));
         return true;
     }
 }

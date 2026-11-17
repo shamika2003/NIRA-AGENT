@@ -441,6 +441,18 @@
                             </StackPanel>
                         </ContentControl>
 
+                        <!-- PRIVATE CONTEXT / GOAL CONTINUITY -->
+                        <TextBlock Text="Memory &amp; goal continuity" Style="{StaticResource SettingsSectionTitle}"/>
+                        <TextBlock Text="Opt in to sending selected private context to your configured model provider. These controls do not grant Windows file permissions." Style="{StaticResource SettingsDescription}"/>
+                        <ContentControl Style="{StaticResource UtilityGlassCard}" Margin="0,10,0,20">
+                            <StackPanel Margin="17,15">
+                                <CheckBox x:Name="PersonalContextCheck" Content="Use saved conversations and long-term memory" Checked="PersonalContext_Changed" Unchecked="PersonalContext_Changed"/>
+                                <TextBlock Text="Relevant memory, earlier user messages and NIRA's mood may be included in requests to your selected cloud model. Off keeps them local." Margin="28,0,0,9" FontSize="10" TextWrapping="Wrap" Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                                <CheckBox x:Name="LifecycleContextCheck" Content="Use saved goals, commitments and NIRA work plans" Checked="LifecycleContext_Changed" Unchecked="LifecycleContext_Changed"/>
+                                <TextBlock Text="Requires memory-context consent; plans are not permission to alter files or execute actions." Margin="28,0,0,0" FontSize="10" TextWrapping="Wrap" Foreground="{DynamicResource NIRASecondaryBrush}"/>
+                            </StackPanel>
+                        </ContentControl>
+
                         <!-- NOTIFICATIONS -->
                         <TextBlock x:Name="NotificationsSection" Text="Notifications" Style="{StaticResource SettingsSectionTitle}"/>
                         <TextBlock Text="Choose how NIRA surfaces requests that need your attention." Style="{StaticResource SettingsDescription}"/>

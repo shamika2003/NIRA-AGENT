@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using NIRAAgent.Capabilities;
 using NIRAAgent.Runtime.Contracts;
@@ -20,12 +21,156 @@ public static class NIRAAuthoritativeCapabilityTools
         ArgumentNullException.ThrowIfNull(vault);
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(service);
-        return new IGeneralCapability[]
+        var discovery = new CapabilityDiscovery(vault, registry);
+        var observer = new CapabilityInvocation(vault, registry, service, mutate: false);
+        var executor = new CapabilityInvocation(vault, registry, service, mutate: true);
+        var tools = new List<IGeneralCapability> { discovery, observer, executor };
+        // These are provider-native facades over EXISTING read-only handlers,
+        // not a second execution engine. The model still selects the operation;
+        // every invocation goes through observer -> NIRACapabilityService (audit,
+        // scope and permission), with the original outcome preserved.
+        foreach ((string id, string function) in new[] {
+            (NIRACapabilityIds.DirectoryList, "nira_list_directory"),
+            (NIRACapabilityIds.FileLocate, "nira_locate_file"),
+            (NIRACapabilityIds.FileSearch, "nira_search_files"),
+            (NIRACapabilityIds.FileRead, "nira_read_file"),
+            (NIRACapabilityIds.FileMetadata, "nira_file_metadata"),
+            (NIRACapabilityIds.MathCalculate, "nira_calculate"),
+            (NIRACapabilityIds.WebSearch, "nira_search_web")
+        }) {
+            if (registry.TryResolve(id, out INIRACapabilityHandler? handler) &&
+                handler is not null &&
+                handler.Descriptor.DefaultRisk == NIRACapabilityRisk.Observe &&
+                !CapabilityInvocation.RequiresCheckpointedDispatch(id))
+                tools.Add(new BoundObservation(vault, service, observer, handler, function));
+        }
+        return tools;
+    }
+
+    // Hierarchical model-visible inventory built from the authoritative registry.
+    // All capability families are represented without shipping 84 costly schemas
+    // per round; the agent can use query discovery for detailed arguments.
+    // This is data from the actual handlers, not a task-specific keyword router.
+    public static string BuildQuickReference(NIRACapabilityRegistry registry)
+    {
+        ArgumentNullException.ThrowIfNull(registry);
+        var b = new StringBuilder("NIRA capability families (discover with query or prefix):\n");
+        foreach (var group in registry.Descriptors
+            .GroupBy(d => d.Id.Split('.')[0], StringComparer.OrdinalIgnoreCase)
+            .OrderBy(g => g.Key, StringComparer.Ordinal))
         {
-            new CapabilityDiscovery(vault, registry),
-            new CapabilityInvocation(vault, registry, service, mutate: false),
-            new CapabilityInvocation(vault, registry, service, mutate: true)
-        };
+            string examples = string.Join(", ", group.Take(3).Select(d => d.Id));
+            string line = "- " + group.Key + " (" + group.Count() + "): " + examples + "\n";
+            if (b.Length + line.Length > 2950) break;
+            b.Append(line);
+        }
+        b.Append("Native functions already advertise exact schemas; use those directly. " +
+            "For other operations, nira_discover_capabilities(query=task words) returns " +
+            "ranked IDs, exact parameters and the safe operation lane. " +
+            "Discovering is not authorization.\n");
+        return b.Length <= 3000 ? b.ToString() : b.ToString(0, 3000);
+    }
+
+    /// <summary>
+    /// A model-native, typed schema for a frequently used real NIRA observation.
+    /// Execution is delegated to the SAME audited observation adapter; its
+    /// provider-visible function name is never trusted as authority.
+    /// </summary>
+    public sealed class BoundObservation : IGeneralCapability
+    {
+        private readonly AgentPayloadVault _vault;
+        private readonly NIRACapabilityService _service;
+        private readonly CapabilityInvocation _observer;
+        private readonly INIRACapabilityHandler _handler;
+        private readonly NIRACapabilityDescriptor _descriptor;
+
+        public BoundObservation(AgentPayloadVault vault, NIRACapabilityService service,
+            CapabilityInvocation observer, INIRACapabilityHandler handler, string function)
+        {
+            _vault = vault;
+            _service = service;
+            _observer = observer;
+            _handler = handler;
+            _descriptor = handler.Descriptor.Normalize();
+            if (_descriptor.DefaultRisk != NIRACapabilityRisk.Observe ||
+                CapabilityInvocation.RequiresCheckpointedDispatch(_descriptor.Id))
+                throw new ArgumentException("Direct tool must be a pure observation.");
+            FunctionName = function;
+            Spec = new AgentToolSpec("nira.direct." + _descriptor.Id,
+                "Execute registered " + _descriptor.Id + " through NIRA's scoped, audited " +
+                "capability service. " + (_descriptor.Description.Length > 500 ?
+                    _descriptor.Description[..500] : _descriptor.Description), AccessLevel.Observe);
+            var props = new Dictionary<string, object>(StringComparer.Ordinal);
+            foreach (NIRACapabilityParameterDescriptor param in _descriptor.Parameters)
+            {
+                string type = param.Type.ToLowerInvariant();
+                if (type is not ("string" or "integer" or "number" or "boolean" or "array" or "object"))
+                    type = "string";
+                string description = param.Description.Length > 240 ?
+                    param.Description[..240] : param.Description;
+                var schema = new Dictionary<string, object> {
+                    ["type"] = type, ["description"] = description
+                };
+                if (type == "array") schema["items"] = new { type = "string" };
+                if (type == "object") schema["additionalProperties"] = true;
+                if (param.AllowedValues.Count > 0 && type == "string")
+                    schema["enum"] = param.AllowedValues.ToArray();
+                props[param.Name] = schema;
+            }
+            InputSchema = JsonSerializer.SerializeToElement(new {
+                type = "object", properties = props,
+                required = _descriptor.Parameters.Where(a => a.Required)
+                    .Select(a => a.Name).ToArray(), additionalProperties = false
+            });
+        }
+
+        public AgentToolSpec Spec { get; }
+        public string FunctionName { get; }
+        public JsonElement InputSchema { get; }
+
+        public bool ValidateArguments(JsonElement args)
+        {
+            if (args.ValueKind != JsonValueKind.Object || args.GetRawText().Length > 16000)
+                return false;
+            NIRACapabilityRequest raw = new() {
+                CapabilityId = _descriptor.Id, Arguments = args.Clone(),
+                Reason = "Model-selected, host-registered read-only operation"
+            };
+            if (!_service.TryNormalizeAndValidateSchema(raw, out var normalized, out _))
+                return false;
+            try { return _handler.ResolveRisk(normalized) == NIRACapabilityRisk.Observe; }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+            { return false; }
+        }
+
+        public async Task<AgentToolReceipt> ExecuteAsync(string reference, CancellationToken ct)
+        {
+            Guid runId;
+            JsonElement args;
+            try {
+                runId = _vault.RunIdFromArgument(reference);
+                args = await _vault.ReadArgumentAsync(runId, Spec.Id, reference, ct);
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or
+                UnauthorizedAccessException or JsonException)
+            { return new AgentToolReceipt(false, false, null, "DIRECT_TOOL_INPUT_INVALID"); }
+            if (!ValidateArguments(args))
+                return new AgentToolReceipt(false, false, null, "DIRECT_TOOL_PREFLIGHT_REJECTED");
+            var wrapped = JsonSerializer.SerializeToElement(new {
+                capabilityId = _descriptor.Id, arguments = args
+            });
+            string wrappedRef = await _vault.SaveArgumentAsync(runId,
+                _observer.Spec.Id, wrapped, ct);
+            AgentToolReceipt result = await _observer.ExecuteAsync(wrappedRef, ct);
+            if (!result.Succeeded || string.IsNullOrWhiteSpace(result.ResultReference))
+                return result;
+            // Re-scope the existing audited receipt to this native tool ID.
+            // A receipt from one tool can NEVER be read under another tool ID.
+            JsonElement body = await _vault.ReadResultAsync(runId,
+                _observer.Spec.Id, result.ResultReference, ct);
+            string saved = await _vault.SaveResultAsync(runId, Spec.Id, body, ct);
+            return AgentToolReceipt.ReadOnlyResult(saved);
+        }
     }
 
     public sealed class CapabilityDiscovery : IGeneralCapability
@@ -37,16 +182,19 @@ public static class NIRAAuthoritativeCapabilityTools
         { _vault = vault; _registry = registry; }
 
         public AgentToolSpec Spec { get; } = new("nira.capabilities.discover",
-            "Browse NIRA's registered capabilities by optional prefix and offset (filesystem., browser., " +
-            "image., vision., desktop., process., web., http., math., etc.). Returns the " +
-            "declared parameter names/types and default risk. Use offset for later pages; inspect before invoking.",
+            "Search every registered NIRA capability by optional natural-language query, " +
+            "ID prefix and page offset. Returns ranked matches, exact parameter schema, " +
+            "risk and operation lane. Query e.g. 'create document' without guessing IDs.",
             AccessLevel.Observe);
         public string FunctionName => "nira_discover_capabilities";
         public JsonElement InputSchema { get; } = JsonSerializer.SerializeToElement(new
         {
             type = "object",
-            properties = new { prefix = new { type = "string", description =
-                "Optional case-insensitive registered capability ID prefix. Empty lists first page." },
+            properties = new {
+                query = new { type = "string", maxLength = 120,
+                    description = "Optional natural-language task words. Ranks matching registered IDs and descriptions." },
+                prefix = new { type = "string", description =
+                    "Optional case-insensitive ID prefix, e.g. browser. or filesystem.docx." },
                 offset = new { type = "integer", minimum = 0, maximum = 4096,
                     description = "Zero-based result offset for pagination. Default 0." } },
             additionalProperties = false
@@ -54,24 +202,52 @@ public static class NIRAAuthoritativeCapabilityTools
         public bool ValidateArguments(JsonElement args) =>
             args.ValueKind == JsonValueKind.Object &&
             args.EnumerateObject().All(p =>
+                (p.NameEquals("query") && p.Value.ValueKind == JsonValueKind.String &&
+                 p.Value.GetString() is string query && query.Length <= 120 &&
+                 !query.Any(char.IsControl)) ||
                 (p.NameEquals("prefix") && p.Value.ValueKind == JsonValueKind.String &&
                  p.Value.GetString() is string prefix && prefix.Length <= 48 &&
                  !prefix.Any(char.IsControl)) ||
                 (p.NameEquals("offset") && p.Value.ValueKind == JsonValueKind.Number &&
                  p.Value.TryGetInt32(out int offset) && offset is >= 0 and <= 4096));
 
+        private static int Relevance(NIRACapabilityDescriptor d, string[] terms)
+        {
+            if (terms.Length == 0) return 0;
+            int score = 0;
+            string id = d.Id;
+            string description = d.Description;
+            string parameterNames = string.Join(" ", d.Parameters.Select(x => x.Name));
+            foreach (string t in terms)
+            {
+                if (id.Contains(t, StringComparison.OrdinalIgnoreCase)) score += 8;
+                if (description.Contains(t, StringComparison.OrdinalIgnoreCase)) score += 3;
+                if (parameterNames.Contains(t, StringComparison.OrdinalIgnoreCase)) score += 1;
+            }
+            return score;
+        }
+
         public async Task<AgentToolReceipt> ExecuteAsync(string reference, CancellationToken ct)
         {
             Guid runId = _vault.RunIdFromArgument(reference);
             JsonElement args = await _vault.ReadArgumentAsync(runId, Spec.Id, reference, ct);
             if (!ValidateArguments(args)) return AgentToolReceipt.Uncertain("INVALID_DISCOVERY_ARGUMENT");
+            string query = args.TryGetProperty("query", out var q) ? q.GetString()!.Trim() : "";
             string prefix = args.TryGetProperty("prefix", out var p) ? p.GetString()!.Trim() : "";
             int offset = args.TryGetProperty("offset", out var start) ? start.GetInt32() : 0;
-            var matches = _registry.Descriptors.Where(d =>
-                d.Id.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToArray();
+            string[] terms = query.Split(new[] { ' ', '-', '_', '.', '/', ',', ':' },
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(t => t.Length >= 2).Distinct(StringComparer.OrdinalIgnoreCase).Take(12).ToArray();
+            var matches = _registry.Descriptors
+                .Where(d => d.Id.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                .Select(d => new { Descriptor = d, Rank = Relevance(d, terms) })
+                .Where(x => terms.Length == 0 || x.Rank > 0)
+                .OrderByDescending(x => x.Rank)
+                .ThenBy(x => x.Descriptor.Id, StringComparer.Ordinal)
+                .Select(x => x.Descriptor).ToArray();
             var result = JsonSerializer.SerializeToElement(new
             {
-                matching = matches.Length, offset,
+                prefix, query, matching = matches.Length, offset,
                 shown = Math.Min(PageSize, Math.Max(0, matches.Length - offset)),
                 nextOffset = offset + PageSize < matches.Length ? (int?)(offset + PageSize) : null,
                 additionalMatches = Math.Max(0, matches.Length - offset - PageSize),
@@ -217,8 +393,25 @@ public static class NIRAAuthoritativeCapabilityTools
                 outcome.Status == NIRACapabilityResultStatus.AuthorizationRequired))
                 return AgentToolReceipt.ConfirmedNoChange("AUTHORIZATION_NOT_GRANTED");
             if (outcome.Status != NIRACapabilityResultStatus.Succeeded)
+            {
+                // Only the AUTHORITATIVE service can classify a dispatched
+                // mutation as definitely not applied. Failed != no-effect.
+                if (_mutate && outcome.DefiniteNoEffect && outcome.AuditRecorded)
+                {
+                    JsonElement failed = JsonSerializer.SerializeToElement(new {
+                        capabilityId = outcome.CapabilityId, status = outcome.Status.ToString(),
+                        summary = outcome.Summary, auditRecorded = outcome.AuditRecorded,
+                        changedSystemState = outcome.ChangedSystemState,
+                        outcomeUncertain = outcome.OutcomeUncertain,
+                        definiteNoEffect = true
+                    });
+                    string failedRef = await _vault.SaveResultAsync(runId, Spec.Id, failed, ct);
+                    return new AgentToolReceipt(false, true, failedRef,
+                        "CAPABILITY_REJECTED_NO_EFFECT");
+                }
                 return _mutate ? AgentToolReceipt.Uncertain("CAPABILITY_NOT_VERIFIED")
                                : new AgentToolReceipt(false, false, null, "CAPABILITY_FAILED");
+            }
             if (!outcome.AuditRecorded)
                 return _mutate ? AgentToolReceipt.Uncertain("AUTHORITATIVE_AUDIT_NOT_PERSISTED")
                     : new AgentToolReceipt(false, false, null, "AUTHORITATIVE_AUDIT_NOT_PERSISTED");

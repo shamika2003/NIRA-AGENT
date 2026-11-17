@@ -47,6 +47,10 @@ using NIRAAgent.Integrations.Elvara.Apps.TradeAI;
 using NIRAAgent.UI.Vision;
 using NIRAAgent.UI.Visuals;
 using NIRAAgent.Diagnostics;
+using NIRAAgent.Runtime.General;
+using NIRAAgent.Runtime.HostAdapters;
+using NIRAAgent.Runtime.ModelProvider;
+using NIRAAgent.Runtime.Runtime.AgentLoop;
 
 using WpfApplication = System.Windows.Application;
 using WpfMessageBox = System.Windows.MessageBox;
@@ -351,7 +355,7 @@ public partial class App : WpfApplication
             // =================================================
             // FIRST-CLASS BRANCH / TASK GRAPH STORAGE
             //
-            // BranchStore shares the executive SQLite database
+            // BranchStore shares the authoritative SQLite database
             // owned by NIRAGoalStore so branch->goal ownership can
             // be protected with real foreign keys.
             // =================================================
@@ -602,7 +606,7 @@ public partial class App : WpfApplication
             builder.Services.AddSingleton<NIRACommonsImageDiscoveryService>(
                 _ => new NIRACommonsImageDiscoveryService());
             // Production image.search and image.retrieve now share Tavily discovery.
-            // Keep the legacy Commons service registration above for compatibility
+            // Keep the optional Commons service registration above for compatibility
             // with existing diagnostic/regression tooling; it is NOT the live provider.
             builder.Services.AddSingleton<NIRATavilyImageDiscoveryService>();
             builder.Services.AddSingleton<INIRAImageDiscoveryService>(sp =>
@@ -751,7 +755,7 @@ public partial class App : WpfApplication
             // =================================================
             // BRANCH-OWNED ASSIGNED WORK
             //
-            // Branches own responsibility/continuity. NIRA cognition
+            // Branches own responsibility/continuity. NIRA's agent loop
             // chooses bounded work; this service persists and tracks
             // the exact capability/tool assignment until a result
             // returns to NIRA.
@@ -798,7 +802,7 @@ public partial class App : WpfApplication
 
 
             // =================================================
-            // MAIN COGNITION
+            // RESPONSE PRESENTATION
             // =================================================
 
 
@@ -872,7 +876,7 @@ public partial class App : WpfApplication
 
 
             // =================================================
-            // NIRA MIND / EXECUTIVE
+            // NIRA UNIFIED MIND
             // =================================================
 
             builder.Services.AddSingleton<
@@ -885,6 +889,10 @@ public partial class App : WpfApplication
             builder.Services.AddSingleton<INIRAAgentExecutionHost, NIRAWpfAgentHost>();
 
             builder.Services.AddSingleton<NIRACompletedExperienceService>();
+            // One encrypted review-outbox owner; pending model-only reviews may
+            // resume after restart, while uncertain writes require reconciliation.
+            builder.Services.AddHostedService(sp =>
+                sp.GetRequiredService<NIRACompletedExperienceService>());
 
             builder.Services.AddSingleton<
                 NIRAMindRuntime>();
@@ -986,6 +994,129 @@ public partial class App : WpfApplication
                 builder.Build();
 
 
+            // Offline production-acceptance smoke: construct the exact WPF dependency
+            // graph and registered capability descriptors, without starting any hosted
+            // service, contacting a provider or touching an external application.
+            // The installer supplies a one-time report path under the user's temp folder.
+            string? smokeArgument = e.Args.FirstOrDefault(x =>
+                x.StartsWith("--nira-acceptance-report=", StringComparison.Ordinal));
+            if (smokeArgument is not null)
+            {
+                string reportPath = smokeArgument["--nira-acceptance-report=".Length..];
+                string fullReportPath = System.IO.Path.GetFullPath(reportPath);
+                string allowedRoot = System.IO.Path.GetFullPath(System.IO.Path.GetTempPath());
+                if (!fullReportPath.StartsWith(allowedRoot, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Acceptance report must be under the temporary directory.");
+                string? smokeRoot = null;
+                try
+                {
+                    var descriptors = _host.Services
+                        .GetRequiredService<NIRACapabilityRegistry>().Descriptors;
+                    string[] required = {
+                        "filesystem.read", "filesystem.write", "filesystem.docx.create",
+                        "web.search", "http.request", "browser.navigate", "image.search",
+                        "vision.capture", "process.start", "elvara.tradeai.read"
+                    };
+                    string[] missing = required.Where(id => !descriptors.Any(d =>
+                        string.Equals(d.Id, id, StringComparison.OrdinalIgnoreCase))).ToArray();
+                    if (descriptors.Count < 65 || missing.Length != 0)
+                        throw new InvalidOperationException("Required NIRA capability registrations are missing: " +
+                            string.Join(",", missing));
+                    if (_host.Services.GetRequiredService<INIRAAgentExecutionHost>()
+                        is not NIRAWpfAgentHost)
+                        throw new InvalidOperationException("Unified WPF agent host not registered.");
+                    _ = _host.Services.GetRequiredService<NIRACompletedExperienceService>();
+                    _ = _host.Services.GetRequiredService<NIRAMindRuntime>();
+                    // Instantiate the ACTUAL model-native capability registry,
+                    // not just the DI descriptors. This catches malformed typed
+                    // function schemas before launching an expensive live round.
+                    smokeRoot = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                        "NIRA_NATIVE_SMOKE_" + Guid.NewGuid().ToString("N"));
+                    var smokeVault = new AgentPayloadVault(smokeRoot,
+                        new WindowsDpapiDataProtector());
+                    var nativeTools = NIRAAuthoritativeCapabilityTools.Create(smokeVault,
+                        _host.Services.GetRequiredService<NIRACapabilityRegistry>(),
+                        _host.Services.GetRequiredService<NIRACapabilityService>());
+                    var nativeRegistry = new CapabilityRegistry(nativeTools);
+                    string[] requiredFunctions = {
+                        "nira_list_directory", "nira_locate_file", "nira_search_files",
+                        "nira_read_file", "nira_file_metadata", "nira_calculate",
+                        "nira_search_web", "nira_discover_capabilities",
+                        "nira_observe_capability", "nira_execute_capability"
+                    };
+                    if (requiredFunctions.Any(name => !nativeTools.Any(t =>
+                        string.Equals(t.FunctionName, name, StringComparison.Ordinal))))
+                        throw new InvalidOperationException(
+                            "A required native observation function is missing.");
+                    _ = nativeRegistry.BuildProviderTools(nativeRegistry.Tools
+                        .Select(x => x.Spec).ToArray(), allowWrite: true);
+                    int protocolChecks = await NiraProtocolSelfCheck.RunAsync();
+                    if (protocolChecks < 8)
+                        throw new InvalidOperationException("Provider protocol self-checks incomplete.");
+                    // Exercise the real dynamic registry/query inventory through
+                    // the encrypted vault, without invoking any real capability.
+                    var discovery = nativeTools.OfType<
+                        NIRAAuthoritativeCapabilityTools.CapabilityDiscovery>().Single();
+                    Guid discoveryRun = Guid.NewGuid();
+                    var inventoryQuery = System.Text.Json.JsonSerializer.SerializeToElement(new {
+                        query = "directory listing", prefix = "filesystem.list" });
+                    string inventoryRef = await smokeVault.SaveArgumentAsync(
+                        discoveryRun, discovery.Spec.Id, inventoryQuery);
+                    var inventoryReceipt = await discovery.ExecuteAsync(inventoryRef,
+                        CancellationToken.None);
+                    if (!inventoryReceipt.Succeeded ||
+                        string.IsNullOrWhiteSpace(inventoryReceipt.ResultReference))
+                        throw new InvalidOperationException("Dynamic registry query failed.");
+                    var inventory = await smokeVault.ReadResultAsync(
+                        discoveryRun, discovery.Spec.Id,
+                        inventoryReceipt.ResultReference, CancellationToken.None);
+                    if (!inventory.TryGetProperty("capabilities", out var inventoryItems) ||
+                        inventoryItems.ValueKind != System.Text.Json.JsonValueKind.Array ||
+                        !inventoryItems.EnumerateArray().Any(x =>
+                            x.TryGetProperty("id", out var capabilityId) &&
+                            capabilityId.GetString() == "filesystem.list"))
+                        throw new InvalidOperationException("Filesystem discovery contract failed.");
+                    int discoveryChecks = 1;
+                    System.IO.File.WriteAllText(fullReportPath,
+                        System.Text.Json.JsonSerializer.Serialize(new {
+                            status = "PASS", capabilityCount = descriptors.Count,
+                            nativeToolCount = nativeRegistry.Count,
+                            nativeFunctionsChecked = requiredFunctions.Length,
+                            protocolChecks, discoveryChecks,
+                            requiredCapabilities = required.Length,
+                            unifiedHost = true, mindOwner = true, memoryReviewOwner = true,
+                            hostedServicesStarted = false
+                        }));
+                    _host.Dispose();
+                    _host = null;
+                    Shutdown(0);
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    System.IO.File.WriteAllText(fullReportPath,
+                        System.Text.Json.JsonSerializer.Serialize(new {
+                            status = "FAIL", exceptionType = ex.GetType().Name,
+                            message = ex.Message.Length > 400 ? ex.Message[..400] : ex.Message
+                        }));
+                    _host.Dispose();
+                    _host = null;
+                    Shutdown(1);
+                    return;
+                }
+                finally
+                {
+                    // Do not leave isolated acceptance-vault artifacts in Temp.
+                    if (smokeRoot is not null && System.IO.Directory.Exists(smokeRoot))
+                    {
+                        try { System.IO.Directory.Delete(smokeRoot, recursive: true); }
+                        catch (System.IO.IOException) { }
+                        catch (UnauthorizedAccessException) { }
+                    }
+                }
+            }
+
+
             NIRACredentialBroker credentialBroker =
                 _host.Services.GetRequiredService<NIRACredentialBroker>();
 
@@ -1026,6 +1157,25 @@ public partial class App : WpfApplication
                     initialResolution.ApiKey);
             }
 
+
+            // Record a first-party, persistent decision on normal desktop runs.
+            // Do not silently enable cloud sharing of private memory on upgrade.
+            NIRARuntimeSettingsService continuitySettings =
+                _host.Services.GetRequiredService<NIRARuntimeSettingsService>();
+            if (continuitySettings.Current.PersonalContextConsent is null)
+            {
+                bool granted = WpfMessageBox.Show(
+                    "Allow NIRA to recall selected previous chats, memories, character state " +
+                    "and saved goals in future conversations?\n\n" +
+                    "Relevant private context may be sent to your configured cloud AI provider. " +
+                    "This does not grant any new Windows action permissions. " +
+                    "You can turn either feature off in Settings at any time.",
+                    "NIRA — Memory & Goal Continuity",
+                    WpfMessageBoxButton.YesNo, WpfMessageBoxImage.Question) ==
+                    System.Windows.MessageBoxResult.Yes;
+                continuitySettings.SetPersonalContextConsent(granted);
+                if (granted) continuitySettings.SetLifecycleContextEnabled(true);
+            }
 
             await _host.StartAsync();
 

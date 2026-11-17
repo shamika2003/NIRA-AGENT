@@ -135,6 +135,9 @@ public partial class SettingsWindow : Window
 
             ProactiveCompanionCheck.IsChecked = current.ProactiveCompanionEnabled;
             PcContextReactionsCheck.IsChecked = current.PcContextReactionsEnabled;
+            PersonalContextCheck.IsChecked = current.PersonalContextConsent == true;
+            LifecycleContextCheck.IsChecked = current.LifecycleContextEnabled;
+            LifecycleContextCheck.IsEnabled = current.PersonalContextConsent == true;
             PermissionNotificationsCheck.IsChecked = current.PermissionNotificationsEnabled;
             CardParticlesCheck.IsChecked = current.WorkCardParticleTransitionsEnabled;
             ShowBranchesCheck.IsChecked = current.ShowBranchActivityInSidebar;
@@ -244,6 +247,18 @@ public partial class SettingsWindow : Window
     {
         if (_loading) return;
         _settings.SetPcContextReactionsEnabled(PcContextReactionsCheck.IsChecked == true);
+    }
+
+    private void PersonalContext_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading) return;
+        _settings.SetPersonalContextConsent(PersonalContextCheck.IsChecked == true);
+    }
+
+    private void LifecycleContext_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading) return;
+        _settings.SetLifecycleContextEnabled(LifecycleContextCheck.IsChecked == true);
     }
 
     private void PermissionNotifications_Changed(object sender, RoutedEventArgs e)

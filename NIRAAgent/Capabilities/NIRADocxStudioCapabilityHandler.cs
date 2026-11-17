@@ -69,6 +69,41 @@ internal static partial class NIRADocx
         return val;
     }
 
+    private static JsonElement NormalizeStudio48Block(JsonElement raw)
+    {
+        if (raw.ValueKind != JsonValueKind.Object)
+            throw new ArgumentException("Word blocks must be JSON objects.");
+        string type = GetString48(raw, "type", 16).ToLowerInvariant();
+        string canonical = type;
+        int headingLevel = 0;
+        if (type is "h1" or "heading1" or "heading_1") { canonical = "heading"; headingLevel = 1; }
+        else if (type is "h2" or "heading2" or "heading_2") { canonical = "heading"; headingLevel = 2; }
+        else if (type is "h3" or "heading3" or "heading_3") { canonical = "heading"; headingLevel = 3; }
+        bool textBlock = canonical is "heading" or "paragraph" or "bullet" or "number" or "quote";
+        bool hasContent = raw.TryGetProperty("content", out JsonElement content);
+        bool hasText = raw.TryGetProperty("text", out _);
+        if (hasContent && textBlock && hasText)
+            throw new ArgumentException("Use either text or content in one text block, never both.");
+        if (hasContent && textBlock && content.ValueKind != JsonValueKind.String)
+            throw new ArgumentException("Word text-block content must be a string.");
+        bool useAlias = textBlock && hasContent && !hasText;
+        if (headingLevel == 0 && !useAlias) return raw.Clone();
+        if (headingLevel > 0 && raw.TryGetProperty("level", out JsonElement existingLevel) &&
+            (existingLevel.ValueKind != JsonValueKind.Number ||
+             !existingLevel.TryGetInt32(out int declared) || declared != headingLevel))
+            throw new ArgumentException("Conflicting heading level in a Word block.");
+        var result = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (JsonProperty item in raw.EnumerateObject())
+        {
+            if (item.Name == "type" || (useAlias && item.Name == "content")) continue;
+            result.Add(item.Name, item.Value.Clone());
+        }
+        result["type"] = canonical;
+        if (headingLevel > 0) result["level"] = headingLevel;
+        if (useAlias) result["text"] = content.GetString();
+        return JsonSerializer.SerializeToElement(result);
+    }
+
     private static bool GetBool48(JsonElement obj, string key, bool fallback = false)
     {
         if (!obj.TryGetProperty(key, out var x)) return fallback;
@@ -477,7 +512,12 @@ internal static partial class NIRADocx
         }
         if (parsed.RootElement.ValueKind != JsonValueKind.Array || parsed.RootElement.GetArrayLength() is < 1 or > 120)
             throw new ArgumentException("blocksJson requires 1-120 blocks.");
-        var selectedMedia = await LoadStudio48MediaAsync(parsed.RootElement,
+        // Normalize harmless, unambiguous authoring aliases exactly once.
+        // Native schemas remain canonical; a wrong alias must never partially
+        // publish a Word document or silently discard a block's text.
+        JsonElement canonicalBlocks = JsonSerializer.SerializeToElement(
+            parsed.RootElement.EnumerateArray().Select(NormalizeStudio48Block).ToArray());
+        var selectedMedia = await LoadStudio48MediaAsync(canonicalBlocks,
             legacyImagePath, ct).ConfigureAwait(false);
         List<Studio48Media> media = selectedMedia.Media;
         int skippedImages = selectedMedia.OmittedBlockIndices.Count;
@@ -486,7 +526,7 @@ internal static partial class NIRADocx
                 $"({skippedImages} unusable input(s) omitted), but minimumImages={minimumImages}. No document was created.");
         if (parsed.RootElement.GetArrayLength() == skippedImages)
             throw new ArgumentException("No document body remains after rejecting unusable optional images.");
-        int bodyWords = CountStudio48BodyWords(parsed.RootElement);
+        int bodyWords = CountStudio48BodyWords(canonicalBlocks);
         if (bodyWords < minimumBodyWords)
             throw new ArgumentException($"Document content is too short: {bodyWords} body words, " +
                 $"minimumBodyWords={minimumBodyWords}, shortfall={minimumBodyWords - bodyWords} words. " +
@@ -506,7 +546,7 @@ internal static partial class NIRADocx
         body.Add(titleP);
         int count = 0, headings = 0, tables = 0, charts = 0, lists = 0, breaks = 0, links = 0, images = 0;
         int sourceBlockIndex = -1;
-        foreach (JsonElement block in parsed.RootElement.EnumerateArray())
+        foreach (JsonElement block in canonicalBlocks.EnumerateArray())
         {
             ct.ThrowIfCancellationRequested();
             sourceBlockIndex++;
@@ -678,7 +718,7 @@ public sealed class NIRADocxStudioCapabilityHandler : INIRACapabilityHandler
             NIRADocx.Param("path", true, "NEW unused .docx destination in an authorized folder."),
             NIRADocx.Param("title", true, "Title of document; one line, maximum 180 characters."),
             new NIRACapabilityParameterDescriptor { Name = "blocksJson", Type = "array", Required = true,
-                Description = "MANDATORY native JSON ARRAY (not a quoted/double-encoded string), 1-120 blocks: paragraph, heading(level 1-3), bullet, number, table(rows 2-40 x 2-8), chart(data:[{label,value}], optional title/source), quote, divider, toc, pagebreak, link(text,url), image(altText,widthMm,caption,credit,imagePath). Text and runs may contain ordinary strings. Preserve all material source content; use the exact user-requested content length." },
+                Description = "MANDATORY native JSON ARRAY (not a quoted/double-encoded string), 1-120 blocks. Each text block uses type and text (not content): paragraph, heading with separate level 1-3, bullet, number, table(rows 2-40 x 2-8), chart(data:[{label,value}], optional title/source), quote, divider, toc, pagebreak, link(text,url), image(altText,widthMm,caption,credit,imagePath). Text and runs may contain ordinary strings. Preserve all material source content; use the exact user-requested content length." },
             NIRADocx.Param("paper", false, "A4 or LETTER") with { AllowedValues = new[] { "A4", "LETTER" }, DefaultValue = "A4" },
             NIRADocx.Param("orientation", false, "portrait or landscape") with { AllowedValues = new[] { "portrait", "landscape" }, DefaultValue = "portrait" },
             NIRADocx.Param("marginMm", false, "10-35, default 20"),

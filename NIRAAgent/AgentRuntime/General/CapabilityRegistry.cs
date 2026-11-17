@@ -82,25 +82,3 @@ public sealed class CapabilityRegistry
         return schemas.ToArray();
     }
 }
-
-/// <summary>Reuses the already-tested Tavily tool, exposing its validated query shape.</summary>
-public sealed class SearchCapability : IGeneralCapability
-{
-    private readonly NIRAAgent.Runtime.Web.TavilySearchTool _inner;
-    public SearchCapability(NIRAAgent.Runtime.Web.TavilySearchTool inner) =>
-        _inner = inner ?? throw new ArgumentNullException(nameof(inner));
-    public AgentToolSpec Spec => _inner.Spec;
-    public string FunctionName => "web_search";
-    public JsonElement InputSchema { get; } = JsonSerializer.SerializeToElement(new {
-        type = "object", properties = new { query = new { type = "string",
-            description = "Focused public query (3-240 characters)" } },
-        required = new[] { "query" }, additionalProperties = false });
-    public bool ValidateArguments(JsonElement arguments) =>
-        arguments.ValueKind == JsonValueKind.Object && arguments.EnumerateObject().Count() == 1 &&
-        arguments.TryGetProperty("query", out JsonElement query) &&
-        query.ValueKind == JsonValueKind.String &&
-        query.GetString() is string q && q.Trim().Length is >= 3 and <= 240 &&
-        !q.Any(char.IsControl);
-    public Task<AgentToolReceipt> ExecuteAsync(string reference, CancellationToken ct) =>
-        _inner.ExecuteAsync(reference, ct);
-}
