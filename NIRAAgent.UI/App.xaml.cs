@@ -49,6 +49,7 @@ using NIRAAgent.Integrations.Elvara.Apps.TradeAI;
 using NIRAAgent.UI.Vision;
 using NIRAAgent.UI.Visuals;
 using NIRAAgent.Diagnostics;
+using NIRAAgent.Runtime.Contracts;
 using NIRAAgent.Runtime.General;
 using NIRAAgent.Runtime.HostAdapters;
 using NIRAAgent.Runtime.ModelProvider;
@@ -1066,7 +1067,31 @@ public partial class App : WpfApplication
                      int providerFailureChecks = NIRAWpfAgentHost.RunProviderFailureSelfCheck();
                     if (providerFailureChecks != 4)
                         throw new InvalidOperationException("Native provider failure diagnostics incomplete.");
+                    // Current-run completion contracts must survive checkpoints
+                    // and require real tool receipts, not a model's final prose.
+                    int taskContractChecks = AgentTaskContractPolicy.RunSelfCheck();
+                    int taskRecoveryChecks = GeneralModelReasoner.RunPendingTaskRecoverySelfCheck();
+                    if (taskRecoveryChecks != 8)
+                        throw new InvalidOperationException("Pending-work decision recovery checks failed.");
+                    int taskReceiptChecks = await GeneralTaskCompletionGuard.RunSelfCheckAsync(smokeVault);
+                    string taskCheckpointRoot = System.IO.Path.Combine(smokeRoot!, "task-loop");
+                    var taskStore = new FileAgentStateStore(taskCheckpointRoot,
+                        new WindowsDpapiDataProtector());
+                    int taskLoopChecks = await AgentLoopEngine.RunTaskExecutionSelfCheckAsync(taskStore);
+                    int noEffectRecoveryChecks =
+                        await AgentLoopEngine.RunConfirmedNoEffectRecoverySelfCheckAsync(taskStore);
+                    int studioMissingParentChecks =
+                        NIRADocxStudioCapabilityHandler.RunMissingParentPreflightSelfCheck();
+                    if (noEffectRecoveryChecks != 3 || studioMissingParentChecks != 2)
+                        throw new InvalidOperationException("Audited missing-folder correction checks failed.");
+                    if (taskContractChecks != 3 || taskReceiptChecks != 5 || taskLoopChecks != 3)
+                        throw new InvalidOperationException("Durable user-task completion checks failed.");
                     int protocolChecks = await NiraProtocolSelfCheck.RunAsync();
+                    int noDecisionRecoveryChecks =
+                        GeneralModelReasoner.RunNoDecisionRecoverySelfCheck();
+                    if (noDecisionRecoveryChecks != 11)
+                        throw new InvalidOperationException(
+                            "Bounded incomplete-model-decision recovery checks failed.");
                     // This is REAL native tool schema checking. A malformed
                     // Word report is rejected without beginning a file write,
                     // audit attempt, or permission request.
@@ -1163,7 +1188,7 @@ public partial class App : WpfApplication
                         throw new InvalidOperationException("Streaming transport safety checks incomplete.");
                     int readFailureEvidenceChecks =
                         await GeneralModelReasoner.RunReadFailureEvidenceSelfCheckAsync(smokeVault);
-                    if (readFailureEvidenceChecks != 4)
+                    if (readFailureEvidenceChecks != 6)
                         throw new InvalidOperationException("Missing-file failure evidence test incomplete.");
                     int researchProgressChecks = GeneralModelReasoner.RunResearchProgressSelfCheck();
                      int discoveredRoutingChecks = GeneralModelReasoner.RunObservedDiscoveryRoutingSelfCheck();
@@ -1327,12 +1352,16 @@ public partial class App : WpfApplication
                             status = "PASS", capabilityCount = descriptors.Count,
                             nativeToolCount = nativeRegistry.Count,
                             nativeFunctionsChecked = requiredFunctions.Length,
-                            protocolChecks, discoveryChecks, richChecks, activityChecks,
+                            protocolChecks, noDecisionRecoveryChecks,
+                            discoveryChecks, richChecks, activityChecks,
                             publicThinkingChecks, streamingDraftChecks,
                             sourceLinkRecoveryChecks, readOnlySchemaChecks, boundedSearchChecks,
                             researchProgressChecks, progressPresentationChecks, observedImageChecks,
                             readFailureEvidenceChecks,
                              discoveredRoutingChecks,
+                            taskContractChecks, taskReceiptChecks, taskLoopChecks,
+                            noEffectRecoveryChecks, studioMissingParentChecks,
+                            taskRecoveryChecks,
                             docxPreflightChecks, docxBoundaryChecks,
                              providerFailureChecks, credentialPersistenceChecks, credentialRetryChecks,
                              goalWorkspaceChecks,

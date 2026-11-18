@@ -243,6 +243,26 @@ public static class NiraProtocolSelfCheck
                 throw new InvalidDataException("Model private trace leaked into streaming callback.");
             passed++;
         }
+        // A model can terminate after private reasoning without emitting a
+        // PUBLIC answer or tool call. Never convert reasoning into an answer.
+        string reasoningOnly = Frame(new { reasoning = "private analysis", content = "" }) +
+            Frame(new { reasoning = "still planning", content = "" }, "stop") +
+            "data: [DONE]\n\n";
+        await VerifyReject("SSE_REASONING_ONLY_STOP", reasoningOnly,
+            "text/event-stream");
+        string toolsWithoutCall = Frame(new { reasoning = "tool intent missing", content = "" },
+            "tool_calls") + "data: [DONE]\n\n";
+        await VerifyReject("SSE_TOOL_FINISH_WITHOUT_TOOL", toolsWithoutCall,
+            "text/event-stream");
+        string reasoningThenTool = Frame(new { reasoning = "private analysis", content = "" }) +
+            ToolFragment(0, "x", "nira_list_directory", "{\"path\":\"Documents\"}") +
+            Frame(new { }, "tool_calls") + "data: [DONE]\n\n";
+        await Verify("SSE_REASONING_THEN_VALID_TOOL", reasoningThenTool,
+            "text/event-stream", "tool_calls", "nira_list_directory");
+        string jsonEmpty = "{\"choices\":[{\"index\":0,\"finish_reason\":\"stop\"," +
+            "\"message\":{\"role\":\"assistant\",\"content\":\"\"}}]}";
+        await VerifyReject("JSON_EMPTY_FINISHED_MESSAGE", jsonEmpty,
+            "application/json");
         await VerifyReject("NO_FINISH", "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n",
             "text/event-stream");
         await VerifyReject("JSON_LENGTH_FINISH", jsonText.Replace("\"stop\"", "\"length\""),

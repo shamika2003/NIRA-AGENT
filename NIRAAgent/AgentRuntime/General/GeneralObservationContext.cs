@@ -55,14 +55,31 @@ internal static class GeneralObservationContext
                     {
                         JsonElement proof = await vault.ReadResultAsync(run.Id,
                             observation.ToolId, observation.ResultReference, ct);
-                        if (proof.ValueKind == JsonValueKind.Object &&
-                            proof.TryGetProperty("observedFailure", out JsonElement marker) &&
-                            marker.ValueKind == JsonValueKind.True)
+                        if (proof.ValueKind == JsonValueKind.Object)
                         {
-                            string id = Clean(FieldString(proof, "capabilityId"), 90);
-                            string reason = Clean(FieldString(proof, "failureSummary"), 420);
-                            failure += " | capability=" + id + " | handler reported: " + reason;
-                            // No saved or created file is inferred from this.
+                            bool readFailure = proof.TryGetProperty("observedFailure", out JsonElement marker) &&
+                                marker.ValueKind == JsonValueKind.True;
+                            // Only the first-party audited executor can issue a
+                            // verified no-effect receipt. Never treat its content
+                            // as evidence that a write succeeded or was authorized.
+                            bool rejectedWithoutWrite =
+                                observation.OutcomeCode == "CAPABILITY_REJECTED_NO_EFFECT" &&
+                                proof.TryGetProperty("definiteNoEffect", out JsonElement definite) &&
+                                definite.ValueKind == JsonValueKind.True &&
+                                proof.TryGetProperty("auditRecorded", out JsonElement audit) &&
+                                audit.ValueKind == JsonValueKind.True &&
+                                proof.TryGetProperty("outcomeUncertain", out JsonElement uncertain) &&
+                                uncertain.ValueKind == JsonValueKind.False;
+                            if (readFailure || rejectedWithoutWrite)
+                            {
+                                string id = Clean(FieldString(proof, "capabilityId"), 90);
+                                string reason = Clean(FieldString(proof,
+                                    readFailure ? "failureSummary" : "summary"), 420);
+                                failure += " | capability=" + id + " | handler reported: " + reason;
+                                if (rejectedWithoutWrite)
+                                    failure += " | definitively no published change; " +
+                                        "correct a missing prerequisite through a NEW authorized tool request";
+                            }
                         }
                     }
                     catch (Exception ex) when (ex is IOException or JsonException or

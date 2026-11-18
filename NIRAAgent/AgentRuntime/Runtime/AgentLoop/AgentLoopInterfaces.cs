@@ -9,6 +9,14 @@ public interface IAgentReasoner
         IReadOnlyList<AgentToolSpec> availableTools, CancellationToken cancellationToken);
 }
 
+// The model proposes a bounded run plan; the host independently evaluates
+// execution receipts before a run can be marked Completed.
+public interface IAgentTaskLifecycle
+{
+    Task<AgentTaskContract> CreateAsync(string userRequest, CancellationToken ct);
+    Task<AgentTaskCompletionAssessment> AssessAsync(AgentRunSnapshot state, CancellationToken ct);
+}
+
 public interface IAgentTool
 {
     AgentToolSpec Spec { get; }

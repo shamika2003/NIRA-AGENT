@@ -46,7 +46,8 @@ public sealed record AgentToolReceipt(bool Succeeded, bool OutcomeConfirmed,
     public static AgentToolReceipt ReadOnlyResult(string? resultReference = null) =>
         new(true, false, resultReference);
     // Distinguish audited DEFINITE no-effect from an unconfirmed mutation.
-    // This never authorizes a replay; the loop terminates the run as incomplete.
+    // Never authorizes a replay. The loop may request a distinct new model
+    // decision for an audited correctable rejection; uncertain writes still stop.
     public static AgentToolReceipt ConfirmedNoChange(string code) => new(false, true, null, code);
     public static AgentToolReceipt Uncertain(string code) => new(false, false, null, code);
 }
@@ -74,6 +75,8 @@ public sealed class AgentRunSnapshot
     public PendingAgentTool? PendingTool { get; set; }
     public string? FinalAnswer { get; set; }
     public string? LastErrorCode { get; set; }
+    // Durable, current-message deliverables; never the long-term Goals database.
+    public AgentTaskContract? TaskContract { get; set; }
     public List<AgentObservation> Observations { get; init; } = new();
     public List<AgentActivityEvent> Activity { get; init; } = new();
 }

@@ -456,10 +456,56 @@ internal static partial class NIRADocx
         }
         catch (Exception ex) when (ex is ArgumentException or JsonException or XmlException or InvalidDataException or InvalidOperationException)
         {
+            // Already proven at the destination preflight boundary. Do not
+            // convert this into an ambiguous post-publication exception.
+            if (ex is NIRADocxStudioNoPublishedFileException) throw;
             if (intendedPath != null && !File.Exists(intendedPath) && !Directory.Exists(intendedPath))
                 throw new NIRADocxStudioNoPublishedFileException(ex.Message, ex);
             throw;
         }
+    }
+
+    // Prove that a missing parent was rejected BEFORE the DOCX publication
+    // operation. The model can then request a separate, authorized directory
+    // creation instead of forcing unnecessary uncertain-write reconciliation.
+    private static void RequireStudio48NewDestination(string path)
+    {
+        try
+        {
+            NIRAFileIntegrity.RequireNewDestination(path);
+        }
+        catch (DirectoryNotFoundException ex)
+        {
+            throw new NIRADocxStudioNoPublishedFileException(
+                "The destination parent folder does not exist. No DOCX publication " +
+                "was attempted. Discover filesystem.directory.create and request " +
+                "a separate authorized creation of the exact requested parent " +
+                "directory; then propose a NEW Word Studio operation.", ex);
+        }
+    }
+
+    // The real preflight is exercised against a guaranteed absent temporary
+    // parent. This is read-only: it never creates a directory or a document.
+    internal static int RunMissingParentPreflightSelfCheck()
+    {
+        string missing = Path.Combine(Path.GetTempPath(),
+            "NIRA_MISSING_PARENT_" + Guid.NewGuid().ToString("N"));
+        string file = Path.Combine(missing, "Report.docx");
+        if (Directory.Exists(missing) || File.Exists(file))
+            throw new InvalidOperationException("Test destination unexpectedly exists.");
+        try
+        {
+            RequireStudio48NewDestination(file);
+        }
+        catch (NIRADocxStudioNoPublishedFileException ex)
+        {
+            if (ex.InnerException is not DirectoryNotFoundException ||
+                !ex.Message.Contains("filesystem.directory.create", StringComparison.Ordinal) ||
+                Directory.Exists(missing) || File.Exists(file))
+                throw new InvalidOperationException("Missing-folder no-publication proof failed.");
+            return 2;
+        }
+        throw new InvalidOperationException("Missing folder was not rejected at preflight.");
     }
 
     private static async Task<NIRACapabilityHandlerResult> Studio48CoreAsync(
@@ -477,7 +523,7 @@ internal static partial class NIRADocx
         NIRAFileIntegrity.RejectLinkedPaths(path);
         if (File.Exists(path) || Directory.Exists(path))
             throw new NIRADocxStudioDestinationExistsException(path);
-        NIRAFileIntegrity.RequireNewDestination(path);
+        RequireStudio48NewDestination(path);
         if (title.Contains('\n') || title.Contains('\r')) throw new ArgumentException("Title must be one line.");
         string paper = (NIRACapabilityArguments.GetOptionalRawString(request, "paper", 8) ?? "A4").ToUpperInvariant();
         string orient = (NIRACapabilityArguments.GetOptionalRawString(request, "orientation", 12) ?? "portrait").ToLowerInvariant();
@@ -709,6 +755,9 @@ internal static partial class NIRADocx
 
 public sealed class NIRADocxStudioCapabilityHandler : INIRACapabilityHandler
 {
+    public static int RunMissingParentPreflightSelfCheck() =>
+        NIRADocx.RunMissingParentPreflightSelfCheck();
+
     public NIRACapabilityDescriptor Descriptor { get; } = new()
     {
         Id = NIRACapabilityIds.DocxStudioCreate,

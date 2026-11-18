@@ -235,7 +235,7 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
                     // Detailed activity remains in the durable run audit.
                     // Never fabricate visible "thinking" by mapping event codes
                     // to prewritten sentences. Only same-model public notes render.
-                }));
+                }), taskLifecycle: reasoner);
 
             // Trusted task identity comes only from the host-created mind event.
             // External-app content and archived text cannot become direct PC authority.
@@ -314,6 +314,19 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
                     "replacement was cancelled or could not be validated. I didn't " +
                     "execute a tool or save an unverified replacement. Please " +
                     "check the key and try again when provider access is available.");
+                return;
+            }
+            if (run.LastErrorCode == "TASK_DELIVERABLE_UNVERIFIED")
+            {
+                // The model attempted to end the request, but the host's
+                // durable contract still has an unmet evidence requirement.
+                // Do not turn research prose into a fictitious saved file.
+                string gap = run.TaskContract?.LastUnfinishedReason ?? "A required deliverable remains unverified.";
+                Finish(writer, mindEvent.Source,
+                    "I couldn't finish all the requested work. " + gap +
+                    " I have not claimed a saved artifact or completed action without its " +
+                    "actual tool receipt. My run checkpoint retains the original request " +
+                    "and observations; interrupted writes still require reconciliation.");
                 return;
             }
             if (run.LastErrorCode == "CAPABILITY_REJECTED_NO_EFFECT")
