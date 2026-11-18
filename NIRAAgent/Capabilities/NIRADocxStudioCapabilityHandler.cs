@@ -79,28 +79,162 @@ internal static partial class NIRADocx
         if (type is "h1" or "heading1" or "heading_1") { canonical = "heading"; headingLevel = 1; }
         else if (type is "h2" or "heading2" or "heading_2") { canonical = "heading"; headingLevel = 2; }
         else if (type is "h3" or "heading3" or "heading_3") { canonical = "heading"; headingLevel = 3; }
+        if (type == "text")
+        {
+            string style = GetString48(raw, "style", 32, false).ToLowerInvariant();
+            switch (style)
+            {
+                case "": case "body": case "paragraph": canonical = "paragraph"; break;
+                case "heading1": case "heading_1": canonical = "heading"; headingLevel = 1; break;
+                case "heading2": case "heading_2": canonical = "heading"; headingLevel = 2; break;
+                case "heading3": case "heading_3": canonical = "heading"; headingLevel = 3; break;
+                default: throw new ArgumentException("Unsupported text style; use paragraph or heading with level 1-3.");
+            }
+        }
         bool textBlock = canonical is "heading" or "paragraph" or "bullet" or "number" or "quote";
         bool hasContent = raw.TryGetProperty("content", out JsonElement content);
-        bool hasText = raw.TryGetProperty("text", out _);
+        bool hasText = raw.TryGetProperty("text", out JsonElement sourceText);
         if (hasContent && textBlock && hasText)
             throw new ArgumentException("Use either text or content in one text block, never both.");
         if (hasContent && textBlock && content.ValueKind != JsonValueKind.String)
             throw new ArgumentException("Word text-block content must be a string.");
         bool useAlias = textBlock && hasContent && !hasText;
-        if (headingLevel == 0 && !useAlias) return raw.Clone();
         if (headingLevel > 0 && raw.TryGetProperty("level", out JsonElement existingLevel) &&
             (existingLevel.ValueKind != JsonValueKind.Number ||
              !existingLevel.TryGetInt32(out int declared) || declared != headingLevel))
             throw new ArgumentException("Conflicting heading level in a Word block.");
+
+        // A common model-generated table wrapper is {type:"table", table:{columns,rows}}
+        // or {type:"table", table:[{cells:[...],isHeader:true}, ...]}.
+        // Convert only unambiguous wrappers; all other shapes remain rejected.
+        if (canonical == "table" && raw.TryGetProperty("table", out JsonElement table))
+        {
+            if (raw.TryGetProperty("rows", out _) || raw.TryGetProperty("header", out _))
+                throw new ArgumentException("Ambiguous table: use rows OR table wrapper, not both.");
+            JsonElement rows;
+            JsonElement columns = default;
+            if (table.ValueKind == JsonValueKind.Object)
+            {
+                if (!table.TryGetProperty("rows", out rows) || rows.ValueKind != JsonValueKind.Array)
+                    throw new ArgumentException("Nested table must contain rows array.");
+                table.TryGetProperty("columns", out columns);
+                foreach (JsonProperty field in table.EnumerateObject())
+                    if (field.Name is not ("rows" or "columns"))
+                        throw new ArgumentException("Unknown nested table field; refusing silent content loss.");
+            }
+            else if (table.ValueKind == JsonValueKind.Array) rows = table;
+            else throw new ArgumentException("table wrapper must be object or array.");
+
+            static JsonElement Cell(JsonElement value)
+            {
+                if (value.ValueKind == JsonValueKind.Object)
+                {
+                    JsonProperty[] props = value.EnumerateObject().ToArray();
+                    if (props.Length != 1 || props[0].Name is not ("text" or "value"))
+                        throw new ArgumentException("Wrapped table cell requires exactly one text or value field.");
+                    return Cell(props[0].Value);
+                }
+                if (value.ValueKind is not (JsonValueKind.String or JsonValueKind.Number or
+                    JsonValueKind.True or JsonValueKind.False or JsonValueKind.Null))
+                    throw new ArgumentException("Nested table cell must be scalar.");
+                return value.Clone();
+            }
+            static JsonElement Row(JsonElement row)
+            {
+                JsonElement cells = row;
+                if (row.ValueKind == JsonValueKind.Object)
+                {
+                    if (!row.TryGetProperty("cells", out cells) &&
+                        !row.TryGetProperty("values", out cells))
+                        throw new ArgumentException("Wrapped table row needs cells or values array.");
+                    foreach (JsonProperty field in row.EnumerateObject())
+                    {
+                        if (field.Name is "cells" or "values") continue;
+                        if (field.Name == "isHeader" &&
+                            field.Value.ValueKind is JsonValueKind.True or JsonValueKind.False) continue;
+                        throw new ArgumentException("Unknown wrapped table row field; refusing silent content loss.");
+                    }
+                    if (row.TryGetProperty("cells", out _) && row.TryGetProperty("values", out _))
+                        throw new ArgumentException("Ambiguous wrapped row: cells and values both present.");
+                }
+                if (cells.ValueKind != JsonValueKind.Array || cells.GetArrayLength() is < 2 or > 8)
+                    throw new ArgumentException("Wrapped table rows need 2-8 explicit cells.");
+                return JsonSerializer.SerializeToElement(cells.EnumerateArray().Select(Cell).ToArray());
+            }
+            List<JsonElement> rebuilt = new();
+            if (columns.ValueKind != JsonValueKind.Undefined)
+                rebuilt.Add(Row(columns));
+            if (rows.GetArrayLength() > 40)
+                throw new ArgumentException("table rows require 2-40 rows.");
+            foreach (JsonElement row in rows.EnumerateArray()) rebuilt.Add(Row(row));
+            if (rebuilt.Count is < 2 or > 40)
+                throw new ArgumentException("table rows require 2-40 rows.");
+            var mappedTable = new Dictionary<string, object?>(StringComparer.Ordinal);
+            foreach (JsonProperty field in raw.EnumerateObject())
+            {
+                if (field.Name == "table") continue;
+                mappedTable.Add(field.Name, field.Value.Clone());
+            }
+            mappedTable["rows"] = rebuilt;
+            return JsonSerializer.SerializeToElement(mappedTable);
+        }
+
+        // Some clients supply an explicit header row next to native rows.
+        // Preserve it as the first row instead of silently dropping headings.
+        if (canonical == "table" && raw.TryGetProperty("header", out JsonElement header))
+        {
+            if (!raw.TryGetProperty("rows", out JsonElement nativeRows) ||
+                nativeRows.ValueKind != JsonValueKind.Array ||
+                header.ValueKind != JsonValueKind.Array || header.GetArrayLength() is < 2 or > 8 ||
+                nativeRows.GetArrayLength() is < 1 or > 39)
+                throw new ArgumentException("Table header requires 2-8 header cells and 1-39 body rows.");
+            List<JsonElement> combined = new() { header.Clone() };
+            foreach (JsonElement row in nativeRows.EnumerateArray()) combined.Add(row.Clone());
+            var mapped = new Dictionary<string, object?>(StringComparer.Ordinal);
+            foreach (JsonProperty field in raw.EnumerateObject())
+            {
+                if (field.Name is "header" or "rows") continue;
+                mapped.Add(field.Name, field.Value.Clone());
+            }
+            mapped["rows"] = combined;
+            return JsonSerializer.SerializeToElement(mapped);
+        }
+
+        // Image description is a documented model-authoring alias, not a
+        // substituted or generated image. The raster path remains independently verified.
+        JsonElement imageCaption = default;
+        bool captionAltAlias = canonical == "image" && !hasText &&
+            raw.TryGetProperty("caption", out imageCaption) &&
+            !raw.TryGetProperty("altText", out _);
+        bool imageTextAlias = canonical == "image" && hasText &&
+            !raw.TryGetProperty("caption", out _) && !raw.TryGetProperty("altText", out _);
+        if (canonical == "image" && hasText && !imageTextAlias)
+            throw new ArgumentException("Image text conflicts with caption or altText; use explicit fields.");
+        if (imageTextAlias && sourceText.ValueKind != JsonValueKind.String)
+            throw new ArgumentException("Image description must be a string.");
+        if (captionAltAlias && imageCaption.ValueKind != JsonValueKind.String)
+            throw new ArgumentException("Image caption must be a string.");
+        if (headingLevel == 0 && !useAlias && canonical == type && !imageTextAlias && !captionAltAlias) return raw.Clone();
+
         var result = new Dictionary<string, object?>(StringComparer.Ordinal);
         foreach (JsonProperty item in raw.EnumerateObject())
         {
-            if (item.Name == "type" || (useAlias && item.Name == "content")) continue;
+            if (item.Name == "type" || (type == "text" && item.Name == "style") ||
+                (useAlias && item.Name == "content") || (imageTextAlias && item.Name == "text")) continue;
             result.Add(item.Name, item.Value.Clone());
         }
         result["type"] = canonical;
         if (headingLevel > 0) result["level"] = headingLevel;
         if (useAlias) result["text"] = content.GetString();
+        if (imageTextAlias || captionAltAlias)
+        {
+            string description = imageTextAlias ? (sourceText.GetString() ?? "") :
+                (imageCaption.GetString() ?? "");
+            if (description.Length is < 1 or > 200)
+                throw new ArgumentException("Image description must contain 1-200 characters.");
+            result["altText"] = description;
+            if (imageTextAlias) result["caption"] = description;
+        }
         return JsonSerializer.SerializeToElement(result);
     }
 
