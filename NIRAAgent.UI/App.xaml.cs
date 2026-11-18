@@ -1052,7 +1052,59 @@ public partial class App : WpfApplication
                             "A required native observation function is missing.");
                     _ = nativeRegistry.BuildProviderTools(nativeRegistry.Tools
                         .Select(x => x.Spec).ToArray(), allowWrite: true);
+                     int credentialPersistenceChecks = NIRAModelApiKeyService.RunPersistenceSelfCheck();
+                     int credentialRetryChecks = GeneralModelReasoner.RunAuthenticationRecoverySelfCheck();
+                     if (credentialPersistenceChecks != 3 || credentialRetryChecks != 6)
+                         throw new InvalidOperationException("Encrypted credential recovery checks failed.");
+                     int goalWorkspaceChecks = NIRAAgent.UI.Goals.NIRAGoalsPage.RunWorkspaceSelfCheck();
+                     if (goalWorkspaceChecks != 4)
+                         throw new InvalidOperationException("Goal workspace / live sidebar checks incomplete.");
+                     // Construct the actual WPF page so broken visual-tree setup
+                     // is caught before a normal launch; no persistent state touched.
+                     var goalsPreview = new NIRAAgent.UI.Goals.NIRAGoalsPage();
+                     goalsPreview.Refresh();
+                     int providerFailureChecks = NIRAWpfAgentHost.RunProviderFailureSelfCheck();
+                    if (providerFailureChecks != 4)
+                        throw new InvalidOperationException("Native provider failure diagnostics incomplete.");
                     int protocolChecks = await NiraProtocolSelfCheck.RunAsync();
+                    // This is REAL native tool schema checking. A malformed
+                    // Word report is rejected without beginning a file write,
+                    // audit attempt, or permission request.
+                    var executeTool = nativeTools.OfType<
+                        NIRAAuthoritativeCapabilityTools.CapabilityInvocation>()
+                        .Single(x => x.FunctionName == "nira_execute_capability");
+                    string sampleDestination = System.IO.Path.Combine(
+                        System.IO.Path.GetTempPath(), "nira-docx-shape-smoke-" +
+                        Guid.NewGuid().ToString("N") + ".docx");
+                    string validSections = System.Text.Json.JsonSerializer.Serialize(new[] {
+                        new { heading = "Budget", body = "Workshop preparation",
+                            tableTsv = "Item\tCost\nKits\t44100" }
+                    });
+                    var validProposal = System.Text.Json.JsonSerializer.SerializeToElement(new {
+                        capabilityId = NIRACapabilityIds.DocxReportCreate,
+                        arguments = new { path = sampleDestination,
+                            title = "Workshop", sectionsJson = validSections }
+                    });
+                    var badReport = System.Text.Json.JsonSerializer.SerializeToElement(new {
+                        capabilityId = NIRACapabilityIds.DocxReportCreate,
+                        arguments = new { path = sampleDestination,
+                            title = "Workshop", sectionsJson = "[{\"heading\":\"Budget\"}]" }
+                    });
+                    var badTable = System.Text.Json.JsonSerializer.SerializeToElement(new {
+                        capabilityId = NIRACapabilityIds.DocxReportCreate,
+                        arguments = new { path = sampleDestination,
+                            title = "Workshop", sectionsJson = "[{\"heading\":\"Budget\",\"body\":\"Text\",\"tableTsv\":\"OnlyOneCell\"}]" }
+                    });
+                    if (!executeTool.ValidateArguments(validProposal) ||
+                        executeTool.ValidateArguments(badReport) ||
+                        executeTool.ValidateArguments(badTable) ||
+                        System.IO.File.Exists(sampleDestination))
+                        throw new InvalidOperationException(
+                            "DOCX report arguments were not validated before mutation dispatch.");
+                    int docxPreflightChecks = 4;
+                    int docxBoundaryChecks = NIRACapabilityService.RunReportPublicationBoundarySelfCheck();
+                    if (docxBoundaryChecks != 3)
+                        throw new InvalidOperationException("DOCX report publication boundary checks incomplete.");
                     int richChecks = NIRAUnifiedRichAnswerComposer.RunSelfCheck();
                     if (richChecks != 3) throw new InvalidOperationException("Rich presenter checks incomplete.");
                     int activityChecks = NIRAAgent.UI.Presentation.NIRAActivityPresentationPolicy.RunSelfCheck();
@@ -1219,6 +1271,9 @@ public partial class App : WpfApplication
                             protocolChecks, discoveryChecks, richChecks, activityChecks,
                             publicThinkingChecks, streamingDraftChecks,
                             sourceLinkRecoveryChecks, readOnlySchemaChecks, boundedSearchChecks,
+                            docxPreflightChecks, docxBoundaryChecks,
+                             providerFailureChecks, credentialPersistenceChecks, credentialRetryChecks,
+                             goalWorkspaceChecks,
                             requiredCapabilities = required.Length,
                             unifiedHost = true, mindOwner = true, memoryReviewOwner = true,
                             hostedServicesStarted = false
@@ -1271,26 +1326,22 @@ public partial class App : WpfApplication
 
             if (!modelApiKeys.HasKey)
             {
-                NIRAModelCredentialResolution? initialResolution =
-                    await PromptForModelCredentialAsync(
-                        new NIRAModelCredentialRequest
-                        {
-                            Problem = NIRAModelCredentialProblem.Missing,
-                            HasCurrentKey = false
-                        },
+                // The initial trusted UI prompt uses the SAME verification and
+                // DPAPI commit path as a replacement after HTTP 401. An untested
+                // key must never be treated as a durable working credential.
+                try
+                {
+                    _ = await modelApiKeys.ResolveProblemAsync(
+                        NIRAModelCredentialProblem.Missing, string.Empty,
+                        "Enter an Ollama Cloud API key. NIRA will test it with the " +
+                        "configured model and save it encrypted only after Ollama accepts it.",
                         CancellationToken.None);
-
-
-                if (initialResolution == null ||
-                    initialResolution.Kind != NIRAModelCredentialResolutionKind.ReplaceKey)
+                }
+                catch (NIRAModelCredentialRequiredException)
                 {
                     Shutdown(0);
                     return;
                 }
-
-
-                modelApiKeys.SaveKey(
-                    initialResolution.ApiKey);
             }
 
 
@@ -1397,6 +1448,9 @@ public partial class App : WpfApplication
 
             window.AttachContinuityState(
                 _host.Services.GetRequiredService<NIRASelfModelService>());
+
+            window.AttachGoals(
+                _host.Services.GetRequiredService<NIRAGoalService>());
 
 
             NIRAVisualIntentService visualIntent =

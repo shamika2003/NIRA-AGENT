@@ -468,9 +468,14 @@
                         <TextBlock Text="Choose which persistent work signals stay visible." Style="{StaticResource SettingsDescription}"/>
                         <ContentControl Style="{StaticResource UtilityGlassCard}" Margin="0,10,0,16">
                             <StackPanel Margin="17,15">
-                                <CheckBox x:Name="CardParticlesCheck" Content="Particle transitions for branches and commitments" Checked="CardParticles_Changed" Unchecked="CardParticles_Changed"/>
-                                <CheckBox x:Name="ShowBranchesCheck" Margin="0,6,0,0" Content="Show active branches in the sidebar" Checked="ShowBranches_Changed" Unchecked="ShowBranches_Changed"/>
-                                <CheckBox x:Name="ShowCommitmentsCheck" Margin="0,6,0,0" Content="Show active commitments in the sidebar" Checked="ShowCommitments_Changed" Unchecked="ShowCommitments_Changed"/>
+                                <CheckBox x:Name="CardParticlesCheck" Content="Particle transitions for live branch cards" Checked="CardParticles_Changed" Unchecked="CardParticles_Changed"/>
+                                <CheckBox x:Name="ShowBranchesCheck" Margin="0,6,0,0" Content="Show running and queued branches in Chat" Checked="ShowBranches_Changed" Unchecked="ShowBranches_Changed"/>
+                                <CheckBox x:Name="ShowCommitmentsCheck" Visibility="Collapsed"
+                                          Margin="0,6,0,0" Content="Legacy sidebar commitments"
+                                          Checked="ShowCommitments_Changed" Unchecked="ShowCommitments_Changed"/>
+                                <TextBlock Text="Saved commitments and waiting project stages now live in Goals, not Chat."
+                                           Margin="0,8,0,0" FontSize="10.5" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource NIRASecondaryBrush}"/>
                             </StackPanel>
                         </ContentControl>
 

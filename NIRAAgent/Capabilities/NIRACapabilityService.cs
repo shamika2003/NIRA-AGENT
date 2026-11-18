@@ -20,7 +20,21 @@ public sealed class NIRACapabilityService
          exception is DirectoryNotFoundException) ||
         (capabilityId == NIRACapabilityIds.DocxStudioCreate &&
          exception is NIRADocxStudioDestinationExistsException or
-             NIRADocxStudioNoPublishedFileException);
+             NIRADocxStudioNoPublishedFileException) ||
+        (capabilityId == NIRACapabilityIds.DocxReportCreate &&
+         exception is NIRADocxReportNoPublishedFileException);
+
+    public static int RunReportPublicationBoundarySelfCheck()
+    {
+        var before = new NIRADocxReportNoPublishedFileException(
+            "Rejected before publication", new ArgumentException("invalid report"));
+        if (!IsCertainNoEffectFilesystemPreflight(NIRACapabilityIds.DocxReportCreate, before) ||
+            IsCertainNoEffectFilesystemPreflight(NIRACapabilityIds.DocxCreate, before) ||
+            IsCertainNoEffectFilesystemPreflight(NIRACapabilityIds.DocxReportCreate,
+                new ArgumentException("post-publication outcome not known")))
+            throw new InvalidOperationException("DOCX report publication boundary is unsafe.");
+        return 3;
+    }
 
     private readonly NIRACapabilityRegistry _registry;
     private readonly INIRACapabilityAuthorizer _authorizer;
@@ -120,6 +134,11 @@ public sealed class NIRACapabilityService
             // This validates only the tool's contract, never the query topic.
             if (normalized.CapabilityId == NIRACapabilityIds.WebSearch)
                 NIRAWebSearchCapabilityHandler.ValidateSearchArguments(normalized);
+            // A malformed DOCX report is a MODEL INPUT defect, never evidence
+            // of an uncertain write. Verify every section/table BEFORE the
+            // checkpointed execute capability is even proposed to the engine.
+            if (normalized.CapabilityId == NIRACapabilityIds.DocxReportCreate)
+                NIRADocx.ValidateReportCreate47Shape(normalized);
 
             return true;
         }

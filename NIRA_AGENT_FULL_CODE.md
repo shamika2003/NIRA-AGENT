@@ -6,9 +6,9 @@
 
 **Source/code files:** 406
 
-**Resource files shown in tree:** 134
+**Resource files shown in tree:** 16
 
-**Total clean project files:** 540
+**Total clean project files:** 422
 
 ---
 
@@ -25,128 +25,6 @@ Generated build folders such as `bin/` and `obj/` are intentionally excluded.
 ```text
 NIRA-AGENT/
 ├── .gitignore
-├── Images
-│   ├── AiGenerated
-│   │   ├── 0fb0322af29348ecb270b5a2e6654754.jpg
-│   │   ├── 1604b1ad89f74a34b53e23a9b9c121a1.jpg
-│   │   └── 6e1f3b936a5a43d38448867bc5723cad.jpg
-│   ├── Uploaded
-│   │   ├── 772acff1d22e4e6cbcafb6622de904a7.png
-│   │   └── b566f8d885264b8da0da06a13fab406b.png
-│   └── WebFound
-│       ├── 02dbd7bf75284d259d05304599bfd7df.gif
-│       ├── 08201b106be9479d80b924ade86db9c4.jpg
-│       ├── 09fc9f3c1f8a471fa4824dba85793519.jpg
-│       ├── 0be313aee76b4ae0bd5f4851847c2796.jpg
-│       ├── 0e8c65079c40456faefe31b15d04082f.jpg
-│       ├── 0fbc5c5b64384fe58e91eaeed09dd51f.png
-│       ├── 0fd42ee5ec9a4ff49041753f7ef1fd9e.jpg
-│       ├── 1024051803b3478fb35b528cfb0f0e01.jpg
-│       ├── 1073cf9f708a4c5e8b1283ef1c1494f0.jpg
-│       ├── 127bad5c77554829bc974074224a8a1a.jpg
-│       ├── 12a9f096488f46ce98abe6e3b5ef1151.jpg
-│       ├── 136bdc156ad2413697e9ae941498851c.jpg
-│       ├── 13eb92391ae94ef4ae077b00d43a73cb.jpg
-│       ├── 172d7929ed56488ca1aeb1dc8cb66876.jpg
-│       ├── 1a1507811815405d9d6b48367211a178.jpg
-│       ├── 1dc53f7c5c26450389e1a88138ae2196.jpg
-│       ├── 2217c4305e4d4294bacdadcc077de92b.jpg
-│       ├── 24bce6aefc684c1983db19ff1998c15f.jpg
-│       ├── 27cfd968f73f4ff1b33583d06b2b8362.jpg
-│       ├── 27ee6420f7a84dfab40856dc80571ccc.jpg
-│       ├── 28a2a0fa4453429eb3ab751fee65ef92.jpg
-│       ├── 29cd0bdd8ed84b21a45186d44dfb6401.jpg
-│       ├── 2f5e5d5b59fb4a43857a123045e66741.jpg
-│       ├── 304bba6b57ac416eaec4fd82ccfa92ff.jpg
-│       ├── 331a60dd0194406eb5d5a37ed2736903.jpg
-│       ├── 344e9ed770444ba4a1a581e0583ba9ac.jpg
-│       ├── 3a64c19375634dd79a0a8fca79d29231.jpg
-│       ├── 43406fcd9bf648a591799fbfb1a23cea.jpg
-│       ├── 4558c403fad8417fb6b4e37e5492b061.jpg
-│       ├── 45a98c444a5e4240a0f9a7a1b6446fdf.jpg
-│       ├── 45b5ae47077a42a3a9e37c80bdbe94ac.jpg
-│       ├── 46d3077b994640eb8e657f4bab247d19.jpg
-│       ├── 4a919e3ea52a4359b748c1b84d184ea9.png
-│       ├── 4fed63e867584bd5b1925fd5196daf02.jpg
-│       ├── 507e1dc8ba1e449ebf64f056342e3faa.jpg
-│       ├── 515689f7b5374a638788272f4c298c85.jpg
-│       ├── 54fb22a94d4e45b09a15e336470b769e.jpg
-│       ├── 584257415eea4fa6b6df8aab8921079d.jpg
-│       ├── 585570b38ff646f7ad296ab76d274142.jpg
-│       ├── 588e8b26f38a4b1eb678e03149330327.jpg
-│       ├── 5ac8ad0c9cec4d82be5d1ea82a1219a1.jpg
-│       ├── 5d63d308cf64497f9d45fbd03da11a05.jpg
-│       ├── 5f6b53dbd5664dfca9f22e2421a4ff0d.jpg
-│       ├── 5f9ea09f1e0a462bab38273b757cba50.jpg
-│       ├── 639a284e077a41d9ac9bfb421e87b49d.jpg
-│       ├── 6f7790e1e7e942e19f420fed495b8d2f.jpg
-│       ├── 706790fa21ff4db7b5c707ef03ddd5b6.jpg
-│       ├── 71720489953143248c81c9be56fb3ec1.jpg
-│       ├── 7375c22eac364493b93b4e1cdceea096.png
-│       ├── 73e086c283c3433b95742625dd1087b7.jpg
-│       ├── 74d9d45efb5b49f1b6ae12087d7dd79c.jpg
-│       ├── 7aff362abdee44f884648d38caa589cc.jpg
-│       ├── 7e0269d13e934e6e92b1aa7ec62023de.jpg
-│       ├── 806b964237df4b0c86a0d5334595e115.jpg
-│       ├── 8288a11841314a61b65529f63684759d.jpg
-│       ├── 86b2c9165db24b81b5c7880a4756b878.png
-│       ├── 872bb72fe3f14b0bbb50026bc3a8014f.jpg
-│       ├── 8823318e4166400298ab2bfc10dd95cf.jpg
-│       ├── 899a567c7af1416ba1309fb65d07e178.jpg
-│       ├── 8a200b4b19b24e69a4d03dbf3a2263ed.png
-│       ├── 8af731bc78954717b06bf02121a425e8.jpg
-│       ├── 8cff5d8998834173b95a1267c98ec005.jpg
-│       ├── 93611629179a4fc2a6f5153975b2cf65.jpg
-│       ├── 94d6a49eb9cc4794b6c3763f34ef3935.png
-│       ├── 966d57ed2f174594a1c73186f6bb6ebe.jpg
-│       ├── 967df48c22cc4bfe9357713d7fb0b015.jpg
-│       ├── 9cb9595ac4b542af9c228da297af7808.jpg
-│       ├── 9d133ef2e0ad4a6296bb42612d418b57.jpg
-│       ├── 9e1bbb4c4ebf487282d5b122bf963ab6.jpg
-│       ├── a085fbb31d1143d3ba5d399e269ab982.jpg
-│       ├── a15359c793a043f7ac9267c3fc5a7bf4.jpg
-│       ├── a26311d442fe47d38d2e152bcf81c447.jpg
-│       ├── a2982c35a04e4d4faeef3ae4c2655928.jpg
-│       ├── a79f28b67f164e5ebf3c16fe0c278420.jpg
-│       ├── ac1abdd05b1e4d56907c4e2a8ad2d367.jpg
-│       ├── ad4562fe31854c53a68ea030f0642248.png
-│       ├── ad5b554e6874457ab190f6cf37c17a35.png
-│       ├── b14f4f0a43924445ad3a86d4fdc18883.jpg
-│       ├── b1653a9748944cd2b7ffe6b9293d6f2c.png
-│       ├── b8f827cc83c64330ac9cc534b2768b02.jpg
-│       ├── b9203ce1d6754875bb52c5da418c9934.gif
-│       ├── b9aa715be64c458e9e89299b61236841.jpg
-│       ├── ba9e26f22f7249879eca58575940b12c.jpg
-│       ├── bae67f68d5d74e679fa5d6319eb024f3.jpg
-│       ├── bd32802281c0446c886ee3df5ac2c65d.png
-│       ├── bee3c91f9bb94eb18c8e9f144d4e9c85.jpg
-│       ├── c055745032a74a51bca8be0cdd6780be.jpg
-│       ├── c0778ad1e8fa45179db9f66bfc6436a9.jpg
-│       ├── c70b5cb4cc5d4a30b1e8b0a3b1c66647.jpg
-│       ├── c7bcded59b004cf5bff2254af12153c3.jpg
-│       ├── cf43127f13ff44ab952021a78670a7ab.jpg
-│       ├── cfc758a8fc9b4f45ab97beb1aad9752e.jpg
-│       ├── d0eb13fd793f4fc5a6446eeb79392878.jpg
-│       ├── d1c1296a46dc4d11841afa70d5fcc302.jpg
-│       ├── d1c5676366794b2688313a339676a23e.jpg
-│       ├── d1eb9d72077e4b29ad7c2392b0b7d710.jpg
-│       ├── d663580359924eeb8517543d9e8553d6.jpg
-│       ├── d71e0e1473fe4faeac74ee77a23fdc16.jpg
-│       ├── d81e136ca54442738c839158a291eee4.jpg
-│       ├── d94c45e6427d4b9ab3ee076c85a073b1.jpg
-│       ├── dea16deb21ad41cbaa3452fb8f953cf7.png
-│       ├── e2366adba67b4295a7db2cfb6553c162.png
-│       ├── e642de21d34941bdb32b905bd59684c8.png
-│       ├── e7265b5ff70c43b0b74383496ce7ce67.jpg
-│       ├── e780436cb44741c0ab180a656d22b504.jpg
-│       ├── eaf53c741f6d43cfaf6ca5577a0c16e6.jpg
-│       ├── ec4417426cc84f2b8477aacf27fd9d13.jpg
-│       ├── ec4fa8ca52c34e21a4c63e4c5240f51b.jpg
-│       ├── ed74a61a41aa4b8caf0fecf67cfb608c.jpg
-│       ├── f087326c748e4d7aa0c99ffd45fd3b34.jpg
-│       ├── f4d772b2ee1e4b389c395d4018db231e.jpg
-│       ├── f5952fd6f34b4c2e85314ad93c7b6a14.jpg
-│       └── fbfe6b7a855a4cacb43a99bc6320fc05.jpg
 ├── NIRAAgent.UI
 │   ├── AgentRuntime
 │   │   ├── NIRALifecyclePermissionGate.cs
@@ -870,6 +748,9 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
     private readonly NIRACapabilityService _capabilityService;
     private readonly NIRAAuthorityExecutionContextAccessor _authorityContext;
     private readonly NIRAModelClient _visionModel;
+    // Shared active Ollama credential: the UI prompt and agent must not
+    // maintain separate key snapshots. Credentials never enter the agent vault.
+    private readonly NIRAModelApiKeyService _modelKeys;
     private readonly NIRAGoalService _goals;
     private readonly NIRAGoalStore _goalStore;
     private readonly NIRABranchService _branches;
@@ -883,7 +764,8 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
         NIRAConversationArchiveStore archive, NIRACapabilityRegistry capabilityRegistry,
         NIRACapabilityService capabilityService,
         NIRAAuthorityExecutionContextAccessor authorityContext,
-        NIRAModelClient visionModel, NIRAGoalService goals, NIRAGoalStore goalStore,
+        NIRAModelClient visionModel, NIRAModelApiKeyService modelKeys,
+        NIRAGoalService goals, NIRAGoalStore goalStore,
         NIRABranchService branches, NIRABranchStore branchStore,
         NIRABranchWorkService branchWork, NIRASelfModelService selfModel,
         NIRAVisualArtifactService artifacts, NIRARuntimeSettingsService settings)
@@ -895,6 +777,7 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
         _capabilityService = capabilityService;
         _authorityContext = authorityContext;
         _visionModel = visionModel;
+        _modelKeys = modelKeys;
         _goals = goals;
         _goalStore = goalStore;
         _branches = branches;
@@ -935,9 +818,10 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
                 return;
             }
             NiraProviderSelection selection = NiraProviderSelection.FromEnvironment();
-            if (!selection.IsReady)
+            if (!selection.IsReady && !(selection.Provider == "OLLAMA" && _modelKeys.HasKey))
             {
-                Finish(writer, mindEvent.Source, "NIRA's configured model provider is unavailable. No action was started.");
+                Finish(writer, mindEvent.Source,
+                    ProviderFailureMessage(selection.Provider, "CLOUD_API_KEY_MISSING", false));
                 return;
             }
 
@@ -1007,8 +891,14 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
             string visual = await ObserveUserImagesAsync(mindEvent, request, ct);
             string context = MergeContext(continuity.UntrustedHistory, lifecycle, attached, visual);
 
+            // On Ollama, use the SAME session-scoped key holder as the trusted
+            // model-credential UI. A UI replacement must affect native agent
+            // reasoning too, not only vision and legacy model clients.
+            Func<string?> agentKey = selection.Provider == "OLLAMA"
+                ? () => _modelKeys.HasKey ? _modelKeys.GetRequiredKey() : null
+                : selection.KeySource;
             var reasoner = new GeneralModelReasoner(modelHttp, selection.Options,
-                registry, vault, maximumTools: 12, cloudKey: selection.KeySource,
+                registry, vault, maximumTools: 12, cloudKey: agentKey,
                 trustedIdentity: identity, untrustedHistory: context,
                 allowAuthoritativeCapabilities: true,
                 allowNiraManagedGoals: selfGoalTool is not null,
@@ -1017,7 +907,14 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
                     Source = mindEvent.Source, Type = NIRAOutputChunkType.Preview, Content = draft }),
                 publicThinkingUpdate: note => writer.TryWrite(new NIRAOutputChunk {
                     RunId = mindEvent.Id, Source = mindEvent.Source,
-                    Type = NIRAOutputChunkType.PublicThinkingNote, Content = note }));
+                    Type = NIRAOutputChunkType.PublicThinkingNote, Content = note }),
+                recoverCredential: selection.Provider == "OLLAMA"
+                    ? async (rejectedKey, token) => await _modelKeys.ResolveProblemAsync(
+                        NIRAModelCredentialProblem.InvalidOrRevoked, rejectedKey,
+                        "Ollama rejected this API key (HTTP 401). NIRA will validate the " +
+                        "replacement, save it securely and continue this SAME request " +
+                        "only if validation succeeds.", token)
+                    : null);
             var action = allTools.OfType<NIRAAuthoritativeCapabilityTools.CapabilityInvocation>()
                 .Single(x => x.Spec.Access == AccessLevel.Modify);
             IAgentPermissionGate permissions = new NIRAAuthoritativeCapabilityPermissionGate(vault, action);
@@ -1114,6 +1011,18 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
                     SkipPostTurnExperienceReview = disposableMath });
                 return;
             }
+            // 401 recovery is handled INSIDE the unsuccessful model request,
+            // before any tool call has been accepted. Do not prompt a second
+            // time on a terminal failure and do not replay an entire agent run.
+            if (run.LastErrorCode == "CLOUD_AUTH_REJECTED" && selection.Provider == "OLLAMA")
+            {
+                Finish(writer, mindEvent.Source,
+                    "Ollama still rejected my model credential (HTTP 401), or the " +
+                    "replacement was cancelled or could not be validated. I didn't " +
+                    "execute a tool or save an unverified replacement. Please " +
+                    "check the key and try again when provider access is available.");
+                return;
+            }
             if (run.LastErrorCode == "CAPABILITY_REJECTED_NO_EFFECT")
             {
                 string rejection = await DescribeNoEffectAsync(run, vault, ct);
@@ -1125,14 +1034,9 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
             else if (run.Status == AgentRunStatus.AwaitingAuthorization)
                 Finish(writer, mindEvent.Source,
                     "The action was not authorized. I did not dispatch it.");
-            else if (run.LastErrorCode?.StartsWith("MODEL_PROTOCOL_", StringComparison.Ordinal) == true)
-                Finish(writer, mindEvent.Source,
-                    "I ran into a problem getting a reliable response. I won't pretend " +
-                    "I verified information or completed actions that I couldn't confirm.");
             else
                 Finish(writer, mindEvent.Source,
-                    "I couldn't finish this request properly. I won't claim that I researched " +
-                    "something or changed anything without confirmation.");
+                    ProviderFailureMessage(selection.Provider, run.LastErrorCode, false));
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -1146,6 +1050,67 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
                 "NIRA encountered an execution error. No unverified external action will be retried automatically.");
         }
         finally { writer.TryComplete(); }
+    }
+
+    // Clear operator-facing diagnostics for VERIFIED terminal run outcomes.
+    // This is not a research-answer generator and never claims tool execution.
+    internal static string ProviderFailureMessage(string provider, string? errorCode,
+        bool credentialWasReplaced)
+    {
+        string service = provider == "NVIDIA" ? "NVIDIA" : "Ollama";
+        string action = provider == "NVIDIA"
+            ? "Check NIRA_NVIDIA_API_KEY or NVIDIA_API_KEY in the launch environment."
+            : "Replace the Ollama Cloud API key in NIRA's secure credential dialog.";
+        return errorCode switch
+        {
+            "CLOUD_AUTH_REJECTED" => credentialWasReplaced
+                ? "The model provider rejected my previous API key (HTTP 401). " +
+                  "Your replacement is now set for this session. Please resend this request; " +
+                  "I did not automatically replay any tool actions."
+                : $"{service} rejected the model API key (HTTP 401). {action} " +
+                  "I stopped before accepting a model answer. Please resend the request after fixing the key.",
+            "CLOUD_API_KEY_MISSING" => $"The {service} model API key is missing. {action} " +
+                "No model response was received.",
+            "CLOUD_PERMISSION_DENIED" => $"{service} denied access to the selected model (HTTP 403). " +
+                "Check model availability and account permissions. I did not complete the request.",
+            "CLOUD_PAYMENT_REQUIRED" => $"{service} returned HTTP 402: cloud inference usage is " +
+                "unavailable. Review your account's usage or billing before retrying.",
+            "CLOUD_RATE_LIMITED" => $"{service} rate-limited the request (HTTP 429). " +
+                "No automatic retry occurred, and I did not complete the request.",
+            "MODEL_NOT_AVAILABLE" => $"{service} could not find the selected model (HTTP 404). " +
+                "Check NIRA_MODEL_NAME and provider model availability.",
+            "MODEL_TRANSPORT_TIMEOUT" or "CLOUD_TIMEOUT" =>
+                "The model connection timed out. I stopped without replaying the request; " +
+                "check your connection and retry when available.",
+            "MODEL_TRANSPORT_FAILED" or "CLOUD_UNAVAILABLE" =>
+                "The model provider connection failed. Check the endpoint's connectivity " +
+                "and service status. No tool actions were automatically replayed.",
+            "CLOUD_BAD_REQUEST" or "MODEL_REQUEST_UNPROCESSABLE" =>
+                $"{service} rejected the model request format. " +
+                "This is a model transport/schema issue, not evidence of completed research.",
+            string code when code.StartsWith("MODEL_PROTOCOL_", StringComparison.Ordinal) =>
+                $"The provider response failed protocol validation ({code}). " +
+                "I stopped rather than treat incomplete text or tool calls as verified.",
+            _ => "I stopped because the agent runtime reported " +
+                (string.IsNullOrWhiteSpace(errorCode) ? "an unclassified failure" :
+                    errorCode.All(c => char.IsUpper(c) || char.IsDigit(c) || c == '_') &&
+                    errorCode.Length <= 64 ? errorCode : "an unclassified failure") +
+                ". I cannot claim the requested work completed. The event log contains the failure code."
+        };
+    }
+
+    public static int RunProviderFailureSelfCheck()
+    {
+        if (!ProviderFailureMessage("OLLAMA", "CLOUD_AUTH_REJECTED", false)
+                .Contains("HTTP 401", StringComparison.Ordinal) ||
+            !ProviderFailureMessage("OLLAMA", "CLOUD_AUTH_REJECTED", true)
+                .Contains("resend", StringComparison.OrdinalIgnoreCase) ||
+            !ProviderFailureMessage("NVIDIA", "CLOUD_PERMISSION_DENIED", false)
+                .Contains("HTTP 403", StringComparison.Ordinal) ||
+            !ProviderFailureMessage("OLLAMA", "MODEL_TRANSPORT_TIMEOUT", false)
+                .Contains("timed out", StringComparison.Ordinal))
+            throw new InvalidOperationException("Operator-facing provider failure messages missing.");
+        return 4;
     }
 
     // Skip costly long-term experience *formation* for a disposable arithmetic
@@ -1463,6 +1428,7 @@ using NIRAAgent.Self.Model;
 using NIRAAgent.Settings;
 using NIRAAgent.UI.Companion;
 using NIRAAgent.UI.ViewModels;
+using NIRAAgent.UI.Presentation;
 using NIRAAgent.UI.AgentRuntime;
 using NIRAAgent.UI.Theming;
 using NIRAAgent.Voice;
@@ -2481,7 +2447,52 @@ public partial class App : WpfApplication
                             "A required native observation function is missing.");
                     _ = nativeRegistry.BuildProviderTools(nativeRegistry.Tools
                         .Select(x => x.Spec).ToArray(), allowWrite: true);
+                     int credentialPersistenceChecks = NIRAModelApiKeyService.RunPersistenceSelfCheck();
+                     int credentialRetryChecks = GeneralModelReasoner.RunAuthenticationRecoverySelfCheck();
+                     if (credentialPersistenceChecks != 3 || credentialRetryChecks != 6)
+                         throw new InvalidOperationException("Encrypted credential recovery checks failed.");
+                     int providerFailureChecks = NIRAWpfAgentHost.RunProviderFailureSelfCheck();
+                    if (providerFailureChecks != 4)
+                        throw new InvalidOperationException("Native provider failure diagnostics incomplete.");
                     int protocolChecks = await NiraProtocolSelfCheck.RunAsync();
+                    // This is REAL native tool schema checking. A malformed
+                    // Word report is rejected without beginning a file write,
+                    // audit attempt, or permission request.
+                    var executeTool = nativeTools.OfType<
+                        NIRAAuthoritativeCapabilityTools.CapabilityInvocation>()
+                        .Single(x => x.FunctionName == "nira_execute_capability");
+                    string sampleDestination = System.IO.Path.Combine(
+                        System.IO.Path.GetTempPath(), "nira-docx-shape-smoke-" +
+                        Guid.NewGuid().ToString("N") + ".docx");
+                    string validSections = System.Text.Json.JsonSerializer.Serialize(new[] {
+                        new { heading = "Budget", body = "Workshop preparation",
+                            tableTsv = "Item\tCost\nKits\t44100" }
+                    });
+                    var validProposal = System.Text.Json.JsonSerializer.SerializeToElement(new {
+                        capabilityId = NIRACapabilityIds.DocxReportCreate,
+                        arguments = new { path = sampleDestination,
+                            title = "Workshop", sectionsJson = validSections }
+                    });
+                    var badReport = System.Text.Json.JsonSerializer.SerializeToElement(new {
+                        capabilityId = NIRACapabilityIds.DocxReportCreate,
+                        arguments = new { path = sampleDestination,
+                            title = "Workshop", sectionsJson = "[{\"heading\":\"Budget\"}]" }
+                    });
+                    var badTable = System.Text.Json.JsonSerializer.SerializeToElement(new {
+                        capabilityId = NIRACapabilityIds.DocxReportCreate,
+                        arguments = new { path = sampleDestination,
+                            title = "Workshop", sectionsJson = "[{\"heading\":\"Budget\",\"body\":\"Text\",\"tableTsv\":\"OnlyOneCell\"}]" }
+                    });
+                    if (!executeTool.ValidateArguments(validProposal) ||
+                        executeTool.ValidateArguments(badReport) ||
+                        executeTool.ValidateArguments(badTable) ||
+                        System.IO.File.Exists(sampleDestination))
+                        throw new InvalidOperationException(
+                            "DOCX report arguments were not validated before mutation dispatch.");
+                    int docxPreflightChecks = 4;
+                    int docxBoundaryChecks = NIRACapabilityService.RunReportPublicationBoundarySelfCheck();
+                    if (docxBoundaryChecks != 3)
+                        throw new InvalidOperationException("DOCX report publication boundary checks incomplete.");
                     int richChecks = NIRAUnifiedRichAnswerComposer.RunSelfCheck();
                     if (richChecks != 3) throw new InvalidOperationException("Rich presenter checks incomplete.");
                     int activityChecks = NIRAAgent.UI.Presentation.NIRAActivityPresentationPolicy.RunSelfCheck();
@@ -2494,8 +2505,51 @@ public partial class App : WpfApplication
                             hasNativeTools: true, previewRequested: false))
                         throw new InvalidOperationException("Streaming transport safety checks incomplete.");
                     int sourceLinkRecoveryChecks = GeneralModelReasoner.RunGroundingRecoverySelfCheck();
+                    int boundedSearchChecks = GeneralModelReasoner.RunWebImageCountSafetySelfCheck();
+                    if (boundedSearchChecks != 4)
+                        throw new InvalidOperationException("Read-only search count clamp checks incomplete.");
                     if (sourceLinkRecoveryChecks != 4)
                         throw new InvalidOperationException("Grounded source-link recovery tests incomplete.");
+                     // Provisional SSE drafts must never create trusted players.
+                    var provisionalVideo = new ChatMessageViewModel("assistant", string.Empty);
+                    provisionalVideo.SetProvisionalText(
+                        "Unverified preview https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+                    if (provisionalVideo.HasVideoDeck || provisionalVideo.VideoCount != 0)
+                        throw new InvalidOperationException("Unverified SSE preview created a video player.");
+                    // Also exercise the ACTUAL text-document renderer, which
+                    // otherwise could create a second player from provisional
+                    // Markdown even when the view-model avoids promotion.
+                    var previewDocument = new System.Windows.Controls.StackPanel();
+                    NIRAChatDocument.SetIsProvisionalPreview(previewDocument, true);
+                    NIRAChatDocument.SetText(previewDocument,
+                        "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+                    if (previewDocument.Children.Count > 1 ||
+                        previewDocument.Children.OfType<System.Windows.Controls.Grid>().Any())
+                        throw new InvalidOperationException("Provisional prose embedded an unverified player.");
+                    provisionalVideo.EndProvisionalText();
+                    // Test that typed video blocks reach ONE actual WPF deck and
+                     // expose its visible jump shortcut. No provider call or
+                     // embedded WebView2 navigation is performed here.
+                    NIRAAgent.UI.Presentation.NIRAVideoThumbnailService.DisableNetworkForOfflineAcceptance = true;
+                    try
+                    {
+                     var videoPreview = new ChatMessageViewModel("assistant", "Research complete.");
+                     videoPreview.AddRichBlocks(new[] {
+                         new NIRARichBlock { Type = "video", Title = "Landing",
+                             Text = "https://www.youtube.com/watch?v=dQw4w9WgXcQ" },
+                         new NIRARichBlock { Type = "video", Title = "Recovery",
+                             Text = "https://www.youtube.com/watch?v=9bZkp7q19f0" }
+                     });
+                     if (!videoPreview.HasVideoDeck || videoPreview.VideoCount != 2 ||
+                         videoPreview.VideoDeckView is null ||
+                         !videoPreview.RichElements.Contains(videoPreview.VideoDeckView) ||
+                         !videoPreview.RichElements.Any())
+                         throw new InvalidOperationException("Video deck not visible in WPF reply.");
+                    }
+                    finally
+                    {
+                        NIRAAgent.UI.Presentation.NIRAVideoThumbnailService.DisableNetworkForOfflineAcceptance = false;
+                    }
                     var activityPreview = new ChatMessageViewModel("assistant", string.Empty);
                     activityPreview.BeginJourney();
                     activityPreview.AddAgentActivity("REASONING_STARTED", "", DateTimeOffset.UtcNow);
@@ -2604,7 +2658,9 @@ public partial class App : WpfApplication
                             nativeFunctionsChecked = requiredFunctions.Length,
                             protocolChecks, discoveryChecks, richChecks, activityChecks,
                             publicThinkingChecks, streamingDraftChecks,
-                            sourceLinkRecoveryChecks, readOnlySchemaChecks,
+                            sourceLinkRecoveryChecks, readOnlySchemaChecks, boundedSearchChecks,
+                            docxPreflightChecks, docxBoundaryChecks,
+                             providerFailureChecks, credentialPersistenceChecks, credentialRetryChecks,
                             requiredCapabilities = required.Length,
                             unifiedHost = true, mindOwner = true, memoryReviewOwner = true,
                             hostedServicesStarted = false
@@ -2657,26 +2713,22 @@ public partial class App : WpfApplication
 
             if (!modelApiKeys.HasKey)
             {
-                NIRAModelCredentialResolution? initialResolution =
-                    await PromptForModelCredentialAsync(
-                        new NIRAModelCredentialRequest
-                        {
-                            Problem = NIRAModelCredentialProblem.Missing,
-                            HasCurrentKey = false
-                        },
+                // The initial trusted UI prompt uses the SAME verification and
+                // DPAPI commit path as a replacement after HTTP 401. An untested
+                // key must never be treated as a durable working credential.
+                try
+                {
+                    _ = await modelApiKeys.ResolveProblemAsync(
+                        NIRAModelCredentialProblem.Missing, string.Empty,
+                        "Enter an Ollama Cloud API key. NIRA will test it with the " +
+                        "configured model and save it encrypted only after Ollama accepts it.",
                         CancellationToken.None);
-
-
-                if (initialResolution == null ||
-                    initialResolution.Kind != NIRAModelCredentialResolutionKind.ReplaceKey)
+                }
+                catch (NIRAModelCredentialRequiredException)
                 {
                     Shutdown(0);
                     return;
                 }
-
-
-                modelApiKeys.SaveKey(
-                    initialResolution.ApiKey);
             }
 
 
@@ -11718,6 +11770,7 @@ public partial class MainWindow
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
 
                             <!-- Genuine PUBLIC thinking-aloud notes authored by the SAME
@@ -11762,22 +11815,39 @@ public partial class MainWindow
                                  paragraph, title, bullet, link and code passage gets
                                  its own readable spacing without a white chat box. -->
                             <StackPanel x:Name="AssistantContentText"
-                                        Grid.Row="1" HorizontalAlignment="Stretch"
+                                        Grid.Row="2" HorizontalAlignment="Stretch"
                                         present:NIRAChatDocument.Text="{Binding Content}"
+                                        present:NIRAChatDocument.IsProvisionalPreview="{Binding IsProvisionalPreview}"
                                         present:NIRAChatDocument.EmbeddedVideoKeys="{Binding EmbeddedVideoKeys}"
                                         present:NIRAChatDocument.InlineVisuals="{Binding VisualArtifacts}"
                                         present:NIRAChatDocument.InlineVisualRevision="{Binding InlineVisualRevision}"
                                         present:NIRAChatDocument.HasRichBlocks="{Binding HasRichElements}"/>
 
-                            <ItemsControl x:Name="AssistantRichBlocks" Grid.Row="3"
+                            <ItemsControl x:Name="AssistantRichBlocks" Grid.Row="4"
                                           ItemsSource="{Binding RichElements}" Visibility="Collapsed"
                                           Margin="0,5,0,5"/>
+
+                            <!-- A verified collection exists even if its carousel is
+                                 beyond the current scroll viewport. Jump to the REAL deck,
+                                 not a second player or synthetic media placeholder. -->
+                            <Button x:Name="VideoJumpButton" Grid.Row="1"
+                                    Tag="{Binding}" Visibility="Collapsed"
+                                    HorizontalAlignment="Left" Margin="0,2,0,12"
+                                    Padding="14,9" MinHeight="35"
+                                    Cursor="Hand" Click="JumpToVideos_Click"
+                                    Foreground="{DynamicResource NIRACyanBrush}"
+                                    Background="{DynamicResource NIRAGlassTintBrush}"
+                                    BorderBrush="{DynamicResource NIRAGlassBorderBrush}"
+                                    BorderThickness="1">
+                                <TextBlock Text="{Binding VideoCollectionLabel}"
+                                           FontSize="12" FontWeight="SemiBold"/>
+                            </Button>
 
                             <!-- NIRA's OWN evidence-grounded image results. One sourced
                                  image is a rich horizontal card; multiple images become
                                  the same bounded, one-row gallery as user attachments. -->
                             <ItemsControl x:Name="AssistantVisualArtifacts"
-                                          Grid.Row="2"
+                                          Grid.Row="3"
                                           ItemsSource="{Binding UnplacedAssistantImageGalleryTiles}"
                                           Visibility="Collapsed"
                                           Margin="0,12,0,2">
@@ -12108,6 +12178,9 @@ public partial class MainWindow
                 </DataTrigger>
                 <DataTrigger Binding="{Binding HasRichElements}" Value="True">
                     <Setter TargetName="AssistantRichBlocks" Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding HasVideoDeck}" Value="True">
+                    <Setter TargetName="VideoJumpButton" Property="Visibility" Value="Visible"/>
                 </DataTrigger>
                 <DataTrigger Binding="{Binding HasUnplacedAssistantImages}" Value="True">
                     <Setter TargetName="AssistantVisualArtifacts" Property="Visibility" Value="Visible"/>
@@ -16838,6 +16911,34 @@ public partial class MainWindow : Window
 
     // Provenance links are opened only on a real user click. Never turn an
     // untrusted sourceUri into an automatic download or executable launch.
+    // Video cards remain under all narrative content and photographs. This
+    // dedicated shortcut makes them discoverable without moving or cloning the
+    // heavy WebView2 player (which can only have one WPF parent).
+    private void JumpToVideos_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: ChatMessageViewModel message } ||
+            message.VideoDeckView is not FrameworkElement deck ||
+            !message.HasVideoDeck) return;
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded,
+            new Action(() =>
+            {
+                if (!deck.IsLoaded || !ChatScroll.IsLoaded) return;
+                try
+                {
+                    Point location = deck.TransformToAncestor(ChatScroll)
+                        .Transform(new Point(0, 0));
+                    ChatScroll.ScrollToVerticalOffset(Math.Max(0,
+                        ChatScroll.VerticalOffset + location.Y - 36));
+                }
+                catch (InvalidOperationException)
+                {
+                    // Navigation or chat reload removed the reply. Do not
+                    // scroll to a different message or create a new player.
+                }
+            }));
+        e.Handled = true;
+    }
+
     private void VisualArtifactOpenSource_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not System.Windows.Controls.Button button ||
@@ -18461,9 +18562,11 @@ public partial class NIRAModelApiKeyWindow : Window
             case NIRAModelCredentialProblem.InvalidOrRevoked:
                 HeadingText.Text = "Ollama API key needs attention";
                 DescriptionText.Text =
-                    "Ollama rejected the current credential. Paste a valid replacement key and NIRA will retry the failed reasoning request once.";
+                    "Ollama rejected the current credential (HTTP 401). Paste a valid replacement. " +
+                    "NIRA will verify it against Ollama, save it securely, then resume the interrupted model request.";
                 WarningText.Text =
-                    "The previous API key is not revoked at Ollama. This replacement is for the current NIRA process only.";
+                    "Only a verified key will replace the saved credential. " +
+                    "No previously executed tool or file operation is automatically repeated.";
                 WarningText.Visibility = Visibility.Visible;
                 RetryCurrentButton.Visibility = Visibility.Collapsed;
                 break;
@@ -18481,6 +18584,14 @@ public partial class NIRAModelApiKeyWindow : Window
                     ? Visibility.Visible
                     : Visibility.Collapsed;
                 break;
+        }
+        if (!string.IsNullOrWhiteSpace(_request.Detail))
+        {
+            // Only first-party trusted host diagnostics enter this window.
+            string detail = _request.Detail.Trim();
+            if (detail.Length > 300) detail = detail[..300] + "…";
+            WarningText.Text = detail;
+            WarningText.Visibility = Visibility.Visible;
         }
     }
 
@@ -22437,6 +22548,19 @@ public static class NIRAChatDocument
     public static string GetEmbeddedVideoKeys(DependencyObject element) =>
         (string)element.GetValue(EmbeddedVideoKeysProperty);
 
+    // The model's SSE preview has not passed grounding or tool verification.
+    // It may be drawn as text, but MUST NOT instantiate video WebViews or
+    // promote any link to a trusted native media player.
+    public static readonly DependencyProperty IsProvisionalPreviewProperty =
+        DependencyProperty.RegisterAttached("IsProvisionalPreview", typeof(bool),
+            typeof(NIRAChatDocument), new PropertyMetadata(false, OnPreviewChanged));
+    public static void SetIsProvisionalPreview(DependencyObject owner, bool value) =>
+        owner.SetValue(IsProvisionalPreviewProperty, value);
+    public static bool GetIsProvisionalPreview(DependencyObject owner) =>
+        (bool)owner.GetValue(IsProvisionalPreviewProperty);
+    private static void OnPreviewChanged(DependencyObject owner, DependencyPropertyChangedEventArgs _) =>
+        Build(owner, GetText(owner));
+
     // Rich blocks are rendered in a separate WPF row. Photos belonging to
     // those blocks are inserted there by ChatMessageViewModel, never before
     // the row simply because plain-text layout finished first.
@@ -22517,6 +22641,7 @@ public static class NIRAChatDocument
     {
         if (element is not StackPanel root) return;
         root.Children.Clear();
+        bool canEmbedVerifiedVideo = !GetIsProvisionalPreview(element);
         string source = NIRAResearchPresentationPolicy.StripEditorialImagePlacement(
             raw.Replace("\r\n", "\n").Replace('\r', '\n'));
         var knownVideoKeys = new HashSet<string>(
@@ -22644,7 +22769,7 @@ public static class NIRAChatDocument
             // 'text':'https://youtube.com/...'} in the answer itself.
             // Do not show raw UI metadata in the conversation, and do not
             // duplicate an existing typed or prose video player.
-            if (line.Length <= 2200 && RawVideoRecord.IsMatch(line))
+            if (canEmbedVerifiedVideo && line.Length <= 2200 && RawVideoRecord.IsMatch(line))
             {
                 Match urlField = RawVideoUrl.Match(line);
                 if (urlField.Success && IsYouTubePlaylist(urlField.Groups["url"].Value))
@@ -22688,8 +22813,10 @@ public static class NIRAChatDocument
             // paragraphs. Keep the original prose and links intact, but present
             // each distinct supported video once at the end of this reply.
             // Validation goes through the same strict video-reference policy.
-            foreach (Match hit in Regex.Matches(line, @"https://[^\s<>\]\)\(]+",
-                         RegexOptions.CultureInvariant | RegexOptions.IgnoreCase))
+            foreach (Match hit in (canEmbedVerifiedVideo
+                ? Regex.Matches(line, @"https://[^\s<>\]\)\(]+",
+                         RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)
+                : Regex.Matches(string.Empty, @"https://[^\s<>\]\)\(]+")))
             {
                 string candidate = hit.Value.TrimEnd('.', ',', ';', ':', '!', '?', '*');
                 if (!NIRAVideoReferencePolicy.TryParse(candidate, out var inlineVideo) ||
@@ -22763,7 +22890,7 @@ public static class NIRAChatDocument
             // repeated as a second player merely because NIRA cited its URL.
             // Ordinary video links receive the identical player without asking
             // cognition to change its existing answer construction.
-            if (NIRAVideoReferencePolicy.TryParseStandaloneLine(line,
+            if (canEmbedVerifiedVideo && NIRAVideoReferencePolicy.TryParseStandaloneLine(line,
                 out var video, out string videoTitle) && video != null)
             {
                 FlushParagraph();
@@ -22851,6 +22978,7 @@ public static class NIRAChatDocument
         FlushParagraph(); FlushCode();
         // Unmatched photos are NOT appended to the end of the response. The
         // rich block presenter may attach them to a strongly matching section.
+        if (canEmbedVerifiedVideo)
         foreach (var item in embeddedLinks)
         {
             if (!knownVideoKeys.Add(item.Video.Key)) continue;
@@ -26579,6 +26707,9 @@ namespace NIRAAgent.UI.Presentation;
 /// </summary>
 public static class NIRAVideoThumbnailService
 {
+    // The WPF acceptance runner tests the real player/deck layout offline.
+    // Do not contact YouTube or read/write thumbnail caches during that test.
+    internal static bool DisableNetworkForOfflineAcceptance { get; set; }
     private const int MaxPosterBytes = 2_400_000;
     private static readonly string CacheDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -26597,6 +26728,7 @@ public static class NIRAVideoThumbnailService
 
     public static void Attach(Grid preview, NIRAVideoReference video)
     {
+        if (DisableNetworkForOfflineAcceptance) return;
         if (video.Provider != "YouTube" || !ValidId(video.VideoId)) return;
         var image = new Image
         {
@@ -27977,11 +28109,15 @@ if ($Model -notmatch '^[A-Za-z0-9][A-Za-z0-9._/:-]{0,159}$') {
 # SecureString blob OUTSIDE the project. -SessionOnlyKey never writes it.
 $secretFolder = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'NIRA\Secrets'
 $secretPath = Join-Path $secretFolder 'ollama-cloud-key.dpapi'
+$secretPathV2 = Join-Path $secretFolder 'ollama-cloud-key.v2.dpapi'
 if ($ForgetSavedKey) {
     if (Test-Path -LiteralPath $secretPath -PathType Leaf) {
         Remove-Item -LiteralPath $secretPath -Force
     }
-    Write-Host '[OLLAMA] Saved credential removed. No project or NIRA state was changed.'
+    if (Test-Path -LiteralPath $secretPathV2 -PathType Leaf) {
+        Remove-Item -LiteralPath $secretPathV2 -Force
+    }
+    Write-Host '[OLLAMA] Saved credentials removed. No project or NIRA state was changed.'
     return
 }
 function Convert-NiraSecretToPlainText([Security.SecureString]$secret) {
@@ -27994,12 +28130,36 @@ $oldModel = [Environment]::GetEnvironmentVariable('NIRA_MODEL_NAME','Process')
 $oldKey = [Environment]::GetEnvironmentVariable('NIRA_OLLAMA_API_KEY','Process')
 $oldDecisionCapture = [Environment]::GetEnvironmentVariable('NIRA_DEBUG_AGENT_DECISIONS','Process')
 $oldPublicCapture = [Environment]::GetEnvironmentVariable('NIRA_DEBUG_PUBLIC_RESPONSES','Process')
+$oldSessionOnly = [Environment]::GetEnvironmentVariable('NIRA_MODEL_CREDENTIAL_SESSION_ONLY','Process')
 try {
-    $key = [Environment]::GetEnvironmentVariable('NIRA_OLLAMA_API_KEY','Process')
+    # The app's DPAPI binary blob takes precedence over any older launcher
+    # cache or inherited process variable, preventing a rotated key from
+    # being overwritten on the next startup. SessionOnly opts out explicitly.
+    $key = $null
+    if (-not $SessionOnlyKey -and (Test-Path -LiteralPath $secretPathV2 -PathType Leaf)) {
+        try {
+            # Windows PowerShell 5.1 carries this type in System.Security.
+            Add-Type -AssemblyName System.Security -ErrorAction Stop
+            $blob = [IO.File]::ReadAllBytes($secretPathV2)
+            $plain = [Security.Cryptography.ProtectedData]::Unprotect(
+                $blob, $null, [Security.Cryptography.DataProtectionScope]::CurrentUser)
+            try { $key = [Text.Encoding]::UTF8.GetString($plain).Trim() }
+            finally { [Array]::Clear($plain, 0, $plain.Length) }
+            if ($key.Length -lt 16 -or $key -match '\s') { throw 'Invalid encrypted credential.' }
+            Write-Host '[OLLAMA] Loaded verified key from encrypted Windows profile storage.'
+        }
+        catch {
+            $key = $null
+            Write-Warning 'Encrypted model credential could not be decrypted; re-entry may be required.'
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($key)) {
+        $key = [Environment]::GetEnvironmentVariable('NIRA_OLLAMA_API_KEY','Process')
+    }
     if ([string]::IsNullOrWhiteSpace($key)) {
         $key = [Environment]::GetEnvironmentVariable('OLLAMA_API_KEY','Process')
     }
-    if ([string]::IsNullOrWhiteSpace($key) -and
+    if (-not $SessionOnlyKey -and [string]::IsNullOrWhiteSpace($key) -and
         (Test-Path -LiteralPath $secretPath -PathType Leaf)) {
         try {
             $stored = (Get-Content -LiteralPath $secretPath -Raw -Encoding UTF8).Trim()
@@ -28010,11 +28170,11 @@ try {
                 $key = $null
                 throw 'Invalid cached credential.'
             }
-            Write-Host '[OLLAMA] Reused encrypted key for this Windows user.'
+            Write-Host '[OLLAMA] Reused legacy encrypted key for this Windows user.'
         }
         catch {
             $key = $null
-            Write-Warning 'Saved OLLAMA credential cannot be decrypted on this Windows profile; re-entry required.'
+            Write-Warning 'Saved OLLAMA credential cannot be decrypted; re-entry required.'
         }
     }
     if ([string]::IsNullOrWhiteSpace($key)) {
@@ -28043,6 +28203,8 @@ try {
     }
     if ([string]::IsNullOrWhiteSpace($key)) { throw 'OLLAMA API key is empty.' }
     [Environment]::SetEnvironmentVariable('NIRA_OLLAMA_API_KEY',$key.Trim(),'Process')
+    [Environment]::SetEnvironmentVariable('NIRA_MODEL_CREDENTIAL_SESSION_ONLY',
+        $(if ($SessionOnlyKey) { '1' } else { $null }), 'Process')
     [Environment]::SetEnvironmentVariable('NIRA_MODEL_PROVIDER','OLLAMA','Process')
     [Environment]::SetEnvironmentVariable('NIRA_MODEL_NAME',$Model,'Process')
     $key = $null
@@ -28064,6 +28226,7 @@ finally {
     [Environment]::SetEnvironmentVariable('NIRA_OLLAMA_API_KEY',$oldKey,'Process')
     [Environment]::SetEnvironmentVariable('NIRA_DEBUG_AGENT_DECISIONS',$oldDecisionCapture,'Process')
     [Environment]::SetEnvironmentVariable('NIRA_DEBUG_PUBLIC_RESPONSES',$oldPublicCapture,'Process')
+    [Environment]::SetEnvironmentVariable('NIRA_MODEL_CREDENTIAL_SESSION_ONLY',$oldSessionOnly,'Process')
 }
 ```
 
@@ -30262,6 +30425,7 @@ using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 
 using NIRAAgent.Artifacts;
+using NIRAAgent.Diagnostics;
 using NIRAAgent.Presentation;
 using NIRAAgent.UI.Presentation;
 using NIRAAgent.Conversation;
@@ -30620,6 +30784,26 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(HasReplySource));
     }
 
+    // Partial SSE output is NOT verified. Showing draft words is fine, but
+    // extracting playable URLs or rich media from those words is not.
+    private bool _contentIsProvisional;
+    public bool IsProvisionalPreview => _contentIsProvisional;
+    public void SetProvisionalText(string text)
+    {
+        if (!_contentIsProvisional)
+        {
+            _contentIsProvisional = true;
+            OnPropertyChanged(nameof(IsProvisionalPreview));
+        }
+        Content = text;
+    }
+    public void EndProvisionalText()
+    {
+        Content = string.Empty;
+        _contentIsProvisional = false;
+        OnPropertyChanged(nameof(IsProvisionalPreview));
+    }
+
     public string Content
     {
         get =>
@@ -30637,8 +30821,10 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
                 value;
             // One media deck per reply, regardless of whether the evidence
             // arrived as prose URLs or typed video blocks.
-            SyncVideoDeckFromProse();
-            if (VisualArtifacts.Count > 0) RefreshRichPhotoPlacement();
+            if (!_contentIsProvisional)
+                SyncVideoDeckFromProse();
+            if (!_contentIsProvisional && VisualArtifacts.Count > 0)
+                RefreshRichPhotoPlacement();
 
             OnPropertyChanged();
             OnPropertyChanged(
@@ -30756,6 +30942,12 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         new(StringComparer.OrdinalIgnoreCase);
     // Persists across structured rich-block batches for the SAME reply.
     private NIRAVideoDepthDeck? _videoDepthDeck;
+    public bool HasVideoDeck => _videoDepthDeck is { Count: > 0 };
+    public int VideoCount => _videoDepthDeck?.Count ?? 0;
+    public string VideoCollectionLabel => VideoCount == 1
+        ? "▶  1 video ready  ·  View player"
+        : $"▶  {VideoCount} videos ready  ·  View player";
+    public FrameworkElement? VideoDeckView => _videoDepthDeck?.View;
 
     // Use the same strict HTTPS/provider/ID policy as typed video blocks.
     // A public response can contain ordinary Markdown references and native
@@ -30770,7 +30962,16 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
     {
         if (!_renderedRichVideoKeys.Add(reference.Key)) return;
         _videoDepthDeck ??= new NIRAVideoDepthDeck();
-        if (_videoDepthDeck.TryAdd(block)) KeepVideoDeckLast();
+        if (_videoDepthDeck.TryAdd(block))
+        {
+            KeepVideoDeckLast();
+            OnPropertyChanged(nameof(HasVideoDeck));
+            OnPropertyChanged(nameof(VideoCount));
+            OnPropertyChanged(nameof(VideoCollectionLabel));
+            NIRADiagnosticTrace.Event("VIDEO-DECK-CHAT-BOUND",
+                "VisibleRichElement=" + RichElements.Contains(_videoDepthDeck.View) +
+                " Count=" + _videoDepthDeck.Count);
+        }
     }
 
     private void KeepVideoDeckLast()
@@ -30778,7 +30979,7 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         if (_videoDepthDeck is not { Count: > 0 }) return;
         FrameworkElement view = _videoDepthDeck.View;
         int existing = RichElements.IndexOf(view);
-        if (existing == RichElements.Count - 1) return;
+        if (existing >= 0 && existing == RichElements.Count - 1) return;
         if (existing >= 0) RichElements.RemoveAt(existing);
         RichElements.Add(view);
     }
@@ -31762,7 +31963,7 @@ public sealed class MainWindowViewModel
                 {
                     // Replace full provisional text, never append it to the final answer.
                     // No SpeechContent is accepted and no preview is archived.
-                    assistantMessage.Content = chunk.Content;
+                    assistantMessage.SetProvisionalText(chunk.Content);
                     hasUnverifiedPreview = !string.IsNullOrEmpty(chunk.Content);
                     if (hasUnverifiedPreview) assistantMessage.BeginProgressFadeOut();
                     continue;
@@ -31770,7 +31971,7 @@ public sealed class MainWindowViewModel
                 if (hasUnverifiedPreview &&
                     chunk.Type is NIRAOutputChunkType.Text or NIRAOutputChunkType.Cancelled)
                 {
-                    assistantMessage.Content = string.Empty;
+                    assistantMessage.EndProvisionalText();
                     hasUnverifiedPreview = false;
                 }
                 if (chunk.Type == NIRAOutputChunkType.Progress)
@@ -31819,7 +32020,7 @@ public sealed class MainWindowViewModel
 
             if (hasUnverifiedPreview)
             {
-                assistantMessage.Content = string.Empty;
+                assistantMessage.EndProvisionalText();
                 hasUnverifiedPreview = false;
             }
             FlushSpeech(
@@ -38155,6 +38356,7 @@ public sealed class GeneralModelReasoner : IAgentReasoner
     private readonly CapabilityRegistry _registry;
     private readonly AgentPayloadVault _vault;
     private readonly Func<string?> _key;
+    private readonly Func<string, CancellationToken, Task<string?>>? _recoverCredential;
     private readonly int _maximumTools;
     private readonly string _trustedIdentity;
     private readonly string _untrustedHistory;
@@ -38260,8 +38462,15 @@ public sealed class GeneralModelReasoner : IAgentReasoner
         the native nira_search_web function for research that benefits from
         actual photographs, consider its registered includeImages, imageQuery
         and retrieveCount arguments: one authorized web search can return
-        source evidence AND verified displayable image artifacts. Choose the
-        visual subject precisely and retrieve only useful images. If that
+        source evidence AND verified displayable image artifacts. For the
+        current native web-search schema, retrieveCount MUST be an integer from
+        1 through 3 inclusive; 5 is INVALID and causes a wasted model retry.
+        Prefer 2-3 targeted search queries in the initial call, combining
+        explanatory and direct-video discovery when relevant. Do not make a
+        second overlapping web search unless the first observation contains
+        a specific, consequential information gap. A second call can be worth
+        it for missing footage, but avoid repeating already-covered topics.
+        Choose the visual subject precisely and retrieve only useful images. If that
         option is unavailable, discover the image capability from the real
         registry and follow its actual argument schema instead.
         Never invent a
@@ -38270,8 +38479,12 @@ public sealed class GeneralModelReasoner : IAgentReasoner
         distinct source-backed playable watch URLs, not merely articles talking
         about videos. Use the observed source IDs in your answer; the host will
         display readable source labels and gather playable clips at the END of
-        the response. Give a clear descriptive title for each actual clip. If
-        fewer playable clips can be observed than requested, be candid rather
+        the response. Give a clear descriptive title for each actual clip. In a
+        nira-blocks video, put the VERIFIED HTTPS watch URL in the `url` field
+        or in `text`; descriptive prose may be in `text` only when `url` is
+        also present. Do not paste citation labels or Video · titles inline
+        as if they were explanation. The host adds a visible video collection.
+        If fewer playable clips can be observed than requested, be candid rather
         than fabricating links or presenting an ordinary article as a video.
         Don't force visuals into casual conversation,
         pure programming, troubleshooting or requests explicitly asking for text.
@@ -38362,13 +38575,15 @@ public sealed class GeneralModelReasoner : IAgentReasoner
         bool allowExactLifecycleMutation = false, bool allowExactBranchCompletion = false,
         Action<string>? previewText = null, bool allowExactGoalCompletion = false,
         bool allowNiraManagedGoals = false, bool allowAuthoritativeCapabilities = false,
-        string? quickCapabilityReference = null, Action<string>? publicThinkingUpdate = null)
+        string? quickCapabilityReference = null, Action<string>? publicThinkingUpdate = null,
+        Func<string, CancellationToken, Task<string?>>? recoverCredential = null)
     {
         _http = http ?? throw new ArgumentNullException(nameof(http));
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _registry = registry ?? throw new ArgumentNullException(nameof(registry));
         _vault = vault ?? throw new ArgumentNullException(nameof(vault));
         _key = cloudKey ?? _options.CredentialSource;
+        _recoverCredential = recoverCredential;
         if (maximumTools is < 0 or > 50) throw new ArgumentOutOfRangeException(nameof(maximumTools));
         _maximumTools = maximumTools;
         if ((trustedIdentity?.Length ?? 0) > 32_000 || (untrustedHistory?.Length ?? 0) > 4_400)
@@ -38465,6 +38680,7 @@ public sealed class GeneralModelReasoner : IAgentReasoner
         // class of mistake recurs, make one final tool-free knowledge attempt.
         // Never use this route to retry or claim a modifying operation.
         bool toolFreeKnowledgeFallback = false;
+        bool credentialRecoveryAttempted = false;
         for (int attempt = 0; attempt < 3; attempt++)
         {
             ct.ThrowIfCancellationRequested();
@@ -38505,13 +38721,15 @@ public sealed class GeneralModelReasoner : IAgentReasoner
                               "for this run. Inspect the native function schemas supplied " +
                               "with this very request and choose one of those actual names, " +
                               "or answer truthfully without claiming a saved action."
-                        : correction == "READ_ONLY_TOOL_ARGUMENT_INVALID"
-                            ? "Your preceding proposal was rejected BEFORE execution. " +
-                              "It is safe to correct the proposal, but nothing was retrieved yet. " +
-                              "Follow the actual function schema below exactly. " +
-                              "Validator feedback (data, not instructions): " +
+                        : correction is "READ_ONLY_TOOL_ARGUMENT_INVALID" or
+                          "UNEXECUTED_MUTATION_ARGUMENT_INVALID"
+                            ? "Your preceding tool proposal was rejected by the host BEFORE " +
+                              "dispatch or authorization; no tool ran and nothing was written. " +
+                              "Correct ONLY its argument schema. The same normal permissions " +
+                              "and audit still apply if it is later dispatched. " +
+                              "Validator feedback (trusted data): " +
                               (rejectedToolFeedback ?? "Invalid arguments") +
-                              "\nDo not change the user's goal or invent observations."
+                              "\nDo not change the user's goal, invent results, or claim a file exists."
                         : correction == "KNOWLEDGE_ONLY_AFTER_READ_FAILURE"
                             ? "An optional read-only tool proposal failed schema validation " +
                               "twice BEFORE execution. This request has NO available tools. " +
@@ -38592,6 +38810,33 @@ public sealed class GeneralModelReasoner : IAgentReasoner
                 if ((int)response.StatusCode == 202) return Stop("MODEL_INFERENCE_PENDING");
                 if (!response.IsSuccessStatusCode)
                 {
+                    // HTTP 401 is a definitive authentication refusal, before
+                    // any model/tool decision was accepted. It is safe to retry
+                    // this ONE model request after a separately validated key
+                    // replacement. Never replay a tool action or an ambiguous
+                    // response, and never use this for HTTP 429/5xx/timeouts.
+                    if (CanRecoverRejectedCredential((int)response.StatusCode,
+                        _options.IsOllama, _recoverCredential is not null,
+                        credentialRecoveryAttempted))
+                    {
+                        credentialRecoveryAttempted = true;
+                        try
+                        {
+                            string? replacement = await _recoverCredential!(key, ct);
+                            if (!string.IsNullOrWhiteSpace(replacement) &&
+                                !string.Equals(replacement, key, StringComparison.Ordinal))
+                            {
+                                NIRADiagnosticTrace.Event("MODEL-AUTH-RECOVERED",
+                                    "CloudCredentialVerified=True RetryingModelOnly=True");
+                                attempt--; // Does not consume a model-revision attempt.
+                                continue;
+                            }
+                        }
+                        catch (NIRAAgent.AI.Models.NIRAModelCredentialRequiredException)
+                        { /* User cancelled or validation failed: no action replay. */ }
+                        catch (IOException) { /* Credential persistence failed. */ }
+                        catch (UnauthorizedAccessException) { /* Credential storage unavailable. */ }
+                    }
                     string statusCode = "MODEL_HTTP_" + (int)response.StatusCode;
                     string? errorBody = null;
                     if (NIRADiagnosticTrace.AgentDecisionCaptureEnabled)
@@ -38712,30 +38957,44 @@ public sealed class GeneralModelReasoner : IAgentReasoner
                             return Stop("UNKNOWN_OR_UNAVAILABLE_CAPABILITY");
                         }
                         JsonElement arguments = decision.Arguments ?? default;
+                        // A bounded, read-only retrieval count is not a write
+                        // request. Correct this ONE known model error before
+                        // preflight, then run the ORIGINAL authoritative schema
+                        // validator unchanged. Never normalize mutation or
+                        // unrelated capability parameters.
+                        if (TryClampWebImageCount(function, capability.Spec.Access,
+                            arguments, out JsonElement correctedArguments))
+                        {
+                            arguments = correctedArguments;
+                            NIRADiagnosticTrace.Event("AGENT-READONLY-COUNT-CLAMP",
+                                "Function=nira_search_web RequestedAboveMax=True ExecutedMax=3");
+                        }
                         if (arguments.ValueKind != JsonValueKind.Object ||
                             !capability.ValidateArguments(arguments))
                         {
                             TraceCandidate("REJECTED_TOOL_ARGUMENT_SCHEMA_INVALID");
-                            // A read-only invalid proposal has not executed and may
-                            // be corrected by the model. A mutating proposal must
-                            // NEVER enter this recovery route.
-                            if (capability.Spec.Access == AccessLevel.Observe &&
-                                !toolFreeKnowledgeFallback && attempt < 2)
+                            // The model may correct an INVALID PROPOSAL before
+                            // the host has created ANY tool intent or dispatched an
+                            // action. This is NOT replay of a write. An actual
+                            // dispatched write, however, still uses the strict
+                            // uncertain-outcome reconciliation path unchanged.
+                            if (!toolFreeKnowledgeFallback && attempt < 2)
                             {
-                                if (attempt == 0)
+                                if (attempt == 0 || capability.Spec.Access != AccessLevel.Observe)
                                 {
                                     string reason = capability is IGeneralCapabilityArgumentFeedback feedback
                                         ? feedback.ValidationFeedback(arguments)
                                         : "The proposed arguments violate the native JSON schema.";
-                                    // Schema and validator output are host-owned, not
-                                    // instructions from the user or external sites.
                                     rejectedToolFeedback =
                                         "Function: " + function + "\n" +
                                         "Schema: " + capability.InputSchema.GetRawText() + "\n" +
                                         "Reason: " + (reason.Length <= 500 ? reason : reason[..500]);
-                                    correction = "READ_ONLY_TOOL_ARGUMENT_INVALID";
-                                    NIRADiagnosticTrace.Event("AGENT-READONLY-TOOL-REPAIR",
-                                        $"Run={run.Id:N} Function={function} Attempt=1");
+                                    correction = capability.Spec.Access == AccessLevel.Observe
+                                        ? "READ_ONLY_TOOL_ARGUMENT_INVALID"
+                                        : "UNEXECUTED_MUTATION_ARGUMENT_INVALID";
+                                    NIRADiagnosticTrace.Event("AGENT-UNEXECUTED-TOOL-CORRECTION",
+                                        $"Run={run.Id:N} Function={function} Access={capability.Spec.Access} " +
+                                        $"Attempt={attempt+1} Dispatched=False");
                                 }
                                 else
                                 {
@@ -38848,6 +39107,53 @@ public sealed class GeneralModelReasoner : IAgentReasoner
                 return Stop(decision.ErrorCode ?? "INVALID_MODEL_DECISION");
         }
         return Stop("INVALID_MODEL_DECISION");
+    }
+
+    // Pure model-argument normalization for the native, READ-ONLY web
+    // image count. This cannot grant authority or widen the descriptor's
+    // numeric range. All resulting arguments still pass the real handler's
+    // full ValidateArguments check before dispatch.
+    internal static bool TryClampWebImageCount(string function, AccessLevel access,
+        JsonElement supplied, out JsonElement corrected)
+    {
+        corrected = default;
+        if (function != "nira_search_web" || access != AccessLevel.Observe ||
+            supplied.ValueKind != JsonValueKind.Object ||
+            !supplied.TryGetProperty("retrieveCount", out JsonElement count) ||
+            count.ValueKind != JsonValueKind.Number ||
+            !count.TryGetInt32(out int requested) || requested <= 3 || requested > 20)
+            return false;
+        var values = new Dictionary<string, object?>();
+        foreach (JsonProperty property in supplied.EnumerateObject())
+        {
+            if (!values.TryAdd(property.Name,
+                property.NameEquals("retrieveCount") ? 3 : property.Value.Clone()))
+                return false; // Ambiguous duplicate JSON keys are not repaired.
+        }
+        corrected = JsonSerializer.SerializeToElement(values);
+        return true;
+    }
+
+    public static int RunWebImageCountSafetySelfCheck()
+    {
+        JsonElement invalid = JsonSerializer.SerializeToElement(new {
+            queries = new[] { "rocket recovery engineering" },
+            includeImages = true, imageQuery = "rocket landing photograph", retrieveCount = 5
+        });
+        if (!TryClampWebImageCount("nira_search_web", AccessLevel.Observe,
+                invalid, out JsonElement fixedArgs) ||
+            fixedArgs.GetProperty("retrieveCount").GetInt32() != 3 ||
+            fixedArgs.GetProperty("imageQuery").GetString() != "rocket landing photograph" ||
+            TryClampWebImageCount("nira_execute_capability", AccessLevel.Modify,
+                invalid, out _) ||
+            TryClampWebImageCount("nira_search_web", AccessLevel.Modify,
+                invalid, out _))
+            throw new InvalidOperationException("Read-only web image-count clamp violated scope.");
+        JsonElement valid = JsonSerializer.SerializeToElement(new { retrieveCount = 3 });
+        if (TryClampWebImageCount("nira_search_web", AccessLevel.Observe,
+            valid, out _))
+            throw new InvalidOperationException("Already valid web image count was altered.");
+        return 4;
     }
 
     private async Task TryPublishObservedThinkingAsync(AgentRunSnapshot run,
@@ -39007,6 +39313,22 @@ public sealed class GeneralModelReasoner : IAgentReasoner
         string result = new string(raw.Where(c => char.IsUpper(c) || char.IsDigit(c) || c == '_')
             .Take(44).ToArray());
         return result.Length == 0 ? "UNKNOWN" : result;
+    }
+
+    internal static bool CanRecoverRejectedCredential(int httpStatus, bool isOllama,
+        bool hasRecoveryCallback, bool alreadyAttempted) =>
+        httpStatus == 401 && isOllama && hasRecoveryCallback && !alreadyAttempted;
+
+    public static int RunAuthenticationRecoverySelfCheck()
+    {
+        if (!CanRecoverRejectedCredential(401, true, true, false) ||
+            CanRecoverRejectedCredential(401, false, true, false) ||
+            CanRecoverRejectedCredential(401, true, false, false) ||
+            CanRecoverRejectedCredential(401, true, true, true) ||
+            CanRecoverRejectedCredential(429, true, true, false) ||
+            CanRecoverRejectedCredential(500, true, true, false))
+            throw new InvalidOperationException("Model credential recovery scope is unsafe.");
+        return 6;
     }
 
     private AgentDecision Stop(string code) { LastFailureCode = code; return AgentDecision.Stop(code); }
@@ -40166,7 +40488,7 @@ public static class NIRAAuthoritativeCapabilityTools
         }
     }
 
-    public sealed class CapabilityInvocation : IGeneralCapability
+    public sealed class CapabilityInvocation : IGeneralCapability, IGeneralCapabilityArgumentFeedback
     {
         private readonly AgentPayloadVault _vault;
         private readonly NIRACapabilityRegistry _registry;
@@ -40198,7 +40520,13 @@ public static class NIRAAuthoritativeCapabilityTools
             additionalProperties = false
         });
 
+        // Validate the actual underlying capability descriptor BEFORE the
+        // agent loop records a mutation proposal. This is a no-effect,
+        // provider-free check; normal authorization still runs separately.
         public bool ValidateArguments(JsonElement args) =>
+            TryPreflight(args, out _, out _);
+
+        private static bool ValidateEnvelope(JsonElement args) =>
             args.ValueKind == JsonValueKind.Object &&
             args.EnumerateObject().Count() == 2 &&
             args.TryGetProperty("capabilityId", out var id) &&
@@ -40208,6 +40536,22 @@ public static class NIRAAuthoritativeCapabilityTools
             args.TryGetProperty("arguments", out var payload) &&
             payload.ValueKind == JsonValueKind.Object &&
             payload.GetRawText().Length <= 16_000;
+
+        public string ValidationFeedback(JsonElement args)
+        {
+            if (!ValidateEnvelope(args))
+                return "Use exactly capabilityId (registered ID) and arguments (object).";
+            string id = args.GetProperty("capabilityId").GetString()!;
+            if (!_registry.TryResolve(id, out INIRACapabilityHandler? handler) || handler is null)
+                return "The capability ID is not registered. Discover its actual descriptor.";
+            var raw = new NIRACapabilityRequest {
+                CapabilityId = id, Arguments = args.GetProperty("arguments").Clone(),
+                Reason = "Unexecuted model tool proposal schema feedback"
+            };
+            if (!_service.TryNormalizeAndValidateSchema(raw, out _, out string error))
+                return error.Length > 440 ? error[..440] : error;
+            return "The tool lane or resolved risk does not match the native capability.";
+        }
 
         // Checkpoint semantics are independent from authorization risk. A browser
         // navigation is Observe for the existing scope authorizer, but it still
@@ -40236,7 +40580,7 @@ public static class NIRAAuthoritativeCapabilityTools
         {
             request = new NIRACapabilityRequest();
             resolvedRisk = NIRACapabilityRisk.Destructive;
-            if (!ValidateArguments(args)) return false;
+            if (!ValidateEnvelope(args)) return false;
             string id = args.GetProperty("capabilityId").GetString()!;
             if (!_registry.TryResolve(id, out INIRACapabilityHandler? handler) || handler is null)
                 return false;
@@ -41447,7 +41791,16 @@ public static class NiraProtocolSelfCheck
             ToolFragment(0, "x", "nira_list_directory", "{\"path\":\"Documents\"}") +
             Frame(new { }, "tool_calls");
         var previews = new List<string>();
-        await VerifyReject("SSE_ANSWER_AND_TOOL_AMBIGUOUS", provisional, "text/event-stream");
+        using (var mixedStream = new MemoryStream(Encoding.UTF8.GetBytes(provisional)))
+        {
+            var mixed = await NiraChatProtocolReader.ReadAsync(mixedStream,
+                "text/event-stream", 64 * 1024, null, ct);
+            var selected = NIRAAgent.Runtime.General.GeneralToolProtocol.Decode(mixed.Message);
+            if (selected.Kind != "tool" || selected.Function != "nira_list_directory" ||
+                mixed.Message.GetProperty("content").ValueKind != JsonValueKind.Null)
+                throw new InvalidDataException("Mixed prose/tool SSE did not discard unmarked text.");
+            passed++;
+        }
         using (var streamPreview = new MemoryStream(Encoding.UTF8.GetBytes(provisional)))
         {
             try
@@ -41460,6 +41813,20 @@ public static class NiraProtocolSelfCheck
         if (previews.Count < 2 || previews[0].Length == 0 || previews[^1].Length != 0)
             throw new InvalidDataException("Streamed provisional answer was not withdrawn.");
         passed++;
+        // Provider variants legitimately use finish_reason=stop for a
+        // completely formed tool proposal. Its structured arguments still
+        // require the SAME strict validation; transport wording alone cannot
+        // turn it into a text answer or grant execution authority.
+        string stopWithTool = ToolFragment(0, "x", "nira_list_directory",
+            "{\"path\":\"Documents\"}") + Frame(new { }, "stop");
+        await Verify("SSE_TOOL_STOP_VARIANT", stopWithTool, "text/event-stream",
+            "tool_calls", "nira_list_directory");
+        // A malformed tool argument must still fail closed even if prose exists.
+        string malformedMixed = Frame(new { content = "Planning the task." }) +
+            ToolFragment(0, "x", "nira_list_directory", "{invalid") +
+            Frame(new { }, "tool_calls");
+        await VerifyReject("SSE_MIXED_TOOL_ARGUMENTS_INVALID", malformedMixed,
+            "text/event-stream");
         // The provider may stream ordinary final prose after a read-only tool;
         // text shows up incrementally, while the final binding gate still runs.
         string sseLong = Frame(new { content = "An introductory explanation of a reusable rocket. " }) +
@@ -41728,10 +42095,15 @@ public static class NvidiaChatStreamReader
             throw new InvalidDataException("MODEL_SSE_TOOL_BATCH_INCOMPLETE");
         if (!hasTool && (finish == "tool_calls" || content.Length == 0))
             throw new InvalidDataException("MODEL_SSE_ANSWER_INCOMPLETE");
-        if (hasTool && content.Length > 0 &&
-            !NIRAAgent.Runtime.General.NiraPublicThinkingNote.TryParse(
-                content.ToString(), out _))
-            throw new InvalidDataException("MODEL_SSE_TOOL_CONTENT_AMBIGUOUS");
+        // An OpenAI-compatible provider can emit ordinary assistant text and
+        // tool_calls in the SAME completed message. That text is not a final
+        // answer, a public thinking note, or tool evidence. Discard it rather
+        // than rejecting a fully formed, separately validated tool proposal.
+        // Only explicit NIRA_PUBLIC_UPDATE notes survive into the model/tool
+        // decision. Never expose unmarked text as private reasoning or prose.
+        bool trustedPublicUpdate = hasTool && content.Length > 0 &&
+            NIRAAgent.Runtime.General.NiraPublicThinkingNote.TryParse(
+                content.ToString(), out _);
         if (hasTool)
         {
             var ids = new HashSet<string>(StringComparer.Ordinal);
@@ -41753,7 +42125,7 @@ public static class NvidiaChatStreamReader
         }
         JsonElement message = hasTool
             ? JsonSerializer.SerializeToElement(new {
-                content = content.Length > 0 ? content.ToString() : (string?)null,
+                content = trustedPublicUpdate ? content.ToString() : (string?)null,
                 tool_calls = calls.Values.Select(call => new {
                     function = new {
                         name = call.Name.ToString(),
@@ -48407,7 +48779,12 @@ public static class NIRAActiveModelProvider
 **File:** `NIRAAgent\AI\Models\NIRAModelApiKeyService.cs`
 
 ```csharp
-using System.Diagnostics;
+using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
+
 namespace NIRAAgent.AI.Models;
 
 public enum NIRAModelCredentialProblem { Missing, InvalidOrRevoked, UsageUnavailable }
@@ -48426,26 +48803,53 @@ public sealed record NIRAModelCredentialResolution
 public sealed class NIRAModelCredentialRequiredException(string message) : InvalidOperationException(message) { }
 
 /// <summary>
-/// Active provider key, session-scoped. The model provider does not own NIRA memory or state.
-/// Never reads retired provider secrets or stores keys in conversations or checkpoints.
+/// One authoritative Ollama key for NIRA's vision model, chat model and agent.
+/// Replacement is validated through Ollama Cloud BEFORE being made active.
+/// Normal launches persist a DPAPI CurrentUser ciphertext, never plaintext.
+/// Existing model prompts, agent run checkpoints, histories and logs never hold keys.
 /// </summary>
 public sealed class NIRAModelApiKeyService : IDisposable
 {
     public const string EnvironmentVariableName = NIRAActiveModelProvider.ProcessCredentialName;
     public const string ProviderEnvironmentVariableName = NIRAActiveModelProvider.AlternateCredentialName;
+    public const string SessionOnlyEnvironmentVariableName = "NIRA_MODEL_CREDENTIAL_SESSION_ONLY";
+    public const string ProtectedFileName = "ollama-cloud-key.v2.dpapi";
+    private const int MaxRecoveryPrompts = 3;
     private readonly SemaphoreSlim _replacementGate = new(1, 1);
     private readonly object _sync = new();
+    private readonly bool _sessionOnly;
+    private readonly string _protectedPath;
     private string _key;
-    private Func<NIRAModelCredentialRequest,CancellationToken,
+    private Func<NIRAModelCredentialRequest, CancellationToken,
         Task<NIRAModelCredentialResolution?>>? _prompt;
     private bool _disposed;
 
     public NIRAModelApiKeyService()
     {
-        _key = (Environment.GetEnvironmentVariable(EnvironmentVariableName,
+        _protectedPath = Path.Combine(Environment.GetFolderPath(
+            Environment.SpecialFolder.LocalApplicationData), "NIRA", "Secrets", ProtectedFileName);
+        _sessionOnly = string.Equals(Environment.GetEnvironmentVariable(
+            SessionOnlyEnvironmentVariableName, EnvironmentVariableTarget.Process),
+            "1", StringComparison.Ordinal);
+        string environmentKey = (Environment.GetEnvironmentVariable(EnvironmentVariableName,
             EnvironmentVariableTarget.Process) ??
             Environment.GetEnvironmentVariable(ProviderEnvironmentVariableName,
             EnvironmentVariableTarget.Process) ?? string.Empty).Trim();
+        string? savedKey = null;
+        if (!_sessionOnly && File.Exists(_protectedPath))
+        {
+            try { savedKey = ReadProtectedKey(_protectedPath); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or
+                CryptographicException or InvalidDataException or ArgumentException)
+            {
+                // A damaged or other-Windows-user blob is not a valid credential.
+                // Never log it or replace it until a key has been verified.
+            }
+        }
+        _key = !string.IsNullOrWhiteSpace(savedKey) ? savedKey : environmentKey;
+        if (!string.IsNullOrEmpty(savedKey))
+            Environment.SetEnvironmentVariable(EnvironmentVariableName, savedKey,
+                EnvironmentVariableTarget.Process);
     }
 
     public bool HasKey { get { lock (_sync) { return !string.IsNullOrWhiteSpace(_key); } } }
@@ -48467,46 +48871,182 @@ public sealed class NIRAModelApiKeyService : IDisposable
     }
     public void SaveKey(string apiKey)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(apiKey);
+        ValidateFormat(apiKey);
         string key = apiKey.Trim();
-        if (key.Length < 16 || key.Any(char.IsWhiteSpace))
-            throw new ArgumentException("Invalid model API credential.",nameof(apiKey));
-        lock (_sync) { ThrowIfDisposed(); _key=key; }
-        Environment.SetEnvironmentVariable(EnvironmentVariableName,key,
-            EnvironmentVariableTarget.Process);
+        lock (_sync)
+        {
+            ThrowIfDisposed();
+            // Persistence comes BEFORE promotion. A write failure must not
+            // silently turn a promised long-lived replacement into a session key.
+            if (!_sessionOnly) WriteProtectedKey(_protectedPath, key);
+            _key = key;
+            Environment.SetEnvironmentVariable(EnvironmentVariableName, key,
+                EnvironmentVariableTarget.Process);
+        }
     }
+
     public async Task<string> ResolveProblemAsync(NIRAModelCredentialProblem problem,
-        string failedKey,string detail,CancellationToken cancellationToken)
+        string failedKey, string detail, CancellationToken cancellationToken)
     {
         await _replacementGate.WaitAsync(cancellationToken);
         try
         {
-            string current;
             Func<NIRAModelCredentialRequest,CancellationToken,
                 Task<NIRAModelCredentialResolution?>>? handler;
-            lock (_sync) { ThrowIfDisposed(); current=_key; handler=_prompt; }
+            string current;
+            lock (_sync) { ThrowIfDisposed(); current = _key; handler = _prompt; }
             if (!string.IsNullOrWhiteSpace(current) &&
-                !string.Equals(current,failedKey,StringComparison.Ordinal)) return current;
+                !string.Equals(current, failedKey, StringComparison.Ordinal))
+                return current; // Another concurrent recovery already changed the key.
             if (handler is null)
-                throw new NIRAModelCredentialRequiredException("Credential needs attention; no UI prompt is attached.");
-            var resolution=await handler(new NIRAModelCredentialRequest {
-                Problem=problem,Detail=detail,HasCurrentKey=!string.IsNullOrWhiteSpace(current)},
-                cancellationToken);
-            if (resolution is null)
-                throw new NIRAModelCredentialRequiredException("Credential replacement was cancelled.");
-            if (resolution.Kind==NIRAModelCredentialResolutionKind.UseCurrent)
+                throw new NIRAModelCredentialRequiredException("No credential prompt is attached.");
+            string explanation = detail;
+            for (int attempt = 0; attempt < MaxRecoveryPrompts; attempt++)
             {
-                if (string.IsNullOrWhiteSpace(current))
-                    throw new NIRAModelCredentialRequiredException("No active key is configured.");
-                return current;
+                cancellationToken.ThrowIfCancellationRequested();
+                var resolution = await handler(new NIRAModelCredentialRequest {
+                    Problem = problem, Detail = explanation,
+                    HasCurrentKey = !string.IsNullOrWhiteSpace(current) }, cancellationToken);
+                if (resolution is null)
+                    throw new NIRAModelCredentialRequiredException("Credential replacement was cancelled.");
+                string candidate;
+                if (resolution.Kind == NIRAModelCredentialResolutionKind.UseCurrent)
+                {
+                    if (string.IsNullOrWhiteSpace(current))
+                        throw new NIRAModelCredentialRequiredException("No current credential to retry.");
+                    candidate = current;
+                }
+                else
+                {
+                    candidate = resolution.ApiKey?.Trim() ?? string.Empty;
+                    ValidateFormat(candidate);
+                }
+                // Do not persist a typed-but-rejected replacement. Validate
+                // against the actual configured Ollama Cloud inference endpoint
+                // before changing ANY active credential or its saved ciphertext.
+                HttpStatusCode? status = await ProbeCloudKeyAsync(candidate, cancellationToken);
+                if (status == HttpStatusCode.OK)
+                {
+                    if (!string.Equals(candidate, current, StringComparison.Ordinal)) SaveKey(candidate);
+                    return candidate;
+                }
+                if (status == HttpStatusCode.Unauthorized)
+                {
+                    explanation = "Ollama rejected that replacement (HTTP 401). " +
+                        "Please enter a different valid key. Nothing was saved.";
+                    problem = NIRAModelCredentialProblem.InvalidOrRevoked;
+                    continue;
+                }
+                // Usage/billing, provider permission errors and transport
+                // failures are NOT proof that a replacement key was bad.
+                string code = status.HasValue ? "HTTP " + (int)status.Value : "network unavailable";
+                throw new NIRAModelCredentialRequiredException(
+                    "Ollama credential validation could not complete (" + code +
+                    "). The previous saved credential was preserved.");
             }
-            SaveKey(resolution.ApiKey);
-            return GetRequiredKey();
+            throw new NIRAModelCredentialRequiredException(
+                "Ollama rejected three credential replacements (HTTP 401). No new key was saved.");
         }
         finally { _replacementGate.Release(); }
     }
-    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed,this);
-    public void Dispose() { if (_disposed)return;_disposed=true;_replacementGate.Dispose(); }
+
+    private static async Task<HttpStatusCode?> ProbeCloudKeyAsync(string key, CancellationToken ct)
+    {
+        using var handler = new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false };
+        using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(25) };
+        using var request = new HttpRequestMessage(HttpMethod.Post,
+            NIRAActiveModelProvider.ChatEndpoint);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+        request.Content = JsonContent.Create(new {
+            model = (Environment.GetEnvironmentVariable("NIRA_MODEL_NAME") is { Length: > 0 } model &&
+                model.Length <= 160 ? model : NIRAActiveModelProvider.DefaultModel),
+            messages = new[] { new { role = "user", content = "ping" } },
+            max_tokens = 64,
+            stream = false
+        });
+        try
+        {
+            using HttpResponseMessage response = await http.SendAsync(request,
+                HttpCompletionOption.ResponseHeadersRead, ct);
+            return response.StatusCode;
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return null; }
+        catch (HttpRequestException) { return null; }
+        catch (IOException) { return null; }
+    }
+
+    private static void ValidateFormat(string? apiKey)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(apiKey);
+        string key = apiKey.Trim();
+        if (key.Length < 16 || key.Length > 1024 || key.Any(char.IsWhiteSpace))
+            throw new ArgumentException("Invalid model API credential format.", nameof(apiKey));
+    }
+    private static void WriteProtectedKey(string path, string key)
+    {
+        byte[] plaintext = Encoding.UTF8.GetBytes(key);
+        byte[] ciphertext;
+        try { ciphertext = ProtectedData.Protect(plaintext, null, DataProtectionScope.CurrentUser); }
+        finally { CryptographicOperations.ZeroMemory(plaintext); }
+        string directory = Path.GetDirectoryName(path) ??
+            throw new InvalidOperationException("Credential folder missing.");
+        Directory.CreateDirectory(directory);
+        string temporary = Path.Combine(directory, "ollama-key-" + Guid.NewGuid().ToString("N") + ".tmp");
+        try
+        {
+            // Ciphertext only. Never put the key in a project file, transcript,
+            // source code, command line, or plaintext temp file.
+            using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write,
+                FileShare.None, 4096, FileOptions.WriteThrough))
+            {
+                file.Write(ciphertext);
+                file.Flush(flushToDisk: true);
+            }
+            File.Move(temporary, path, overwrite: true);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
+    private static string ReadProtectedKey(string path)
+    {
+        byte[] blob = File.ReadAllBytes(path);
+        if (blob.Length is < 16 or > 16_384)
+            throw new InvalidDataException("Encrypted model key has an invalid length.");
+        byte[] plaintext = ProtectedData.Unprotect(blob, null, DataProtectionScope.CurrentUser);
+        try
+        {
+            string key = new UTF8Encoding(false, true).GetString(plaintext);
+            ValidateFormat(key);
+            return key.Trim();
+        }
+        finally { CryptographicOperations.ZeroMemory(plaintext); }
+    }
+
+    public static int RunPersistenceSelfCheck()
+    {
+        string path = Path.Combine(Path.GetTempPath(),
+            "nira-model-dpapi-smoke-" + Guid.NewGuid().ToString("N"), ProtectedFileName);
+        const string first = "nira-test-key-not-a-real-provider-token-01";
+        const string second = "nira-test-key-not-a-real-provider-token-02";
+        try
+        {
+            WriteProtectedKey(path, first);
+            if (ReadProtectedKey(path) != first) throw new InvalidOperationException("DPAPI roundtrip failed.");
+            if (Encoding.UTF8.GetString(File.ReadAllBytes(path)).Contains(first, StringComparison.Ordinal))
+                throw new InvalidOperationException("Protected key leaked in storage.");
+            WriteProtectedKey(path, second);
+            if (ReadProtectedKey(path) != second) throw new InvalidOperationException("DPAPI rotation failed.");
+            return 3;
+        }
+        finally
+        {
+            string? directory = Path.GetDirectoryName(path);
+            if (directory is not null && Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
+    public void Dispose() { if (_disposed) return; _disposed = true; _replacementGate.Dispose(); }
 }
 ```
 
@@ -78329,7 +78869,21 @@ public sealed class NIRACapabilityService
          exception is DirectoryNotFoundException) ||
         (capabilityId == NIRACapabilityIds.DocxStudioCreate &&
          exception is NIRADocxStudioDestinationExistsException or
-             NIRADocxStudioNoPublishedFileException);
+             NIRADocxStudioNoPublishedFileException) ||
+        (capabilityId == NIRACapabilityIds.DocxReportCreate &&
+         exception is NIRADocxReportNoPublishedFileException);
+
+    public static int RunReportPublicationBoundarySelfCheck()
+    {
+        var before = new NIRADocxReportNoPublishedFileException(
+            "Rejected before publication", new ArgumentException("invalid report"));
+        if (!IsCertainNoEffectFilesystemPreflight(NIRACapabilityIds.DocxReportCreate, before) ||
+            IsCertainNoEffectFilesystemPreflight(NIRACapabilityIds.DocxCreate, before) ||
+            IsCertainNoEffectFilesystemPreflight(NIRACapabilityIds.DocxReportCreate,
+                new ArgumentException("post-publication outcome not known")))
+            throw new InvalidOperationException("DOCX report publication boundary is unsafe.");
+        return 3;
+    }
 
     private readonly NIRACapabilityRegistry _registry;
     private readonly INIRACapabilityAuthorizer _authorizer;
@@ -78429,6 +78983,11 @@ public sealed class NIRACapabilityService
             // This validates only the tool's contract, never the query topic.
             if (normalized.CapabilityId == NIRACapabilityIds.WebSearch)
                 NIRAWebSearchCapabilityHandler.ValidateSearchArguments(normalized);
+            // A malformed DOCX report is a MODEL INPUT defect, never evidence
+            // of an uncertain write. Verify every section/table BEFORE the
+            // checkpointed execute capability is even proposed to the engine.
+            if (normalized.CapabilityId == NIRACapabilityIds.DocxReportCreate)
+                NIRADocx.ValidateReportCreate47Shape(normalized);
 
             return true;
         }
@@ -80692,6 +81251,15 @@ using System.Xml.Linq;
 
 namespace NIRAAgent.Capabilities;
 
+// Trusted file-publication boundary: exceptions that occur *before* the
+// create-only publisher is called prove no new document was written by this
+// operation. Errors after entering PublishNew keep their uncertain outcome.
+internal sealed class NIRADocxReportNoPublishedFileException : InvalidOperationException
+{
+    public NIRADocxReportNoPublishedFileException(string message, Exception inner)
+        : base("DOCX_REPORT_NOT_PUBLISHED: " + message, inner) { }
+}
+
 // R47: one bounded native Word finishing release: templates, deterministic
 // multi-document batch, and structured reports. No Word automation or network.
 internal static partial class NIRADocx
@@ -81092,9 +81660,58 @@ internal static partial class NIRADocx
         return table;
     }
 
+    // PURE report-shape preflight for a model proposal. This runs before the
+    // authorized execution stage: no file is opened, created, deleted, or
+    // overwritten, and no permission or audit boundary is bypassed. Use the
+    // same Word table parser to avoid weaker validation of TSV cells.
+    internal static void ValidateReportCreate47Shape(NIRACapabilityRequest request)
+    {
+        string proposedPath = NIRACapabilityArguments.RequireString(request, "path", 32760);
+        if (!string.Equals(Path.GetExtension(proposedPath), ".docx",
+                StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Report destination must end in .docx.");
+        string title = RequiredText(request, "title", 160).Trim();
+        if (title.Contains('\n') || title.Contains('\r'))
+            throw new ArgumentException("Report title must be one line.");
+        string sections = RequiredText(request, "sectionsJson", 26000);
+        using JsonDocument document = JsonDocument.Parse(sections,
+            new JsonDocumentOptions { MaxDepth = 6 });
+        JsonElement root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Array || root.GetArrayLength() is < 1 or > 12)
+            throw new ArgumentException("sectionsJson needs 1-12 report section objects.");
+        foreach (JsonElement section in root.EnumerateArray())
+        {
+            if (section.ValueKind != JsonValueKind.Object ||
+                !section.TryGetProperty("heading", out JsonElement heading) ||
+                heading.ValueKind != JsonValueKind.String ||
+                !section.TryGetProperty("body", out JsonElement body) ||
+                body.ValueKind != JsonValueKind.String)
+                throw new ArgumentException("Each section requires heading and body strings.");
+            string h = heading.GetString() ?? "", b = body.GetString() ?? "";
+            if (h.Length is < 1 or > 140 || b.Length is < 1 or > 3000 ||
+                h.Contains('\n') || h.Contains('\r'))
+                throw new ArgumentException("Section heading must be 1-140 characters; body 1-3000.");
+            try { XmlConvert.VerifyXmlChars(h); XmlConvert.VerifyXmlChars(b); }
+            catch (XmlException)
+            { throw new ArgumentException("Report contains XML-invalid characters."); }
+            if (!section.TryGetProperty("tableTsv", out JsonElement t) ||
+                t.ValueKind == JsonValueKind.Null) continue;
+            if (t.ValueKind != JsonValueKind.String || t.GetString()!.Length > 8000)
+                throw new ArgumentException("tableTsv must be a string of at most 8000 characters.");
+            string tsv = t.GetString()!;
+            try { XmlConvert.VerifyXmlChars(tsv); }
+            catch (XmlException)
+            { throw new ArgumentException("Report table contains XML-invalid characters."); }
+            _ = ReportTable47(tsv); // Only builds an in-memory XElement.
+        }
+    }
+
     internal static async Task<NIRACapabilityHandlerResult> ReportCreate47Async(
         NIRACapabilityRequest request, CancellationToken ct)
     {
+        bool publicationStarted = false;
+        try
+        {
         string path = GetPath(request, "path");
         string title = RequiredText(request, "title", 160).Trim();
         string sections = RequiredText(request, "sectionsJson", 26000);
@@ -81151,6 +81768,7 @@ internal static partial class NIRADocx
                 new XAttribute(W + "bottom", 1134), new XAttribute(W + "left", 1134))));
         XDocument result = new(new XElement(W + "document", new XAttribute(XNamespace.Xmlns + "w", W), body));
         ct.ThrowIfCancellationRequested();
+        publicationStarted = true;
         PublishNew(path, stage => NewPackage(stage, result), result);
         string verification = VerifyPublishedDocument(path, result);
         var written = await NIRAFileIntegrity.HashAsync(path, CancellationToken.None).ConfigureAwait(false);
@@ -81161,6 +81779,15 @@ internal static partial class NIRADocx
             Output = $"Destination={path}\nDestinationSHA256={written.Sha256}\nReportSections={json.RootElement.GetArrayLength()}\n" +
                 $"ReportTables={tableCount}\nPaper=A4\nOrientation=portrait\n{verification}\nOverwroteExisting=False\nVisualPaginationVerified=False"
         };
+        }
+        catch (Exception ex) when (!publicationStarted &&
+            (ex is ArgumentException or InvalidOperationException or JsonException or
+                XmlException or IOException or UnauthorizedAccessException))
+        {
+            // This catch is reachable only BEFORE entering PublishNew.
+            // Do not conflate these rejected inputs with unknown write results.
+            throw new NIRADocxReportNoPublishedFileException(ex.Message, ex);
+        }
     }
 }
 
@@ -127972,6 +128599,11 @@ internal static class NIRAWindowObservationContinuityPolicy
 
   <ItemGroup>
 
+    <!-- Required for CurrentUser DPAPI credential encryption in .NET 10. -->
+    <PackageReference
+      Include="System.Security.Cryptography.ProtectedData"
+      Version="10.0.0" />
+
     <PackageReference
       Include="Microsoft.Extensions.Hosting"
       Version="10.0.10" />
@@ -134117,7 +134749,19 @@ public static class NIRARichBlockJsonReader
         if (type == "equation") body = NIRAMathMarkup.NormalizeEquationInput(body);
         // A source card may use a conventional URL field. This only preserves
         // model-supplied link text; it does not fetch or verify the destination.
-        if ((type is "source" or "video") && body.Length == 0)
+        if (type == "video")
+        {
+            // The model commonly supplies BOTH a user-facing description in
+            // "text" and a validated watch address in "url". A display block's
+            // Text is the native player's URL, not its description. Never
+            // discard valid video cards merely because description was set.
+            string watch = First(element, "", "url", "href", "uri",
+                "watchUrl", "videoUrl", "video_url", "link");
+            if (NIRAVideoReferencePolicy.TryParse(watch, out _)) body = watch;
+            // When URL is not a supported video destination, keep the existing
+            // text for Normalize() to reject. No website is auto-promoted.
+        }
+        else if (type == "source" && body.Length == 0)
             body = First(element, "", "url", "href", "uri", "watchUrl", "videoUrl", "video_url", "link");
         if (type == "card")
         {
@@ -134390,6 +135034,13 @@ public static class NIRAUnifiedRichAnswerComposer
         @"^(?:S[1-9]\d*|Source\s+S[1-9]\d*)$",
         RegexOptions.CultureInvariant | RegexOptions.IgnoreCase | RegexOptions.Compiled,
         TimeSpan.FromMilliseconds(100));
+    // The research binder uses this label for a verified VIDEO citation.
+    // It is not authored explanatory prose and must not be left inline when
+    // the real playable item is displayed once in the video collection.
+    private static readonly Regex BoundVideoCitationLabel = new(
+        @"^Video\s*[·:\-]\s*.+$",
+        RegexOptions.CultureInvariant | RegexOptions.IgnoreCase | RegexOptions.Compiled,
+        TimeSpan.FromMilliseconds(100));
 
     public static NIRAUnifiedRichAnswer Compose(string answer, string userRequest,
         IReadOnlyList<string>? successfulObservationReceipts)
@@ -134471,7 +135122,13 @@ public static class NIRAUnifiedRichAnswerComposer
                     !trustedVideos.Contains(video.Key)) return match.Value;
                 string label = match.Groups["label"].Value.Trim();
                 AddVideo(video, label);
-                return InternalSourceLabel.IsMatch(label) ? "video footage below" : label;
+                // The authoritative source binder has already verified this
+                // URL. The actual player with its descriptive title is rendered
+                // once at the bottom; don't leak "Video · ..." citations into
+                // engineering prose. Other authored link labels stay readable.
+                return InternalSourceLabel.IsMatch(label) ||
+                    BoundVideoCitationLabel.IsMatch(label)
+                    ? "(see video collection below)" : label;
             });
             // Also accept an actual standalone or inline plaintext watch URL.
             // Do not replace non-video web links or unsupported destinations.
@@ -134481,7 +135138,7 @@ public static class NIRAUnifiedRichAnswerComposer
                 if (!NIRAVideoReferencePolicy.TryParse(raw, out var video) ||
                     video is null || !trustedVideos.Contains(video.Key)) return match.Value;
                 AddVideo(video, null);
-                return "video below" + match.Value[raw.Length..];
+                return "(see video collection below)" + match.Value[raw.Length..];
             });
         }
 
@@ -134524,6 +135181,9 @@ public static class NIRAUnifiedRichAnswerComposer
     private static string CleanVideoLabel(string? proposed, NIRAVideoReference video)
     {
         string label = (proposed ?? "").Trim();
+        if (BoundVideoCitationLabel.IsMatch(label))
+            label = Regex.Replace(label, @"^Video\s*[·:\-]\s*", "",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         if (InternalSourceLabel.IsMatch(label) ||
             label.Equals("Source", StringComparison.OrdinalIgnoreCase) ||
             label.Equals("Video", StringComparison.OrdinalIgnoreCase) ||
@@ -134618,6 +135278,19 @@ public static class NIRAUnifiedRichAnswerComposer
         if (alias.Blocks.Count != 1 || alias.Blocks[0].Type != "video" ||
             alias.Blocks[0].Title != "Launch and landing")
             throw new InvalidOperationException("Valid verified videoUrl block alias was discarded.");
+        const string dualVideo = "Engineering discussion.\n\n```nira-blocks\n" +
+            "{\"displayBlocks\":[{\"type\":\"video\",\"title\":\"Actual footage\"," +
+            "\"text\":\"A meaningful description of the recovery sequence.\"," +
+            "\"url\":\"" + video + "\"}]}\n```";
+        var dualAccepted = Compose(dualVideo, "Explain recovery", new[] {
+            "{\"sources\":[{\"url\":\"" + video + "\",\"title\":\"Actual footage\"}]}" });
+        if (dualAccepted.Blocks.Count != 1 ||
+            dualAccepted.Blocks[0].Type != "video" ||
+            dualAccepted.Blocks[0].Text != video)
+            throw new InvalidOperationException("Model descriptive video + URL shape was discarded.");
+        var dualRejected = Compose(dualVideo, "Explain recovery", Array.Empty<string>());
+        if (dualRejected.Blocks.Count != 0)
+            throw new InvalidOperationException("Unobserved descriptive video was promoted.");
         var aliasDenied = Compose(videoAlias, "Explain launch sequence", Array.Empty<string>());
         if (aliasDenied.Blocks.Count != 0)
             throw new InvalidOperationException("Unobserved videoUrl alias promoted into a player.");
@@ -134629,6 +135302,14 @@ public static class NIRAUnifiedRichAnswerComposer
         if (inline.Blocks.Count != 1 || inline.Blocks[0].Title != "Falcon booster landing" ||
             inline.Screen.Contains(video, StringComparison.Ordinal))
             throw new InvalidOperationException("Inline video was not moved to end-of-reply deck.");
+        var boundCitation = Compose("Falcon 9 descent is explained [Video · Rocket descent](" +
+            video + ").", "Show video", new[] {
+            "{\"sources\":[{\"url\":\"" + video + "\"}]}" });
+        if (boundCitation.Blocks.Count != 1 ||
+            !boundCitation.Screen.Contains("video collection below", StringComparison.Ordinal) ||
+            boundCitation.Screen.Contains("Video ·", StringComparison.Ordinal) ||
+            boundCitation.Blocks[0].Title != "Rocket descent")
+            throw new InvalidOperationException("Internal video citation leaked into explanation.");
         var duplicate = Compose("[Landing](" + video + ") and [Landing again](" + video + ")",
             "Show videos", new[] { "{\"sources\":[{\"url\":\"" + video + "\"}]}" });
         if (duplicate.Blocks.Count != 1)
@@ -194301,124 +194982,6 @@ public sealed record VoiceUtterance
 
 These files are part of the project and are shown in the tree, but their binary data is intentionally not written into this Markdown file.
 
-- `Images\AiGenerated\0fb0322af29348ecb270b5a2e6654754.jpg` — 569.44 KB
-- `Images\AiGenerated\1604b1ad89f74a34b53e23a9b9c121a1.jpg` — 485.09 KB
-- `Images\AiGenerated\6e1f3b936a5a43d38448867bc5723cad.jpg` — 622.86 KB
-- `Images\Uploaded\772acff1d22e4e6cbcafb6622de904a7.png` — 2.01 MB
-- `Images\Uploaded\b566f8d885264b8da0da06a13fab406b.png` — 363.98 KB
-- `Images\WebFound\02dbd7bf75284d259d05304599bfd7df.gif` — 47.86 KB
-- `Images\WebFound\08201b106be9479d80b924ade86db9c4.jpg` — 134.21 KB
-- `Images\WebFound\09fc9f3c1f8a471fa4824dba85793519.jpg` — 143.59 KB
-- `Images\WebFound\0be313aee76b4ae0bd5f4851847c2796.jpg` — 946.27 KB
-- `Images\WebFound\0e8c65079c40456faefe31b15d04082f.jpg` — 436.73 KB
-- `Images\WebFound\0fbc5c5b64384fe58e91eaeed09dd51f.png` — 640 bytes
-- `Images\WebFound\0fd42ee5ec9a4ff49041753f7ef1fd9e.jpg` — 251.36 KB
-- `Images\WebFound\1024051803b3478fb35b528cfb0f0e01.jpg` — 140.23 KB
-- `Images\WebFound\1073cf9f708a4c5e8b1283ef1c1494f0.jpg` — 93.84 KB
-- `Images\WebFound\127bad5c77554829bc974074224a8a1a.jpg` — 244.90 KB
-- `Images\WebFound\12a9f096488f46ce98abe6e3b5ef1151.jpg` — 252.61 KB
-- `Images\WebFound\136bdc156ad2413697e9ae941498851c.jpg` — 34.06 KB
-- `Images\WebFound\13eb92391ae94ef4ae077b00d43a73cb.jpg` — 304.70 KB
-- `Images\WebFound\172d7929ed56488ca1aeb1dc8cb66876.jpg` — 55.59 KB
-- `Images\WebFound\1a1507811815405d9d6b48367211a178.jpg` — 23.86 KB
-- `Images\WebFound\1dc53f7c5c26450389e1a88138ae2196.jpg` — 115.10 KB
-- `Images\WebFound\2217c4305e4d4294bacdadcc077de92b.jpg` — 91.62 KB
-- `Images\WebFound\24bce6aefc684c1983db19ff1998c15f.jpg` — 12.28 KB
-- `Images\WebFound\27cfd968f73f4ff1b33583d06b2b8362.jpg` — 163.46 KB
-- `Images\WebFound\27ee6420f7a84dfab40856dc80571ccc.jpg` — 23.65 KB
-- `Images\WebFound\28a2a0fa4453429eb3ab751fee65ef92.jpg` — 27.13 KB
-- `Images\WebFound\29cd0bdd8ed84b21a45186d44dfb6401.jpg` — 27.09 KB
-- `Images\WebFound\2f5e5d5b59fb4a43857a123045e66741.jpg` — 20.00 KB
-- `Images\WebFound\304bba6b57ac416eaec4fd82ccfa92ff.jpg` — 152.08 KB
-- `Images\WebFound\331a60dd0194406eb5d5a37ed2736903.jpg` — 209.36 KB
-- `Images\WebFound\344e9ed770444ba4a1a581e0583ba9ac.jpg` — 2.83 MB
-- `Images\WebFound\3a64c19375634dd79a0a8fca79d29231.jpg` — 117.65 KB
-- `Images\WebFound\43406fcd9bf648a591799fbfb1a23cea.jpg` — 170.59 KB
-- `Images\WebFound\4558c403fad8417fb6b4e37e5492b061.jpg` — 872.05 KB
-- `Images\WebFound\45a98c444a5e4240a0f9a7a1b6446fdf.jpg` — 3.19 KB
-- `Images\WebFound\45b5ae47077a42a3a9e37c80bdbe94ac.jpg` — 104.30 KB
-- `Images\WebFound\46d3077b994640eb8e657f4bab247d19.jpg` — 114.46 KB
-- `Images\WebFound\4a919e3ea52a4359b748c1b84d184ea9.png` — 920.29 KB
-- `Images\WebFound\4fed63e867584bd5b1925fd5196daf02.jpg` — 57.70 KB
-- `Images\WebFound\507e1dc8ba1e449ebf64f056342e3faa.jpg` — 132.59 KB
-- `Images\WebFound\515689f7b5374a638788272f4c298c85.jpg` — 154.55 KB
-- `Images\WebFound\54fb22a94d4e45b09a15e336470b769e.jpg` — 42.58 KB
-- `Images\WebFound\584257415eea4fa6b6df8aab8921079d.jpg` — 148.71 KB
-- `Images\WebFound\585570b38ff646f7ad296ab76d274142.jpg` — 136.87 KB
-- `Images\WebFound\588e8b26f38a4b1eb678e03149330327.jpg` — 38.23 KB
-- `Images\WebFound\5ac8ad0c9cec4d82be5d1ea82a1219a1.jpg` — 95.52 KB
-- `Images\WebFound\5d63d308cf64497f9d45fbd03da11a05.jpg` — 72.00 KB
-- `Images\WebFound\5f6b53dbd5664dfca9f22e2421a4ff0d.jpg` — 52.31 KB
-- `Images\WebFound\5f9ea09f1e0a462bab38273b757cba50.jpg` — 99.39 KB
-- `Images\WebFound\639a284e077a41d9ac9bfb421e87b49d.jpg` — 48.10 KB
-- `Images\WebFound\6f7790e1e7e942e19f420fed495b8d2f.jpg` — 97.10 KB
-- `Images\WebFound\706790fa21ff4db7b5c707ef03ddd5b6.jpg` — 69.66 KB
-- `Images\WebFound\71720489953143248c81c9be56fb3ec1.jpg` — 137.90 KB
-- `Images\WebFound\7375c22eac364493b93b4e1cdceea096.png` — 128.80 KB
-- `Images\WebFound\73e086c283c3433b95742625dd1087b7.jpg` — 104.78 KB
-- `Images\WebFound\74d9d45efb5b49f1b6ae12087d7dd79c.jpg` — 40.96 KB
-- `Images\WebFound\7aff362abdee44f884648d38caa589cc.jpg` — 66.68 KB
-- `Images\WebFound\7e0269d13e934e6e92b1aa7ec62023de.jpg` — 608.13 KB
-- `Images\WebFound\806b964237df4b0c86a0d5334595e115.jpg` — 79.59 KB
-- `Images\WebFound\8288a11841314a61b65529f63684759d.jpg` — 1.49 MB
-- `Images\WebFound\86b2c9165db24b81b5c7880a4756b878.png` — 292.41 KB
-- `Images\WebFound\872bb72fe3f14b0bbb50026bc3a8014f.jpg` — 38.57 KB
-- `Images\WebFound\8823318e4166400298ab2bfc10dd95cf.jpg` — 1.05 MB
-- `Images\WebFound\899a567c7af1416ba1309fb65d07e178.jpg` — 84.30 KB
-- `Images\WebFound\8a200b4b19b24e69a4d03dbf3a2263ed.png` — 61.83 KB
-- `Images\WebFound\8af731bc78954717b06bf02121a425e8.jpg` — 91.81 KB
-- `Images\WebFound\8cff5d8998834173b95a1267c98ec005.jpg` — 122.47 KB
-- `Images\WebFound\93611629179a4fc2a6f5153975b2cf65.jpg` — 149.35 KB
-- `Images\WebFound\94d6a49eb9cc4794b6c3763f34ef3935.png` — 791.26 KB
-- `Images\WebFound\966d57ed2f174594a1c73186f6bb6ebe.jpg` — 42.35 KB
-- `Images\WebFound\967df48c22cc4bfe9357713d7fb0b015.jpg` — 142.89 KB
-- `Images\WebFound\9cb9595ac4b542af9c228da297af7808.jpg` — 48.37 KB
-- `Images\WebFound\9d133ef2e0ad4a6296bb42612d418b57.jpg` — 559.57 KB
-- `Images\WebFound\9e1bbb4c4ebf487282d5b122bf963ab6.jpg` — 260.80 KB
-- `Images\WebFound\a085fbb31d1143d3ba5d399e269ab982.jpg` — 122.11 KB
-- `Images\WebFound\a15359c793a043f7ac9267c3fc5a7bf4.jpg` — 49.51 KB
-- `Images\WebFound\a26311d442fe47d38d2e152bcf81c447.jpg` — 125.25 KB
-- `Images\WebFound\a2982c35a04e4d4faeef3ae4c2655928.jpg` — 44.65 KB
-- `Images\WebFound\a79f28b67f164e5ebf3c16fe0c278420.jpg` — 174.35 KB
-- `Images\WebFound\ac1abdd05b1e4d56907c4e2a8ad2d367.jpg` — 85.75 KB
-- `Images\WebFound\ad4562fe31854c53a68ea030f0642248.png` — 220.38 KB
-- `Images\WebFound\ad5b554e6874457ab190f6cf37c17a35.png` — 1002.00 KB
-- `Images\WebFound\b14f4f0a43924445ad3a86d4fdc18883.jpg` — 27.43 KB
-- `Images\WebFound\b1653a9748944cd2b7ffe6b9293d6f2c.png` — 352.75 KB
-- `Images\WebFound\b8f827cc83c64330ac9cc534b2768b02.jpg` — 84.85 KB
-- `Images\WebFound\b9203ce1d6754875bb52c5da418c9934.gif` — 62.65 KB
-- `Images\WebFound\b9aa715be64c458e9e89299b61236841.jpg` — 239.00 KB
-- `Images\WebFound\ba9e26f22f7249879eca58575940b12c.jpg` — 80.90 KB
-- `Images\WebFound\bae67f68d5d74e679fa5d6319eb024f3.jpg` — 119.91 KB
-- `Images\WebFound\bd32802281c0446c886ee3df5ac2c65d.png` — 2.28 MB
-- `Images\WebFound\bee3c91f9bb94eb18c8e9f144d4e9c85.jpg` — 230.34 KB
-- `Images\WebFound\c055745032a74a51bca8be0cdd6780be.jpg` — 146.47 KB
-- `Images\WebFound\c0778ad1e8fa45179db9f66bfc6436a9.jpg` — 571.64 KB
-- `Images\WebFound\c70b5cb4cc5d4a30b1e8b0a3b1c66647.jpg` — 33.27 KB
-- `Images\WebFound\c7bcded59b004cf5bff2254af12153c3.jpg` — 295.92 KB
-- `Images\WebFound\cf43127f13ff44ab952021a78670a7ab.jpg` — 160.00 KB
-- `Images\WebFound\cfc758a8fc9b4f45ab97beb1aad9752e.jpg` — 244.13 KB
-- `Images\WebFound\d0eb13fd793f4fc5a6446eeb79392878.jpg` — 347.93 KB
-- `Images\WebFound\d1c1296a46dc4d11841afa70d5fcc302.jpg` — 221.08 KB
-- `Images\WebFound\d1c5676366794b2688313a339676a23e.jpg` — 30.52 KB
-- `Images\WebFound\d1eb9d72077e4b29ad7c2392b0b7d710.jpg` — 183.17 KB
-- `Images\WebFound\d663580359924eeb8517543d9e8553d6.jpg` — 45.70 KB
-- `Images\WebFound\d71e0e1473fe4faeac74ee77a23fdc16.jpg` — 333.16 KB
-- `Images\WebFound\d81e136ca54442738c839158a291eee4.jpg` — 164.57 KB
-- `Images\WebFound\d94c45e6427d4b9ab3ee076c85a073b1.jpg` — 169.75 KB
-- `Images\WebFound\dea16deb21ad41cbaa3452fb8f953cf7.png` — 5.09 MB
-- `Images\WebFound\e2366adba67b4295a7db2cfb6553c162.png` — 35.84 KB
-- `Images\WebFound\e642de21d34941bdb32b905bd59684c8.png` — 320.71 KB
-- `Images\WebFound\e7265b5ff70c43b0b74383496ce7ce67.jpg` — 10.05 KB
-- `Images\WebFound\e780436cb44741c0ab180a656d22b504.jpg` — 688.62 KB
-- `Images\WebFound\eaf53c741f6d43cfaf6ca5577a0c16e6.jpg` — 139.27 KB
-- `Images\WebFound\ec4417426cc84f2b8477aacf27fd9d13.jpg` — 155.64 KB
-- `Images\WebFound\ec4fa8ca52c34e21a4c63e4c5240f51b.jpg` — 145.36 KB
-- `Images\WebFound\ed74a61a41aa4b8caf0fecf67cfb608c.jpg` — 194.52 KB
-- `Images\WebFound\f087326c748e4d7aa0c99ffd45fd3b34.jpg` — 20.11 KB
-- `Images\WebFound\f4d772b2ee1e4b389c395d4018db231e.jpg` — 148.56 KB
-- `Images\WebFound\f5952fd6f34b4c2e85314ad93c7b6a14.jpg` — 108.37 KB
-- `Images\WebFound\fbfe6b7a855a4cacb43a99bc6320fc05.jpg` — 112.00 KB
 - `NIRAAgent.UI\Assets\close.png` — 10.58 KB
 - `NIRAAgent.UI\Assets\ELVARA-NIRA-DARK.png` — 1.46 MB
 - `NIRAAgent.UI\Assets\ELVARA-NIRA-LIGHT.png` — 1.59 MB

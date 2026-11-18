@@ -175,10 +175,15 @@ public static class NvidiaChatStreamReader
             throw new InvalidDataException("MODEL_SSE_TOOL_BATCH_INCOMPLETE");
         if (!hasTool && (finish == "tool_calls" || content.Length == 0))
             throw new InvalidDataException("MODEL_SSE_ANSWER_INCOMPLETE");
-        if (hasTool && content.Length > 0 &&
-            !NIRAAgent.Runtime.General.NiraPublicThinkingNote.TryParse(
-                content.ToString(), out _))
-            throw new InvalidDataException("MODEL_SSE_TOOL_CONTENT_AMBIGUOUS");
+        // An OpenAI-compatible provider can emit ordinary assistant text and
+        // tool_calls in the SAME completed message. That text is not a final
+        // answer, a public thinking note, or tool evidence. Discard it rather
+        // than rejecting a fully formed, separately validated tool proposal.
+        // Only explicit NIRA_PUBLIC_UPDATE notes survive into the model/tool
+        // decision. Never expose unmarked text as private reasoning or prose.
+        bool trustedPublicUpdate = hasTool && content.Length > 0 &&
+            NIRAAgent.Runtime.General.NiraPublicThinkingNote.TryParse(
+                content.ToString(), out _);
         if (hasTool)
         {
             var ids = new HashSet<string>(StringComparer.Ordinal);
@@ -200,7 +205,7 @@ public static class NvidiaChatStreamReader
         }
         JsonElement message = hasTool
             ? JsonSerializer.SerializeToElement(new {
-                content = content.Length > 0 ? content.ToString() : (string?)null,
+                content = trustedPublicUpdate ? content.ToString() : (string?)null,
                 tool_calls = calls.Values.Select(call => new {
                     function = new {
                         name = call.Name.ToString(),

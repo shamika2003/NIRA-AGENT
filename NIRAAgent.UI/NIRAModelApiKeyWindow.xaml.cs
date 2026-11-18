@@ -53,9 +53,11 @@ public partial class NIRAModelApiKeyWindow : Window
             case NIRAModelCredentialProblem.InvalidOrRevoked:
                 HeadingText.Text = "Ollama API key needs attention";
                 DescriptionText.Text =
-                    "Ollama rejected the current credential. Paste a valid replacement key and NIRA will retry the failed reasoning request once.";
+                    "Ollama rejected the current credential (HTTP 401). Paste a valid replacement. " +
+                    "NIRA will verify it against Ollama, save it securely, then resume the interrupted model request.";
                 WarningText.Text =
-                    "The previous API key is not revoked at Ollama. This replacement is for the current NIRA process only.";
+                    "Only a verified key will replace the saved credential. " +
+                    "No previously executed tool or file operation is automatically repeated.";
                 WarningText.Visibility = Visibility.Visible;
                 RetryCurrentButton.Visibility = Visibility.Collapsed;
                 break;
@@ -73,6 +75,14 @@ public partial class NIRAModelApiKeyWindow : Window
                     ? Visibility.Visible
                     : Visibility.Collapsed;
                 break;
+        }
+        if (!string.IsNullOrWhiteSpace(_request.Detail))
+        {
+            // Only first-party trusted host diagnostics enter this window.
+            string detail = _request.Detail.Trim();
+            if (detail.Length > 300) detail = detail[..300] + "…";
+            WarningText.Text = detail;
+            WarningText.Visibility = Visibility.Visible;
         }
     }
 

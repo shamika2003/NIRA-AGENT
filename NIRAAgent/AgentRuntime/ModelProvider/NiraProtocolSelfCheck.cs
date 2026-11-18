@@ -180,7 +180,16 @@ public static class NiraProtocolSelfCheck
             ToolFragment(0, "x", "nira_list_directory", "{\"path\":\"Documents\"}") +
             Frame(new { }, "tool_calls");
         var previews = new List<string>();
-        await VerifyReject("SSE_ANSWER_AND_TOOL_AMBIGUOUS", provisional, "text/event-stream");
+        using (var mixedStream = new MemoryStream(Encoding.UTF8.GetBytes(provisional)))
+        {
+            var mixed = await NiraChatProtocolReader.ReadAsync(mixedStream,
+                "text/event-stream", 64 * 1024, null, ct);
+            var selected = NIRAAgent.Runtime.General.GeneralToolProtocol.Decode(mixed.Message);
+            if (selected.Kind != "tool" || selected.Function != "nira_list_directory" ||
+                mixed.Message.GetProperty("content").ValueKind != JsonValueKind.Null)
+                throw new InvalidDataException("Mixed prose/tool SSE did not discard unmarked text.");
+            passed++;
+        }
         using (var streamPreview = new MemoryStream(Encoding.UTF8.GetBytes(provisional)))
         {
             try
@@ -193,6 +202,20 @@ public static class NiraProtocolSelfCheck
         if (previews.Count < 2 || previews[0].Length == 0 || previews[^1].Length != 0)
             throw new InvalidDataException("Streamed provisional answer was not withdrawn.");
         passed++;
+        // Provider variants legitimately use finish_reason=stop for a
+        // completely formed tool proposal. Its structured arguments still
+        // require the SAME strict validation; transport wording alone cannot
+        // turn it into a text answer or grant execution authority.
+        string stopWithTool = ToolFragment(0, "x", "nira_list_directory",
+            "{\"path\":\"Documents\"}") + Frame(new { }, "stop");
+        await Verify("SSE_TOOL_STOP_VARIANT", stopWithTool, "text/event-stream",
+            "tool_calls", "nira_list_directory");
+        // A malformed tool argument must still fail closed even if prose exists.
+        string malformedMixed = Frame(new { content = "Planning the task." }) +
+            ToolFragment(0, "x", "nira_list_directory", "{invalid") +
+            Frame(new { }, "tool_calls");
+        await VerifyReject("SSE_MIXED_TOOL_ARGUMENTS_INVALID", malformedMixed,
+            "text/event-stream");
         // The provider may stream ordinary final prose after a read-only tool;
         // text shows up incrementally, while the final binding gate still runs.
         string sseLong = Frame(new { content = "An introductory explanation of a reusable rocket. " }) +

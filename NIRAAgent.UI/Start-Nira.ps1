@@ -20,11 +20,15 @@ if ($Model -notmatch '^[A-Za-z0-9][A-Za-z0-9._/:-]{0,159}$') {
 # SecureString blob OUTSIDE the project. -SessionOnlyKey never writes it.
 $secretFolder = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'NIRA\Secrets'
 $secretPath = Join-Path $secretFolder 'ollama-cloud-key.dpapi'
+$secretPathV2 = Join-Path $secretFolder 'ollama-cloud-key.v2.dpapi'
 if ($ForgetSavedKey) {
     if (Test-Path -LiteralPath $secretPath -PathType Leaf) {
         Remove-Item -LiteralPath $secretPath -Force
     }
-    Write-Host '[OLLAMA] Saved credential removed. No project or NIRA state was changed.'
+    if (Test-Path -LiteralPath $secretPathV2 -PathType Leaf) {
+        Remove-Item -LiteralPath $secretPathV2 -Force
+    }
+    Write-Host '[OLLAMA] Saved credentials removed. No project or NIRA state was changed.'
     return
 }
 function Convert-NiraSecretToPlainText([Security.SecureString]$secret) {
@@ -37,12 +41,36 @@ $oldModel = [Environment]::GetEnvironmentVariable('NIRA_MODEL_NAME','Process')
 $oldKey = [Environment]::GetEnvironmentVariable('NIRA_OLLAMA_API_KEY','Process')
 $oldDecisionCapture = [Environment]::GetEnvironmentVariable('NIRA_DEBUG_AGENT_DECISIONS','Process')
 $oldPublicCapture = [Environment]::GetEnvironmentVariable('NIRA_DEBUG_PUBLIC_RESPONSES','Process')
+$oldSessionOnly = [Environment]::GetEnvironmentVariable('NIRA_MODEL_CREDENTIAL_SESSION_ONLY','Process')
 try {
-    $key = [Environment]::GetEnvironmentVariable('NIRA_OLLAMA_API_KEY','Process')
+    # The app's DPAPI binary blob takes precedence over any older launcher
+    # cache or inherited process variable, preventing a rotated key from
+    # being overwritten on the next startup. SessionOnly opts out explicitly.
+    $key = $null
+    if (-not $SessionOnlyKey -and (Test-Path -LiteralPath $secretPathV2 -PathType Leaf)) {
+        try {
+            # Windows PowerShell 5.1 carries this type in System.Security.
+            Add-Type -AssemblyName System.Security -ErrorAction Stop
+            $blob = [IO.File]::ReadAllBytes($secretPathV2)
+            $plain = [Security.Cryptography.ProtectedData]::Unprotect(
+                $blob, $null, [Security.Cryptography.DataProtectionScope]::CurrentUser)
+            try { $key = [Text.Encoding]::UTF8.GetString($plain).Trim() }
+            finally { [Array]::Clear($plain, 0, $plain.Length) }
+            if ($key.Length -lt 16 -or $key -match '\s') { throw 'Invalid encrypted credential.' }
+            Write-Host '[OLLAMA] Loaded verified key from encrypted Windows profile storage.'
+        }
+        catch {
+            $key = $null
+            Write-Warning 'Encrypted model credential could not be decrypted; re-entry may be required.'
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($key)) {
+        $key = [Environment]::GetEnvironmentVariable('NIRA_OLLAMA_API_KEY','Process')
+    }
     if ([string]::IsNullOrWhiteSpace($key)) {
         $key = [Environment]::GetEnvironmentVariable('OLLAMA_API_KEY','Process')
     }
-    if ([string]::IsNullOrWhiteSpace($key) -and
+    if (-not $SessionOnlyKey -and [string]::IsNullOrWhiteSpace($key) -and
         (Test-Path -LiteralPath $secretPath -PathType Leaf)) {
         try {
             $stored = (Get-Content -LiteralPath $secretPath -Raw -Encoding UTF8).Trim()
@@ -53,11 +81,11 @@ try {
                 $key = $null
                 throw 'Invalid cached credential.'
             }
-            Write-Host '[OLLAMA] Reused encrypted key for this Windows user.'
+            Write-Host '[OLLAMA] Reused legacy encrypted key for this Windows user.'
         }
         catch {
             $key = $null
-            Write-Warning 'Saved OLLAMA credential cannot be decrypted on this Windows profile; re-entry required.'
+            Write-Warning 'Saved OLLAMA credential cannot be decrypted; re-entry required.'
         }
     }
     if ([string]::IsNullOrWhiteSpace($key)) {
@@ -86,6 +114,8 @@ try {
     }
     if ([string]::IsNullOrWhiteSpace($key)) { throw 'OLLAMA API key is empty.' }
     [Environment]::SetEnvironmentVariable('NIRA_OLLAMA_API_KEY',$key.Trim(),'Process')
+    [Environment]::SetEnvironmentVariable('NIRA_MODEL_CREDENTIAL_SESSION_ONLY',
+        $(if ($SessionOnlyKey) { '1' } else { $null }), 'Process')
     [Environment]::SetEnvironmentVariable('NIRA_MODEL_PROVIDER','OLLAMA','Process')
     [Environment]::SetEnvironmentVariable('NIRA_MODEL_NAME',$Model,'Process')
     $key = $null
@@ -107,4 +137,5 @@ finally {
     [Environment]::SetEnvironmentVariable('NIRA_OLLAMA_API_KEY',$oldKey,'Process')
     [Environment]::SetEnvironmentVariable('NIRA_DEBUG_AGENT_DECISIONS',$oldDecisionCapture,'Process')
     [Environment]::SetEnvironmentVariable('NIRA_DEBUG_PUBLIC_RESPONSES',$oldPublicCapture,'Process')
+    [Environment]::SetEnvironmentVariable('NIRA_MODEL_CREDENTIAL_SESSION_ONLY',$oldSessionOnly,'Process')
 }

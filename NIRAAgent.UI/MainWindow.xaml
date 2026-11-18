@@ -7,6 +7,7 @@
         xmlns:present="clr-namespace:NIRAAgent.UI.Presentation"
         xmlns:typing="clr-namespace:NIRAAgent.UI.Typing"
         xmlns:gallery="clr-namespace:NIRAAgent.UI.Gallery"
+        xmlns:goals="clr-namespace:NIRAAgent.UI.Goals"
         Title="NIRA by ELVARA"
         Icon="Assets/Nira-Icon.ico"
         Width="1440"
@@ -2010,9 +2011,9 @@
                     <Button Style="{StaticResource NavButtonStyle}" Content="Memory"
                             Tag="Show me the most relevant things you remember about our current work."
                             Click="QuickPrompt_Click"/>
-                    <Button Style="{StaticResource NavButtonStyle}" Content="Goals"
-                            Tag="Show my active goals and what currently deserves attention."
-                            Click="QuickPrompt_Click"/>
+                    <Button x:Name="GoalsNavButton" Style="{StaticResource NavButtonStyle}"
+                            Content="Goals" ToolTip="Browse saved projects, unfinished stages and commitments"
+                            Click="OpenGoals_Click"/>
                     <Button Style="{StaticResource NavButtonStyle}" Content="Tools"
                             Tag="What tools and capabilities can you use for me right now?"
                             Click="QuickPrompt_Click"/>
@@ -2300,8 +2301,8 @@
                     <ScrollViewer Grid.Row="6" Margin="0,10,0,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <StackPanel>
                             <StackPanel x:Name="BranchActivitySection">
-                                <TextBlock x:Name="BranchActivityTitleText" Text="ACTIVE BRANCHES" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource NIRACyanBrush}"/>
-                                <TextBlock x:Name="NoBranchActivityText" Text="No active branches" Margin="0,7,0,8" FontSize="10.5" Foreground="{DynamicResource NIRAMutedBrush}"/>
+                                <TextBlock x:Name="BranchActivityTitleText" Text="LIVE BRANCH WORK" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource NIRACyanBrush}"/>
+                                <TextBlock x:Name="NoBranchActivityText" Text="No branch work running" Margin="0,7,0,8" FontSize="10.5" Foreground="{DynamicResource NIRAMutedBrush}"/>
                                 <StackPanel x:Name="BranchCardsPanel"/>
                             </StackPanel>
 
@@ -2898,6 +2899,9 @@
                 Grid.RowSpan="2" Panel.ZIndex="900"
                 Background="#F201040A" Opacity="0"
                 Visibility="Visible" IsHitTestVisible="False"/>
+        <!-- Read-only Goals workspace; no cloud call or state mutation on opening. -->
+        <goals:NIRAGoalsPage x:Name="GoalsPage" Grid.Row="1" Margin="12,10,12,12"
+                             Visibility="Collapsed" Panel.ZIndex="8"/>
         <!-- R34: Real local Gallery page. Chat stays alive underneath, with no LLM work. -->
         <gallery:NIRAGalleryPage x:Name="GalleryPage" Grid.Row="1" Margin="12,10,12,12"
                                  Visibility="Collapsed" Panel.ZIndex="8"/>

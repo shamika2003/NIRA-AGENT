@@ -21,6 +21,8 @@ using NIRAAgent.Images;
 using NIRAAgent.UI.Gallery;
 using NIRAAgent.Authorization;
 using NIRAAgent.Branches;
+using NIRAAgent.Goals;
+using NIRAAgent.UI.Goals;
 using NIRAAgent.Self.Model;
 using NIRAAgent.Settings;
 using NIRAAgent.Temporal;
@@ -116,7 +118,8 @@ public partial class MainWindow : Window
         (_settingsService?.Current.DesktopPresenceEnabled ?? true) &&
         NIRADockHost.Visibility == Visibility.Visible &&
         MainWorkspace.Visibility == Visibility.Visible &&
-        GalleryPage.Visibility != Visibility.Visible;
+        GalleryPage.Visibility != Visibility.Visible &&
+        GoalsPage.Visibility != Visibility.Visible;
 
     public event EventHandler? SidebarLayoutChanged;
 
@@ -274,16 +277,9 @@ public partial class MainWindow : Window
                 ? Visibility.Visible
                 : Visibility.Collapsed;
 
-        CommitmentActivitySection.Visibility =
-            settings.ShowCommitmentActivityInSidebar
-                ? Visibility.Visible
-                : Visibility.Collapsed;
-
-        ActivitySectionDivider.Visibility =
-            settings.ShowBranchActivityInSidebar
-            && settings.ShowCommitmentActivityInSidebar
-                ? Visibility.Visible
-                : Visibility.Collapsed;
+        // Saved commitments are intentionally kept in Goals, not live Chat.
+        CommitmentActivitySection.Visibility = Visibility.Collapsed;
+        ActivitySectionDivider.Visibility = Visibility.Collapsed;
 
         if (!settings.PermissionNotificationsEnabled)
         {
@@ -522,6 +518,7 @@ public partial class MainWindow : Window
             _viewModel;
 
         GalleryPage.Initialize(_galleryLibrary);
+        GoalsPage.DraftRequested += GoalsPage_DraftRequested;
 
         _viewModel.Messages.CollectionChanged +=
             Messages_CollectionChanged;
@@ -627,6 +624,7 @@ public partial class MainWindow : Window
         _commitmentCardSignatures.Clear();
         RefreshBranchActivity();
         RefreshCommitmentActivity();
+        if (GoalsPage.Visibility == Visibility.Visible) GoalsPage.Refresh();
     }
 
     private void ApplyThemeBackdrop(
@@ -686,8 +684,10 @@ public partial class MainWindow : Window
         try { _miniStop?.Invoke(); }
         catch (Exception ex) { NIRADiagnosticTrace.Event("VIDEO-MINI", "Stage=Gallery Kind=" + ex.GetType().Name); }
         MainWorkspace.Visibility = Visibility.Collapsed;
+        GoalsPage.Visibility = Visibility.Collapsed;
         GalleryPage.Visibility = Visibility.Visible;
         ChatNavButton.Tag = null;
+        GoalsNavButton.Tag = null;
         GalleryNavButton.Tag = "ACTIVE";
         // Invalidate the dock as soon as Gallery replaces Chat.
         SidebarLayoutChanged?.Invoke(this, EventArgs.Empty);
@@ -698,10 +698,43 @@ public partial class MainWindow : Window
     private void OpenChat_Click(object sender, RoutedEventArgs e)
     {
         GalleryPage.Visibility = Visibility.Collapsed;
+        GoalsPage.Visibility = Visibility.Collapsed;
         MainWorkspace.Visibility = Visibility.Visible;
         GalleryNavButton.Tag = null;
+        GoalsNavButton.Tag = null;
         ChatNavButton.Tag = "ACTIVE";
         SidebarLayoutChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void OpenGoals_Click(object sender, RoutedEventArgs e)
+    {
+        // A saved plan is navigation, not authorization to run tools.
+        try { _miniStop?.Invoke(); }
+        catch (Exception ex) { NIRADiagnosticTrace.Event("VIDEO-MINI", "Stage=Goals Kind=" + ex.GetType().Name); }
+        MainWorkspace.Visibility = Visibility.Collapsed;
+        GalleryPage.Visibility = Visibility.Collapsed;
+        GoalsPage.Visibility = Visibility.Visible;
+        ChatNavButton.Tag = null;
+        GalleryNavButton.Tag = null;
+        GoalsNavButton.Tag = "ACTIVE";
+        SidebarLayoutChanged?.Invoke(this, EventArgs.Empty);
+        GoalsPage.Refresh();
+    }
+
+    private void GoalsPage_DraftRequested(string message)
+    {
+        // User still must review and SEND the request. No silent background work.
+        OpenChat_Click(this, new RoutedEventArgs());
+        _viewModel.MessageInput = message;
+        MessageInput.Focus();
+        MessageInput.CaretIndex = MessageInput.Text.Length;
+    }
+
+    public void AttachGoals(NIRAGoalService goals)
+    {
+        if (_branchService is null || _branchWorkService is null || _selfModelService is null)
+            throw new InvalidOperationException("Attach the branch and continuity services before Goals.");
+        GoalsPage.Attach(goals, _branchService, _branchWorkService, _selfModelService);
     }
 
     private void ImportVisibleChatImages()
@@ -1061,7 +1094,7 @@ public partial class MainWindow : Window
         {
             BeginRemovingAllBranchCards();
             NoBranchActivityText.Text =
-                "No active branches";
+                "No branch work running";
             NoBranchActivityText.Visibility =
                 Visibility.Visible;
             return;
@@ -1069,46 +1102,9 @@ public partial class MainWindow : Window
 
         NIRABranchWorkItem[] allWork =
             _branchWorkService.CurrentWork.ToArray();
-        NIRABranchWorkItem[] openWork =
-            allWork.Where(work => work.IsOpen).ToArray();
-
-        NIRABranchState[] openBranches =
-            _branchService.CurrentBranches
-                .Where(branch => branch.IsOpen)
-                .OrderByDescending(
-                    branch =>
-                        openWork.Any(
-                            work =>
-                                work.BranchId == branch.Id &&
-                                work.Status == NIRABranchWorkStatus.Running))
-                .ThenByDescending(
-                    branch => branch.Status == NIRABranchStatus.Active)
-                .ThenByDescending(
-                    branch => branch.Priority)
-                .ThenByDescending(
-                    branch => branch.UpdatedAt)
-                .ToArray();
-
-        // Retain a recently resolved branch when no work is open; otherwise
-        // a successful fast branch disappears before a person can see it.
-        NIRABranchState[] visibleBranches = openBranches.Length > 0
-            ? openBranches
-            : _branchService.CurrentBranches
-                .Where(branch => branch.IsResolved &&
-                    // Explicitly cancelled work is no longer a visible active
-                    // responsibility. Preserve its durable audit record; don't
-                    // keep a CANCELLED card in the live presence sidebar.
-                    branch.Status != NIRABranchStatus.Cancelled &&
-                    DateTimeOffset.UtcNow - (branch.ResolvedAt ?? branch.UpdatedAt) <
-                        TimeSpan.FromHours(2))
-                .OrderByDescending(branch => branch.ResolvedAt ?? branch.UpdatedAt)
-                .Take(1)
-                .ToArray();
-        BranchActivityTitleText.Text = openBranches.Length > 0
-            ? "ACTIVE BRANCHES"
-            : visibleBranches.Length > 0
-                ? "RECENTLY FINISHED"
-                : "ACTIVE BRANCHES";
+        NIRABranchState[] visibleBranches = NIRAGoalsPage.LiveBranches(
+            _branchService.CurrentBranches, allWork);
+        BranchActivityTitleText.Text = "LIVE BRANCH WORK";
         HashSet<Guid> desiredIds =
             visibleBranches
                 .Select(branch => branch.Id)
@@ -1126,7 +1122,7 @@ public partial class MainWindow : Window
         if (visibleBranches.Length == 0)
         {
             NoBranchActivityText.Text =
-                "No active branches";
+                "No branch work running";
             NoBranchActivityText.Visibility =
                 Visibility.Visible;
             return;
@@ -1227,7 +1223,7 @@ public partial class MainWindow : Window
         BeginRemovingAllBranchCards();
 
         NoBranchActivityText.Text =
-            "No active branches";
+            "No branch work running";
 
         NoBranchActivityText.Visibility =
             Visibility.Visible;
@@ -3647,6 +3643,9 @@ public partial class MainWindow : Window
             _visualEvidenceService =
                 null;
         }
+
+        GoalsPage.DraftRequested -= GoalsPage_DraftRequested;
+        GoalsPage.Detach();
 
         _viewModel.VisualArtifactReceived -=
             ViewModel_VisualArtifactReceived;

@@ -8,6 +8,15 @@ using System.Xml.Linq;
 
 namespace NIRAAgent.Capabilities;
 
+// Trusted file-publication boundary: exceptions that occur *before* the
+// create-only publisher is called prove no new document was written by this
+// operation. Errors after entering PublishNew keep their uncertain outcome.
+internal sealed class NIRADocxReportNoPublishedFileException : InvalidOperationException
+{
+    public NIRADocxReportNoPublishedFileException(string message, Exception inner)
+        : base("DOCX_REPORT_NOT_PUBLISHED: " + message, inner) { }
+}
+
 // R47: one bounded native Word finishing release: templates, deterministic
 // multi-document batch, and structured reports. No Word automation or network.
 internal static partial class NIRADocx
@@ -408,9 +417,58 @@ internal static partial class NIRADocx
         return table;
     }
 
+    // PURE report-shape preflight for a model proposal. This runs before the
+    // authorized execution stage: no file is opened, created, deleted, or
+    // overwritten, and no permission or audit boundary is bypassed. Use the
+    // same Word table parser to avoid weaker validation of TSV cells.
+    internal static void ValidateReportCreate47Shape(NIRACapabilityRequest request)
+    {
+        string proposedPath = NIRACapabilityArguments.RequireString(request, "path", 32760);
+        if (!string.Equals(Path.GetExtension(proposedPath), ".docx",
+                StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Report destination must end in .docx.");
+        string title = RequiredText(request, "title", 160).Trim();
+        if (title.Contains('\n') || title.Contains('\r'))
+            throw new ArgumentException("Report title must be one line.");
+        string sections = RequiredText(request, "sectionsJson", 26000);
+        using JsonDocument document = JsonDocument.Parse(sections,
+            new JsonDocumentOptions { MaxDepth = 6 });
+        JsonElement root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Array || root.GetArrayLength() is < 1 or > 12)
+            throw new ArgumentException("sectionsJson needs 1-12 report section objects.");
+        foreach (JsonElement section in root.EnumerateArray())
+        {
+            if (section.ValueKind != JsonValueKind.Object ||
+                !section.TryGetProperty("heading", out JsonElement heading) ||
+                heading.ValueKind != JsonValueKind.String ||
+                !section.TryGetProperty("body", out JsonElement body) ||
+                body.ValueKind != JsonValueKind.String)
+                throw new ArgumentException("Each section requires heading and body strings.");
+            string h = heading.GetString() ?? "", b = body.GetString() ?? "";
+            if (h.Length is < 1 or > 140 || b.Length is < 1 or > 3000 ||
+                h.Contains('\n') || h.Contains('\r'))
+                throw new ArgumentException("Section heading must be 1-140 characters; body 1-3000.");
+            try { XmlConvert.VerifyXmlChars(h); XmlConvert.VerifyXmlChars(b); }
+            catch (XmlException)
+            { throw new ArgumentException("Report contains XML-invalid characters."); }
+            if (!section.TryGetProperty("tableTsv", out JsonElement t) ||
+                t.ValueKind == JsonValueKind.Null) continue;
+            if (t.ValueKind != JsonValueKind.String || t.GetString()!.Length > 8000)
+                throw new ArgumentException("tableTsv must be a string of at most 8000 characters.");
+            string tsv = t.GetString()!;
+            try { XmlConvert.VerifyXmlChars(tsv); }
+            catch (XmlException)
+            { throw new ArgumentException("Report table contains XML-invalid characters."); }
+            _ = ReportTable47(tsv); // Only builds an in-memory XElement.
+        }
+    }
+
     internal static async Task<NIRACapabilityHandlerResult> ReportCreate47Async(
         NIRACapabilityRequest request, CancellationToken ct)
     {
+        bool publicationStarted = false;
+        try
+        {
         string path = GetPath(request, "path");
         string title = RequiredText(request, "title", 160).Trim();
         string sections = RequiredText(request, "sectionsJson", 26000);
@@ -467,6 +525,7 @@ internal static partial class NIRADocx
                 new XAttribute(W + "bottom", 1134), new XAttribute(W + "left", 1134))));
         XDocument result = new(new XElement(W + "document", new XAttribute(XNamespace.Xmlns + "w", W), body));
         ct.ThrowIfCancellationRequested();
+        publicationStarted = true;
         PublishNew(path, stage => NewPackage(stage, result), result);
         string verification = VerifyPublishedDocument(path, result);
         var written = await NIRAFileIntegrity.HashAsync(path, CancellationToken.None).ConfigureAwait(false);
@@ -477,6 +536,15 @@ internal static partial class NIRADocx
             Output = $"Destination={path}\nDestinationSHA256={written.Sha256}\nReportSections={json.RootElement.GetArrayLength()}\n" +
                 $"ReportTables={tableCount}\nPaper=A4\nOrientation=portrait\n{verification}\nOverwroteExisting=False\nVisualPaginationVerified=False"
         };
+        }
+        catch (Exception ex) when (!publicationStarted &&
+            (ex is ArgumentException or InvalidOperationException or JsonException or
+                XmlException or IOException or UnauthorizedAccessException))
+        {
+            // This catch is reachable only BEFORE entering PublishNew.
+            // Do not conflate these rejected inputs with unknown write results.
+            throw new NIRADocxReportNoPublishedFileException(ex.Message, ex);
+        }
     }
 }
 

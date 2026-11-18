@@ -41,6 +41,9 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
     private readonly NIRACapabilityService _capabilityService;
     private readonly NIRAAuthorityExecutionContextAccessor _authorityContext;
     private readonly NIRAModelClient _visionModel;
+    // Shared active Ollama credential: the UI prompt and agent must not
+    // maintain separate key snapshots. Credentials never enter the agent vault.
+    private readonly NIRAModelApiKeyService _modelKeys;
     private readonly NIRAGoalService _goals;
     private readonly NIRAGoalStore _goalStore;
     private readonly NIRABranchService _branches;
@@ -54,7 +57,8 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
         NIRAConversationArchiveStore archive, NIRACapabilityRegistry capabilityRegistry,
         NIRACapabilityService capabilityService,
         NIRAAuthorityExecutionContextAccessor authorityContext,
-        NIRAModelClient visionModel, NIRAGoalService goals, NIRAGoalStore goalStore,
+        NIRAModelClient visionModel, NIRAModelApiKeyService modelKeys,
+        NIRAGoalService goals, NIRAGoalStore goalStore,
         NIRABranchService branches, NIRABranchStore branchStore,
         NIRABranchWorkService branchWork, NIRASelfModelService selfModel,
         NIRAVisualArtifactService artifacts, NIRARuntimeSettingsService settings)
@@ -66,6 +70,7 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
         _capabilityService = capabilityService;
         _authorityContext = authorityContext;
         _visionModel = visionModel;
+        _modelKeys = modelKeys;
         _goals = goals;
         _goalStore = goalStore;
         _branches = branches;
@@ -106,9 +111,10 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
                 return;
             }
             NiraProviderSelection selection = NiraProviderSelection.FromEnvironment();
-            if (!selection.IsReady)
+            if (!selection.IsReady && !(selection.Provider == "OLLAMA" && _modelKeys.HasKey))
             {
-                Finish(writer, mindEvent.Source, "NIRA's configured model provider is unavailable. No action was started.");
+                Finish(writer, mindEvent.Source,
+                    ProviderFailureMessage(selection.Provider, "CLOUD_API_KEY_MISSING", false));
                 return;
             }
 
@@ -178,8 +184,14 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
             string visual = await ObserveUserImagesAsync(mindEvent, request, ct);
             string context = MergeContext(continuity.UntrustedHistory, lifecycle, attached, visual);
 
+            // On Ollama, use the SAME session-scoped key holder as the trusted
+            // model-credential UI. A UI replacement must affect native agent
+            // reasoning too, not only vision and legacy model clients.
+            Func<string?> agentKey = selection.Provider == "OLLAMA"
+                ? () => _modelKeys.HasKey ? _modelKeys.GetRequiredKey() : null
+                : selection.KeySource;
             var reasoner = new GeneralModelReasoner(modelHttp, selection.Options,
-                registry, vault, maximumTools: 12, cloudKey: selection.KeySource,
+                registry, vault, maximumTools: 12, cloudKey: agentKey,
                 trustedIdentity: identity, untrustedHistory: context,
                 allowAuthoritativeCapabilities: true,
                 allowNiraManagedGoals: selfGoalTool is not null,
@@ -188,7 +200,14 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
                     Source = mindEvent.Source, Type = NIRAOutputChunkType.Preview, Content = draft }),
                 publicThinkingUpdate: note => writer.TryWrite(new NIRAOutputChunk {
                     RunId = mindEvent.Id, Source = mindEvent.Source,
-                    Type = NIRAOutputChunkType.PublicThinkingNote, Content = note }));
+                    Type = NIRAOutputChunkType.PublicThinkingNote, Content = note }),
+                recoverCredential: selection.Provider == "OLLAMA"
+                    ? async (rejectedKey, token) => await _modelKeys.ResolveProblemAsync(
+                        NIRAModelCredentialProblem.InvalidOrRevoked, rejectedKey,
+                        "Ollama rejected this API key (HTTP 401). NIRA will validate the " +
+                        "replacement, save it securely and continue this SAME request " +
+                        "only if validation succeeds.", token)
+                    : null);
             var action = allTools.OfType<NIRAAuthoritativeCapabilityTools.CapabilityInvocation>()
                 .Single(x => x.Spec.Access == AccessLevel.Modify);
             IAgentPermissionGate permissions = new NIRAAuthoritativeCapabilityPermissionGate(vault, action);
@@ -285,6 +304,18 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
                     SkipPostTurnExperienceReview = disposableMath });
                 return;
             }
+            // 401 recovery is handled INSIDE the unsuccessful model request,
+            // before any tool call has been accepted. Do not prompt a second
+            // time on a terminal failure and do not replay an entire agent run.
+            if (run.LastErrorCode == "CLOUD_AUTH_REJECTED" && selection.Provider == "OLLAMA")
+            {
+                Finish(writer, mindEvent.Source,
+                    "Ollama still rejected my model credential (HTTP 401), or the " +
+                    "replacement was cancelled or could not be validated. I didn't " +
+                    "execute a tool or save an unverified replacement. Please " +
+                    "check the key and try again when provider access is available.");
+                return;
+            }
             if (run.LastErrorCode == "CAPABILITY_REJECTED_NO_EFFECT")
             {
                 string rejection = await DescribeNoEffectAsync(run, vault, ct);
@@ -296,14 +327,9 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
             else if (run.Status == AgentRunStatus.AwaitingAuthorization)
                 Finish(writer, mindEvent.Source,
                     "The action was not authorized. I did not dispatch it.");
-            else if (run.LastErrorCode?.StartsWith("MODEL_PROTOCOL_", StringComparison.Ordinal) == true)
-                Finish(writer, mindEvent.Source,
-                    "I ran into a problem getting a reliable response. I won't pretend " +
-                    "I verified information or completed actions that I couldn't confirm.");
             else
                 Finish(writer, mindEvent.Source,
-                    "I couldn't finish this request properly. I won't claim that I researched " +
-                    "something or changed anything without confirmation.");
+                    ProviderFailureMessage(selection.Provider, run.LastErrorCode, false));
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -317,6 +343,67 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
                 "NIRA encountered an execution error. No unverified external action will be retried automatically.");
         }
         finally { writer.TryComplete(); }
+    }
+
+    // Clear operator-facing diagnostics for VERIFIED terminal run outcomes.
+    // This is not a research-answer generator and never claims tool execution.
+    internal static string ProviderFailureMessage(string provider, string? errorCode,
+        bool credentialWasReplaced)
+    {
+        string service = provider == "NVIDIA" ? "NVIDIA" : "Ollama";
+        string action = provider == "NVIDIA"
+            ? "Check NIRA_NVIDIA_API_KEY or NVIDIA_API_KEY in the launch environment."
+            : "Replace the Ollama Cloud API key in NIRA's secure credential dialog.";
+        return errorCode switch
+        {
+            "CLOUD_AUTH_REJECTED" => credentialWasReplaced
+                ? "The model provider rejected my previous API key (HTTP 401). " +
+                  "Your replacement is now set for this session. Please resend this request; " +
+                  "I did not automatically replay any tool actions."
+                : $"{service} rejected the model API key (HTTP 401). {action} " +
+                  "I stopped before accepting a model answer. Please resend the request after fixing the key.",
+            "CLOUD_API_KEY_MISSING" => $"The {service} model API key is missing. {action} " +
+                "No model response was received.",
+            "CLOUD_PERMISSION_DENIED" => $"{service} denied access to the selected model (HTTP 403). " +
+                "Check model availability and account permissions. I did not complete the request.",
+            "CLOUD_PAYMENT_REQUIRED" => $"{service} returned HTTP 402: cloud inference usage is " +
+                "unavailable. Review your account's usage or billing before retrying.",
+            "CLOUD_RATE_LIMITED" => $"{service} rate-limited the request (HTTP 429). " +
+                "No automatic retry occurred, and I did not complete the request.",
+            "MODEL_NOT_AVAILABLE" => $"{service} could not find the selected model (HTTP 404). " +
+                "Check NIRA_MODEL_NAME and provider model availability.",
+            "MODEL_TRANSPORT_TIMEOUT" or "CLOUD_TIMEOUT" =>
+                "The model connection timed out. I stopped without replaying the request; " +
+                "check your connection and retry when available.",
+            "MODEL_TRANSPORT_FAILED" or "CLOUD_UNAVAILABLE" =>
+                "The model provider connection failed. Check the endpoint's connectivity " +
+                "and service status. No tool actions were automatically replayed.",
+            "CLOUD_BAD_REQUEST" or "MODEL_REQUEST_UNPROCESSABLE" =>
+                $"{service} rejected the model request format. " +
+                "This is a model transport/schema issue, not evidence of completed research.",
+            string code when code.StartsWith("MODEL_PROTOCOL_", StringComparison.Ordinal) =>
+                $"The provider response failed protocol validation ({code}). " +
+                "I stopped rather than treat incomplete text or tool calls as verified.",
+            _ => "I stopped because the agent runtime reported " +
+                (string.IsNullOrWhiteSpace(errorCode) ? "an unclassified failure" :
+                    errorCode.All(c => char.IsUpper(c) || char.IsDigit(c) || c == '_') &&
+                    errorCode.Length <= 64 ? errorCode : "an unclassified failure") +
+                ". I cannot claim the requested work completed. The event log contains the failure code."
+        };
+    }
+
+    public static int RunProviderFailureSelfCheck()
+    {
+        if (!ProviderFailureMessage("OLLAMA", "CLOUD_AUTH_REJECTED", false)
+                .Contains("HTTP 401", StringComparison.Ordinal) ||
+            !ProviderFailureMessage("OLLAMA", "CLOUD_AUTH_REJECTED", true)
+                .Contains("resend", StringComparison.OrdinalIgnoreCase) ||
+            !ProviderFailureMessage("NVIDIA", "CLOUD_PERMISSION_DENIED", false)
+                .Contains("HTTP 403", StringComparison.Ordinal) ||
+            !ProviderFailureMessage("OLLAMA", "MODEL_TRANSPORT_TIMEOUT", false)
+                .Contains("timed out", StringComparison.Ordinal))
+            throw new InvalidOperationException("Operator-facing provider failure messages missing.");
+        return 4;
     }
 
     // Skip costly long-term experience *formation* for a disposable arithmetic

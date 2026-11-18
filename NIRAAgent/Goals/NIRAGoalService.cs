@@ -31,6 +31,10 @@ public sealed class NIRAGoalService : IHostedService
 
     private Dictionary<Guid, NIRAGoalState> _goals = new();
 
+    // State is authoritative and persisted before subscribers are notified.
+    // UI consumers must marshal the callback to their own dispatcher.
+    public event Action? StateChanged;
+
     public NIRAGoalService(
         NIRAGoalStore store,
         NIRASelfModelService selfModel,
@@ -54,6 +58,7 @@ public sealed class NIRAGoalService : IHostedService
         {
             _goals = goals.ToDictionary(goal => goal.Id, goal => goal);
         }
+        StateChanged?.Invoke();
 
         // Reconcile persisted task grants against authoritative goal state
         // before the goal service is ready to accept new work. Persistent
@@ -321,6 +326,7 @@ public sealed class NIRAGoalService : IHostedService
                 {
                     _goals[updated.Id] = updated;
                 }
+                StateChanged?.Invoke();
 
                 claimed.Add(updated);
             }
@@ -736,6 +742,7 @@ public sealed class NIRAGoalService : IHostedService
         {
             _goals[goal.Id] = goal;
         }
+        StateChanged?.Invoke();
 
         return new NIRAGoalApplyResult
         {
@@ -998,6 +1005,7 @@ public sealed class NIRAGoalService : IHostedService
         {
             _goals[normalized.Id] = normalized;
         }
+        StateChanged?.Invoke();
     }
 
     private async Task CompleteLinkedCommitmentAsync(

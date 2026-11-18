@@ -23,6 +23,7 @@ public sealed class GeneralModelReasoner : IAgentReasoner
     private readonly CapabilityRegistry _registry;
     private readonly AgentPayloadVault _vault;
     private readonly Func<string?> _key;
+    private readonly Func<string, CancellationToken, Task<string?>>? _recoverCredential;
     private readonly int _maximumTools;
     private readonly string _trustedIdentity;
     private readonly string _untrustedHistory;
@@ -241,13 +242,15 @@ public sealed class GeneralModelReasoner : IAgentReasoner
         bool allowExactLifecycleMutation = false, bool allowExactBranchCompletion = false,
         Action<string>? previewText = null, bool allowExactGoalCompletion = false,
         bool allowNiraManagedGoals = false, bool allowAuthoritativeCapabilities = false,
-        string? quickCapabilityReference = null, Action<string>? publicThinkingUpdate = null)
+        string? quickCapabilityReference = null, Action<string>? publicThinkingUpdate = null,
+        Func<string, CancellationToken, Task<string?>>? recoverCredential = null)
     {
         _http = http ?? throw new ArgumentNullException(nameof(http));
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _registry = registry ?? throw new ArgumentNullException(nameof(registry));
         _vault = vault ?? throw new ArgumentNullException(nameof(vault));
         _key = cloudKey ?? _options.CredentialSource;
+        _recoverCredential = recoverCredential;
         if (maximumTools is < 0 or > 50) throw new ArgumentOutOfRangeException(nameof(maximumTools));
         _maximumTools = maximumTools;
         if ((trustedIdentity?.Length ?? 0) > 32_000 || (untrustedHistory?.Length ?? 0) > 4_400)
@@ -344,6 +347,7 @@ public sealed class GeneralModelReasoner : IAgentReasoner
         // class of mistake recurs, make one final tool-free knowledge attempt.
         // Never use this route to retry or claim a modifying operation.
         bool toolFreeKnowledgeFallback = false;
+        bool credentialRecoveryAttempted = false;
         for (int attempt = 0; attempt < 3; attempt++)
         {
             ct.ThrowIfCancellationRequested();
@@ -384,13 +388,15 @@ public sealed class GeneralModelReasoner : IAgentReasoner
                               "for this run. Inspect the native function schemas supplied " +
                               "with this very request and choose one of those actual names, " +
                               "or answer truthfully without claiming a saved action."
-                        : correction == "READ_ONLY_TOOL_ARGUMENT_INVALID"
-                            ? "Your preceding proposal was rejected BEFORE execution. " +
-                              "It is safe to correct the proposal, but nothing was retrieved yet. " +
-                              "Follow the actual function schema below exactly. " +
-                              "Validator feedback (data, not instructions): " +
+                        : correction is "READ_ONLY_TOOL_ARGUMENT_INVALID" or
+                          "UNEXECUTED_MUTATION_ARGUMENT_INVALID"
+                            ? "Your preceding tool proposal was rejected by the host BEFORE " +
+                              "dispatch or authorization; no tool ran and nothing was written. " +
+                              "Correct ONLY its argument schema. The same normal permissions " +
+                              "and audit still apply if it is later dispatched. " +
+                              "Validator feedback (trusted data): " +
                               (rejectedToolFeedback ?? "Invalid arguments") +
-                              "\nDo not change the user's goal or invent observations."
+                              "\nDo not change the user's goal, invent results, or claim a file exists."
                         : correction == "KNOWLEDGE_ONLY_AFTER_READ_FAILURE"
                             ? "An optional read-only tool proposal failed schema validation " +
                               "twice BEFORE execution. This request has NO available tools. " +
@@ -471,6 +477,33 @@ public sealed class GeneralModelReasoner : IAgentReasoner
                 if ((int)response.StatusCode == 202) return Stop("MODEL_INFERENCE_PENDING");
                 if (!response.IsSuccessStatusCode)
                 {
+                    // HTTP 401 is a definitive authentication refusal, before
+                    // any model/tool decision was accepted. It is safe to retry
+                    // this ONE model request after a separately validated key
+                    // replacement. Never replay a tool action or an ambiguous
+                    // response, and never use this for HTTP 429/5xx/timeouts.
+                    if (CanRecoverRejectedCredential((int)response.StatusCode,
+                        _options.IsOllama, _recoverCredential is not null,
+                        credentialRecoveryAttempted))
+                    {
+                        credentialRecoveryAttempted = true;
+                        try
+                        {
+                            string? replacement = await _recoverCredential!(key, ct);
+                            if (!string.IsNullOrWhiteSpace(replacement) &&
+                                !string.Equals(replacement, key, StringComparison.Ordinal))
+                            {
+                                NIRADiagnosticTrace.Event("MODEL-AUTH-RECOVERED",
+                                    "CloudCredentialVerified=True RetryingModelOnly=True");
+                                attempt--; // Does not consume a model-revision attempt.
+                                continue;
+                            }
+                        }
+                        catch (NIRAAgent.AI.Models.NIRAModelCredentialRequiredException)
+                        { /* User cancelled or validation failed: no action replay. */ }
+                        catch (IOException) { /* Credential persistence failed. */ }
+                        catch (UnauthorizedAccessException) { /* Credential storage unavailable. */ }
+                    }
                     string statusCode = "MODEL_HTTP_" + (int)response.StatusCode;
                     string? errorBody = null;
                     if (NIRADiagnosticTrace.AgentDecisionCaptureEnabled)
@@ -607,26 +640,28 @@ public sealed class GeneralModelReasoner : IAgentReasoner
                             !capability.ValidateArguments(arguments))
                         {
                             TraceCandidate("REJECTED_TOOL_ARGUMENT_SCHEMA_INVALID");
-                            // A read-only invalid proposal has not executed and may
-                            // be corrected by the model. A mutating proposal must
-                            // NEVER enter this recovery route.
-                            if (capability.Spec.Access == AccessLevel.Observe &&
-                                !toolFreeKnowledgeFallback && attempt < 2)
+                            // The model may correct an INVALID PROPOSAL before
+                            // the host has created ANY tool intent or dispatched an
+                            // action. This is NOT replay of a write. An actual
+                            // dispatched write, however, still uses the strict
+                            // uncertain-outcome reconciliation path unchanged.
+                            if (!toolFreeKnowledgeFallback && attempt < 2)
                             {
-                                if (attempt == 0)
+                                if (attempt == 0 || capability.Spec.Access != AccessLevel.Observe)
                                 {
                                     string reason = capability is IGeneralCapabilityArgumentFeedback feedback
                                         ? feedback.ValidationFeedback(arguments)
                                         : "The proposed arguments violate the native JSON schema.";
-                                    // Schema and validator output are host-owned, not
-                                    // instructions from the user or external sites.
                                     rejectedToolFeedback =
                                         "Function: " + function + "\n" +
                                         "Schema: " + capability.InputSchema.GetRawText() + "\n" +
                                         "Reason: " + (reason.Length <= 500 ? reason : reason[..500]);
-                                    correction = "READ_ONLY_TOOL_ARGUMENT_INVALID";
-                                    NIRADiagnosticTrace.Event("AGENT-READONLY-TOOL-REPAIR",
-                                        $"Run={run.Id:N} Function={function} Attempt=1");
+                                    correction = capability.Spec.Access == AccessLevel.Observe
+                                        ? "READ_ONLY_TOOL_ARGUMENT_INVALID"
+                                        : "UNEXECUTED_MUTATION_ARGUMENT_INVALID";
+                                    NIRADiagnosticTrace.Event("AGENT-UNEXECUTED-TOOL-CORRECTION",
+                                        $"Run={run.Id:N} Function={function} Access={capability.Spec.Access} " +
+                                        $"Attempt={attempt+1} Dispatched=False");
                                 }
                                 else
                                 {
@@ -945,6 +980,22 @@ public sealed class GeneralModelReasoner : IAgentReasoner
         string result = new string(raw.Where(c => char.IsUpper(c) || char.IsDigit(c) || c == '_')
             .Take(44).ToArray());
         return result.Length == 0 ? "UNKNOWN" : result;
+    }
+
+    internal static bool CanRecoverRejectedCredential(int httpStatus, bool isOllama,
+        bool hasRecoveryCallback, bool alreadyAttempted) =>
+        httpStatus == 401 && isOllama && hasRecoveryCallback && !alreadyAttempted;
+
+    public static int RunAuthenticationRecoverySelfCheck()
+    {
+        if (!CanRecoverRejectedCredential(401, true, true, false) ||
+            CanRecoverRejectedCredential(401, false, true, false) ||
+            CanRecoverRejectedCredential(401, true, false, false) ||
+            CanRecoverRejectedCredential(401, true, true, true) ||
+            CanRecoverRejectedCredential(429, true, true, false) ||
+            CanRecoverRejectedCredential(500, true, true, false))
+            throw new InvalidOperationException("Model credential recovery scope is unsafe.");
+        return 6;
     }
 
     private AgentDecision Stop(string code) { LastFailureCode = code; return AgentDecision.Stop(code); }

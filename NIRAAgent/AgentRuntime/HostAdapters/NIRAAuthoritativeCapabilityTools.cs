@@ -297,7 +297,7 @@ public static class NIRAAuthoritativeCapabilityTools
         }
     }
 
-    public sealed class CapabilityInvocation : IGeneralCapability
+    public sealed class CapabilityInvocation : IGeneralCapability, IGeneralCapabilityArgumentFeedback
     {
         private readonly AgentPayloadVault _vault;
         private readonly NIRACapabilityRegistry _registry;
@@ -329,7 +329,13 @@ public static class NIRAAuthoritativeCapabilityTools
             additionalProperties = false
         });
 
+        // Validate the actual underlying capability descriptor BEFORE the
+        // agent loop records a mutation proposal. This is a no-effect,
+        // provider-free check; normal authorization still runs separately.
         public bool ValidateArguments(JsonElement args) =>
+            TryPreflight(args, out _, out _);
+
+        private static bool ValidateEnvelope(JsonElement args) =>
             args.ValueKind == JsonValueKind.Object &&
             args.EnumerateObject().Count() == 2 &&
             args.TryGetProperty("capabilityId", out var id) &&
@@ -339,6 +345,22 @@ public static class NIRAAuthoritativeCapabilityTools
             args.TryGetProperty("arguments", out var payload) &&
             payload.ValueKind == JsonValueKind.Object &&
             payload.GetRawText().Length <= 16_000;
+
+        public string ValidationFeedback(JsonElement args)
+        {
+            if (!ValidateEnvelope(args))
+                return "Use exactly capabilityId (registered ID) and arguments (object).";
+            string id = args.GetProperty("capabilityId").GetString()!;
+            if (!_registry.TryResolve(id, out INIRACapabilityHandler? handler) || handler is null)
+                return "The capability ID is not registered. Discover its actual descriptor.";
+            var raw = new NIRACapabilityRequest {
+                CapabilityId = id, Arguments = args.GetProperty("arguments").Clone(),
+                Reason = "Unexecuted model tool proposal schema feedback"
+            };
+            if (!_service.TryNormalizeAndValidateSchema(raw, out _, out string error))
+                return error.Length > 440 ? error[..440] : error;
+            return "The tool lane or resolved risk does not match the native capability.";
+        }
 
         // Checkpoint semantics are independent from authorization risk. A browser
         // navigation is Observe for the existing scope authorizer, but it still
@@ -367,7 +389,7 @@ public static class NIRAAuthoritativeCapabilityTools
         {
             request = new NIRACapabilityRequest();
             resolvedRisk = NIRACapabilityRisk.Destructive;
-            if (!ValidateArguments(args)) return false;
+            if (!ValidateEnvelope(args)) return false;
             string id = args.GetProperty("capabilityId").GetString()!;
             if (!_registry.TryResolve(id, out INIRACapabilityHandler? handler) || handler is null)
                 return false;
