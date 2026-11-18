@@ -40,10 +40,41 @@ internal static class GeneralObservationContext
         foreach (AgentObservation observation in run.Observations.TakeLast(MaxResults))
         {
             ct.ThrowIfCancellationRequested();
-            if (!observation.Succeeded || string.IsNullOrWhiteSpace(observation.ResultReference))
+            if (!observation.Succeeded)
             {
                 failed++;
-                AddLimited(builder, "TOOL " + observation.ToolId + " FAILED " + Clean(observation.OutcomeCode, 90) + "\n");
+                // A failed observation may still have an audited, encrypted
+                // failure receipt. This NEVER becomes positive tool evidence.
+                // The model needs the failure reason to avoid inspecting the
+                // same missing file repeatedly or claiming it was created.
+                string failure = "TOOL " + observation.ToolId + " FAILED " +
+                    Clean(observation.OutcomeCode, 90);
+                if (!string.IsNullOrWhiteSpace(observation.ResultReference))
+                {
+                    try
+                    {
+                        JsonElement proof = await vault.ReadResultAsync(run.Id,
+                            observation.ToolId, observation.ResultReference, ct);
+                        if (proof.ValueKind == JsonValueKind.Object &&
+                            proof.TryGetProperty("observedFailure", out JsonElement marker) &&
+                            marker.ValueKind == JsonValueKind.True)
+                        {
+                            string id = Clean(FieldString(proof, "capabilityId"), 90);
+                            string reason = Clean(FieldString(proof, "failureSummary"), 420);
+                            failure += " | capability=" + id + " | handler reported: " + reason;
+                            // No saved or created file is inferred from this.
+                        }
+                    }
+                    catch (Exception ex) when (ex is IOException or JsonException or
+                        InvalidDataException or UnauthorizedAccessException) { }
+                }
+                AddLimited(builder, failure + "\n");
+                continue;
+            }
+            if (string.IsNullOrWhiteSpace(observation.ResultReference))
+            {
+                failed++;
+                AddLimited(builder, "TOOL " + observation.ToolId + " RESULT_UNAVAILABLE\n");
                 continue;
             }
             JsonElement body;
@@ -147,6 +178,12 @@ internal static class GeneralObservationContext
                     if (!AppendWebSources(observedOutput, builder, sources, sourceTitles, urlSet))
                         AddExcerpt(builder, "TOOL web.search returned no parseable attributed " +
                             "sources. Do not cite unverified result data.\n");
+                    // The same authoritative web receipt may contain real local
+                    // image artifacts. Supply their observed paths for optional
+                    // document composition, with attribution and an explicit
+                    // reminder: downloading an image is NOT a license to reuse it.
+                    // No paths are made up, and this grants no file authority.
+                    AppendWebVisualHints(body, builder);
                     continue;
                 }
                 int outputLimit = capabilityId switch
@@ -228,6 +265,54 @@ internal static class GeneralObservationContext
         if (run.Observations.Count > MaxResults)
             AddLimited(builder, "Earlier tool outputs are retained in the vault but not displayed here.\n");
         return new Snapshot(builder.ToString(), sources, sourceTitles, urlSet, success, failed);
+    }
+
+    private static int AppendWebVisualHints(JsonElement receipt, StringBuilder builder)
+    {
+        if (receipt.ValueKind != JsonValueKind.Object ||
+            !receipt.TryGetProperty("visualArtifacts", out JsonElement items) ||
+            items.ValueKind != JsonValueKind.Array) return 0;
+        int added = 0;
+        foreach (JsonElement artifact in items.EnumerateArray())
+        {
+            if (added >= 3 || artifact.ValueKind != JsonValueKind.Object ||
+                !artifact.TryGetProperty("presentToUser", out JsonElement present) ||
+                present.ValueKind != JsonValueKind.True) continue;
+            string local = FieldString(artifact, "localPath");
+            string sourceUri = FieldString(artifact, "sourceUri");
+            if (local.Length == 0 || local.Length > 380 ||
+                !Path.IsPathFullyQualified(local) ||
+                !Uri.TryCreate(sourceUri, UriKind.Absolute, out Uri? source) ||
+                source.Scheme != Uri.UriSchemeHttps ||
+                !string.IsNullOrEmpty(source.UserInfo)) continue;
+            string title = FieldString(artifact, "title");
+            string caption = FieldString(artifact, "caption");
+            string entry = "OBSERVED LOCAL RESEARCH IMAGE (NOT REUSE AUTHORIZATION) | " +
+                "localPath=" + Clean(local, 380) + " | source=" +
+                Clean(source.AbsoluteUri, 700) + " | title=" + Clean(title, 140) +
+                " | caption=" + Clean(caption, 180) +
+                ". Embed in an external document ONLY if reuse rights are " +
+                "independently established; otherwise cite without embedding.\n";
+            if (!AddLimited(builder, entry)) break;
+            added++;
+        }
+        return added;
+    }
+
+    internal static int RunObservedWebImageSelfCheck()
+    {
+        using JsonDocument trusted = JsonDocument.Parse(
+            "{\"visualArtifacts\":[" +
+            "{\"presentToUser\":true,\"localPath\":\"C:\\\\Evidence\\\\photo.jpg\"," +
+            "\"sourceUri\":\"https://example.org/photograph\",\"title\":\"Archive photo\"}," +
+            "{\"presentToUser\":false,\"localPath\":\"C:\\\\Hidden\\\\bad.jpg\"," +
+            "\"sourceUri\":\"https://example.org/private\"}]}");
+        var output = new StringBuilder();
+        int kept = AppendWebVisualHints(trusted.RootElement, output);
+        if (kept != 1 || !output.ToString().Contains("NOT REUSE AUTHORIZATION", StringComparison.Ordinal) ||
+            output.ToString().Contains("private", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Observed image hints crossed provenance boundary.");
+        return 3;
     }
 
     private static string FieldNumber(JsonElement value, string field) =>

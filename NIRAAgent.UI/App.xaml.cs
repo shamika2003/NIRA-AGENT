@@ -1095,6 +1095,51 @@ public partial class App : WpfApplication
                         arguments = new { path = sampleDestination,
                             title = "Workshop", sectionsJson = "[{\"heading\":\"Budget\",\"body\":\"Text\",\"tableTsv\":\"OnlyOneCell\"}]" }
                     });
+                    // Real registered Studio capability through the observed-ID
+                    // envelope, not a mock or a fabricated native function. The
+                    // exact same checkpointed invoke adapter performs preflight;
+                    // this test performs NO filesystem write.
+                    var actualStudio = System.Text.Json.JsonSerializer.SerializeToElement(new {
+                        path = sampleDestination, title = "Tesla engineering research",
+                        blocksJson = new[] { new { type = "paragraph",
+                            text = "A documented technical study of AC motors." } }
+                    });
+                    var studioDiscovery = System.Text.Json.JsonSerializer.SerializeToElement(new {
+                        capabilities = new[] { new { id = NIRACapabilityIds.DocxStudioCreate,
+                            operationLane = "execute" } }
+                    });
+                    if (!GeneralModelReasoner.TryBuildObservedDiscoveryEnvelope(
+                            NIRACapabilityIds.DocxStudioCreate, actualStudio,
+                            studioDiscovery, out string mappedStudioTool,
+                            out System.Text.Json.JsonElement mappedStudioArgs) ||
+                        mappedStudioTool != "nira_execute_capability" ||
+                        !executeTool.ValidateArguments(mappedStudioArgs) ||
+                        System.IO.File.Exists(sampleDestination))
+                        throw new InvalidOperationException(
+                            "Real Studio tool cannot be preflighted through observed-ID route.");
+                    // Confirm the real registry treats a missing DOCX read
+                     // as OBSERVE, never as EXECUTE; an attempted Word Studio
+                     // write must not pass the observational adapter. These
+                     // assertions exercise both real handler schemas, not mocks.
+                     var observeTool = nativeTools.OfType<
+                         NIRAAuthoritativeCapabilityTools.CapabilityInvocation>()
+                         .Single(x => x.FunctionName == "nira_observe_capability");
+                     var missingRead = System.Text.Json.JsonSerializer.SerializeToElement(new {
+                         capabilityId = NIRACapabilityIds.DocxInspect,
+                         arguments = new { path = sampleDestination }
+                     });
+                     if (executeTool.ValidateArguments(missingRead) ||
+                         !observeTool.ValidateArguments(missingRead) ||
+                         observeTool.ValidateArguments(mappedStudioArgs) ||
+                         !GeneralModelReasoner.TryDowngradeObservationLane(missingRead,
+                             nativeRegistry.Tools.Select(x => x.Spec).ToArray(),
+                             nativeRegistry, out IGeneralCapability laneResult) ||
+                         laneResult.FunctionName != "nira_observe_capability" ||
+                         GeneralModelReasoner.TryDowngradeObservationLane(mappedStudioArgs,
+                             nativeRegistry.Tools.Select(x => x.Spec).ToArray(),
+                             nativeRegistry, out _))
+                         throw new InvalidOperationException(
+                             "Read/write adapter lanes not enforced for real DOCX handlers.");
                     if (!executeTool.ValidateArguments(validProposal) ||
                         executeTool.ValidateArguments(badReport) ||
                         executeTool.ValidateArguments(badTable) ||
@@ -1116,6 +1161,20 @@ public partial class App : WpfApplication
                         NiraModelEndpointOptions.Ollama("gemma4:31b").ShouldStream(
                             hasNativeTools: true, previewRequested: false))
                         throw new InvalidOperationException("Streaming transport safety checks incomplete.");
+                    int readFailureEvidenceChecks =
+                        await GeneralModelReasoner.RunReadFailureEvidenceSelfCheckAsync(smokeVault);
+                    if (readFailureEvidenceChecks != 4)
+                        throw new InvalidOperationException("Missing-file failure evidence test incomplete.");
+                    int researchProgressChecks = GeneralModelReasoner.RunResearchProgressSelfCheck();
+                     int discoveredRoutingChecks = GeneralModelReasoner.RunObservedDiscoveryRoutingSelfCheck();
+                     if (discoveredRoutingChecks != 7)
+                         throw new InvalidOperationException("Observed capability-ID routing checks incomplete.");
+                    int progressPresentationChecks = ChatMessageViewModel.RunProgressPresentationSelfCheck();
+                    int observedImageChecks = GeneralModelReasoner.RunObservedWebImageSelfCheck();
+                    if (observedImageChecks != 3)
+                        throw new InvalidOperationException("Verified research-image hint checks incomplete.");
+                    if (researchProgressChecks != 5 || progressPresentationChecks != 6)
+                        throw new InvalidOperationException("Research progress or elapsed-time checks incomplete.");
                     int sourceLinkRecoveryChecks = GeneralModelReasoner.RunGroundingRecoverySelfCheck();
                     int boundedSearchChecks = GeneralModelReasoner.RunWebImageCountSafetySelfCheck();
                     if (boundedSearchChecks != 4)
@@ -1271,6 +1330,9 @@ public partial class App : WpfApplication
                             protocolChecks, discoveryChecks, richChecks, activityChecks,
                             publicThinkingChecks, streamingDraftChecks,
                             sourceLinkRecoveryChecks, readOnlySchemaChecks, boundedSearchChecks,
+                            researchProgressChecks, progressPresentationChecks, observedImageChecks,
+                            readFailureEvidenceChecks,
+                             discoveredRoutingChecks,
                             docxPreflightChecks, docxBoundaryChecks,
                              providerFailureChecks, credentialPersistenceChecks, credentialRetryChecks,
                              goalWorkspaceChecks,

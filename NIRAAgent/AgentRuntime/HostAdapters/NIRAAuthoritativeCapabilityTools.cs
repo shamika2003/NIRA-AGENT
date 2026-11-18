@@ -187,14 +187,16 @@ public static class NIRAAuthoritativeCapabilityTools
             string wrappedRef = await _vault.SaveArgumentAsync(runId,
                 _observer.Spec.Id, wrapped, ct);
             AgentToolReceipt result = await _observer.ExecuteAsync(wrappedRef, ct);
-            if (!result.Succeeded || string.IsNullOrWhiteSpace(result.ResultReference))
+            if (string.IsNullOrWhiteSpace(result.ResultReference))
                 return result;
-            // Re-scope the existing audited receipt to this native tool ID.
-            // A receipt from one tool can NEVER be read under another tool ID.
+            // Re-scope BOTH success and failure receipts. Before this fix an
+            // observed read failure lost its explanation (or carried an invalid
+            // vault scope), so the model could repeat an impossible inspection.
             JsonElement body = await _vault.ReadResultAsync(runId,
                 _observer.Spec.Id, result.ResultReference, ct);
             string saved = await _vault.SaveResultAsync(runId, Spec.Id, body, ct);
-            return AgentToolReceipt.ReadOnlyResult(saved);
+            return result.Succeeded ? AgentToolReceipt.ReadOnlyResult(saved) :
+                new AgentToolReceipt(false, false, saved, result.OutcomeCode);
         }
     }
 
@@ -357,9 +359,22 @@ public static class NIRAAuthoritativeCapabilityTools
                 CapabilityId = id, Arguments = args.GetProperty("arguments").Clone(),
                 Reason = "Unexecuted model tool proposal schema feedback"
             };
+            NIRACapabilityDescriptor descriptor = handler.Descriptor.Normalize();
+            string required = string.Join(", ", descriptor.Parameters.Where(p => p.Required)
+                .Select(p => p.Name + ":" + p.Type));
+            string parameterHint = "Capability=" + id + "; required=" + required +
+                "; declared=" + string.Join(", ", descriptor.Parameters.Select(p =>
+                    p.Name + ":" + p.Type + (p.Required ? "!" : "")));
             if (!_service.TryNormalizeAndValidateSchema(raw, out _, out string error))
-                return error.Length > 440 ? error[..440] : error;
-            return "The tool lane or resolved risk does not match the native capability.";
+            {
+                string detail = parameterHint + "; error=" + error;
+                return detail.Length > 700 ? detail[..700] : detail;
+            }
+            string correctLane = RequiresCheckpointedDispatch(id) ||
+                descriptor.DefaultRisk != NIRACapabilityRisk.Observe
+                ? "nira_execute_capability" : "nira_observe_capability";
+            return "Wrong native invocation lane for " + id +
+                ". Use " + correctLane + " with the same validated arguments.";
         }
 
         // Checkpoint semantics are independent from authorization risk. A browser
@@ -456,8 +471,28 @@ public static class NIRAAuthoritativeCapabilityTools
                     return new AgentToolReceipt(false, true, failedRef,
                         "CAPABILITY_REJECTED_NO_EFFECT");
                 }
-                return _mutate ? AgentToolReceipt.Uncertain("CAPABILITY_NOT_VERIFIED")
-                               : new AgentToolReceipt(false, false, null, "CAPABILITY_FAILED");
+                if (!_mutate)
+                {
+                    // A failed READ is not successful evidence. However, the
+                    // authoritative handler's audited failure reason IS useful
+                    // evidence: e.g. a nonexistent document cannot be inspected.
+                    // Store it in the same scoped encrypted vault as normal
+                    // observations. Do not change write/reconciliation behavior.
+                    JsonElement failedRead = JsonSerializer.SerializeToElement(new {
+                        capabilityId = outcome.CapabilityId,
+                        status = outcome.Status.ToString(),
+                        failureSummary = outcome.Summary.Length > 650
+                            ? outcome.Summary[..650] : outcome.Summary,
+                        auditRecorded = outcome.AuditRecorded,
+                        definiteNoEffect = outcome.DefiniteNoEffect,
+                        observedFailure = true
+                    });
+                    string failureRef = await _vault.SaveResultAsync(runId,
+                        Spec.Id, failedRead, ct);
+                    return new AgentToolReceipt(false, false, failureRef,
+                        "CAPABILITY_FAILED");
+                }
+                return AgentToolReceipt.Uncertain("CAPABILITY_NOT_VERIFIED");
             }
             if (!outcome.AuditRecorded)
                 return _mutate ? AgentToolReceipt.Uncertain("AUTHORITATIVE_AUDIT_NOT_PERSISTED")

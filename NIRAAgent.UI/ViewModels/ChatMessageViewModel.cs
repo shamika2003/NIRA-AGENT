@@ -35,10 +35,13 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
     public void AddPublicThinkingNote(string? text)
     {
         if (_activityFinishedUtc is not null || string.IsNullOrWhiteSpace(text) ||
-            PublicThinkingNotes.Count >= 9) return;
+            PublicThinkingNotes.Count >= 6) return;
         string note = text.Trim();
+        // Rephrasing "I still need better pictures before I begin" after each
+        // search round is not useful progress. Keep only distinctly informative
+        // public model notes; never replace them with hardcoded host narration.
         if (note.Length is < 20 or > 360 ||
-            PublicThinkingNotes.Any(x => string.Equals(x, note, StringComparison.OrdinalIgnoreCase)))
+            PublicThinkingNotes.Any(x => SimilarPublicNote(x, note)))
             return;
         if (_activityStartedUtc == default) _activityStartedUtc = DateTimeOffset.UtcNow;
         PublicThinkingNotes.Add(note);
@@ -47,6 +50,59 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         if (!_activityClock.IsEnabled) _activityClock.Start();
         OnPropertyChanged(nameof(ActivityHeader));
     }
+    private static readonly HashSet<string> PublicNoteStopwords = new(
+        StringComparer.OrdinalIgnoreCase) {
+        "about", "actually", "after", "again", "already", "also", "before",
+        "been", "being", "could", "from", "going", "have", "into", "just",
+        "make", "more", "need", "really", "some", "that", "them", "there",
+        "these", "this", "those", "want", "with", "would", "will", "your",
+        "user", "right", "first", "here", "good", "getting", "still"
+    };
+
+    private static HashSet<string> NoteKeywords(string text) =>
+        Regex.Matches(text.ToLowerInvariant(), @"[a-z]{4,}|\d{3,}")
+            .Select(m => m.Value)
+            .Where(word => !PublicNoteStopwords.Contains(word))
+            .ToHashSet(StringComparer.Ordinal);
+
+    internal static bool SimilarPublicNote(string oldText, string newText)
+    {
+        if (string.Equals(oldText.Trim(), newText.Trim(),
+            StringComparison.OrdinalIgnoreCase)) return true;
+        HashSet<string> a = NoteKeywords(oldText), b = NoteKeywords(newText);
+        if (a.Count < 4 || b.Count < 4) return false;
+        int shared = a.Count(b.Contains);
+        return shared >= 4 &&
+            (shared >= Math.Ceiling(Math.Min(a.Count, b.Count) * 0.66) ||
+             shared >= Math.Ceiling((a.Count + b.Count - shared) * 0.50));
+    }
+
+    internal static string FormatActivityDuration(TimeSpan elapsed)
+    {
+        long total = Math.Max(0, (long)Math.Floor(elapsed.TotalSeconds));
+        long hours = total / 3600;
+        long minutes = total / 60 % 60;
+        long seconds = total % 60;
+        if (hours > 0) return $"{hours}h {minutes}m {seconds}s";
+        if (total >= 60) return $"{total / 60}m {seconds}s";
+        return $"{seconds}s";
+    }
+
+    public static int RunProgressPresentationSelfCheck()
+    {
+        if (FormatActivityDuration(TimeSpan.FromSeconds(80)) != "1m 20s" ||
+            FormatActivityDuration(TimeSpan.FromSeconds(323)) != "5m 23s" ||
+            FormatActivityDuration(TimeSpan.FromSeconds(14)) != "14s" ||
+            FormatActivityDuration(TimeSpan.FromSeconds(3661)) != "1h 1m 1s")
+            throw new InvalidOperationException("Elapsed activity time format incorrect.");
+        string a = "I have collected the history and now need some reliable photographs and diagrams.";
+        string b = "I have history collected; I still need reliable diagrams and some photographs.";
+        string c = "The report is now written, and I will inspect the saved document for errors.";
+        if (!SimilarPublicNote(a, b) || SimilarPublicNote(a, c))
+            throw new InvalidOperationException("Public-note repetition filter incorrect.");
+        return 6;
+    }
+
     private readonly DispatcherTimer _activityClock = new() {
         Interval = TimeSpan.FromSeconds(1)
     };
@@ -86,10 +142,10 @@ public sealed class ChatMessageViewModel : INotifyPropertyChanged
         {
             if (_activityStartedUtc == default) return "Activity";
             var duration = (_activityFinishedUtc ?? DateTimeOffset.UtcNow) - _activityStartedUtc;
-            int seconds = Math.Max(0, (int)duration.TotalSeconds);
-            if (_activityFinishedUtc is null) return $"{_activityLiveLabel} · {seconds}s";
-            if (_activityFailed) return $"Stopped after {seconds}s";
-            return $"Worked for {seconds}s";
+            string elapsed = FormatActivityDuration(duration);
+            if (_activityFinishedUtc is null) return $"{_activityLiveLabel} · {elapsed}";
+            if (_activityFailed) return $"Stopped after {elapsed}";
+            return $"Worked for {elapsed}";
         }
     }
 
