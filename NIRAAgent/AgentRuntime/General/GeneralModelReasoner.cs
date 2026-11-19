@@ -159,7 +159,8 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
     {
         if (correction is not ("UNFINISHED_TASK_ACTION_REQUIRED" or
                 "UNFINISHED_TASK_JSON_ACTION_REQUIRED" or
-                "DOCX_CREATE_BEFORE_INSPECT") ||
+                "DOCX_CREATE_BEFORE_INSPECT" or
+                "TASK_BOUND_TOOL_CONFLICT") ||
             contract?.RequiresSavedArtifact != true)
             return advertised;
         AgentToolSpec[] focused = advertised.Where(t =>
@@ -168,18 +169,23 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
         return focused.Any(t => t.Id == "nira.capabilities.execute") ? focused : advertised;
     }
 
-    // An invalid model proposal was never an executed tool. Constrain its
-    // revision to the SAME registered adapter; a successful audited mutation
-    // or uncertain write cannot reach this path. No tool authority is added.
+    // A rejected proposal was NEVER an executed tool. Give the model ONE
+    // chance to revise the SAME read-only function rather than switching to
+    // discovery or a different malformed call. Writes stay on the separate
+    // original modification lane, with their normal permission gate.
     private static IReadOnlyList<AgentToolSpec> FocusRejectedNativeTool(
         IReadOnlyList<AgentToolSpec> advertised, string? correction,
         string? rejectedToolId)
     {
-        if (correction is not ("UNEXECUTED_MUTATION_ARGUMENT_INVALID" or
-                "UNFINISHED_TASK_ACTION_REQUIRED") ||
+        bool writeRevision = correction is "UNEXECUTED_MUTATION_ARGUMENT_INVALID" or
+            "UNFINISHED_TASK_ACTION_REQUIRED";
+        bool readRevision = correction == "READ_ONLY_TOOL_ARGUMENT_INVALID";
+        if ((!writeRevision && !readRevision) ||
             string.IsNullOrWhiteSpace(rejectedToolId)) return advertised;
         AgentToolSpec[] focused = advertised.Where(t =>
-            t.Id == rejectedToolId && t.Access == AccessLevel.Modify).ToArray();
+            t.Id == rejectedToolId && (readRevision
+                ? t.Access == AccessLevel.Observe
+                : t.Access == AccessLevel.Modify)).ToArray();
         return focused.Length == 1 ? focused : advertised;
     }
 
@@ -193,15 +199,40 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
         bool mandatoryWorkUnfinished, IReadOnlyList<AgentToolSpec> advertised)
     {
         if (!provider.IsOllama || !mandatoryWorkUnfinished ||
-            correction is not ("UNEXECUTED_MUTATION_ARGUMENT_INVALID" or
+            correction is not ("READ_ONLY_TOOL_ARGUMENT_INVALID" or
+                "UNEXECUTED_MUTATION_ARGUMENT_INVALID" or
                 "UNFINISHED_TASK_ACTION_REQUIRED" or
-                "DOCX_CREATE_BEFORE_INSPECT") ||
-            !advertised.Any(t => t.Access == AccessLevel.Modify ||
-                t.Id == "nira.capabilities.observe")) return false;
+                "DOCX_CREATE_BEFORE_INSPECT" or
+                "TASK_BOUND_TOOL_CONFLICT")) return false;
+        bool hasCorrectiveFunction = correction == "READ_ONLY_TOOL_ARGUMENT_INVALID"
+            ? advertised.Any(t => t.Access == AccessLevel.Observe)
+            : advertised.Any(t => t.Access == AccessLevel.Modify ||
+                t.Id == "nira.capabilities.observe");
+        if (!hasCorrectiveFunction) return false;
         if (!payload.TryGetValue("tools", out object? tools) ||
             tools is not object[] definitions || definitions.Length == 0) return false;
         payload["tool_choice"] = "required";
         return true;
+    }
+
+    // Decide how to recover a schema-rejected MODEL proposal, before any tool
+    // dispatch or authorization. Optional read-only research may degrade to a
+    // knowledge answer ONLY for tasks that have no outstanding mandatory work.
+    // For an unfinished artifact/action, preserve native tools and prioritize
+    // the registered execution/inspection adapters instead. This policy never
+    // creates a tool intent or changes permissions by itself.
+    private static string? ChooseInvalidToolRecovery(AccessLevel access,
+        bool mandatoryWorkUnfinished, bool knowledgeFallbackAlreadyUsed,
+        int attempt, int maximumDecisionAttempts)
+    {
+        if (knowledgeFallbackAlreadyUsed || attempt + 1 >= maximumDecisionAttempts)
+            return null;
+        if (access != AccessLevel.Observe)
+            return "UNEXECUTED_MUTATION_ARGUMENT_INVALID";
+        if (mandatoryWorkUnfinished && attempt > 0)
+            return "UNFINISHED_TASK_ACTION_REQUIRED";
+        return attempt == 0 ? "READ_ONLY_TOOL_ARGUMENT_INVALID" :
+            "KNOWLEDGE_ONLY_AFTER_READ_FAILURE";
     }
 
     // The model must receive the *actual* proposal it produced and the host's
@@ -246,6 +277,247 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                 string.Equals(n, Path.GetFileName(path), StringComparison.OrdinalIgnoreCase)))
             return false;
         return !File.Exists(path);
+    }
+
+    // R85: A task to CREATE and deliver a file is not permission to destroy it.
+    // Protect the immutable, explicit requested output names before a model
+    // proposal becomes a durable tool intent. The trusted authorizer still
+    // decides every other permitted operation; this policy cannot grant access.
+    private static string? TaskBoundMutationProblem(AgentTaskContract? contract,
+        JsonElement envelope)
+    {
+        if (contract?.RequiresSavedArtifact != true ||
+            contract.RequestedFileNames.Count == 0 ||
+            envelope.ValueKind != JsonValueKind.Object ||
+            !envelope.TryGetProperty("capabilityId", out JsonElement id) ||
+            id.ValueKind != JsonValueKind.String ||
+            !envelope.TryGetProperty("arguments", out JsonElement args) ||
+            args.ValueKind != JsonValueKind.Object) return null;
+        string capabilityId = id.GetString() ?? "";
+        // The simple text-only creator cannot satisfy the rich Word report
+        // contract. Stop BEFORE it creates a low-quality irreversible file.
+        if ((capabilityId == NIRACapabilityIds.DocxCreate &&
+             (contract.RequiresDocxCover || contract.RequiresDocxIllustration ||
+              contract.RequiresDocxTable || contract.RequiresDocxReferences)) ||
+            (capabilityId == NIRACapabilityIds.DocxReportCreate &&
+             (contract.RequiresDocxCover || contract.RequiresDocxIllustration)))
+            return "The requested Word report needs native cover/media/table/reference " +
+                "blocks. Use filesystem.docx.studio.create: basic text/section " +
+                "writers cannot produce the required illustrated layout.";
+        // Never delete the requested output or a directory that currently
+        // contains it. Unrelated cleanup still goes through normal authority.
+        if (capabilityId == NIRACapabilityIds.FileDelete &&
+            args.TryGetProperty("path", out JsonElement deletion) &&
+            deletion.ValueKind == JsonValueKind.String &&
+            deletion.GetString() is string deletePath &&
+            (RequestedNameMatches(contract, deletePath) ||
+             (Directory.Exists(deletePath) &&
+              contract.RequestedFileNames.Any(name =>
+                  File.Exists(Path.Combine(deletePath, name))))))
+            return "The requested deliverable or its containing directory " +
+                "cannot be deleted during its creation/verification task.";
+        // Moving the requested file away also defeats later exact-path
+        // inspection. Other unrelated moves are left to normal authorization.
+        if (capabilityId == NIRACapabilityIds.FileMove &&
+            args.TryGetProperty("source", out JsonElement source) &&
+            source.ValueKind == JsonValueKind.String &&
+            RequestedNameMatches(contract, source.GetString()))
+            return "Moving the requested output before delivery is prohibited.";
+        return null;
+    }
+
+    private static bool RequestedNameMatches(AgentTaskContract contract, string? path) =>
+        !string.IsNullOrWhiteSpace(path) &&
+        contract.RequestedFileNames.Any(name =>
+            string.Equals(name, Path.GetFileName(path), StringComparison.OrdinalIgnoreCase));
+
+    // A successful, audited DOCX write is evidence of a file, NOT of a
+    // completed task. Recover its precise path only from the first-party
+    // receipt, not a model claim. Any follow-up uses the existing OBSERVE
+    // capability, its schema, vault, checkpoint and ordinary permission gate.
+    private static bool TryGetPublishedDocxPath(JsonElement receipt,
+        AgentTaskContract contract, out string path)
+    {
+        path = string.Empty;
+        if (!contract.RequiresSavedArtifact || !contract.RequiresReadBack ||
+            receipt.ValueKind != JsonValueKind.Object ||
+            !receipt.TryGetProperty("capabilityId", out JsonElement id) ||
+            id.ValueKind != JsonValueKind.String ||
+            !receipt.TryGetProperty("auditRecorded", out JsonElement audit) ||
+            audit.ValueKind != JsonValueKind.True ||
+            !receipt.TryGetProperty("status", out JsonElement status) ||
+            status.ValueKind != JsonValueKind.String || status.GetString() != "Succeeded" ||
+            !receipt.TryGetProperty("changedSystemState", out JsonElement changed) ||
+            changed.ValueKind != JsonValueKind.True ||
+            !receipt.TryGetProperty("outcomeUncertain", out JsonElement uncertain) ||
+            uncertain.ValueKind != JsonValueKind.False ||
+            !receipt.TryGetProperty("output", out JsonElement output) ||
+            output.ValueKind != JsonValueKind.String) return false;
+        string capabilityId = id.GetString() ?? "";
+        // These are genuine Word writers with audited hashes and destination.
+        if (capabilityId is not (NIRACapabilityIds.DocxCreate or
+                NIRACapabilityIds.DocxStudioCreate or
+                NIRACapabilityIds.DocxReportCreate)) return false;
+        string? value = null;
+        foreach (string line in (output.GetString() ?? "").Split('\n'))
+        {
+            if (line.StartsWith("Destination=", StringComparison.Ordinal))
+                value = line["Destination=".Length..].TrimEnd('\r');
+            else if (line.StartsWith("Path=", StringComparison.Ordinal))
+                value = line["Path=".Length..].TrimEnd('\r');
+        }
+        if (string.IsNullOrWhiteSpace(value) ||
+            !Path.IsPathFullyQualified(value) ||
+            !value.EndsWith(".docx", StringComparison.OrdinalIgnoreCase) ||
+            !RequestedNameMatches(contract, value)) return false;
+        path = value;
+        return true;
+    }
+
+    // Repair the observed run sequence: create -> delete -> repeated research ->
+    // tool budget exhausted. Once a new Word deliverable is saved, immediately
+    // arrange its read-only inspection before spending another model/tool turn.
+    // No automatic write, overwrite, delete, or uncertain mutation replay.
+    private async Task<AgentDecision?> TryInspectAuditedDocxAsync(
+        AgentRunSnapshot run, IReadOnlyList<AgentToolSpec> advertised,
+        CancellationToken ct)
+    {
+        AgentTaskContract? contract = run.TaskContract;
+        if (contract?.RequiresReadBack != true ||
+            run.ToolCallCount >= _maximumTools ||
+            !advertised.Any(t => t.Id == "nira.capabilities.observe" &&
+                t.Access == AccessLevel.Observe) ||
+            !_registry.TryGetFunction("nira_observe_capability",
+                out IGeneralCapability observer)) return null;
+        for (int i = run.Observations.Count - 1; i >= 0; i--)
+        {
+            AgentObservation item = run.Observations[i];
+            if (!item.Succeeded ||
+                item.ToolId != "nira.capabilities.execute" ||
+                string.IsNullOrWhiteSpace(item.ResultReference)) continue;
+            JsonElement receipt;
+            try
+            {
+                receipt = await _vault.ReadResultAsync(run.Id, item.ToolId,
+                    item.ResultReference!, ct);
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or
+                UnauthorizedAccessException or JsonException) { continue; }
+            if (!TryGetPublishedDocxPath(receipt, contract, out string destination))
+                continue;
+            // An attempted post-write inspection is not automatically retried:
+            // it might have failed for a real reason, and repeating consumes
+            // budget without new evidence.
+            foreach (AgentObservation later in run.Observations.Skip(i + 1))
+            {
+                if (later.ToolId != "nira.capabilities.observe" ||
+                    string.IsNullOrWhiteSpace(later.ResultReference)) continue;
+                JsonElement observed;
+                try
+                {
+                    observed = await _vault.ReadResultAsync(run.Id, later.ToolId,
+                        later.ResultReference!, ct);
+                }
+                catch (Exception ex) when (ex is IOException or InvalidDataException or
+                    UnauthorizedAccessException or JsonException) { continue; }
+                if (observed.ValueKind == JsonValueKind.Object &&
+                    observed.TryGetProperty("capabilityId", out JsonElement inspectId) &&
+                    inspectId.ValueKind == JsonValueKind.String &&
+                    inspectId.GetString() == NIRACapabilityIds.DocxInspect)
+                    return null;
+            }
+            if (!File.Exists(destination)) return null;
+            JsonElement proposal = JsonSerializer.SerializeToElement(new {
+                capabilityId = NIRACapabilityIds.DocxInspect,
+                arguments = new { path = destination }
+            });
+            if (!observer.ValidateArguments(proposal)) return null;
+            string token = await _vault.SaveArgumentAsync(run.Id, observer.Spec.Id,
+                proposal, ct);
+            NIRADiagnosticTrace.Event("AGENT-DOCX-READBACK-PRIORITY",
+                $"Run={run.Id:N} AuditedWrite=True IndependentInspect=True " +
+                "NormalObservationLane=True NoModelWrite=True");
+            return AgentDecision.Tool(observer.Spec.Id, token,
+                "nira-" + observer.Spec.Id + "-" + run.Id.ToString("N") +
+                "-" + run.ToolCallCount);
+        }
+        return null;
+    }
+
+    // Pure acceptance cases exercise the bad basic-writer/delete proposal
+    // path and audited-receipt binding; no real files or model calls needed.
+    public static int RunArtifactSafetyR85SelfCheck()
+    {
+        AgentTaskContract contract = AgentTaskContractPolicy.Create(
+            "Create and inspect a 3-4 page illustrated Word report with title page, " +
+            "comparison table and references; save as Motor_R85.docx.");
+        if (!contract.RequiresSavedArtifact || !contract.RequiresReadBack ||
+            !contract.RequiresDocxIllustration || !contract.RequiresDocxCover)
+            throw new InvalidOperationException("R85 task contract not detected.");
+        JsonElement Basic() => JsonSerializer.SerializeToElement(new {
+            capabilityId = NIRACapabilityIds.DocxCreate,
+            arguments = new { path = "Motor_R85.docx", content = "Too short" }
+        });
+        JsonElement Delete() => JsonSerializer.SerializeToElement(new {
+            capabilityId = NIRACapabilityIds.FileDelete,
+            arguments = new { path = "Motor_R85.docx" }
+        });
+        JsonElement BasicReport() => JsonSerializer.SerializeToElement(new {
+            capabilityId = NIRACapabilityIds.DocxReportCreate,
+            arguments = new { path = "Motor_R85.docx", title = "Motor", sectionsJson = "[]" }
+        });
+        JsonElement Studio() => JsonSerializer.SerializeToElement(new {
+            capabilityId = NIRACapabilityIds.DocxStudioCreate,
+            arguments = new { path = "Motor_R85.docx" }
+        });
+        if (TaskBoundMutationProblem(contract, Basic()) is null ||
+            TaskBoundMutationProblem(contract, BasicReport()) is null ||
+            TaskBoundMutationProblem(contract, Delete()) is null ||
+            TaskBoundMutationProblem(contract, Studio()) is not null)
+            throw new InvalidOperationException("R85 artifact mutation guard failed.");
+        JsonElement UnrelatedDelete() => JsonSerializer.SerializeToElement(new {
+            capabilityId = NIRACapabilityIds.FileDelete,
+            arguments = new { path = "Unrelated_Temp.txt" }
+        });
+        JsonElement MoveRequested() => JsonSerializer.SerializeToElement(new {
+            capabilityId = NIRACapabilityIds.FileMove,
+            arguments = new { source = "Motor_R85.docx", destination = "Moved.docx" }
+        });
+        if (TaskBoundMutationProblem(contract, UnrelatedDelete()) is not null ||
+            TaskBoundMutationProblem(contract, MoveRequested()) is null)
+            throw new InvalidOperationException("R85 guarded the wrong file mutation.");
+        int checks = 6;
+        string requestedPath = Path.GetFullPath(Path.Combine(Path.GetTempPath(),
+            "Motor_R85.docx"));
+        JsonElement receipt = JsonSerializer.SerializeToElement(new {
+            capabilityId = NIRACapabilityIds.DocxStudioCreate,
+            auditRecorded = true, status = "Succeeded", changedSystemState = true,
+            outcomeUncertain = false,
+            output = "Destination=" + requestedPath + "\nDestinationSHA256=abc"
+        });
+        if (!TryGetPublishedDocxPath(receipt, contract, out string output) ||
+            !output.EndsWith("Motor_R85.docx", StringComparison.Ordinal))
+            throw new InvalidOperationException("R85 receipt-based path selection failed.");
+        checks++;
+        JsonElement other = JsonSerializer.SerializeToElement(new {
+            capabilityId = NIRACapabilityIds.DocxStudioCreate,
+            auditRecorded = true, status = "Succeeded", changedSystemState = true,
+            outcomeUncertain = false,
+            output = "Destination=" + Path.GetFullPath(Path.Combine(
+                Path.GetTempPath(), "Other.docx")) + "\nDestinationSHA256=abc"
+        });
+        if (TryGetPublishedDocxPath(other, contract, out _))
+            throw new InvalidOperationException("R85 unrelated DOCX path accepted.");
+        checks++;
+        JsonElement unaudited = JsonSerializer.SerializeToElement(new {
+            capabilityId = NIRACapabilityIds.DocxStudioCreate,
+            auditRecorded = false, status = "Succeeded", changedSystemState = true,
+            outcomeUncertain = false, output = "Destination=" + requestedPath
+        });
+        if (TryGetPublishedDocxPath(unaudited, contract, out _))
+            throw new InvalidOperationException("R85 unaudited DOCX accepted.");
+        checks++;
+        return checks;
     }
 
     private static bool IsConfirmedNoFileReceipt(JsonElement receipt) =>
@@ -390,6 +662,26 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
             FocusUnstartedActionTools(tools, requested, Array.Empty<AgentObservation>(),
                 null).Count != tools.Length)
             throw new InvalidOperationException("Directory creation incorrectly ended artifact recovery focus.");
+        // R84 regression: an invalid optional web/observe proposal after the
+        // output directory was created MUST NOT disable tools while a DOCX is
+        // still missing. A read-only knowledge fallback remains valid only for
+        // requests that have no unfinished required file/action.
+        if (ChooseInvalidToolRecovery(AccessLevel.Observe, true, false, 0, 5) !=
+                "READ_ONLY_TOOL_ARGUMENT_INVALID" ||
+            ChooseInvalidToolRecovery(AccessLevel.Observe, true, false, 1, 5) !=
+                "UNFINISHED_TASK_ACTION_REQUIRED" ||
+            ChooseInvalidToolRecovery(AccessLevel.Observe, true, false, 2, 5) !=
+                "UNFINISHED_TASK_ACTION_REQUIRED" ||
+            ChooseInvalidToolRecovery(AccessLevel.Observe, true, false, 4, 5) is not null ||
+            ChooseInvalidToolRecovery(AccessLevel.Observe, false, false, 1, 3) !=
+                "KNOWLEDGE_ONLY_AFTER_READ_FAILURE" ||
+            ChooseInvalidToolRecovery(AccessLevel.Modify, true, false, 1, 5) !=
+                "UNEXECUTED_MUTATION_ARGUMENT_INVALID" ||
+            ChooseInvalidToolRecovery(AccessLevel.Observe, true, true, 1, 5) is not null ||
+            FocusUnstartedActionTools(tools, requested, afterDirectoryOnly,
+                "UNFINISHED_TASK_ACTION_REQUIRED").Any(t => t.Id == "nira.direct.web.search"))
+            throw new InvalidOperationException(
+                "R84 unfinished artifact lost its native tools after read-only schema rejection.");
         // Only a strict model-authored action JSON envelope is allowed to enter
         // the original native preflight/permission/checkpoint path.
         if (!GeneralToolProtocol.TryDecodeActionJson(
@@ -447,6 +739,23 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
             !NiraPublicThinkingNote.TryParse(decoded.Answer, out _))
             throw new InvalidOperationException("Standalone progress message replay was not recognized.");
         var ollama = NiraModelEndpointOptions.Ollama("gemma4:31b");
+        // A malformed direct read must first correct its OWN native schema;
+        // it cannot switch to another discovery or accidentally acquire write
+        // authority. Its second failure then uses the artifact-first recovery.
+        IReadOnlyList<AgentToolSpec> focusedRead = FocusRejectedNativeTool(tools,
+            "READ_ONLY_TOOL_ARGUMENT_INVALID", "nira.direct.web.search");
+        var readCorrectionPayload = new Dictionary<string, object> {
+            ["tools"] = new object[] { new { type = "function", function =
+                new { name = "nira_search_web" } } },
+            ["tool_choice"] = "auto" };
+        if (focusedRead.Count != 1 || focusedRead[0].Id != "nira.direct.web.search" ||
+            !RequireCorrectiveNativeTool(readCorrectionPayload, ollama,
+                "READ_ONLY_TOOL_ARGUMENT_INVALID", true, focusedRead) ||
+            !Equals(readCorrectionPayload["tool_choice"], "required") ||
+            FocusRejectedNativeTool(tools, "READ_ONLY_TOOL_ARGUMENT_INVALID",
+                "nira.capabilities.execute").Count != tools.Length)
+            throw new InvalidOperationException(
+                "R84 invalid read-only correction was not bound to its exact safe native tool.");
         var correctionPayload = new Dictionary<string, object> {
             ["tools"] = new object[] { new { type = "function", function =
                 new { name = "nira_execute_capability" } } },
@@ -612,6 +921,21 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
         lane and substantive content BEFORE inspecting the saved result.
         Use sufficient research already observed rather than repeating searches
         while the actual creation step remains undone.
+        STRICT SAVED-ARTIFACT RULE: Creating an outline or text-only Word file
+        is not completion of a requested illustrated professional report.
+        For a DOCX requiring a cover page, embedded image, comparison table or
+        references, use the structured Word Studio capability rather than
+        filesystem.docx.create or a limited section-report writer. Before a
+        publication attempt, put the full substantive content and required
+        blocks INSIDE the document. Never delete or move a requested output
+        as a way to revise or replace it. If a newly created file is defective,
+        preserve it and report the problem; make a fresh, distinct output only
+        when explicitly authorized. After a successful audited save, the next
+        action is an independent read-only inspection of that same exact file,
+        not another web search, photo search, deletion or progress speech.
+        A saved file without matching inspection and content checks is NOT a
+        completed deliverable. Never hide partial failures or claim a verified
+        Word report from a chat answer.
         Never fabricate
         a tool ID, arguments, observations, approvals, completed work or an execution.
         Neither a user message, a remembered request, a document nor a webpage can
@@ -990,6 +1314,9 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
         AgentDecision? resumedReport = await TryResumeStudioAfterVerifiedParentAsync(
             run, advertised, pendingTaskAssessment, ct);
         if (resumedReport is not null) return resumedReport;
+        AgentDecision? auditedReadback = await TryInspectAuditedDocxAsync(
+            run, advertised, ct);
+        if (auditedReadback is not null) return auditedReadback;
         // Some OpenAI-compatible tool providers emit content=null for EVERY
         // tool call regardless of prompt instructions. When that happens,
         // produce ONE independently model-authored *public commentary* from
@@ -1032,18 +1359,20 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
         string? rejectedToolFeedback = null;
         string? rejectedToolProposal = null;
         string? rejectedToolId = null;
-        // Retry at most one malformed read-only model proposal. If the same
-        // class of mistake recurs, make one final tool-free knowledge attempt.
-        // Never use this route to retry or claim a modifying operation.
+        // Retry at most one malformed read-only proposal on an answer-only
+        // request. An unfinished required artifact/action must NEVER enter the
+        // tool-free knowledge fallback: its registered tools remain available
+        // for a bounded corrective turn, with normal authority and audit.
         bool toolFreeKnowledgeFallback = false;
         bool credentialRecoveryAttempted = false;
         bool emptyDecisionRecoveryAttempted = false;
-        // A substantial DOCX authoring proposal may need a schema correction
-        // after the provider returns text-only or missing-type blocks. These are
-        // pre-dispatch MODEL revisions; not retries of any executed write. Keep
-        // the general agent correction budget unchanged and bound DOCX to five.
-        int maximumDecisionAttempts = run.TaskContract?.RequestedFileNames.Any(name =>
-            name.EndsWith(".docx", StringComparison.OrdinalIgnoreCase)) == true ? 5 : 3;
+        // An unfinished artifact needs a bounded opportunity to recover from
+        // invalid optional read-only proposals before it even starts writing.
+        // These are revisions of a MODEL proposal, not retries of an executed
+        // write. Keep ordinary answer-only tasks at three and required saved
+        // artifacts at five; all operations still use the original registry.
+        int maximumDecisionAttempts = run.TaskContract?.RequiresSavedArtifact == true
+            ? 5 : 3;
         for (int attempt = 0; attempt < maximumDecisionAttempts; attempt++)
         {
             ct.ThrowIfCancellationRequested();
@@ -1112,7 +1441,9 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                               "\nDo not invent results or claim an uncreated file exists."
                         : correction == "KNOWLEDGE_ONLY_AFTER_READ_FAILURE"
                             ? "An optional read-only tool proposal failed schema validation " +
-                              "twice BEFORE execution. This request has NO available tools. " +
+                              "twice BEFORE execution. No mandatory external action or " +
+                              "saved artifact remains pending, and this request has NO " +
+                              "available tools. " +
                               "You still need to answer the CURRENT USER with your own stable " +
                               "knowledge, appropriately thoroughly and in your established " +
                               "character. Never claim live research, image retrieval, visiting " +
@@ -1139,7 +1470,10 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                               "The host's unfulfilled evidence requirement is: " +
                               pendingTaskAssessment.Reason + ". " +
                               "Stop promising what you are about to do. Choose ONE actual " +
-                              "advertised tool call NOW. For a capability discovered earlier " +
+                              "advertised tool call NOW. If an optional read-only research " +
+                              "proposal failed schema validation, do NOT abandon this " +
+                              "required file/action or switch to knowledge-only prose. " +
+                              "For a capability discovered earlier " +
                               "with an execute lane, call nira_execute_capability using " +
                               "{\"capabilityId\":\"the real discovered ID\",\"arguments\":{...}} " +
                               "with the EXACT parameters already returned in the discovery. " +
@@ -1170,6 +1504,18 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                               "missing fields, missing permission and unwarranted claims. " +
                               "Populate the document with complete user-requested content " +
                               "using the actual capability schema already discovered."
+                        : correction == "TASK_BOUND_TOOL_CONFLICT"
+                            ? "The proposed tool conflicts with the original user's " +
+                              "mandatory saved artifact. The host rejected it BEFORE " +
+                              "dispatch. Do not delete, move or destroy requested " +
+                              "deliverables during their creation. A rich Word report " +
+                              "requires the registered filesystem.docx.studio.create " +
+                              "capability with complete native cover, illustration, " +
+                              "table and reference blocks; the plain-text Word " +
+                              "creator cannot satisfy it. Use a fresh, authorized " +
+                              "tool proposal for the original task, not another " +
+                              "optional web search. Validation feedback: " +
+                              (rejectedToolFeedback ?? "Task conflict")
                         : correction == "DOCX_CREATE_BEFORE_INSPECT"
                             ? "The requested NEW Word document has not been created and " +
                               "does not exist at the exact requested path. Do not inspect " +
@@ -1604,42 +1950,81 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                             // action. This is NOT replay of a write. An actual
                             // dispatched write, however, still uses the strict
                             // uncertain-outcome reconciliation path unchanged.
-                            if (!toolFreeKnowledgeFallback &&
-                                (attempt < 2 || (capability.Spec.Access == AccessLevel.Modify &&
-                                attempt + 1 < maximumDecisionAttempts)))
+                            string? schemaRecovery = ChooseInvalidToolRecovery(
+                                capability.Spec.Access, mandatoryWorkUnfinished,
+                                toolFreeKnowledgeFallback, attempt,
+                                maximumDecisionAttempts);
+                            if (schemaRecovery is not null)
                             {
-                                if (attempt == 0 || capability.Spec.Access != AccessLevel.Observe)
+                                if (schemaRecovery == "KNOWLEDGE_ONLY_AFTER_READ_FAILURE")
+                                {
+                                    // This path is *unreachable* for an unfinished
+                                    // mandatory artifact/action, even if multiple
+                                    // optional observations were malformed.
+                                    toolFreeKnowledgeFallback = true;
+                                    correction = schemaRecovery;
+                                    NIRADiagnosticTrace.Event("AGENT-READONLY-TOOL-FALLBACK",
+                                        $"Run={run.Id:N} Function={function} ToolCallsDisabled=True");
+                                }
+                                else if (schemaRecovery == "UNFINISHED_TASK_ACTION_REQUIRED")
+                                {
+                                    // The rejected read did not change state.
+                                    // Do not keep pushing the model toward a
+                                    // broken optional read; focus existing
+                                    // execute/inspect adapters for required work.
+                                    correction = schemaRecovery;
+                                    rejectedToolId = null;
+                                    rejectedToolProposal = null;
+                                    rejectedToolFeedback = null;
+                                    NIRADiagnosticTrace.Event("AGENT-ARTIFACT-READ-RECOVERY",
+                                        $"Run={run.Id:N} Function={function} " +
+                                        "ToolsPreserved=True OptionalReadSkipped=True " +
+                                        "PriorProposalDispatched=False");
+                                }
+                                else
                                 {
                                     string reason = capability is IGeneralCapabilityArgumentFeedback feedback
                                         ? feedback.ValidationFeedback(arguments)
                                         : "The proposed arguments violate the native JSON schema.";
-                                    if (capability.Spec.Access == AccessLevel.Modify)
-                                    {
-                                        rejectedToolId = capability.Spec.Id;
-                                        rejectedToolProposal = arguments.ValueKind == JsonValueKind.Object
+                                    // Both read and write proposals are
+                                    // unexecuted here. Preserve exact arguments
+                                    // for a bounded same-function correction.
+                                    rejectedToolId = capability.Spec.Id;
+                                    rejectedToolProposal = arguments.ValueKind == JsonValueKind.Object &&
+                                        arguments.GetRawText().Length <= 14_000
                                             ? arguments.GetRawText() : null;
-                                    }
                                     rejectedToolFeedback =
                                         "Function: " + function + "\n" +
                                         "Schema: " + capability.InputSchema.GetRawText() + "\n" +
                                         "Reason: " + (reason.Length <= 500 ? reason : reason[..500]);
-                                    correction = capability.Spec.Access == AccessLevel.Observe
-                                        ? "READ_ONLY_TOOL_ARGUMENT_INVALID"
-                                        : "UNEXECUTED_MUTATION_ARGUMENT_INVALID";
+                                    correction = schemaRecovery;
                                     NIRADiagnosticTrace.Event("AGENT-UNEXECUTED-TOOL-CORRECTION",
                                         $"Run={run.Id:N} Function={function} Access={capability.Spec.Access} " +
                                         $"Attempt={attempt+1} Dispatched=False");
                                 }
-                                else
-                                {
-                                    toolFreeKnowledgeFallback = true;
-                                    correction = "KNOWLEDGE_ONLY_AFTER_READ_FAILURE";
-                                    NIRADiagnosticTrace.Event("AGENT-READONLY-TOOL-FALLBACK",
-                                        $"Run={run.Id:N} Function={function} ToolCallsDisabled=True");
-                                }
                                 continue;
                             }
                             return Stop("TOOL_ARGUMENT_SCHEMA_INVALID");
+                        }
+                        // R85: this is a task-specific pre-dispatch policy, not
+                        // a new permission grant or a handler-level delete retry.
+                        string? taskConflict = TaskBoundMutationProblem(
+                            run.TaskContract, arguments);
+                        if (taskConflict is not null)
+                        {
+                            TraceCandidate("REJECTED_TASK_BOUND_MUTATION");
+                            NIRADiagnosticTrace.Event("AGENT-ARTIFACT-SAFETY",
+                                $"Run={run.Id:N} CandidateRejected=True " +
+                                "NoDispatch=True NoStateChange=True");
+                            if (attempt + 1 < maximumDecisionAttempts)
+                            {
+                                correction = "TASK_BOUND_TOOL_CONFLICT";
+                                rejectedToolFeedback = taskConflict;
+                                rejectedToolProposal = null;
+                                rejectedToolId = null;
+                                continue;
+                            }
+                            return Stop("TASK_BOUND_MUTATION_REJECTED");
                         }
                         if (capability.Spec.Access != AccessLevel.Observe &&
                             !IsHostEnabledWrite(capability.Spec.Id))

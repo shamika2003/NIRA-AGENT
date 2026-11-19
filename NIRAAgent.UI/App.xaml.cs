@@ -1084,6 +1084,10 @@ public partial class App : WpfApplication
                     if (docxDraftNormalizationChecks != 4)
                         throw new InvalidOperationException(
                             "R82 typed DOCX proposal / cover normalization checks failed.");
+                    int artifactSafetyR85Checks = GeneralModelReasoner.RunArtifactSafetyR85SelfCheck();
+                    if (artifactSafetyR85Checks != 9)
+                        throw new InvalidOperationException(
+                            "R85 task-bound file protection and audited DOCX inspection failed.");
                     int taskRecoveryChecks = GeneralModelReasoner.RunPendingTaskRecoverySelfCheck();
                     if (taskRecoveryChecks != 8)
                         throw new InvalidOperationException("Pending-work decision recovery checks failed.");
@@ -1380,7 +1384,7 @@ public partial class App : WpfApplication
                             taskContractChecks, docxDraftNormalizationChecks, modelDefaultChecks,
                             taskReceiptChecks, taskLoopChecks,
                             noEffectRecoveryChecks, studioMissingParentChecks, studioR12QualityChecks,
-                            taskRecoveryChecks,
+                            taskRecoveryChecks, artifactSafetyR85Checks,
                             docxPreflightChecks, docxBoundaryChecks,
                              providerFailureChecks, credentialPersistenceChecks, credentialRetryChecks,
                              goalWorkspaceChecks,

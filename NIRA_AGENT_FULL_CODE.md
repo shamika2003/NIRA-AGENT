@@ -6,9 +6,9 @@
 
 **Source/code files:** 409
 
-**Resource files shown in tree:** 16
+**Resource files shown in tree:** 143
 
-**Total clean project files:** 425
+**Total clean project files:** 552
 
 ---
 
@@ -25,6 +25,137 @@ Generated build folders such as `bin/` and `obj/` are intentionally excluded.
 ```text
 NIRA-AGENT/
 ├── .gitignore
+├── Images
+│   ├── AiGenerated
+│   │   ├── 0fb0322af29348ecb270b5a2e6654754.jpg
+│   │   ├── 1604b1ad89f74a34b53e23a9b9c121a1.jpg
+│   │   └── 6e1f3b936a5a43d38448867bc5723cad.jpg
+│   ├── Uploaded
+│   │   ├── 772acff1d22e4e6cbcafb6622de904a7.png
+│   │   └── b566f8d885264b8da0da06a13fab406b.png
+│   └── WebFound
+│       ├── 02dbd7bf75284d259d05304599bfd7df.gif
+│       ├── 045893321acd449ab06f8a651cc04f13.jpg
+│       ├── 08201b106be9479d80b924ade86db9c4.jpg
+│       ├── 09fc9f3c1f8a471fa4824dba85793519.jpg
+│       ├── 0be313aee76b4ae0bd5f4851847c2796.jpg
+│       ├── 0e8c65079c40456faefe31b15d04082f.jpg
+│       ├── 0fbc5c5b64384fe58e91eaeed09dd51f.png
+│       ├── 0fd42ee5ec9a4ff49041753f7ef1fd9e.jpg
+│       ├── 1024051803b3478fb35b528cfb0f0e01.jpg
+│       ├── 1073cf9f708a4c5e8b1283ef1c1494f0.jpg
+│       ├── 127bad5c77554829bc974074224a8a1a.jpg
+│       ├── 12a9f096488f46ce98abe6e3b5ef1151.jpg
+│       ├── 136bdc156ad2413697e9ae941498851c.jpg
+│       ├── 13eb92391ae94ef4ae077b00d43a73cb.jpg
+│       ├── 172d7929ed56488ca1aeb1dc8cb66876.jpg
+│       ├── 1a1507811815405d9d6b48367211a178.jpg
+│       ├── 1dc53f7c5c26450389e1a88138ae2196.jpg
+│       ├── 2217c4305e4d4294bacdadcc077de92b.jpg
+│       ├── 24bce6aefc684c1983db19ff1998c15f.jpg
+│       ├── 27cfd968f73f4ff1b33583d06b2b8362.jpg
+│       ├── 27ee6420f7a84dfab40856dc80571ccc.jpg
+│       ├── 28a2a0fa4453429eb3ab751fee65ef92.jpg
+│       ├── 29cd0bdd8ed84b21a45186d44dfb6401.jpg
+│       ├── 2f5e5d5b59fb4a43857a123045e66741.jpg
+│       ├── 304bba6b57ac416eaec4fd82ccfa92ff.jpg
+│       ├── 331a60dd0194406eb5d5a37ed2736903.jpg
+│       ├── 344e9ed770444ba4a1a581e0583ba9ac.jpg
+│       ├── 3a64c19375634dd79a0a8fca79d29231.jpg
+│       ├── 43406fcd9bf648a591799fbfb1a23cea.jpg
+│       ├── 4558c403fad8417fb6b4e37e5492b061.jpg
+│       ├── 45a98c444a5e4240a0f9a7a1b6446fdf.jpg
+│       ├── 45b5ae47077a42a3a9e37c80bdbe94ac.jpg
+│       ├── 46d3077b994640eb8e657f4bab247d19.jpg
+│       ├── 4a919e3ea52a4359b748c1b84d184ea9.png
+│       ├── 4db4ef9dd4384ecda16aed87b9c79f19.jpg
+│       ├── 4fed63e867584bd5b1925fd5196daf02.jpg
+│       ├── 507e1dc8ba1e449ebf64f056342e3faa.jpg
+│       ├── 515689f7b5374a638788272f4c298c85.jpg
+│       ├── 54fb22a94d4e45b09a15e336470b769e.jpg
+│       ├── 584257415eea4fa6b6df8aab8921079d.jpg
+│       ├── 585570b38ff646f7ad296ab76d274142.jpg
+│       ├── 588e8b26f38a4b1eb678e03149330327.jpg
+│       ├── 5ac8ad0c9cec4d82be5d1ea82a1219a1.jpg
+│       ├── 5d63d308cf64497f9d45fbd03da11a05.jpg
+│       ├── 5f6b53dbd5664dfca9f22e2421a4ff0d.jpg
+│       ├── 5f9ea09f1e0a462bab38273b757cba50.jpg
+│       ├── 61ac0a9f8dd94fe380957c18dc3035cb.jpg
+│       ├── 639a284e077a41d9ac9bfb421e87b49d.jpg
+│       ├── 6ec710edefc44255bc9e71c36be813c9.jpg
+│       ├── 6f7790e1e7e942e19f420fed495b8d2f.jpg
+│       ├── 706790fa21ff4db7b5c707ef03ddd5b6.jpg
+│       ├── 71720489953143248c81c9be56fb3ec1.jpg
+│       ├── 7375c22eac364493b93b4e1cdceea096.png
+│       ├── 73e086c283c3433b95742625dd1087b7.jpg
+│       ├── 74d9d45efb5b49f1b6ae12087d7dd79c.jpg
+│       ├── 7aff362abdee44f884648d38caa589cc.jpg
+│       ├── 7e0269d13e934e6e92b1aa7ec62023de.jpg
+│       ├── 806b964237df4b0c86a0d5334595e115.jpg
+│       ├── 8288a11841314a61b65529f63684759d.jpg
+│       ├── 86b2c9165db24b81b5c7880a4756b878.png
+│       ├── 872bb72fe3f14b0bbb50026bc3a8014f.jpg
+│       ├── 8823318e4166400298ab2bfc10dd95cf.jpg
+│       ├── 899a567c7af1416ba1309fb65d07e178.jpg
+│       ├── 8a200b4b19b24e69a4d03dbf3a2263ed.png
+│       ├── 8af731bc78954717b06bf02121a425e8.jpg
+│       ├── 8cff5d8998834173b95a1267c98ec005.jpg
+│       ├── 93611629179a4fc2a6f5153975b2cf65.jpg
+│       ├── 94d6a49eb9cc4794b6c3763f34ef3935.png
+│       ├── 966d57ed2f174594a1c73186f6bb6ebe.jpg
+│       ├── 967df48c22cc4bfe9357713d7fb0b015.jpg
+│       ├── 9a46266cb34e4f54919fd8f17a373086.jpg
+│       ├── 9cb9595ac4b542af9c228da297af7808.jpg
+│       ├── 9d133ef2e0ad4a6296bb42612d418b57.jpg
+│       ├── 9e1bbb4c4ebf487282d5b122bf963ab6.jpg
+│       ├── a085fbb31d1143d3ba5d399e269ab982.jpg
+│       ├── a15359c793a043f7ac9267c3fc5a7bf4.jpg
+│       ├── a26311d442fe47d38d2e152bcf81c447.jpg
+│       ├── a2982c35a04e4d4faeef3ae4c2655928.jpg
+│       ├── a79f28b67f164e5ebf3c16fe0c278420.jpg
+│       ├── ac1abdd05b1e4d56907c4e2a8ad2d367.jpg
+│       ├── ad4562fe31854c53a68ea030f0642248.png
+│       ├── ad5b554e6874457ab190f6cf37c17a35.png
+│       ├── b14f4f0a43924445ad3a86d4fdc18883.jpg
+│       ├── b1653a9748944cd2b7ffe6b9293d6f2c.png
+│       ├── b8f827cc83c64330ac9cc534b2768b02.jpg
+│       ├── b9203ce1d6754875bb52c5da418c9934.gif
+│       ├── b9aa715be64c458e9e89299b61236841.jpg
+│       ├── ba9e26f22f7249879eca58575940b12c.jpg
+│       ├── bae67f68d5d74e679fa5d6319eb024f3.jpg
+│       ├── bd32802281c0446c886ee3df5ac2c65d.png
+│       ├── bee3c91f9bb94eb18c8e9f144d4e9c85.jpg
+│       ├── c055745032a74a51bca8be0cdd6780be.jpg
+│       ├── c0778ad1e8fa45179db9f66bfc6436a9.jpg
+│       ├── c70b5cb4cc5d4a30b1e8b0a3b1c66647.jpg
+│       ├── c7bcded59b004cf5bff2254af12153c3.jpg
+│       ├── cf43127f13ff44ab952021a78670a7ab.jpg
+│       ├── cfc758a8fc9b4f45ab97beb1aad9752e.jpg
+│       ├── d0eb13fd793f4fc5a6446eeb79392878.jpg
+│       ├── d1c1296a46dc4d11841afa70d5fcc302.jpg
+│       ├── d1c5676366794b2688313a339676a23e.jpg
+│       ├── d1eb9d72077e4b29ad7c2392b0b7d710.jpg
+│       ├── d663580359924eeb8517543d9e8553d6.jpg
+│       ├── d71e0e1473fe4faeac74ee77a23fdc16.jpg
+│       ├── d81e136ca54442738c839158a291eee4.jpg
+│       ├── d94c45e6427d4b9ab3ee076c85a073b1.jpg
+│       ├── dea16deb21ad41cbaa3452fb8f953cf7.png
+│       ├── dfc0d2e613914c2293e5cb71c4bf98fc.jpg
+│       ├── e2366adba67b4295a7db2cfb6553c162.png
+│       ├── e642de21d34941bdb32b905bd59684c8.png
+│       ├── e7265b5ff70c43b0b74383496ce7ce67.jpg
+│       ├── e780436cb44741c0ab180a656d22b504.jpg
+│       ├── eaf53c741f6d43cfaf6ca5577a0c16e6.jpg
+│       ├── ec4417426cc84f2b8477aacf27fd9d13.jpg
+│       ├── ec4fa8ca52c34e21a4c63e4c5240f51b.jpg
+│       ├── ec82150936834444ba46666fbbc9fa74.jpg
+│       ├── ed5d02eb08784f0cbc75d13d76f7343e.png
+│       ├── ed74a61a41aa4b8caf0fecf67cfb608c.jpg
+│       ├── f087326c748e4d7aa0c99ffd45fd3b34.jpg
+│       ├── f4d772b2ee1e4b389c395d4018db231e.jpg
+│       ├── f5952fd6f34b4c2e85314ad93c7b6a14.jpg
+│       ├── fbafba10d0744b408936e435d8f07b48.jpg
+│       └── fbfe6b7a855a4cacb43a99bc6320fc05.jpg
 ├── NIRAAgent.UI
 │   ├── AgentRuntime
 │   │   ├── NIRALifecyclePermissionGate.cs
@@ -2533,7 +2664,7 @@ public partial class App : WpfApplication
                     int protocolChecks = await NiraProtocolSelfCheck.RunAsync();
                     int noDecisionRecoveryChecks =
                         GeneralModelReasoner.RunNoDecisionRecoverySelfCheck();
-                    if (noDecisionRecoveryChecks != 11)
+                    if (noDecisionRecoveryChecks != 12)
                         throw new InvalidOperationException(
                             "Bounded incomplete-model-decision recovery checks failed.");
                     // This is REAL native tool schema checking. A malformed
@@ -39400,15 +39531,18 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
     public static int RunObservedWebImageSelfCheck() =>
         GeneralObservationContext.RunObservedWebImageSelfCheck();
 
-    // Provider-only recovery. A malformed or empty model response never becomes
-    // an authoritative action; the current request has dispatched no tool.
-    // Retrying inference is safe, but only once and never for invalid tool JSON,
-    // conflicting finish signals, permission denials, or canceled work.
+    // Only a rejected provider inference, never a capability execution, is
+    // eligible here. A malformed Ollama SSE choices envelope leaves NO parsed
+    // model decision and cannot authorize a tool. Exactly one retry uses full
+    // non-streaming JSON with the same checkpointed observations and controls.
+    // Do not retry invalid tool fragments, conflicting finishes, non-Ollama
+    // protocol faults, cancellations or a second malformed response.
     private static bool CanRetryNoModelDecision(string code, bool alreadyRetried,
-        bool cancellationRequested) =>
-        !alreadyRetried && !cancellationRequested && code is
-            ("MODEL_SSE_ANSWER_INCOMPLETE" or "MODEL_SSE_MISSING_FINISH" or
-             "MODEL_JSON_ANSWER_EMPTY" or "MODEL_RESPONSE_EMPTY");
+        bool cancellationRequested, bool ollamaSseResponse = false) =>
+        !alreadyRetried && !cancellationRequested &&
+        (code is ("MODEL_SSE_ANSWER_INCOMPLETE" or "MODEL_SSE_MISSING_FINISH" or
+             "MODEL_JSON_ANSWER_EMPTY" or "MODEL_RESPONSE_EMPTY") ||
+         (ollamaSseResponse && code == "MODEL_SSE_CHOICES_INVALID"));
 
     private static void ApplyNoDecisionTransportRecovery(
         IDictionary<string, object> payload, NiraModelEndpointOptions endpoint,
@@ -39445,6 +39579,23 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                 throw new InvalidOperationException("Unsafe provider error retried.");
             passed++;
         }
+        // Reproduce the observed Ollama GPT-OSS stream-shape failure. This
+        // must be a one-shot inference-only JSON fallback, never a tool replay.
+        const string malformedChoices = "MODEL_SSE_CHOICES_INVALID";
+        if (!CanRetryNoModelDecision(malformedChoices, false, false,
+                ollamaSseResponse: true) ||
+            CanRetryNoModelDecision(malformedChoices, true, false,
+                ollamaSseResponse: true) ||
+            CanRetryNoModelDecision(malformedChoices, false, true,
+                ollamaSseResponse: true) ||
+            CanRetryNoModelDecision(malformedChoices, false, false) ||
+            CanRetryNoModelDecision("MODEL_SSE_FRAME_JSON_INVALID", false, false,
+                ollamaSseResponse: true) ||
+            CanRetryNoModelDecision("MODEL_SSE_TOOL_ARGUMENTS_INVALID", false, false,
+                ollamaSseResponse: true))
+            throw new InvalidOperationException(
+                "R83 Ollama malformed-SSE recovery boundary incorrect.");
+        passed++;
         var retry = new Dictionary<string, object> {
             ["stream"] = true, ["reasoning_effort"] = "medium" };
         ApplyNoDecisionTransportRecovery(retry, NiraModelEndpointOptions.Ollama(
@@ -39486,18 +39637,23 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
         return focused.Any(t => t.Id == "nira.capabilities.execute") ? focused : advertised;
     }
 
-    // An invalid model proposal was never an executed tool. Constrain its
-    // revision to the SAME registered adapter; a successful audited mutation
-    // or uncertain write cannot reach this path. No tool authority is added.
+    // A rejected proposal was NEVER an executed tool. Give the model ONE
+    // chance to revise the SAME read-only function rather than switching to
+    // discovery or a different malformed call. Writes stay on the separate
+    // original modification lane, with their normal permission gate.
     private static IReadOnlyList<AgentToolSpec> FocusRejectedNativeTool(
         IReadOnlyList<AgentToolSpec> advertised, string? correction,
         string? rejectedToolId)
     {
-        if (correction is not ("UNEXECUTED_MUTATION_ARGUMENT_INVALID" or
-                "UNFINISHED_TASK_ACTION_REQUIRED") ||
+        bool writeRevision = correction is "UNEXECUTED_MUTATION_ARGUMENT_INVALID" or
+            "UNFINISHED_TASK_ACTION_REQUIRED";
+        bool readRevision = correction == "READ_ONLY_TOOL_ARGUMENT_INVALID";
+        if ((!writeRevision && !readRevision) ||
             string.IsNullOrWhiteSpace(rejectedToolId)) return advertised;
         AgentToolSpec[] focused = advertised.Where(t =>
-            t.Id == rejectedToolId && t.Access == AccessLevel.Modify).ToArray();
+            t.Id == rejectedToolId && (readRevision
+                ? t.Access == AccessLevel.Observe
+                : t.Access == AccessLevel.Modify)).ToArray();
         return focused.Length == 1 ? focused : advertised;
     }
 
@@ -39511,15 +39667,39 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
         bool mandatoryWorkUnfinished, IReadOnlyList<AgentToolSpec> advertised)
     {
         if (!provider.IsOllama || !mandatoryWorkUnfinished ||
-            correction is not ("UNEXECUTED_MUTATION_ARGUMENT_INVALID" or
+            correction is not ("READ_ONLY_TOOL_ARGUMENT_INVALID" or
+                "UNEXECUTED_MUTATION_ARGUMENT_INVALID" or
                 "UNFINISHED_TASK_ACTION_REQUIRED" or
-                "DOCX_CREATE_BEFORE_INSPECT") ||
-            !advertised.Any(t => t.Access == AccessLevel.Modify ||
-                t.Id == "nira.capabilities.observe")) return false;
+                "DOCX_CREATE_BEFORE_INSPECT")) return false;
+        bool hasCorrectiveFunction = correction == "READ_ONLY_TOOL_ARGUMENT_INVALID"
+            ? advertised.Any(t => t.Access == AccessLevel.Observe)
+            : advertised.Any(t => t.Access == AccessLevel.Modify ||
+                t.Id == "nira.capabilities.observe");
+        if (!hasCorrectiveFunction) return false;
         if (!payload.TryGetValue("tools", out object? tools) ||
             tools is not object[] definitions || definitions.Length == 0) return false;
         payload["tool_choice"] = "required";
         return true;
+    }
+
+    // Decide how to recover a schema-rejected MODEL proposal, before any tool
+    // dispatch or authorization. Optional read-only research may degrade to a
+    // knowledge answer ONLY for tasks that have no outstanding mandatory work.
+    // For an unfinished artifact/action, preserve native tools and prioritize
+    // the registered execution/inspection adapters instead. This policy never
+    // creates a tool intent or changes permissions by itself.
+    private static string? ChooseInvalidToolRecovery(AccessLevel access,
+        bool mandatoryWorkUnfinished, bool knowledgeFallbackAlreadyUsed,
+        int attempt, int maximumDecisionAttempts)
+    {
+        if (knowledgeFallbackAlreadyUsed || attempt + 1 >= maximumDecisionAttempts)
+            return null;
+        if (access != AccessLevel.Observe)
+            return "UNEXECUTED_MUTATION_ARGUMENT_INVALID";
+        if (mandatoryWorkUnfinished && attempt > 0)
+            return "UNFINISHED_TASK_ACTION_REQUIRED";
+        return attempt == 0 ? "READ_ONLY_TOOL_ARGUMENT_INVALID" :
+            "KNOWLEDGE_ONLY_AFTER_READ_FAILURE";
     }
 
     // The model must receive the *actual* proposal it produced and the host's
@@ -39708,6 +39888,26 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
             FocusUnstartedActionTools(tools, requested, Array.Empty<AgentObservation>(),
                 null).Count != tools.Length)
             throw new InvalidOperationException("Directory creation incorrectly ended artifact recovery focus.");
+        // R84 regression: an invalid optional web/observe proposal after the
+        // output directory was created MUST NOT disable tools while a DOCX is
+        // still missing. A read-only knowledge fallback remains valid only for
+        // requests that have no unfinished required file/action.
+        if (ChooseInvalidToolRecovery(AccessLevel.Observe, true, false, 0, 5) !=
+                "READ_ONLY_TOOL_ARGUMENT_INVALID" ||
+            ChooseInvalidToolRecovery(AccessLevel.Observe, true, false, 1, 5) !=
+                "UNFINISHED_TASK_ACTION_REQUIRED" ||
+            ChooseInvalidToolRecovery(AccessLevel.Observe, true, false, 2, 5) !=
+                "UNFINISHED_TASK_ACTION_REQUIRED" ||
+            ChooseInvalidToolRecovery(AccessLevel.Observe, true, false, 4, 5) is not null ||
+            ChooseInvalidToolRecovery(AccessLevel.Observe, false, false, 1, 3) !=
+                "KNOWLEDGE_ONLY_AFTER_READ_FAILURE" ||
+            ChooseInvalidToolRecovery(AccessLevel.Modify, true, false, 1, 5) !=
+                "UNEXECUTED_MUTATION_ARGUMENT_INVALID" ||
+            ChooseInvalidToolRecovery(AccessLevel.Observe, true, true, 1, 5) is not null ||
+            FocusUnstartedActionTools(tools, requested, afterDirectoryOnly,
+                "UNFINISHED_TASK_ACTION_REQUIRED").Any(t => t.Id == "nira.direct.web.search"))
+            throw new InvalidOperationException(
+                "R84 unfinished artifact lost its native tools after read-only schema rejection.");
         // Only a strict model-authored action JSON envelope is allowed to enter
         // the original native preflight/permission/checkpoint path.
         if (!GeneralToolProtocol.TryDecodeActionJson(
@@ -39765,6 +39965,23 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
             !NiraPublicThinkingNote.TryParse(decoded.Answer, out _))
             throw new InvalidOperationException("Standalone progress message replay was not recognized.");
         var ollama = NiraModelEndpointOptions.Ollama("gemma4:31b");
+        // A malformed direct read must first correct its OWN native schema;
+        // it cannot switch to another discovery or accidentally acquire write
+        // authority. Its second failure then uses the artifact-first recovery.
+        IReadOnlyList<AgentToolSpec> focusedRead = FocusRejectedNativeTool(tools,
+            "READ_ONLY_TOOL_ARGUMENT_INVALID", "nira.direct.web.search");
+        var readCorrectionPayload = new Dictionary<string, object> {
+            ["tools"] = new object[] { new { type = "function", function =
+                new { name = "nira_search_web" } } },
+            ["tool_choice"] = "auto" };
+        if (focusedRead.Count != 1 || focusedRead[0].Id != "nira.direct.web.search" ||
+            !RequireCorrectiveNativeTool(readCorrectionPayload, ollama,
+                "READ_ONLY_TOOL_ARGUMENT_INVALID", true, focusedRead) ||
+            !Equals(readCorrectionPayload["tool_choice"], "required") ||
+            FocusRejectedNativeTool(tools, "READ_ONLY_TOOL_ARGUMENT_INVALID",
+                "nira.capabilities.execute").Count != tools.Length)
+            throw new InvalidOperationException(
+                "R84 invalid read-only correction was not bound to its exact safe native tool.");
         var correctionPayload = new Dictionary<string, object> {
             ["tools"] = new object[] { new { type = "function", function =
                 new { name = "nira_execute_capability" } } },
@@ -40350,18 +40567,20 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
         string? rejectedToolFeedback = null;
         string? rejectedToolProposal = null;
         string? rejectedToolId = null;
-        // Retry at most one malformed read-only model proposal. If the same
-        // class of mistake recurs, make one final tool-free knowledge attempt.
-        // Never use this route to retry or claim a modifying operation.
+        // Retry at most one malformed read-only proposal on an answer-only
+        // request. An unfinished required artifact/action must NEVER enter the
+        // tool-free knowledge fallback: its registered tools remain available
+        // for a bounded corrective turn, with normal authority and audit.
         bool toolFreeKnowledgeFallback = false;
         bool credentialRecoveryAttempted = false;
         bool emptyDecisionRecoveryAttempted = false;
-        // A substantial DOCX authoring proposal may need a schema correction
-        // after the provider returns text-only or missing-type blocks. These are
-        // pre-dispatch MODEL revisions; not retries of any executed write. Keep
-        // the general agent correction budget unchanged and bound DOCX to five.
-        int maximumDecisionAttempts = run.TaskContract?.RequestedFileNames.Any(name =>
-            name.EndsWith(".docx", StringComparison.OrdinalIgnoreCase)) == true ? 5 : 3;
+        // An unfinished artifact needs a bounded opportunity to recover from
+        // invalid optional read-only proposals before it even starts writing.
+        // These are revisions of a MODEL proposal, not retries of an executed
+        // write. Keep ordinary answer-only tasks at three and required saved
+        // artifacts at five; all operations still use the original registry.
+        int maximumDecisionAttempts = run.TaskContract?.RequiresSavedArtifact == true
+            ? 5 : 3;
         for (int attempt = 0; attempt < maximumDecisionAttempts; attempt++)
         {
             ct.ThrowIfCancellationRequested();
@@ -40430,7 +40649,9 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                               "\nDo not invent results or claim an uncreated file exists."
                         : correction == "KNOWLEDGE_ONLY_AFTER_READ_FAILURE"
                             ? "An optional read-only tool proposal failed schema validation " +
-                              "twice BEFORE execution. This request has NO available tools. " +
+                              "twice BEFORE execution. No mandatory external action or " +
+                              "saved artifact remains pending, and this request has NO " +
+                              "available tools. " +
                               "You still need to answer the CURRENT USER with your own stable " +
                               "knowledge, appropriately thoroughly and in your established " +
                               "character. Never claim live research, image retrieval, visiting " +
@@ -40457,7 +40678,10 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                               "The host's unfulfilled evidence requirement is: " +
                               pendingTaskAssessment.Reason + ". " +
                               "Stop promising what you are about to do. Choose ONE actual " +
-                              "advertised tool call NOW. For a capability discovered earlier " +
+                              "advertised tool call NOW. If an optional read-only research " +
+                              "proposal failed schema validation, do NOT abandon this " +
+                              "required file/action or switch to knowledge-only prose. " +
+                              "For a capability discovered earlier " +
                               "with an execute lane, call nira_execute_capability using " +
                               "{\"capabilityId\":\"the real discovered ID\",\"arguments\":{...}} " +
                               "with the EXACT parameters already returned in the discovery. " +
@@ -40724,8 +40948,17 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                 {
                     NIRADiagnosticTrace.AgentModelProtocolFailure(run.Id, ModelRequests,
                         ex.Message, "Provider response rejected by protocol validator", rawDiagnostic);
+                    // The logged R82C incident was an invalid choices envelope
+                    // from Ollama SSE. No decision or tool from THIS HTTP reply
+                    // was accepted; retry only this model inference once via
+                    // non-streaming JSON. Keep all prior audited observations.
+                    bool ollamaSseResponse = _options.IsOllama &&
+                        (bool)payload["stream"] &&
+                        response.Content.Headers.ContentType?.MediaType?.Contains(
+                            "event-stream", StringComparison.OrdinalIgnoreCase) == true;
                     if (CanRetryNoModelDecision(ex.Message,
-                        emptyDecisionRecoveryAttempted, ct.IsCancellationRequested))
+                        emptyDecisionRecoveryAttempted, ct.IsCancellationRequested,
+                        ollamaSseResponse))
                     {
                         // No decision was parsed or dispatched from this HTTP
                         // response. Existing tool receipts remain untouched.
@@ -40736,7 +40969,8 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                         NIRADiagnosticTrace.Event("AGENT-MODEL-NO-DECISION-RECOVERY",
                             "Run=" + run.Id.ToString("N") +
                             " PreviousModelRequest=" + ModelRequests +
-                            " NextStream=False ModelOnly=True Retry=1/1");
+                            " NextStream=False ModelOnly=True Retry=1/1" +
+                            " Cause=" + SafeProtocolCode(ex.Message));
                         attempt--; // Do not consume an argument-correction attempt.
                         continue;
                     }
@@ -40912,38 +41146,57 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                             // action. This is NOT replay of a write. An actual
                             // dispatched write, however, still uses the strict
                             // uncertain-outcome reconciliation path unchanged.
-                            if (!toolFreeKnowledgeFallback &&
-                                (attempt < 2 || (capability.Spec.Access == AccessLevel.Modify &&
-                                attempt + 1 < maximumDecisionAttempts)))
+                            string? schemaRecovery = ChooseInvalidToolRecovery(
+                                capability.Spec.Access, mandatoryWorkUnfinished,
+                                toolFreeKnowledgeFallback, attempt,
+                                maximumDecisionAttempts);
+                            if (schemaRecovery is not null)
                             {
-                                if (attempt == 0 || capability.Spec.Access != AccessLevel.Observe)
+                                if (schemaRecovery == "KNOWLEDGE_ONLY_AFTER_READ_FAILURE")
+                                {
+                                    // This path is *unreachable* for an unfinished
+                                    // mandatory artifact/action, even if multiple
+                                    // optional observations were malformed.
+                                    toolFreeKnowledgeFallback = true;
+                                    correction = schemaRecovery;
+                                    NIRADiagnosticTrace.Event("AGENT-READONLY-TOOL-FALLBACK",
+                                        $"Run={run.Id:N} Function={function} ToolCallsDisabled=True");
+                                }
+                                else if (schemaRecovery == "UNFINISHED_TASK_ACTION_REQUIRED")
+                                {
+                                    // The rejected read did not change state.
+                                    // Do not keep pushing the model toward a
+                                    // broken optional read; focus existing
+                                    // execute/inspect adapters for required work.
+                                    correction = schemaRecovery;
+                                    rejectedToolId = null;
+                                    rejectedToolProposal = null;
+                                    rejectedToolFeedback = null;
+                                    NIRADiagnosticTrace.Event("AGENT-ARTIFACT-READ-RECOVERY",
+                                        $"Run={run.Id:N} Function={function} " +
+                                        "ToolsPreserved=True OptionalReadSkipped=True " +
+                                        "PriorProposalDispatched=False");
+                                }
+                                else
                                 {
                                     string reason = capability is IGeneralCapabilityArgumentFeedback feedback
                                         ? feedback.ValidationFeedback(arguments)
                                         : "The proposed arguments violate the native JSON schema.";
-                                    if (capability.Spec.Access == AccessLevel.Modify)
-                                    {
-                                        rejectedToolId = capability.Spec.Id;
-                                        rejectedToolProposal = arguments.ValueKind == JsonValueKind.Object
+                                    // Both read and write proposals are
+                                    // unexecuted here. Preserve exact arguments
+                                    // for a bounded same-function correction.
+                                    rejectedToolId = capability.Spec.Id;
+                                    rejectedToolProposal = arguments.ValueKind == JsonValueKind.Object &&
+                                        arguments.GetRawText().Length <= 14_000
                                             ? arguments.GetRawText() : null;
-                                    }
                                     rejectedToolFeedback =
                                         "Function: " + function + "\n" +
                                         "Schema: " + capability.InputSchema.GetRawText() + "\n" +
                                         "Reason: " + (reason.Length <= 500 ? reason : reason[..500]);
-                                    correction = capability.Spec.Access == AccessLevel.Observe
-                                        ? "READ_ONLY_TOOL_ARGUMENT_INVALID"
-                                        : "UNEXECUTED_MUTATION_ARGUMENT_INVALID";
+                                    correction = schemaRecovery;
                                     NIRADiagnosticTrace.Event("AGENT-UNEXECUTED-TOOL-CORRECTION",
                                         $"Run={run.Id:N} Function={function} Access={capability.Spec.Access} " +
                                         $"Attempt={attempt+1} Dispatched=False");
-                                }
-                                else
-                                {
-                                    toolFreeKnowledgeFallback = true;
-                                    correction = "KNOWLEDGE_ONLY_AFTER_READ_FAILURE";
-                                    NIRADiagnosticTrace.Event("AGENT-READONLY-TOOL-FALLBACK",
-                                        $"Run={run.Id:N} Function={function} ToolCallsDisabled=True");
                                 }
                                 continue;
                             }
@@ -44580,6 +44833,25 @@ public static class NiraProtocolSelfCheck
             ToolFragment(1, "y", "nira_file_metadata", "{\"path\":") +
             Frame(new { }, "tool_calls");
         await VerifyReject("SSE_SECOND_TOOL_TRUNCATED", malformedSecond, "text/event-stream");
+        // R83: an upstream error/shape frame must NOT become a model answer
+        // or an executable tool. The reasoner separately decides whether the
+        // Ollama inference is eligible for one non-streaming JSON retry.
+        string badChoices = "data: {\"error\":{\"message\":\"provider interrupted\"}}\n\n";
+        bool badChoicesRejected = false;
+        using (var badChoicesStream = new MemoryStream(Encoding.UTF8.GetBytes(badChoices)))
+        {
+            try
+            {
+                _ = await NiraChatProtocolReader.ReadAsync(badChoicesStream,
+                    "text/event-stream", 64 * 1024, null, ct);
+            }
+            catch (InvalidDataException ex) when (ex.Message == "MODEL_SSE_CHOICES_INVALID")
+            { badChoicesRejected = true; }
+        }
+        if (!badChoicesRejected)
+            throw new InvalidDataException(
+                "R83: malformed choices SSE frame was accepted or misclassified.");
+        passed++;
         string annotatedSse =
             Frame(new { content = publicContent }) +
             ToolFragment(0, "x", "nira_list_directory", "{\"path\":\"Documents\"}") +
@@ -198848,6 +199120,133 @@ public sealed record VoiceUtterance
 
 These files are part of the project and are shown in the tree, but their binary data is intentionally not written into this Markdown file.
 
+- `Images\AiGenerated\0fb0322af29348ecb270b5a2e6654754.jpg` — 569.44 KB
+- `Images\AiGenerated\1604b1ad89f74a34b53e23a9b9c121a1.jpg` — 485.09 KB
+- `Images\AiGenerated\6e1f3b936a5a43d38448867bc5723cad.jpg` — 622.86 KB
+- `Images\Uploaded\772acff1d22e4e6cbcafb6622de904a7.png` — 2.01 MB
+- `Images\Uploaded\b566f8d885264b8da0da06a13fab406b.png` — 363.98 KB
+- `Images\WebFound\02dbd7bf75284d259d05304599bfd7df.gif` — 47.86 KB
+- `Images\WebFound\045893321acd449ab06f8a651cc04f13.jpg` — 11.24 KB
+- `Images\WebFound\08201b106be9479d80b924ade86db9c4.jpg` — 134.21 KB
+- `Images\WebFound\09fc9f3c1f8a471fa4824dba85793519.jpg` — 143.59 KB
+- `Images\WebFound\0be313aee76b4ae0bd5f4851847c2796.jpg` — 946.27 KB
+- `Images\WebFound\0e8c65079c40456faefe31b15d04082f.jpg` — 436.73 KB
+- `Images\WebFound\0fbc5c5b64384fe58e91eaeed09dd51f.png` — 640 bytes
+- `Images\WebFound\0fd42ee5ec9a4ff49041753f7ef1fd9e.jpg` — 251.36 KB
+- `Images\WebFound\1024051803b3478fb35b528cfb0f0e01.jpg` — 140.23 KB
+- `Images\WebFound\1073cf9f708a4c5e8b1283ef1c1494f0.jpg` — 93.84 KB
+- `Images\WebFound\127bad5c77554829bc974074224a8a1a.jpg` — 244.90 KB
+- `Images\WebFound\12a9f096488f46ce98abe6e3b5ef1151.jpg` — 252.61 KB
+- `Images\WebFound\136bdc156ad2413697e9ae941498851c.jpg` — 34.06 KB
+- `Images\WebFound\13eb92391ae94ef4ae077b00d43a73cb.jpg` — 304.70 KB
+- `Images\WebFound\172d7929ed56488ca1aeb1dc8cb66876.jpg` — 55.59 KB
+- `Images\WebFound\1a1507811815405d9d6b48367211a178.jpg` — 23.86 KB
+- `Images\WebFound\1dc53f7c5c26450389e1a88138ae2196.jpg` — 115.10 KB
+- `Images\WebFound\2217c4305e4d4294bacdadcc077de92b.jpg` — 91.62 KB
+- `Images\WebFound\24bce6aefc684c1983db19ff1998c15f.jpg` — 12.28 KB
+- `Images\WebFound\27cfd968f73f4ff1b33583d06b2b8362.jpg` — 163.46 KB
+- `Images\WebFound\27ee6420f7a84dfab40856dc80571ccc.jpg` — 23.65 KB
+- `Images\WebFound\28a2a0fa4453429eb3ab751fee65ef92.jpg` — 27.13 KB
+- `Images\WebFound\29cd0bdd8ed84b21a45186d44dfb6401.jpg` — 27.09 KB
+- `Images\WebFound\2f5e5d5b59fb4a43857a123045e66741.jpg` — 20.00 KB
+- `Images\WebFound\304bba6b57ac416eaec4fd82ccfa92ff.jpg` — 152.08 KB
+- `Images\WebFound\331a60dd0194406eb5d5a37ed2736903.jpg` — 209.36 KB
+- `Images\WebFound\344e9ed770444ba4a1a581e0583ba9ac.jpg` — 2.83 MB
+- `Images\WebFound\3a64c19375634dd79a0a8fca79d29231.jpg` — 117.65 KB
+- `Images\WebFound\43406fcd9bf648a591799fbfb1a23cea.jpg` — 170.59 KB
+- `Images\WebFound\4558c403fad8417fb6b4e37e5492b061.jpg` — 872.05 KB
+- `Images\WebFound\45a98c444a5e4240a0f9a7a1b6446fdf.jpg` — 3.19 KB
+- `Images\WebFound\45b5ae47077a42a3a9e37c80bdbe94ac.jpg` — 104.30 KB
+- `Images\WebFound\46d3077b994640eb8e657f4bab247d19.jpg` — 114.46 KB
+- `Images\WebFound\4a919e3ea52a4359b748c1b84d184ea9.png` — 920.29 KB
+- `Images\WebFound\4db4ef9dd4384ecda16aed87b9c79f19.jpg` — 106.59 KB
+- `Images\WebFound\4fed63e867584bd5b1925fd5196daf02.jpg` — 57.70 KB
+- `Images\WebFound\507e1dc8ba1e449ebf64f056342e3faa.jpg` — 132.59 KB
+- `Images\WebFound\515689f7b5374a638788272f4c298c85.jpg` — 154.55 KB
+- `Images\WebFound\54fb22a94d4e45b09a15e336470b769e.jpg` — 42.58 KB
+- `Images\WebFound\584257415eea4fa6b6df8aab8921079d.jpg` — 148.71 KB
+- `Images\WebFound\585570b38ff646f7ad296ab76d274142.jpg` — 136.87 KB
+- `Images\WebFound\588e8b26f38a4b1eb678e03149330327.jpg` — 38.23 KB
+- `Images\WebFound\5ac8ad0c9cec4d82be5d1ea82a1219a1.jpg` — 95.52 KB
+- `Images\WebFound\5d63d308cf64497f9d45fbd03da11a05.jpg` — 72.00 KB
+- `Images\WebFound\5f6b53dbd5664dfca9f22e2421a4ff0d.jpg` — 52.31 KB
+- `Images\WebFound\5f9ea09f1e0a462bab38273b757cba50.jpg` — 99.39 KB
+- `Images\WebFound\61ac0a9f8dd94fe380957c18dc3035cb.jpg` — 66.70 KB
+- `Images\WebFound\639a284e077a41d9ac9bfb421e87b49d.jpg` — 48.10 KB
+- `Images\WebFound\6ec710edefc44255bc9e71c36be813c9.jpg` — 51.30 KB
+- `Images\WebFound\6f7790e1e7e942e19f420fed495b8d2f.jpg` — 97.10 KB
+- `Images\WebFound\706790fa21ff4db7b5c707ef03ddd5b6.jpg` — 69.66 KB
+- `Images\WebFound\71720489953143248c81c9be56fb3ec1.jpg` — 137.90 KB
+- `Images\WebFound\7375c22eac364493b93b4e1cdceea096.png` — 128.80 KB
+- `Images\WebFound\73e086c283c3433b95742625dd1087b7.jpg` — 104.78 KB
+- `Images\WebFound\74d9d45efb5b49f1b6ae12087d7dd79c.jpg` — 40.96 KB
+- `Images\WebFound\7aff362abdee44f884648d38caa589cc.jpg` — 66.68 KB
+- `Images\WebFound\7e0269d13e934e6e92b1aa7ec62023de.jpg` — 608.13 KB
+- `Images\WebFound\806b964237df4b0c86a0d5334595e115.jpg` — 79.59 KB
+- `Images\WebFound\8288a11841314a61b65529f63684759d.jpg` — 1.49 MB
+- `Images\WebFound\86b2c9165db24b81b5c7880a4756b878.png` — 292.41 KB
+- `Images\WebFound\872bb72fe3f14b0bbb50026bc3a8014f.jpg` — 38.57 KB
+- `Images\WebFound\8823318e4166400298ab2bfc10dd95cf.jpg` — 1.05 MB
+- `Images\WebFound\899a567c7af1416ba1309fb65d07e178.jpg` — 84.30 KB
+- `Images\WebFound\8a200b4b19b24e69a4d03dbf3a2263ed.png` — 61.83 KB
+- `Images\WebFound\8af731bc78954717b06bf02121a425e8.jpg` — 91.81 KB
+- `Images\WebFound\8cff5d8998834173b95a1267c98ec005.jpg` — 122.47 KB
+- `Images\WebFound\93611629179a4fc2a6f5153975b2cf65.jpg` — 149.35 KB
+- `Images\WebFound\94d6a49eb9cc4794b6c3763f34ef3935.png` — 791.26 KB
+- `Images\WebFound\966d57ed2f174594a1c73186f6bb6ebe.jpg` — 42.35 KB
+- `Images\WebFound\967df48c22cc4bfe9357713d7fb0b015.jpg` — 142.89 KB
+- `Images\WebFound\9a46266cb34e4f54919fd8f17a373086.jpg` — 143.34 KB
+- `Images\WebFound\9cb9595ac4b542af9c228da297af7808.jpg` — 48.37 KB
+- `Images\WebFound\9d133ef2e0ad4a6296bb42612d418b57.jpg` — 559.57 KB
+- `Images\WebFound\9e1bbb4c4ebf487282d5b122bf963ab6.jpg` — 260.80 KB
+- `Images\WebFound\a085fbb31d1143d3ba5d399e269ab982.jpg` — 122.11 KB
+- `Images\WebFound\a15359c793a043f7ac9267c3fc5a7bf4.jpg` — 49.51 KB
+- `Images\WebFound\a26311d442fe47d38d2e152bcf81c447.jpg` — 125.25 KB
+- `Images\WebFound\a2982c35a04e4d4faeef3ae4c2655928.jpg` — 44.65 KB
+- `Images\WebFound\a79f28b67f164e5ebf3c16fe0c278420.jpg` — 174.35 KB
+- `Images\WebFound\ac1abdd05b1e4d56907c4e2a8ad2d367.jpg` — 85.75 KB
+- `Images\WebFound\ad4562fe31854c53a68ea030f0642248.png` — 220.38 KB
+- `Images\WebFound\ad5b554e6874457ab190f6cf37c17a35.png` — 1002.00 KB
+- `Images\WebFound\b14f4f0a43924445ad3a86d4fdc18883.jpg` — 27.43 KB
+- `Images\WebFound\b1653a9748944cd2b7ffe6b9293d6f2c.png` — 352.75 KB
+- `Images\WebFound\b8f827cc83c64330ac9cc534b2768b02.jpg` — 84.85 KB
+- `Images\WebFound\b9203ce1d6754875bb52c5da418c9934.gif` — 62.65 KB
+- `Images\WebFound\b9aa715be64c458e9e89299b61236841.jpg` — 239.00 KB
+- `Images\WebFound\ba9e26f22f7249879eca58575940b12c.jpg` — 80.90 KB
+- `Images\WebFound\bae67f68d5d74e679fa5d6319eb024f3.jpg` — 119.91 KB
+- `Images\WebFound\bd32802281c0446c886ee3df5ac2c65d.png` — 2.28 MB
+- `Images\WebFound\bee3c91f9bb94eb18c8e9f144d4e9c85.jpg` — 230.34 KB
+- `Images\WebFound\c055745032a74a51bca8be0cdd6780be.jpg` — 146.47 KB
+- `Images\WebFound\c0778ad1e8fa45179db9f66bfc6436a9.jpg` — 571.64 KB
+- `Images\WebFound\c70b5cb4cc5d4a30b1e8b0a3b1c66647.jpg` — 33.27 KB
+- `Images\WebFound\c7bcded59b004cf5bff2254af12153c3.jpg` — 295.92 KB
+- `Images\WebFound\cf43127f13ff44ab952021a78670a7ab.jpg` — 160.00 KB
+- `Images\WebFound\cfc758a8fc9b4f45ab97beb1aad9752e.jpg` — 244.13 KB
+- `Images\WebFound\d0eb13fd793f4fc5a6446eeb79392878.jpg` — 347.93 KB
+- `Images\WebFound\d1c1296a46dc4d11841afa70d5fcc302.jpg` — 221.08 KB
+- `Images\WebFound\d1c5676366794b2688313a339676a23e.jpg` — 30.52 KB
+- `Images\WebFound\d1eb9d72077e4b29ad7c2392b0b7d710.jpg` — 183.17 KB
+- `Images\WebFound\d663580359924eeb8517543d9e8553d6.jpg` — 45.70 KB
+- `Images\WebFound\d71e0e1473fe4faeac74ee77a23fdc16.jpg` — 333.16 KB
+- `Images\WebFound\d81e136ca54442738c839158a291eee4.jpg` — 164.57 KB
+- `Images\WebFound\d94c45e6427d4b9ab3ee076c85a073b1.jpg` — 169.75 KB
+- `Images\WebFound\dea16deb21ad41cbaa3452fb8f953cf7.png` — 5.09 MB
+- `Images\WebFound\dfc0d2e613914c2293e5cb71c4bf98fc.jpg` — 404.56 KB
+- `Images\WebFound\e2366adba67b4295a7db2cfb6553c162.png` — 35.84 KB
+- `Images\WebFound\e642de21d34941bdb32b905bd59684c8.png` — 320.71 KB
+- `Images\WebFound\e7265b5ff70c43b0b74383496ce7ce67.jpg` — 10.05 KB
+- `Images\WebFound\e780436cb44741c0ab180a656d22b504.jpg` — 688.62 KB
+- `Images\WebFound\eaf53c741f6d43cfaf6ca5577a0c16e6.jpg` — 139.27 KB
+- `Images\WebFound\ec4417426cc84f2b8477aacf27fd9d13.jpg` — 155.64 KB
+- `Images\WebFound\ec4fa8ca52c34e21a4c63e4c5240f51b.jpg` — 145.36 KB
+- `Images\WebFound\ec82150936834444ba46666fbbc9fa74.jpg` — 47.23 KB
+- `Images\WebFound\ed5d02eb08784f0cbc75d13d76f7343e.png` — 18.61 KB
+- `Images\WebFound\ed74a61a41aa4b8caf0fecf67cfb608c.jpg` — 194.52 KB
+- `Images\WebFound\f087326c748e4d7aa0c99ffd45fd3b34.jpg` — 20.11 KB
+- `Images\WebFound\f4d772b2ee1e4b389c395d4018db231e.jpg` — 148.56 KB
+- `Images\WebFound\f5952fd6f34b4c2e85314ad93c7b6a14.jpg` — 108.37 KB
+- `Images\WebFound\fbafba10d0744b408936e435d8f07b48.jpg` — 161.83 KB
+- `Images\WebFound\fbfe6b7a855a4cacb43a99bc6320fc05.jpg` — 112.00 KB
 - `NIRAAgent.UI\Assets\close.png` — 10.58 KB
 - `NIRAAgent.UI\Assets\ELVARA-NIRA-DARK.png` — 1.46 MB
 - `NIRAAgent.UI\Assets\ELVARA-NIRA-LIGHT.png` — 1.59 MB
