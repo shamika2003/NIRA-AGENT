@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Model = 'gemma4:31b',
+    [string]$Model = 'gpt-oss:120b',
     [switch]$SessionOnlyKey,
     [switch]$ForgetSavedKey,
     [switch]$AllowPersonalContext,

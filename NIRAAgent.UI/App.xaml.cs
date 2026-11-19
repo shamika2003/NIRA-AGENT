@@ -1053,6 +1053,9 @@ public partial class App : WpfApplication
                             "A required native observation function is missing.");
                     _ = nativeRegistry.BuildProviderTools(nativeRegistry.Tools
                         .Select(x => x.Spec).ToArray(), allowWrite: true);
+                     int secureTraceChecks = NIRADiagnosticTrace.RunSecureTraceSelfCheck();
+                     if (secureTraceChecks != 2)
+                         throw new InvalidOperationException("Encrypted model forensic trace is unavailable.");
                      int credentialPersistenceChecks = NIRAModelApiKeyService.RunPersistenceSelfCheck();
                      int credentialRetryChecks = GeneralModelReasoner.RunAuthenticationRecoverySelfCheck();
                      if (credentialPersistenceChecks != 3 || credentialRetryChecks != 6)
@@ -1070,6 +1073,17 @@ public partial class App : WpfApplication
                     // Current-run completion contracts must survive checkpoints
                     // and require real tool receipts, not a model's final prose.
                     int taskContractChecks = AgentTaskContractPolicy.RunSelfCheck();
+                    int modelDefaultChecks =
+                        NIRAActiveModelProvider.DefaultModel == "gpt-oss:120b" &&
+                        NIRAModelSelection.VisionDefault == "gemma4:31b" ? 2 : 0;
+                    if (modelDefaultChecks != 2)
+                        throw new InvalidOperationException(
+                            "R82 GPT-OSS reasoning / Gemma vision defaults are not compiled.");
+                    int docxDraftNormalizationChecks =
+                        AgentTaskContractPolicy.RunDocxDraftNormalizationSelfCheck();
+                    if (docxDraftNormalizationChecks != 4)
+                        throw new InvalidOperationException(
+                            "R82 typed DOCX proposal / cover normalization checks failed.");
                     int taskRecoveryChecks = GeneralModelReasoner.RunPendingTaskRecoverySelfCheck();
                     if (taskRecoveryChecks != 8)
                         throw new InvalidOperationException("Pending-work decision recovery checks failed.");
@@ -1082,6 +1096,10 @@ public partial class App : WpfApplication
                         await AgentLoopEngine.RunConfirmedNoEffectRecoverySelfCheckAsync(taskStore);
                     int studioMissingParentChecks =
                         NIRADocxStudioCapabilityHandler.RunMissingParentPreflightSelfCheck();
+                    int studioR12QualityChecks =
+                        NIRADocxStudioCapabilityHandler.RunStudioR12QualitySelfCheck();
+                    if (studioR12QualityChecks != 3)
+                        throw new InvalidOperationException("R12 Word Studio quality regression failed.");
                     if (noEffectRecoveryChecks != 3 || studioMissingParentChecks != 2)
                         throw new InvalidOperationException("Audited missing-folder correction checks failed.");
                     if (taskContractChecks != 3 || taskReceiptChecks != 5 || taskLoopChecks != 3)
@@ -1089,7 +1107,7 @@ public partial class App : WpfApplication
                     int protocolChecks = await NiraProtocolSelfCheck.RunAsync();
                     int noDecisionRecoveryChecks =
                         GeneralModelReasoner.RunNoDecisionRecoverySelfCheck();
-                    if (noDecisionRecoveryChecks != 11)
+                    if (noDecisionRecoveryChecks != 12)
                         throw new InvalidOperationException(
                             "Bounded incomplete-model-decision recovery checks failed.");
                     // This is REAL native tool schema checking. A malformed
@@ -1352,15 +1370,16 @@ public partial class App : WpfApplication
                             status = "PASS", capabilityCount = descriptors.Count,
                             nativeToolCount = nativeRegistry.Count,
                             nativeFunctionsChecked = requiredFunctions.Length,
-                            protocolChecks, noDecisionRecoveryChecks,
+                             secureTraceChecks, protocolChecks, noDecisionRecoveryChecks,
                             discoveryChecks, richChecks, activityChecks,
                             publicThinkingChecks, streamingDraftChecks,
                             sourceLinkRecoveryChecks, readOnlySchemaChecks, boundedSearchChecks,
                             researchProgressChecks, progressPresentationChecks, observedImageChecks,
                             readFailureEvidenceChecks,
                              discoveredRoutingChecks,
-                            taskContractChecks, taskReceiptChecks, taskLoopChecks,
-                            noEffectRecoveryChecks, studioMissingParentChecks,
+                            taskContractChecks, docxDraftNormalizationChecks, modelDefaultChecks,
+                            taskReceiptChecks, taskLoopChecks,
+                            noEffectRecoveryChecks, studioMissingParentChecks, studioR12QualityChecks,
                             taskRecoveryChecks,
                             docxPreflightChecks, docxBoundaryChecks,
                              providerFailureChecks, credentialPersistenceChecks, credentialRetryChecks,

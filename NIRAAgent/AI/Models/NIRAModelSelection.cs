@@ -16,7 +16,9 @@ public enum NIRAReasoningRole
 public static class NIRAModelSelection
 {
     public const string PrimaryDefault = NIRAActiveModelProvider.DefaultModel;
-    public const string VisionDefault = NIRAActiveModelProvider.DefaultModel;
+    // GPT-OSS 120B is text-only. Keep image observation on the separate
+    // multimodal Gemma resource; it cannot inherit the text-agent default.
+    public const string VisionDefault = "gemma4:31b";
     public const string DeepDefault = "nemotron-3-ultra";
 
     // Used only for identifying source/runtime alignment in diagnostics and tests.

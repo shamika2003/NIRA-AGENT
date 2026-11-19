@@ -25,7 +25,7 @@ public sealed class GeneralTaskCompletionGuard
         if (contract.SchemaVersion != 1)
             return new AgentTaskCompletionAssessment(false, "Task checkpoint uses an unsupported contract version.");
         var changed = new List<(string Name, string Hash, int Index)>();
-        var reads = new List<(string Name, string Hash, int Index)>();
+        var reads = new List<(string Name, string Hash, int Index, string Output)>();
         bool sawAction = false, sawChange = false;
         int i = 0;
         foreach (AgentObservation observation in run.Observations)
@@ -68,7 +68,7 @@ public sealed class GeneralTaskCompletionGuard
             {
                 string name = NameFromOutput(output, "Path", "Destination", "File");
                 if (name.Length > 0)
-                    reads.Add((name, ReadLine(output, "SHA256"), at));
+                    reads.Add((name, ReadLine(output, "SHA256"), at, output));
             }
         }
         if (contract.RequiresVerifiedAction && !sawAction)
@@ -88,14 +88,57 @@ public sealed class GeneralTaskCompletionGuard
                     return new(false, name.Length > 0
                         ? "No verified creation receipt exists for the requested file: " + name
                         : "No successful saved-artifact receipt exists for the requested output.");
-                if (contract.RequiresReadBack && !published.Any(write => reads.Any(read =>
-                    read.Index > write.Index &&
-                    string.Equals(read.Name, write.Name, StringComparison.OrdinalIgnoreCase) &&
-                    (write.Hash.Length == 0 || read.Hash.Length == 0 ||
-                     string.Equals(read.Hash, write.Hash, StringComparison.OrdinalIgnoreCase)))))
+                var matchingReads = (from write in published
+                    from read in reads
+                    where read.Index > write.Index &&
+                        string.Equals(read.Name, write.Name, StringComparison.OrdinalIgnoreCase) &&
+                        (write.Hash.Length == 0 || read.Hash.Length == 0 ||
+                         string.Equals(read.Hash, write.Hash, StringComparison.OrdinalIgnoreCase))
+                    orderby read.Index descending
+                    select read).ToArray();
+                bool docx = published.Any(x => x.Name.EndsWith(".docx", StringComparison.OrdinalIgnoreCase));
+                // A generic file.hash receipt does not prove Word structure.
+                // For DOCX quality, choose the latest ACTUAL DOCX inspector
+                // receipt, even if a later independent hash was also taken.
+                var paired = docx ? matchingReads.FirstOrDefault(read =>
+                    ReadLine(read.Output, "EmbeddedMediaParts").Length > 0) :
+                    matchingReads.FirstOrDefault();
+                if (contract.RequiresReadBack && paired.Output is null)
                     return new(false, "The saved artifact " +
                         (name.Length > 0 ? name : published[^1].Name) +
                         " has not been verified by a later matching read-only inspection.");
+                if (paired.Output is not null && docx)
+                {
+                    string readback = paired.Output;
+                    static int? Number(string output, string key) =>
+                        int.TryParse(ReadLine(output, key), out int number) ? number : null;
+                    // Honest independent readback: a matching SHA alone does
+                    // not prove the requested images/table/references exist.
+                    if (contract.RequiresDocxIllustration && Number(readback, "EmbeddedMediaParts") is not > 0)
+                        return new(false, "The saved DOCX does not contain a verified embedded illustration.");
+                    if (contract.RequiresDocxTable && Number(readback, "Tables") is not > 0)
+                        return new(false, "The saved DOCX does not contain the requested table.");
+                    if (contract.RequiresDocxReferences && Number(readback, "ReferenceEntries") is not > 0)
+                        return new(false, "The saved DOCX has no independently observed source definitions.");
+                    if (contract.MinimumDocxBodyWords > 0 &&
+                        (Number(readback, "WordsApprox") ?? 0) < contract.MinimumDocxBodyWords)
+                        return new(false, "The saved DOCX is materially shorter than the user's requested page-length content floor.");
+                    if (Number(readback, "UnresolvedCitationCount") is > 0)
+                        return new(false, "The saved DOCX contains unresolved source references.");
+                    if (Number(readback, "PositionalTableLabelCount") is > 0)
+                        return new(false, "The saved DOCX table exposes JSON positional key names.");
+                    if (ReadLine(readback, "DuplicateLeadingTitle") == "True")
+                        return new(false, "The saved DOCX starts with a duplicated document title.");
+                    // R81: a ZIP-valid Word file is not enough when visible
+                    // Markdown and escaped line breaks were saved as document
+                    // prose. Do not claim quality/completion from a bad readback.
+                    if (Number(readback, "LiteralEscapedBreakParagraphs") is > 0 ||
+                        Number(readback, "RawMarkdownHeadingParagraphs") is > 0)
+                        return new(false, "The saved DOCX contains raw Markdown or escaped line-break text instead of formatted Word content.");
+                    if (contract.RequiresDocxReferences &&
+                        Number(readback, "BibliographyHeadingCount") is > 1)
+                        return new(false, "The saved DOCX has duplicate bibliography sections.");
+                }
             }
         }
         return new(true, "The recorded tool receipts satisfy the mandatory external-action " +
@@ -115,9 +158,28 @@ public sealed class GeneralTaskCompletionGuard
         if (contract.RequestedFileNames.Count > 0)
             text.AppendLine("Required named outputs: " + string.Join(", ", contract.RequestedFileNames));
         if (contract.RequiresSavedArtifact)
+        {
             text.AppendLine("A real saved artifact needs an audited success receipt, not narration.");
+            if (contract.RequestedFileNames.Any(name =>
+                name.EndsWith(".docx", StringComparison.OrdinalIgnoreCase)))
+                text.AppendLine("The user requested an ACTUAL Word file. Put the substantive " +
+                    "report, tables, references and verified images INSIDE the document. " +
+                    "A lengthy chat reply is not a substitute. After file verification, " +
+                    "respond with a brief accurate status and destination. " +
+                    "Never claim rendered page count without a renderer.");
+        }
         if (contract.RequiresReadBack)
             text.AppendLine("The user also requires independent read-back verification AFTER publication.");
+        if (contract.RequiresDocxIllustration)
+            text.AppendLine("Required DOCX content: at least one real embedded, verified illustration. A chat image is not an embedded document illustration.");
+        if (contract.RequiresDocxTable)
+            text.AppendLine("Required DOCX content: a native comparison/data table.");
+        if (contract.RequiresDocxReferences)
+            text.AppendLine("Required DOCX content: a references section with source definitions; no dangling [S#] markers.");
+        if (contract.RequiresDocxCover)
+            text.AppendLine("Required DOCX layout: a distinct cover/title page with a native page break.");
+        if (contract.MinimumDocxBodyWords > 0)
+            text.AppendLine($"Approximate DOCX content floor: {contract.MinimumDocxBodyWords} narrative words from {contract.RequestedDocxPages}-page request. This does NOT establish rendered page count.");
         text.AppendLine("Mandatory execution proof: " +
             (assessment.Accept ? "Observed required actions" : "UNFULFILLED — " + assessment.Reason));
         if (contract.RejectedPrematureAnswers > 0)
@@ -193,12 +255,17 @@ public sealed class GeneralTaskCompletionGuard
         var inspected = JsonSerializer.SerializeToElement(new {
             capabilityId = "filesystem.docx.inspect", status = "Succeeded",
             auditRecorded = true, changedSystemState = false, outcomeUncertain = false,
-            output = "Path=C:\\Docs\\Tesla_Report.docx\nSHA256=abc\nParagraphs=12" });
+            output = "Path=C:\\Docs\\Tesla_Report.docx\nSHA256=abc\nParagraphs=12\nTables=0\nEmbeddedMediaParts=0\nReferenceEntries=0\nWordsApprox=140" });
         string si = await vault.SaveResultAsync(run.Id, "nira.capabilities.observe", inspected, ct);
         run.Observations.Add(new AgentObservation("nira.capabilities.observe", si, true,
             "OK", DateTimeOffset.UtcNow));
         if (!(await guard.AssessAsync(run, ct)).Accept)
             throw new InvalidOperationException("Valid saved and inspected artifact rejected.");
+        run.TaskContract = AgentTaskContractPolicy.Create(
+            "Create Tesla_Report.docx with an illustration and comparison table " +
+            "and references. Inspect the saved file.");
+        if ((await guard.AssessAsync(run, ct)).Accept)
+            throw new InvalidOperationException("Unillustrated document passed content-quality gate.");
         return 5;
     }
 }

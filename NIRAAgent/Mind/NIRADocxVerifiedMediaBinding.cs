@@ -71,32 +71,68 @@ internal static class NIRADocxVerifiedMediaBinding
             .GroupBy(asset => asset.LocalPath, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First()).Take(6).ToArray();
         var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (JsonNode? item in blocks)
+        for (int blockIndex = 0; blockIndex < blocks.Count; blockIndex++)
         {
-            if (item is not JsonObject obj ||
+            if (blocks[blockIndex] is not JsonObject obj ||
                 !string.Equals(Text(obj, "type"), "image", StringComparison.OrdinalIgnoreCase)) continue;
 
             string existing = Text(obj, "imagePath");
+            NIRACapabilityVisualArtifact? exact = candidates.FirstOrDefault(asset =>
+                string.Equals(asset.LocalPath, existing, StringComparison.OrdinalIgnoreCase));
             if (!string.IsNullOrWhiteSpace(existing) && File.Exists(existing))
             {
+                // Do not replace a valid model-supplied image. Enrich only if
+                // THIS local file was independently returned by a prior tool.
+                if (exact is not null)
+                {
+                    if (Text(obj, "altText").Length == 0 && exact.Title.Length > 0)
+                    {
+                        obj["altText"] = exact.Title[..Math.Min(200, exact.Title.Length)];
+                        bound++;
+                    }
+                    if (Text(obj, "credit").Length == 0 && exact.SourceUri.Length > 0)
+                    {
+                        obj["credit"] = "Source: " + exact.SourceUri[..Math.Min(360, exact.SourceUri.Length)];
+                        bound++;
+                    }
+                }
                 used.Add(existing);
-                continue; // Preserve the author's valid explicit image file.
+                continue;
             }
 
             string description = string.Join(' ', Text(obj, "altText"), Text(obj, "caption"));
             HashSet<string> desired = Tokens(description);
-            // Do not fill unspecified or unrelated pictures with an arbitrary
-            // image simply to pass minimumImages; provenance and subject matter.
+            bool inferred = desired.Count == 0;
+            if (inferred)
+            {
+                // An empty image block still has local document context.
+                // Match only against the 1-3 immediately preceding text blocks;
+                // do not choose an arbitrary web photograph merely to pass QA.
+                int from = Math.Max(0, blockIndex - 3);
+                string neighborhood = string.Join(' ', Enumerable.Range(from, blockIndex - from)
+                    .Select(index => blocks[index] is JsonObject preceding
+                        ? string.Join(' ', Text(preceding, "text"), Text(preceding, "content")) : ""));
+                desired = Tokens(neighborhood);
+            }
             if (desired.Count == 0) continue;
             NIRACapabilityVisualArtifact? match = candidates
                 .Where(asset => !used.Contains(asset.LocalPath))
                 .Select(asset => (Asset: asset, Score: Tokens(string.Join(' ', asset.Title,
                     asset.SubjectQuery, asset.Caption)).Intersect(desired).Count()))
-                .Where(entry => entry.Score > 0)
+                .Where(entry => entry.Score >= (inferred ? 2 : 1))
                 .OrderByDescending(entry => entry.Score)
                 .Select(entry => entry.Asset).FirstOrDefault();
             if (match is null) continue;
             obj["imagePath"] = match.LocalPath;
+            if (Text(obj, "altText").Length == 0)
+            {
+                string label = match.Title.Length > 0 ? match.Title : match.Caption;
+                if (label.Length > 0) obj["altText"] = label[..Math.Min(200, label.Length)];
+            }
+            if (Text(obj, "caption").Length == 0 && match.Caption.Length > 0)
+                obj["caption"] = match.Caption[..Math.Min(300, match.Caption.Length)];
+            if (Text(obj, "credit").Length == 0 && match.SourceUri.Length > 0)
+                obj["credit"] = "Source: " + match.SourceUri[..Math.Min(360, match.SourceUri.Length)];
             used.Add(match.LocalPath);
             bound++;
         }

@@ -111,6 +111,10 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
                 return;
             }
             NiraProviderSelection selection = NiraProviderSelection.FromEnvironment();
+            // Operator-visible model identity for diagnosing stale binaries or
+            // an inherited process-level NIRA_MODEL_NAME override. No key logged.
+            NIRADiagnosticTrace.Event("NIRA-REASONING-MODEL",
+                $"Provider={selection.Provider} Model={selection.Options.Model} Revision=R82");
             if (!selection.IsReady && !(selection.Provider == "OLLAMA" && _modelKeys.HasKey))
             {
                 Finish(writer, mindEvent.Source,
@@ -289,15 +293,23 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
                     catch (Exception ex) when (ex is IOException or InvalidDataException or
                         UnauthorizedAccessException or JsonException) { }
                 }
-                NIRAUnifiedRichAnswer prepared = NIRAUnifiedRichAnswerComposer.Compose(
-                    run.FinalAnswer, request, evidenceTexts);
+                // On a verified DOCX deliverable, the saved document is the
+                // answer. Do not repeat its research chapters or web images in
+                // the chat; derive the short status from matching audited create
+                // and readback receipts, never from model completion claims.
+                bool artifactFirst = NIRADocxArtifactReplyPolicy.TryCompose(
+                    run.TaskContract, evidenceTexts, out NIRAUnifiedRichAnswer prepared);
+                if (!artifactFirst)
+                    prepared = NIRAUnifiedRichAnswerComposer.Compose(
+                        run.FinalAnswer, request, evidenceTexts);
                 string content = prepared.Screen + (receipt ?? "");
                 writer.TryWrite(new NIRAOutputChunk {
                     RunId = run.Id, Source = mindEvent.Source, Type = NIRAOutputChunkType.Text,
                     Content = content, DisplayBlocks = prepared.Blocks,
                     SpeechContent = prepared.Screen + (receipt is null ? "" :
                         " The saved work plan was verified.") });
-                await EmitVerifiedVisualsAsync(run, vault, writer, mindEvent.Source, ct);
+                if (!artifactFirst)
+                    await EmitVerifiedVisualsAsync(run, vault, writer, mindEvent.Source, ct);
                 bool disposableMath = await IsVerifiedDisposableMathAsync(mindEvent, run, vault, ct);
                 writer.TryWrite(new NIRAOutputChunk { RunId = run.Id,
                     Source = mindEvent.Source, Type = NIRAOutputChunkType.Completed,
@@ -416,6 +428,8 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
             !ProviderFailureMessage("OLLAMA", "MODEL_TRANSPORT_TIMEOUT", false)
                 .Contains("timed out", StringComparison.Ordinal))
             throw new InvalidOperationException("Operator-facing provider failure messages missing.");
+        if (NIRADocxArtifactReplyPolicy.RunSelfCheck() != 3)
+            throw new InvalidOperationException("R81 artifact-first document presentation check failed.");
         return 4;
     }
 

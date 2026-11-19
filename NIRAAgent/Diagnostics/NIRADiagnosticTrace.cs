@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Security.Cryptography;
 
 namespace NIRAAgent.Diagnostics;
 
@@ -52,6 +53,110 @@ public static class NIRADiagnosticTrace
     public static string PublicResponseLogPath => Path.Combine(DirectoryPath,
         $"nira-public-{Environment.ProcessId}.jsonl");
 
+    // Default ON, DPAPI CurrentUser encrypted: full forensic records of every
+    // model request, provider decision, rejected draft and protocol failure.
+    // The provider API key is never serialized (Authorization is HTTP-header only).
+    // Ordinary event logs remain metadata-only, safe to inspect/share after review.
+    public static bool SecureAgentCaptureEnabled => OperatingSystem.IsWindows();
+    public static string SecureAgentDecisionLogPath => Path.Combine(DirectoryPath,
+        $"nira-agent-secure-{Environment.ProcessId}.jsonl.dpapi");
+    private static readonly byte[] AgentTraceEntropy =
+        Encoding.UTF8.GetBytes("NIRAAgent-DPAPI-DecisionTrace-V1");
+
+    private static void AppendSecureAgentRecord(object record)
+    {
+        if (!SecureAgentCaptureEnabled) return;
+        byte[]? plaintext = null;
+        try
+        {
+            plaintext = JsonSerializer.SerializeToUtf8Bytes(record);
+            byte[] ciphertext = ProtectedData.Protect(plaintext, AgentTraceEntropy,
+                DataProtectionScope.CurrentUser);
+            Append(SecureAgentDecisionLogPath, Convert.ToBase64String(ciphertext));
+        }
+        catch (Exception ex) when (ex is CryptographicException or JsonException or
+            UnauthorizedAccessException or IOException or ArgumentException or
+            NotSupportedException or InvalidOperationException)
+        {
+            // Never fall back to plaintext logging when DPAPI fails.
+            Event("SECURE-AGENT-TRACE-ERROR", "EncryptionOrWrite=" + ex.GetType().Name);
+        }
+        finally
+        {
+            if (plaintext is not null) CryptographicOperations.ZeroMemory(plaintext);
+        }
+    }
+
+    // The exact non-secret Ollama request body and native tool definitions are
+    // encrypted BEFORE network submission. The API key/header is not part of it.
+    public static void AgentProviderRequest(Guid runId, int modelRequest,
+        IDictionary<string, object> payload)
+    {
+        AppendSecureAgentRecord(new {
+            TimestampUtc = DateTimeOffset.UtcNow, Event = "AGENT-HTTP-REQUEST",
+            RunId = runId, ModelRequest = modelRequest, RequestPayload = payload
+        });
+    }
+
+    // Always-safe block STRUCTURE summary; never log a document's private text,
+    // file paths, source URLs, or typed content in the ordinary event log.
+    public static void DocumentDraftShape(Guid runId, int modelRequest,
+        JsonElement proposal)
+    {
+        if (proposal.ValueKind != JsonValueKind.Object ||
+            !proposal.TryGetProperty("arguments", out JsonElement args) ||
+            args.ValueKind != JsonValueKind.Object ||
+            !args.TryGetProperty("blocksJson", out JsonElement blocks)) return;
+        try
+        {
+            using JsonDocument? owner = blocks.ValueKind == JsonValueKind.String
+                ? JsonDocument.Parse(blocks.GetString() ?? "") : null;
+            if (owner is not null) blocks = owner.RootElement;
+            if (blocks.ValueKind != JsonValueKind.Array) return;
+            var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            int citationMarkers = 0, linkTokens = 0, textChars = 0;
+            foreach (JsonElement block in blocks.EnumerateArray())
+            {
+                if (block.ValueKind != JsonValueKind.Object) continue;
+                string kind = block.TryGetProperty("type", out JsonElement type) &&
+                    type.ValueKind == JsonValueKind.String ? type.GetString() ?? "" : "unknown";
+                kind = OneLine(kind, 18);
+                counts[kind] = counts.TryGetValue(kind, out int n) ? n + 1 : 1;
+                foreach (string field in new[] { "text", "content" })
+                {
+                    if (!block.TryGetProperty(field, out JsonElement content) ||
+                        content.ValueKind != JsonValueKind.String) continue;
+                    string val = content.GetString() ?? "";
+                    textChars += val.Length;
+                    citationMarkers += System.Text.RegularExpressions.Regex.Matches(val,
+                        @"\[S[0-9]+\]", System.Text.RegularExpressions.RegexOptions.IgnoreCase).Count;
+                    linkTokens += System.Text.RegularExpressions.Regex.Matches(val,
+                        @"https://", System.Text.RegularExpressions.RegexOptions.IgnoreCase).Count;
+                }
+            }
+            Event("AGENT-DOCX-DRAFT-SHAPE", $"Run={runId:N} ModelRequest={modelRequest} " +
+                $"Blocks={blocks.GetArrayLength()} Types={string.Join(",", counts.OrderBy(x => x.Key).Select(x => x.Key + ":" + x.Value))} " +
+                $"CitationMarkers={citationMarkers} UrlMarkers={linkTokens} TextChars={textChars}");
+        }
+        catch (JsonException) { Event("AGENT-DOCX-DRAFT-SHAPE", $"Run={runId:N} InvalidBlocksJson=True"); }
+    }
+
+    public static int RunSecureTraceSelfCheck()
+    {
+        if (!OperatingSystem.IsWindows()) return 2;
+        byte[] plaintext = Encoding.UTF8.GetBytes("NIRA forensic audit self-check");
+        byte[] encrypted = ProtectedData.Protect(plaintext, AgentTraceEntropy,
+            DataProtectionScope.CurrentUser);
+        byte[] recovered = ProtectedData.Unprotect(encrypted, AgentTraceEntropy,
+            DataProtectionScope.CurrentUser);
+        if (!plaintext.AsSpan().SequenceEqual(recovered) ||
+            Encoding.UTF8.GetString(encrypted).Contains("NIRA forensic", StringComparison.Ordinal))
+            throw new InvalidOperationException("DPAPI decision trace cannot be recovered safely.");
+        CryptographicOperations.ZeroMemory(plaintext);
+        CryptographicOperations.ZeroMemory(recovered);
+        return 2;
+    }
+
     // Full agent decisions (including candidates rejected by grounding and
     // quality gates) may contain file paths, private answers or tool inputs.
     // Default event log records ONLY metadata; complete text is opt-in locally.
@@ -66,6 +171,12 @@ public static class NIRADiagnosticTrace
     public static void AgentModelRawMessage(Guid runId, int requestNumber,
         int decisionNumber, JsonElement message)
     {
+        AppendSecureAgentRecord(new {
+            TimestampUtc = DateTimeOffset.UtcNow,
+            Event = "AGENT-RAW-MODEL-MESSAGE", RunId = runId,
+            ModelRequest = requestNumber, Decision = decisionNumber,
+            Message = message
+        });
         if (!AgentDecisionCaptureEnabled) return;
         Append(AgentDecisionLogPath, JsonSerializer.Serialize(new {
             TimestampUtc = DateTimeOffset.UtcNow,
@@ -85,6 +196,12 @@ public static class NIRADiagnosticTrace
         Event("AGENT-MODEL-PROTOCOL-FAILURE", "Run=" + runId.ToString("N") +
             " Request=" + modelRequest + " Code=" + reason +
             " Phase=" + OneLine(phase, 110));
+        AppendSecureAgentRecord(new {
+            TimestampUtc = DateTimeOffset.UtcNow,
+            Event = "AGENT-PROVIDER-RESPONSE-REJECTED",
+            RunId = runId, ModelRequest = modelRequest,
+            ReasonCode = reasonCode, Phase = phase, RawResponse = rawResponse
+        });
         if (!AgentDecisionCaptureEnabled) return;
         Append(AgentDecisionLogPath, JsonSerializer.Serialize(new {
             TimestampUtc = DateTimeOffset.UtcNow,
@@ -108,6 +225,12 @@ public static class NIRADiagnosticTrace
             $"Decision={decisionNumber} Kind={safeKind} Function={safeFunction} " +
             $"Verdict={safeVerdict} AnswerChars={answer?.Length ?? 0} " +
             $"ArgsChars={(arguments?.GetRawText().Length ?? 0)}");
+        AppendSecureAgentRecord(new {
+            TimestampUtc = DateTimeOffset.UtcNow, Event = "AGENT-MODEL-CANDIDATE",
+            RunId = runId, ModelRequest = requestNumber, Decision = decisionNumber,
+            Kind = kind, Function = function, Verdict = verdict,
+            Arguments = arguments, Answer = answer
+        });
         if (!AgentDecisionCaptureEnabled) return;
         Append(AgentDecisionLogPath, JsonSerializer.Serialize(new {
             TimestampUtc = DateTimeOffset.UtcNow, Event = "AGENT-MODEL-CANDIDATE",
@@ -272,6 +395,10 @@ public static class NIRADiagnosticTrace
                         $"PublicResponseLog={PublicResponseLogPath}\n" +
                         $"AgentDecisionCapture={AgentDecisionCaptureEnabled}\n" +
                         $"AgentDecisionLog={AgentDecisionLogPath}\n" +
+                        $"SecureAgentLog={SecureAgentDecisionLogPath}\n" +
+                        $"SecureAgentCapture={SecureAgentCaptureEnabled}\n" +
+                        "SecureAgentLog is encrypted under the current Windows account; " +
+                        "it captures model requests, candidate tool calls and rejections by default.\n" +
                         "To capture accepted/rejected model text and tool arguments: " +
                         "NIRA_DEBUG_AGENT_DECISIONS=1\n" +
                         "To capture delivered Markdown and native blocks: NIRA_DEBUG_PUBLIC_RESPONSES=1\n" +
@@ -287,7 +414,9 @@ public static class NIRADiagnosticTrace
                 long limit = string.Equals(filePath, LlmLogPath, StringComparison.OrdinalIgnoreCase)
                     || string.Equals(filePath, PublicResponseLogPath, StringComparison.OrdinalIgnoreCase)
                     || string.Equals(filePath, AgentDecisionLogPath, StringComparison.OrdinalIgnoreCase)
-                    ? 32_000_000 : 4_000_000;
+                    ? 32_000_000 :
+                    string.Equals(filePath, SecureAgentDecisionLogPath, StringComparison.OrdinalIgnoreCase)
+                    ? 64_000_000 : 4_000_000;
                 if (File.Exists(filePath) && new FileInfo(filePath).Length > limit)
                     File.Move(filePath, filePath + ".previous", overwrite: true);
                 File.AppendAllText(filePath, line + Environment.NewLine, Encoding.UTF8);

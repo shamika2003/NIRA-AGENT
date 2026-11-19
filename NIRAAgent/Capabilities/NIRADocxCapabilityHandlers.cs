@@ -386,10 +386,60 @@ internal static partial class NIRADocx
                     $"\nMarginBottomMm={ToMm(bottom)}\nMarginLeftMm={ToMm(left)}";
             }
         }
+        // Analyze the SAVED Word XML, never the model's proposed contents.
+        // Markers are a source-list integrity check, not a truth/citation audit.
+        var referenceDefinitions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var sourceMentions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        bool inReferenceSection = false;
+        int referenceEntries = 0;
+        foreach (string paragraph in paragraphs)
+        {
+            if (Regex.IsMatch(paragraph.Trim(),
+                @"^(?:References|Bibliography|Sources|Works Cited)$", RegexOptions.IgnoreCase))
+            { inReferenceSection = true; continue; }
+            foreach (Match group in Regex.Matches(paragraph,
+                @"\[S[0-9]{1,3}(?:\s*,\s*S?[0-9]{1,3})*\]", RegexOptions.IgnoreCase))
+                foreach (Match num in Regex.Matches(group.Value, @"[0-9]{1,3}"))
+                    sourceMentions.Add(num.Value);
+            if (inReferenceSection)
+            {
+                referenceEntries++;
+                foreach (Match match in Regex.Matches(paragraph,
+                    @"^\s*\[S(?<n>[0-9]{1,3})\]\s*[-.:]?\s+", RegexOptions.IgnoreCase))
+                    referenceDefinitions.Add(match.Groups["n"].Value);
+            }
+        }
+        int unresolvedSources = sourceMentions.Except(referenceDefinitions,
+            StringComparer.OrdinalIgnoreCase).Count();
+        int tablePositionLabels = document.Descendants(W + "tbl")
+            .SelectMany(table => table.Descendants(W + "tc"))
+            .Count(cell => Regex.IsMatch(
+                string.Concat(cell.Descendants(W + "t").Select(t => t.Value)).Trim(),
+                @"^cell[1-8]:\s", RegexOptions.IgnoreCase));
+        bool duplicatedTitle = paragraphs.Count > 1 &&
+            string.Equals(paragraphs[0].Trim(), paragraphs[1].Trim(),
+                StringComparison.OrdinalIgnoreCase);
+        // R81: inspect the ACTUAL saved Word text for visible serialization
+        // defects that were previously mistaken for professionally formatted
+        // headings/paragraphs. These are structural metrics, not page rendering.
+        int literalEscapedBreakParagraphs = paragraphs.Count(p =>
+            p.Contains("\\n", StringComparison.Ordinal) ||
+            p.Contains("\\r", StringComparison.Ordinal));
+        int rawMarkdownHeadingParagraphs = paragraphs.Count(p =>
+            Regex.IsMatch(p, @"^\s*#{1,6}\s+\S", RegexOptions.CultureInvariant));
+        int bibliographyHeadingCount = paragraphs.Count(p =>
+            Regex.IsMatch(p.Trim(), @"^(?:References|Bibliography|Sources|Works Cited)$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant));
+        string documentQualityEvidence =
+            $"ReferenceDefinitions={referenceDefinitions.Count}\nReferenceEntries={referenceEntries}\nUnresolvedCitationCount={unresolvedSources}\n" +
+            $"PositionalTableLabelCount={tablePositionLabels}\nDuplicateLeadingTitle={duplicatedTitle}\n" +
+            $"LiteralEscapedBreakParagraphs={literalEscapedBreakParagraphs}\n" +
+            $"RawMarkdownHeadingParagraphs={rawMarkdownHeadingParagraphs}\n" +
+            $"BibliographyHeadingCount={bibliographyHeadingCount}\n";
         string headerFooterEvidence = InspectHeaderFooterParts(zip, document);
         return new NIRACapabilityHandlerResult { ChangedSystemState = false,
             Summary = "DOCX inspected read-only; verified file contents, section layout and bounded text preview returned.",
-            Output = $"Path={path}\nSHA256={fingerprint.Sha256}\nBytes={fingerprint.Bytes}\nParagraphs={paragraphs.Count}\nHeadings={headings}\nTables={tables}\nManualPageBreaks={manualPageBreaks}\n{headerEvidence}{pageEvidence}\n{headerFooterEvidence}\nEmbeddedMediaParts={images}\nWordsApprox={words}\nPreviewLimited=True\nPreview:\n{preview}" };
+            Output = $"Path={path}\nSHA256={fingerprint.Sha256}\nBytes={fingerprint.Bytes}\nParagraphs={paragraphs.Count}\nHeadings={headings}\nTables={tables}\nManualPageBreaks={manualPageBreaks}\n{headerEvidence}{pageEvidence}\n{headerFooterEvidence}\n{documentQualityEvidence}EmbeddedMediaParts={images}\nWordsApprox={words}\nPreviewLimited=True\nPreview:\n{preview}" };
     }
 
     internal static async Task<NIRACapabilityHandlerResult> AppendAsync(

@@ -7,7 +7,7 @@ namespace NIRAAgent.AI.Models;
 /// </summary>
 public static class NIRAActiveModelProvider
 {
-    public const string DefaultModel = "gemma4:31b";
+    public const string DefaultModel = "gpt-oss:120b";
     public const string ProcessCredentialName = "NIRA_OLLAMA_API_KEY";
     public const string AlternateCredentialName = "OLLAMA_API_KEY";
     public static Uri ChatEndpoint { get; } =

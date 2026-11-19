@@ -3,6 +3,9 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using NIRAAgent.Diagnostics;
+using NIRAAgent.Capabilities;
+using NIRAAgent.Mind;
+using System.Text.Json.Nodes;
 using NIRAAgent.Runtime.Contracts;
 using NIRAAgent.Runtime.ModelProvider;
 using NIRAAgent.Runtime.Runtime.AgentLoop;
@@ -43,6 +46,13 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
     private readonly Action<string>? _publicThinkingUpdate;
     private bool _publicThinkingPublished;
     private bool _publicThinkingFallbackAttempted;
+    // SAME live run only: the model's exact previously validated report intent.
+    // A confirmed no-publication failure + an audited exact parent-create may
+    // permit ONE fresh, re-authorized proposal; no uncertain write is replayed.
+    private Guid _studioPendingRunId;
+    private JsonElement _studioPendingProposal;
+    private int _studioPendingObservationStart;
+    private bool _studioPendingRetryUsed;
     public int PublicThinkingFallbackRequests { get; private set; }
 
     public static int RunGroundingRecoverySelfCheck() =>
@@ -52,15 +62,18 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
     public static int RunObservedWebImageSelfCheck() =>
         GeneralObservationContext.RunObservedWebImageSelfCheck();
 
-    // Provider-only recovery. A malformed or empty model response never becomes
-    // an authoritative action; the current request has dispatched no tool.
-    // Retrying inference is safe, but only once and never for invalid tool JSON,
-    // conflicting finish signals, permission denials, or canceled work.
+    // Only a rejected provider inference, never a capability execution, is
+    // eligible here. A malformed Ollama SSE choices envelope leaves NO parsed
+    // model decision and cannot authorize a tool. Exactly one retry uses full
+    // non-streaming JSON with the same checkpointed observations and controls.
+    // Do not retry invalid tool fragments, conflicting finishes, non-Ollama
+    // protocol faults, cancellations or a second malformed response.
     private static bool CanRetryNoModelDecision(string code, bool alreadyRetried,
-        bool cancellationRequested) =>
-        !alreadyRetried && !cancellationRequested && code is
-            ("MODEL_SSE_ANSWER_INCOMPLETE" or "MODEL_SSE_MISSING_FINISH" or
-             "MODEL_JSON_ANSWER_EMPTY" or "MODEL_RESPONSE_EMPTY");
+        bool cancellationRequested, bool ollamaSseResponse = false) =>
+        !alreadyRetried && !cancellationRequested &&
+        (code is ("MODEL_SSE_ANSWER_INCOMPLETE" or "MODEL_SSE_MISSING_FINISH" or
+             "MODEL_JSON_ANSWER_EMPTY" or "MODEL_RESPONSE_EMPTY") ||
+         (ollamaSseResponse && code == "MODEL_SSE_CHOICES_INVALID"));
 
     private static void ApplyNoDecisionTransportRecovery(
         IDictionary<string, object> payload, NiraModelEndpointOptions endpoint,
@@ -97,6 +110,23 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                 throw new InvalidOperationException("Unsafe provider error retried.");
             passed++;
         }
+        // Reproduce the observed Ollama GPT-OSS stream-shape failure. This
+        // must be a one-shot inference-only JSON fallback, never a tool replay.
+        const string malformedChoices = "MODEL_SSE_CHOICES_INVALID";
+        if (!CanRetryNoModelDecision(malformedChoices, false, false,
+                ollamaSseResponse: true) ||
+            CanRetryNoModelDecision(malformedChoices, true, false,
+                ollamaSseResponse: true) ||
+            CanRetryNoModelDecision(malformedChoices, false, true,
+                ollamaSseResponse: true) ||
+            CanRetryNoModelDecision(malformedChoices, false, false) ||
+            CanRetryNoModelDecision("MODEL_SSE_FRAME_JSON_INVALID", false, false,
+                ollamaSseResponse: true) ||
+            CanRetryNoModelDecision("MODEL_SSE_TOOL_ARGUMENTS_INVALID", false, false,
+                ollamaSseResponse: true))
+            throw new InvalidOperationException(
+                "R83 Ollama malformed-SSE recovery boundary incorrect.");
+        passed++;
         var retry = new Dictionary<string, object> {
             ["stream"] = true, ["reasoning_effort"] = "medium" };
         ApplyNoDecisionTransportRecovery(retry, NiraModelEndpointOptions.Ollama(
@@ -114,24 +144,200 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
     // for Tesla, DOCX paths, or the machine running NIRA.
     private static bool CanRetryUnfinishedTask(AgentTaskContract? contract,
         AgentTaskCompletionAssessment assessment, int attempt, int toolCount) =>
-        contract is not null && !assessment.Accept && attempt < 2 && toolCount > 0;
+        contract is not null && !assessment.Accept && toolCount > 0 &&
+        attempt < (contract.RequestedFileNames.Any(n =>
+            n.EndsWith(".docx", StringComparison.OrdinalIgnoreCase)) ? 4 : 2);
 
-    // Only for an unfinished saved-artifact task, prioritize the registered
-    // action adapters in a corrective turn instead
-    // of inviting another search when the requested mutation has not run at all.
-    // These tools are ALREADY advertised/authorized through the normal registry;
-    // this only narrows model suggestions, never expands permissions.
+    // Prioritize the ALREADY REGISTERED adapters during a corrective artifact
+    // turn. A successful directory.create is NOT evidence that the requested
+    // DOCX was written. Do not switch this focus off merely because ANY write
+    // succeeded. Include observe for the post-create independent inspection.
+    // Only a failed task assessment activates this path; normal turns are intact.
     private static IReadOnlyList<AgentToolSpec> FocusUnstartedActionTools(
         IReadOnlyList<AgentToolSpec> advertised, AgentTaskContract? contract,
         IReadOnlyList<AgentObservation> observations, string? correction)
     {
-        if (correction != "UNFINISHED_TASK_ACTION_REQUIRED" ||
-            contract?.RequiresSavedArtifact != true ||
-            observations.Any(o => o.Succeeded && o.ToolId == "nira.capabilities.execute"))
+        if (correction is not ("UNFINISHED_TASK_ACTION_REQUIRED" or
+                "UNFINISHED_TASK_JSON_ACTION_REQUIRED" or
+                "DOCX_CREATE_BEFORE_INSPECT") ||
+            contract?.RequiresSavedArtifact != true)
             return advertised;
         AgentToolSpec[] focused = advertised.Where(t =>
-            t.Id is "nira.capabilities.execute" or "nira.capabilities.discover").ToArray();
+            t.Id is "nira.capabilities.execute" or "nira.capabilities.observe" or
+                "nira.capabilities.discover").ToArray();
         return focused.Any(t => t.Id == "nira.capabilities.execute") ? focused : advertised;
+    }
+
+    // An invalid model proposal was never an executed tool. Constrain its
+    // revision to the SAME registered adapter; a successful audited mutation
+    // or uncertain write cannot reach this path. No tool authority is added.
+    private static IReadOnlyList<AgentToolSpec> FocusRejectedNativeTool(
+        IReadOnlyList<AgentToolSpec> advertised, string? correction,
+        string? rejectedToolId)
+    {
+        if (correction is not ("UNEXECUTED_MUTATION_ARGUMENT_INVALID" or
+                "UNFINISHED_TASK_ACTION_REQUIRED") ||
+            string.IsNullOrWhiteSpace(rejectedToolId)) return advertised;
+        AgentToolSpec[] focused = advertised.Where(t =>
+            t.Id == rejectedToolId && t.Access == AccessLevel.Modify).ToArray();
+        return focused.Length == 1 ? focused : advertised;
+    }
+
+    // OpenAI-compatible Ollama advertises tool_choice. On a correction for
+    // unfulfilled authorized work, require a native structured proposal,
+    // rather than allowing an unverified public update to consume the turn.
+    // The selected call still passes the same native schema, permission gate,
+    // checkpoint and definitive/uncertain outcome rules as any other call.
+    private static bool RequireCorrectiveNativeTool(IDictionary<string, object> payload,
+        NiraModelEndpointOptions provider, string? correction,
+        bool mandatoryWorkUnfinished, IReadOnlyList<AgentToolSpec> advertised)
+    {
+        if (!provider.IsOllama || !mandatoryWorkUnfinished ||
+            correction is not ("UNEXECUTED_MUTATION_ARGUMENT_INVALID" or
+                "UNFINISHED_TASK_ACTION_REQUIRED" or
+                "DOCX_CREATE_BEFORE_INSPECT") ||
+            !advertised.Any(t => t.Access == AccessLevel.Modify ||
+                t.Id == "nira.capabilities.observe")) return false;
+        if (!payload.TryGetValue("tools", out object? tools) ||
+            tools is not object[] definitions || definitions.Length == 0) return false;
+        payload["tool_choice"] = "required";
+        return true;
+    }
+
+    // The model must receive the *actual* proposal it produced and the host's
+    // reason for rejecting it. This is review-only data, NEVER a tool result,
+    // authority grant, or replay. No untrusted proposal is executed from here.
+    private static string? RejectedToolRevisionContext(
+        string? rejectedToolJson, string? feedback)
+    {
+        if (string.IsNullOrWhiteSpace(rejectedToolJson) ||
+            rejectedToolJson.Length > 14_000 ||
+            string.IsNullOrWhiteSpace(feedback)) return null;
+        return "PREVIOUS ASSISTANT TOOL PROPOSAL (NOT EXECUTED; review only):\n" +
+            rejectedToolJson +
+            "\n\nAUTHORITATIVE PRE-DISPATCH VALIDATION RESULT (no tool ran):\n" +
+            feedback +
+            "\nRevise the existing JSON proposal to satisfy ALL listed issues. " +
+            "Submit a fresh native tool call with the revised arguments. " +
+            "Do not use a progress-only message or claim a saved file.";
+    }
+
+    // A read-after-write requirement cannot be satisfied by inspecting a file
+    // that has never been published. Observation remains available for ordinary
+    // inspect-only tasks and for an already existing requested document.
+    private static bool IsPrematureMissingDocxInspect(
+        AgentTaskContract? contract, string function, JsonElement envelope)
+    {
+        if (contract?.RequiresSavedArtifact != true ||
+            function != "nira_observe_capability" ||
+            envelope.ValueKind != JsonValueKind.Object ||
+            !envelope.TryGetProperty("capabilityId", out JsonElement capability) ||
+            capability.ValueKind != JsonValueKind.String ||
+            capability.GetString() != NIRACapabilityIds.DocxInspect ||
+            !envelope.TryGetProperty("arguments", out JsonElement args) ||
+            args.ValueKind != JsonValueKind.Object ||
+            !args.TryGetProperty("path", out JsonElement destination) ||
+            destination.ValueKind != JsonValueKind.String) return false;
+        string? path = destination.GetString();
+        if (string.IsNullOrWhiteSpace(path) ||
+            !Path.IsPathFullyQualified(path) ||
+            !path.EndsWith(".docx", StringComparison.OrdinalIgnoreCase) ||
+            !contract.RequestedFileNames.Any(n =>
+                string.Equals(n, Path.GetFileName(path), StringComparison.OrdinalIgnoreCase)))
+            return false;
+        return !File.Exists(path);
+    }
+
+    private static bool IsConfirmedNoFileReceipt(JsonElement receipt) =>
+        receipt.ValueKind == JsonValueKind.Object &&
+        receipt.TryGetProperty("capabilityId", out JsonElement id) &&
+        id.ValueKind == JsonValueKind.String &&
+        id.GetString() == NIRACapabilityIds.DocxStudioCreate &&
+        receipt.TryGetProperty("auditRecorded", out JsonElement audited) &&
+        audited.ValueKind == JsonValueKind.True &&
+        receipt.TryGetProperty("definiteNoEffect", out JsonElement noEffect) &&
+        noEffect.ValueKind == JsonValueKind.True &&
+        receipt.TryGetProperty("summary", out JsonElement reason) &&
+        reason.ValueKind == JsonValueKind.String &&
+        (reason.GetString() ?? "").Contains(
+            "The destination parent folder does not exist", StringComparison.Ordinal);
+
+    private static bool IsVerifiedExactParentReceipt(JsonElement receipt, string parent) =>
+        receipt.ValueKind == JsonValueKind.Object &&
+        receipt.TryGetProperty("capabilityId", out JsonElement id) &&
+        id.ValueKind == JsonValueKind.String &&
+        id.GetString() == NIRACapabilityIds.DirectoryCreate &&
+        receipt.TryGetProperty("auditRecorded", out JsonElement audit) &&
+        audit.ValueKind == JsonValueKind.True &&
+        receipt.TryGetProperty("status", out JsonElement status) &&
+        status.ValueKind == JsonValueKind.String &&
+        status.GetString() == "Succeeded" &&
+        receipt.TryGetProperty("summary", out JsonElement summary) &&
+        summary.ValueKind == JsonValueKind.String &&
+        (summary.GetString() ?? "").Contains("'" + parent + "'", StringComparison.OrdinalIgnoreCase);
+
+    private async Task<AgentDecision?> TryResumeStudioAfterVerifiedParentAsync(
+        AgentRunSnapshot run, IReadOnlyList<AgentToolSpec> advertised,
+        AgentTaskCompletionAssessment assessment, CancellationToken ct)
+    {
+        if (assessment.Accept || _studioPendingRetryUsed ||
+            _studioPendingRunId != run.Id ||
+            _studioPendingProposal.ValueKind != JsonValueKind.Object ||
+            run.ToolCallCount >= _maximumTools ||
+            run.TaskContract?.RequiresSavedArtifact != true ||
+            !_allowAuthoritativeCapabilities ||
+            !advertised.Any(t => t.Id == "nira.capabilities.execute" &&
+                t.Access == AccessLevel.Modify) ||
+            !_registry.TryGetFunction("nira_execute_capability", out IGeneralCapability execute) ||
+            !execute.ValidateArguments(_studioPendingProposal) ||
+            !_studioPendingProposal.TryGetProperty("arguments", out JsonElement parameters) ||
+            parameters.ValueKind != JsonValueKind.Object ||
+            !parameters.TryGetProperty("path", out JsonElement destination) ||
+            destination.ValueKind != JsonValueKind.String) return null;
+        string? target = destination.GetString();
+        if (string.IsNullOrWhiteSpace(target) || !Path.IsPathFullyQualified(target) ||
+            !target.EndsWith(".docx", StringComparison.OrdinalIgnoreCase) ||
+            !run.TaskContract.RequestedFileNames.Any(n => string.Equals(n,
+                Path.GetFileName(target), StringComparison.OrdinalIgnoreCase))) return null;
+        string? parent = Path.GetDirectoryName(target);
+        if (string.IsNullOrWhiteSpace(parent) || !Directory.Exists(parent) ||
+            File.Exists(target) || Directory.Exists(target)) return null;
+        AgentObservation[] steps = run.Observations
+            .Skip(_studioPendingObservationStart).ToArray();
+        if (steps.Length is < 2 or > 6 ||
+            steps[0].ToolId != "nira.capabilities.execute" ||
+            steps[0].Succeeded ||
+            steps[0].OutcomeCode != "CAPABILITY_REJECTED_NO_EFFECT" ||
+            steps[^1].ToolId != "nira.capabilities.execute" ||
+            !steps[^1].Succeeded ||
+            steps.Skip(1).SkipLast(1).Any(o =>
+                o.ToolId == "nira.capabilities.execute") ||
+            string.IsNullOrWhiteSpace(steps[0].ResultReference) ||
+            string.IsNullOrWhiteSpace(steps[^1].ResultReference)) return null;
+        JsonElement failed, created;
+        try
+        {
+            failed = await _vault.ReadResultAsync(run.Id, steps[0].ToolId,
+                steps[0].ResultReference!, ct);
+            created = await _vault.ReadResultAsync(run.Id, steps[^1].ToolId,
+                steps[^1].ResultReference!, ct);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or
+            UnauthorizedAccessException or JsonException) { return null; }
+        if (!IsConfirmedNoFileReceipt(failed) ||
+            !IsVerifiedExactParentReceipt(created, parent)) return null;
+        // A SECOND durable action intent: the old attempt was proven no-effect.
+        // The existing AgentLoopEngine still independently checks scope,
+        // authorization, idempotency, audit, and uncertain outcomes.
+        string reference = await _vault.SaveArgumentAsync(run.Id, execute.Spec.Id,
+            _studioPendingProposal, ct);
+        _studioPendingRetryUsed = true;
+        NIRADiagnosticTrace.Event("AGENT-DOCX-PARENT-RESUME",
+            $"Run={run.Id:N} ExactParentVerified=True DefiniteNoEffect=True " +
+            "NewIntent=True PriorMutationNotReplayed=True");
+        return AgentDecision.Tool(execute.Spec.Id, reference,
+            "nira-" + execute.Spec.Id + "-" + run.Id.ToString("N") +
+            "-" + run.ToolCallCount);
     }
 
     public static int RunPendingTaskRecoverySelfCheck()
@@ -141,11 +347,24 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
         var unfinished = new AgentTaskCompletionAssessment(false,
             "No verified creation receipt for Motor_Report.docx");
         var finished = new AgentTaskCompletionAssessment(true, "Verified");
+        // R82C: this test must agree with the actual DOCX retry budget.
+        // A DOCX task receives FOUR corrective opportunities (attempts 0..3),
+        // while ordinary tasks keep their original TWO (attempts 0..1).
+        // The earlier test incorrectly required attempt 2 to be rejected,
+        // causing a guaranteed failure after an otherwise successful rebuild.
+        AgentTaskContract ordinary = AgentTaskContractPolicy.Create(
+            "Create Recovery_Notes.txt and inspect the saved file.");
         if (!CanRetryUnfinishedTask(requested, unfinished, 0, 3) ||
             !CanRetryUnfinishedTask(requested, unfinished, 1, 3) ||
-            CanRetryUnfinishedTask(requested, unfinished, 2, 3) ||
+            !CanRetryUnfinishedTask(requested, unfinished, 2, 3) ||
+            !CanRetryUnfinishedTask(requested, unfinished, 3, 3) ||
+            CanRetryUnfinishedTask(requested, unfinished, 4, 3) ||
+            !CanRetryUnfinishedTask(ordinary, unfinished, 0, 3) ||
+            !CanRetryUnfinishedTask(ordinary, unfinished, 1, 3) ||
+            CanRetryUnfinishedTask(ordinary, unfinished, 2, 3) ||
             CanRetryUnfinishedTask(requested, finished, 0, 3) ||
-            CanRetryUnfinishedTask(requested, unfinished, 0, 0))
+            CanRetryUnfinishedTask(requested, unfinished, 0, 0) ||
+            CanRetryUnfinishedTask(null, unfinished, 0, 3))
             throw new InvalidOperationException("Pending-task correction gate is incorrect.");
         var tools = new AgentToolSpec[] {
             new("nira.direct.web.search", "Real search", AccessLevel.Observe),
@@ -155,16 +374,69 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
         };
         IReadOnlyList<AgentToolSpec> focused = FocusUnstartedActionTools(tools,
             requested, Array.Empty<AgentObservation>(), "UNFINISHED_TASK_ACTION_REQUIRED");
-        if (focused.Count != 2 || focused.Any(t => t.Id == "nira.direct.web.search") ||
-            !focused.Any(t => t.Id == "nira.capabilities.execute"))
+        if (focused.Count != 3 || focused.Any(t => t.Id == "nira.direct.web.search") ||
+            !focused.Any(t => t.Id == "nira.capabilities.execute") ||
+            !focused.Any(t => t.Id == "nira.capabilities.observe"))
             throw new InvalidOperationException("Unfinished action did not prioritize registered adapters.");
-        var afterWrite = new[] { new AgentObservation("nira.capabilities.execute",
-            "verified", true, "OK", DateTimeOffset.UtcNow) };
-        if (FocusUnstartedActionTools(tools, requested, afterWrite,
-                "UNFINISHED_TASK_ACTION_REQUIRED").Count != tools.Length ||
+        // Reproduce the actual 2026-11-19 failure: directory.create succeeded,
+        // but the requested report was NOT published. Prior implementation
+        // incorrectly reinstated web/other functions after that directory write.
+        var afterDirectoryOnly = new[] { new AgentObservation("nira.capabilities.execute",
+            "directory-created", true, "OK", DateTimeOffset.UtcNow) };
+        if (FocusUnstartedActionTools(tools, requested, afterDirectoryOnly,
+                "UNFINISHED_TASK_ACTION_REQUIRED").Count != 3 ||
+            FocusUnstartedActionTools(tools, requested, afterDirectoryOnly,
+                "UNFINISHED_TASK_JSON_ACTION_REQUIRED").Count != 3 ||
             FocusUnstartedActionTools(tools, requested, Array.Empty<AgentObservation>(),
                 null).Count != tools.Length)
-            throw new InvalidOperationException("Read-back tools were removed after an action.");
+            throw new InvalidOperationException("Directory creation incorrectly ended artifact recovery focus.");
+        // Only a strict model-authored action JSON envelope is allowed to enter
+        // the original native preflight/permission/checkpoint path.
+        if (!GeneralToolProtocol.TryDecodeActionJson(
+                "{\"function\":\"nira_execute_capability\",\"arguments\":{\"capabilityId\":\"filesystem.docx.studio.create\",\"arguments\":{}}}",
+                out var fallbackAction) || fallbackAction.Function != "nira_execute_capability" ||
+            GeneralToolProtocol.TryDecodeActionJson(
+                "NIRA_PUBLIC_UPDATE: preparing the document", out _) ||
+            GeneralToolProtocol.TryDecodeActionJson(
+                "{\"function\":\"nira_execute_capability\",\"arguments\":{},\"extra\":true}", out _) ||
+            GeneralToolProtocol.TryDecodeActionJson(
+                "{\"function\":\"nira_execute_capability\",\"function\":\"nira_execute_capability\",\"arguments\":{}}", out _) ||
+            GeneralToolProtocol.TryDecodeActionJson(
+                "{\"function\":\"shell_execute\",\"arguments\":{}}", out _))
+            throw new InvalidOperationException("Strict structured action fallback accepted invalid provider content.");
+        // R80: the original request must prevent inspection of a missing
+        // deliverable; inspection-only tasks must remain available.
+        string absent = Path.Combine(Path.GetTempPath(),
+            "R80_DOCX_INSPECT_MISSING_" + Guid.NewGuid().ToString("N") + ".docx");
+        var inspected = JsonSerializer.SerializeToElement(new { capabilityId =
+            NIRACapabilityIds.DocxInspect, arguments = new { path = absent } });
+        var mustCreate = AgentTaskContractPolicy.Create(
+            "Create and verify " + Path.GetFileName(absent) + " inside my test folder.");
+        if (!IsPrematureMissingDocxInspect(mustCreate,
+                "nira_observe_capability", inspected) ||
+            IsPrematureMissingDocxInspect(AgentTaskContractPolicy.Create(
+                "Inspect " + Path.GetFileName(absent) + "."),
+                "nira_observe_capability", inspected))
+            throw new InvalidOperationException("R80 missing-document read guard is incorrect.");
+        JsonElement noFileReceipt = JsonSerializer.SerializeToElement(new {
+            capabilityId = NIRACapabilityIds.DocxStudioCreate,
+            auditRecorded = true, definiteNoEffect = true,
+            summary = "STUDIO_INPUT_REJECTED_NO_FILE: The destination parent folder does not exist."
+        });
+        JsonElement parentReceipt = JsonSerializer.SerializeToElement(new {
+            capabilityId = NIRACapabilityIds.DirectoryCreate,
+            auditRecorded = true, status = "Succeeded",
+            summary = "Directory created and verified: 'C:\\Evidence'."
+        });
+        if (!IsConfirmedNoFileReceipt(noFileReceipt) ||
+            !IsVerifiedExactParentReceipt(parentReceipt, @"C:\Evidence") ||
+            IsVerifiedExactParentReceipt(parentReceipt, @"C:\Other") ||
+            IsConfirmedNoFileReceipt(JsonSerializer.SerializeToElement(new {
+                capabilityId = NIRACapabilityIds.DocxStudioCreate,
+                auditRecorded = true, definiteNoEffect = false,
+                summary = "The destination parent folder does not exist."
+            })))
+            throw new InvalidOperationException("R80 missing-parent retry evidence checks failed.");
         // Replay the same wire SHAPE seen on the home PC: a valid provider
         // message, no tool_calls, and only a NIRA_PUBLIC_UPDATE announcement.
         using JsonDocument providerMessage = JsonDocument.Parse(
@@ -174,6 +446,63 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
         if (decoded.Kind != "answer" ||
             !NiraPublicThinkingNote.TryParse(decoded.Answer, out _))
             throw new InvalidOperationException("Standalone progress message replay was not recognized.");
+        var ollama = NiraModelEndpointOptions.Ollama("gemma4:31b");
+        var correctionPayload = new Dictionary<string, object> {
+            ["tools"] = new object[] { new { type = "function", function =
+                new { name = "nira_execute_capability" } } },
+            ["tool_choice"] = "auto" };
+        IReadOnlyList<AgentToolSpec> narrowed = FocusRejectedNativeTool(tools,
+            "UNEXECUTED_MUTATION_ARGUMENT_INVALID", "nira.capabilities.execute");
+        IReadOnlyList<AgentToolSpec> stillFocused = FocusRejectedNativeTool(tools,
+            "UNFINISHED_TASK_ACTION_REQUIRED", "nira.capabilities.execute");
+        if (narrowed.Count != 1 || narrowed[0].Id != "nira.capabilities.execute" ||
+            stillFocused.Count != 1 || stillFocused[0].Id != "nira.capabilities.execute" ||
+            !RequireCorrectiveNativeTool(correctionPayload, ollama,
+                "UNEXECUTED_MUTATION_ARGUMENT_INVALID", true, narrowed) ||
+            !Equals(correctionPayload["tool_choice"], "required"))
+            throw new InvalidOperationException("Ollama mutation correction did not require a real native tool.");
+        var noTools = new Dictionary<string, object> { ["tool_choice"] = "auto" };
+        if (RequireCorrectiveNativeTool(noTools, ollama,
+                "UNFINISHED_TASK_ACTION_REQUIRED", true, narrowed) ||
+            RequireCorrectiveNativeTool(correctionPayload, ollama,
+                "UNFINISHED_TASK_ACTION_REQUIRED", false, narrowed) ||
+            RequireCorrectiveNativeTool(correctionPayload,
+                NiraModelEndpointOptions.Nvidia("test-model"),
+                "UNFINISHED_TASK_ACTION_REQUIRED", true, narrowed))
+            throw new InvalidOperationException("Tool-choice recovery crossed its safety boundary.");
+        string? revision = RejectedToolRevisionContext(
+            "{\"capabilityId\":\"filesystem.docx.studio.create\",\"arguments\":{}}",
+            "Missing native table and six hundred words");
+        if (revision is null || !revision.Contains("NOT EXECUTED", StringComparison.Ordinal) ||
+            !revision.Contains("six hundred words", StringComparison.Ordinal) ||
+            RejectedToolRevisionContext(new string('x', 14_001), "error") is not null)
+            throw new InvalidOperationException("Rejected model draft was not retained safely.");
+        // Actual citation binding uses trusted observation IDs only. It
+        // preserves original narrative and never invents an absent source.
+        AgentTaskContract citationTask = AgentTaskContractPolicy.Create(
+            "Create Research.docx with references and inspect it.");
+        var evidence = new GeneralObservationContext.Snapshot("observed",
+            new Dictionary<string, string> { ["S1"] = "https://example.org/science" },
+            new Dictionary<string, string> { ["S1"] = "Observed science source" },
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase), 1, 0);
+        JsonElement missing = JsonSerializer.SerializeToElement(new {
+            capabilityId = NIRACapabilityIds.DocxStudioCreate,
+            arguments = new { blocksJson = new[] {
+                new { type = "paragraph", text = "Research explanation with observed citation [S1]." } } }
+        });
+        JsonElement repaired = BindObservedDocxReferences(missing, evidence,
+            citationTask, Guid.NewGuid());
+        string repairedText = repaired.GetRawText();
+        if (AgentTaskContractPolicy.StudioProposalProblem(citationTask, repaired) is not null ||
+            !repairedText.Contains("https://example.org/science", StringComparison.Ordinal) ||
+            !repairedText.Contains("Research explanation", StringComparison.Ordinal) ||
+            BindObservedDocxReferences(missing, evidence with {
+                Sources = new Dictionary<string, string>() }, citationTask,
+                Guid.Empty).GetRawText() != missing.GetRawText() ||
+            BindObservedDocxReferences(repaired, evidence, citationTask,
+                Guid.Empty).GetRawText() != repairedText)
+            throw new InvalidOperationException("Verified bibliography binding regression.");
+        // The old self-check count is preserved for existing WPF acceptance.
         return 8;
     }
 
@@ -658,6 +987,9 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
             await _taskCompletion.AssessAsync(run, ct);
         bool mandatoryWorkUnfinished = run.TaskContract is not null &&
             !pendingTaskAssessment.Accept;
+        AgentDecision? resumedReport = await TryResumeStudioAfterVerifiedParentAsync(
+            run, advertised, pendingTaskAssessment, ct);
+        if (resumedReport is not null) return resumedReport;
         // Some OpenAI-compatible tool providers emit content=null for EVERY
         // tool call regardless of prompt instructions. When that happens,
         // produce ONE independently model-authored *public commentary* from
@@ -698,13 +1030,21 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
         string? correction = null;
         string? rejectedAnswer = null;
         string? rejectedToolFeedback = null;
+        string? rejectedToolProposal = null;
+        string? rejectedToolId = null;
         // Retry at most one malformed read-only model proposal. If the same
         // class of mistake recurs, make one final tool-free knowledge attempt.
         // Never use this route to retry or claim a modifying operation.
         bool toolFreeKnowledgeFallback = false;
         bool credentialRecoveryAttempted = false;
         bool emptyDecisionRecoveryAttempted = false;
-        for (int attempt = 0; attempt < 3; attempt++)
+        // A substantial DOCX authoring proposal may need a schema correction
+        // after the provider returns text-only or missing-type blocks. These are
+        // pre-dispatch MODEL revisions; not retries of any executed write. Keep
+        // the general agent correction budget unchanged and bound DOCX to five.
+        int maximumDecisionAttempts = run.TaskContract?.RequestedFileNames.Any(name =>
+            name.EndsWith(".docx", StringComparison.OrdinalIgnoreCase)) == true ? 5 : 3;
+        for (int attempt = 0; attempt < maximumDecisionAttempts; attempt++)
         {
             ct.ThrowIfCancellationRequested();
             var messages = new List<object> {
@@ -805,10 +1145,38 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                               "with the EXACT parameters already returned in the discovery. " +
                               "If a successful write already exists but inspection is missing, " +
                               "use the actual read-only inspection tool instead. " +
+                              "A previous model proposal may have been rejected BEFORE dispatch; " +
+                              "its original JSON and the specific validation issues appear " +
+                              "in the correction evidence below. REVISE that draft instead " +
+                              "of starting another research or commentary round. " +
                               "Use NIRA_PUBLIC_UPDATE only alongside an actual tool_calls " +
                               "field; an announcement alone cannot complete the user's task. " +
                               "Do not re-research an already evidenced topic just to avoid the action. " +
                               "The original scope and permissions remain unchanged."
+                        : correction == "UNFINISHED_TASK_JSON_ACTION_REQUIRED"
+                            ? "The provider has TWICE returned prose instead of the requested " +
+                              "native tool call, even after a required-tool correction. " +
+                              "This turn deliberately has no native function declarations. " +
+                              "Author ONE real action proposal as PLAIN JSON, with exactly " +
+                              "two root properties: function and arguments. " +
+                              "Use this structure (fill with REAL, correctly typed arguments): " +
+                              "{\"function\":\"nira_execute_capability\",\"arguments\": " +
+                              "{\"capabilityId\":\"EXACT_DISCOVERED_ID\",\"arguments\":{}}}. " +
+                              "For verified read-back, use function nira_observe_capability " +
+                              "with a REAL registered inspect capability instead. " +
+                              "Do not surround JSON with Markdown fences; do not write a " +
+                              "progress note, explanation, fabricated ID or unsupported result. " +
+                              "The host WILL reject invalid JSON, invalid capabilities, " +
+                              "missing fields, missing permission and unwarranted claims. " +
+                              "Populate the document with complete user-requested content " +
+                              "using the actual capability schema already discovered."
+                        : correction == "DOCX_CREATE_BEFORE_INSPECT"
+                            ? "The requested NEW Word document has not been created and " +
+                              "does not exist at the exact requested path. Do not inspect " +
+                              "it yet; an inspection now would be a guaranteed file-not-found. " +
+                              "Use the registered execute adapter to publish the complete " +
+                              "DOCX using its schema and current evidence first. After a " +
+                              "confirmed save receipt, inspect the saved document."
                         : correction == "PUBLIC_UPDATE_WITHOUT_TOOL"
                             ? "Your previous reply was ONLY a NIRA_PUBLIC_UPDATE status note " +
                               "and had no tool_calls. Such a note is never a final answer. " +
@@ -838,17 +1206,27 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                             : "Your answer failed final evidence validation (" + correction + "). " +
                               "Use only verified observations and citation IDs from this run. " +
                               "Give a grounded answer or one registered tool call." });
+                string? revision = RejectedToolRevisionContext(
+                    rejectedToolProposal, rejectedToolFeedback);
+                if (revision is not null)
+                    messages.Add(new { role = "user", content = revision });
             }
             // Only the transport chooses an endpoint and model. NIRA still owns
             // observation validation, evidence binding, approval and tool dispatch.
             GeneralToolProtocol.Decision decision;
             IReadOnlyList<AgentToolSpec> effectiveAdvertised =
-                FocusUnstartedActionTools(advertised, run.TaskContract,
-                    run.Observations, correction);
+                FocusRejectedNativeTool(
+                    FocusUnstartedActionTools(advertised, run.TaskContract,
+                        run.Observations, correction), correction, rejectedToolId);
             object[] effectiveSchemas = toolFreeKnowledgeFallback ? Array.Empty<object>() :
                 ReferenceEquals(effectiveAdvertised, advertised) ? schemas :
                 _registry.BuildProviderTools(effectiveAdvertised,
                     allowWrite: _allowAuthoritativeCapabilities || _allowNiraManagedGoals);
+            // Recovery from a provider that ignored native tool_choice. We keep
+            // this original real capability set for validation and authorization.
+            bool structuredActionFallback =
+                correction == "UNFINISHED_TASK_JSON_ACTION_REQUIRED" &&
+                mandatoryWorkUnfinished && effectiveSchemas.Length > 0;
             var payload = new Dictionary<string, object> {
                 ["model"] = _options.Model,
                 // SSE is used even when native tools are offered. Their arguments
@@ -859,11 +1237,22 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                     _previewText is not null),
                 ["messages"] = messages
             };
-            if (effectiveSchemas.Length > 0) payload["tools"] = effectiveSchemas;
+            if (effectiveSchemas.Length > 0 && !structuredActionFallback)
+                payload["tools"] = effectiveSchemas;
             bool lightConversation = NiraLatencyPolicy.IsLightConversation(
                 run.UserRequest, run.Observations.Count, availableTools);
-            _options.ConfigureRequest(payload, effectiveSchemas.Length > 0,
-                fastConversation: lightConversation);
+            _options.ConfigureRequest(payload, effectiveSchemas.Length > 0 &&
+                !structuredActionFallback, fastConversation: lightConversation);
+            if (structuredActionFallback)
+                NIRADiagnosticTrace.Event("AGENT-STRUCTURED-ACTION-FALLBACK",
+                    $"Run={run.Id:N} NativeToolsAdvertised=False " +
+                    $"HostValidationTools={effectiveSchemas.Length} " +
+                    "Context=CurrentVerifiedRun Stage=ProposalOnly");
+            if (RequireCorrectiveNativeTool(payload, _options, correction,
+                mandatoryWorkUnfinished, effectiveAdvertised))
+                NIRADiagnosticTrace.Event("AGENT-NATIVE-TOOL-CORRECTION",
+                    $"Run={run.Id:N} Mode=required NativeToolCount={effectiveSchemas.Length} " +
+                    "PriorProposalUnexecuted=True");
             ApplyNoDecisionTransportRecovery(payload, _options,
                 emptyDecisionRecoveryAttempted);
             string? key = _key()?.Trim();
@@ -873,8 +1262,17 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                 Content = JsonContent.Create(payload) };
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
             ModelRequests++;
+            NIRADiagnosticTrace.Event("AGENT-NATIVE-REQUEST",
+                $"Run={run.Id:N} ModelRequest={ModelRequests} " +
+                $"Correction={correction ?? "none"} " +
+                $"ToolsAdvertised={effectiveSchemas.Length} " +
+                $"ToolChoice={(payload.TryGetValue("tool_choice", out object? selectedChoice) ? selectedChoice : "auto")} " +
+                $"Stream={payload["stream"]} Observations={run.Observations.Count} " +
+                $"VerifiedSources={context.Sources.Count} " +
+                $"WritesDispatched={run.Observations.Count(o => o.ToolId == "nira.capabilities.execute")}");
             LastFirstTextMilliseconds = -1;
             LastRoundMilliseconds = -1;
+            NIRADiagnosticTrace.AgentProviderRequest(run.Id, ModelRequests, payload);
             var roundClock = Stopwatch.StartNew();
             HttpResponseMessage response;
             try { response = await SendAsync(request, ct); }
@@ -920,7 +1318,8 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                     }
                     string statusCode = "MODEL_HTTP_" + (int)response.StatusCode;
                     string? errorBody = null;
-                    if (NIRADiagnosticTrace.AgentDecisionCaptureEnabled)
+                    if (NIRADiagnosticTrace.SecureAgentCaptureEnabled ||
+                        NIRADiagnosticTrace.AgentDecisionCaptureEnabled)
                     {
                         try
                         {
@@ -951,7 +1350,8 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                 // mode the capture stays bounded and inside NIRA diagnostics.
                 void CaptureDiagnostic(string payloadText)
                 {
-                    if (!NIRADiagnosticTrace.AgentDecisionCaptureEnabled) return;
+                    if (!NIRADiagnosticTrace.SecureAgentCaptureEnabled &&
+                        !NIRADiagnosticTrace.AgentDecisionCaptureEnabled) return;
                     string bounded = payloadText.Length > 24000 ? payloadText[..24000] : payloadText;
                     rawDiagnostic = rawDiagnostic is null ? bounded :
                         (rawDiagnostic.Length + bounded.Length > 32000 ? rawDiagnostic :
@@ -984,6 +1384,18 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                             " Offered=" + batch.GetArrayLength() +
                             " Selected=1 DeferredNotDispatched=" + (batch.GetArrayLength() - 1));
                     decision = GeneralToolProtocol.Decode(parsed.Message);
+                    if (structuredActionFallback && decision.Kind == "answer" &&
+                        GeneralToolProtocol.TryDecodeActionJson(decision.Answer,
+                            out GeneralToolProtocol.Decision structuredProposal))
+                    {
+                        // A candidate model proposal, NOT an executed action.
+                        // The same native schema, discovered-ID binding, actual
+                        // authorization, encrypted checkpoint and auditing follow.
+                        decision = structuredProposal;
+                        NIRADiagnosticTrace.Event("AGENT-STRUCTURED-ACTION-PROPOSAL",
+                            $"Run={run.Id:N} Function={decision.Function} " +
+                            "ValidatedEnvelope=True Dispatched=False");
+                    }
                     NIRADiagnosticTrace.Event("AGENT-MODEL-PROTOCOL",
                         "Run=" + run.Id.ToString("N") + " ModelRequest=" + ModelRequests +
                         " StreamRequested=" + streamRequested +
@@ -994,8 +1406,17 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                 {
                     NIRADiagnosticTrace.AgentModelProtocolFailure(run.Id, ModelRequests,
                         ex.Message, "Provider response rejected by protocol validator", rawDiagnostic);
+                    // The logged R82C incident was an invalid choices envelope
+                    // from Ollama SSE. No decision or tool from THIS HTTP reply
+                    // was accepted; retry only this model inference once via
+                    // non-streaming JSON. Keep all prior audited observations.
+                    bool ollamaSseResponse = _options.IsOllama &&
+                        (bool)payload["stream"] &&
+                        response.Content.Headers.ContentType?.MediaType?.Contains(
+                            "event-stream", StringComparison.OrdinalIgnoreCase) == true;
                     if (CanRetryNoModelDecision(ex.Message,
-                        emptyDecisionRecoveryAttempted, ct.IsCancellationRequested))
+                        emptyDecisionRecoveryAttempted, ct.IsCancellationRequested,
+                        ollamaSseResponse))
                     {
                         // No decision was parsed or dispatched from this HTTP
                         // response. Existing tool receipts remain untouched.
@@ -1006,7 +1427,8 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                         NIRADiagnosticTrace.Event("AGENT-MODEL-NO-DECISION-RECOVERY",
                             "Run=" + run.Id.ToString("N") +
                             " PreviousModelRequest=" + ModelRequests +
-                            " NextStream=False ModelOnly=True Retry=1/1");
+                            " NextStream=False ModelOnly=True Retry=1/1" +
+                            " Cause=" + SafeProtocolCode(ex.Message));
                         attempt--; // Do not consume an argument-correction attempt.
                         continue;
                     }
@@ -1075,6 +1497,74 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                                     ? "TOOL_BUDGET_EXHAUSTED" :
                                       "UNKNOWN_OR_UNAVAILABLE_CAPABILITY");
                         }
+                        // Never waste a tool dispatch inspecting a requested NEW
+                        // document before it exists. This is a no-effect proposal
+                        // rejection, not an authoritative read or a claim of saving.
+                        if (IsPrematureMissingDocxInspect(run.TaskContract, function, arguments))
+                        {
+                            TraceCandidate("REJECTED_INSPECT_BEFORE_DOCX_CREATE");
+                            if (attempt < 2)
+                            {
+                                correction = "DOCX_CREATE_BEFORE_INSPECT";
+                                continue;
+                            }
+                            return Stop("TASK_DELIVERABLE_UNVERIFIED");
+                        }
+                        // Reuse verified local raster evidence from THIS run for
+                        // Word Studio image blocks. Never invent a URL/path or
+                        // bypass registered schema, permission or write audit.
+                        if (function == "nira_execute_capability" &&
+                            arguments.ValueKind == JsonValueKind.Object)
+                        {
+                            // Normalization is PURE and pre-dispatch. Unambiguous
+                            // model-authored text without a `type` becomes an
+                            // explicit paragraph; an explicitly requested cover
+                            // receives a native page break. No invented wording,
+                            // capability or path is introduced.
+                            arguments = AgentTaskContractPolicy.NormalizeStudioDraft(
+                                run.TaskContract, arguments, out int inferredTextBlocks,
+                                out bool coverBreakInserted);
+                            if (inferredTextBlocks != 0 || coverBreakInserted)
+                                NIRADiagnosticTrace.Event("AGENT-DOCX-SAFE-SHAPE-REPAIR",
+                                    $"Run={run.Id:N} TextBlocks={inferredTextBlocks} " +
+                                    $"CoverBreak={coverBreakInserted} Dispatched=False");
+                            arguments = await BindObservedDocxImagesAsync(run, arguments, ct);
+                            // A bibliography is a deterministic, read-only projection of
+                            // source IDs/URLs already accepted from audited web receipts.
+                            // Do not waste model revisions asking it to copy citations
+                            // already held in this run's verified observation context.
+                            arguments = BindObservedDocxReferences(arguments, context,
+                                run.TaskContract, run.Id);
+                            NIRADiagnosticTrace.DocumentDraftShape(run.Id, ModelRequests, arguments);
+                            string? docxProblem = AgentTaskContractPolicy.StudioProposalProblem(
+                                run.TaskContract, arguments);
+                            if (docxProblem is not null)
+                            {
+                                TraceCandidate("REJECTED_INCOMPLETE_DOCX_PROPOSAL");
+                                // Structural findings only: no private tool arguments,
+                                // original prompt, local paths or source material.
+                                NIRADiagnosticTrace.Event("AGENT-DOCX-DRAFT-REJECTED",
+                                    $"Run={run.Id:N} Attempt={attempt + 1} " + docxProblem);
+                                if (attempt + 1 < maximumDecisionAttempts)
+                                {
+                                    rejectedToolId = capability.Spec.Id;
+                                    rejectedToolProposal = arguments.GetRawText();
+                                    rejectedToolFeedback = "Word draft fails the original user task: " +
+                                        docxProblem + " No file has been written. The DOCX blocksJson " +
+                                        "MUST be a JSON array of objects with a supported type. " +
+                                        "Use paragraph(text), heading(text,level), pagebreak, " +
+                                        "image(altText,imagePath,caption), and table(rows) " +
+                                        "rather than unnamed nested section objects. " +
+                                        "Preserve researched paragraphs and their source IDs; " +
+                                        "do NOT replace a long report with a shorter outline. " +
+                                        "Correct only the invalid blocks and resubmit the same " +
+                                        "registered tool after correction.";
+                                    correction = "UNEXECUTED_MUTATION_ARGUMENT_INVALID";
+                                    continue;
+                                }
+                                return Stop("TASK_DELIVERABLE_UNVERIFIED");
+                            }
+                        }
                         // A bounded, read-only retrieval count is not a write
                         // request. Correct this ONE known model error before
                         // preflight, then run the ORIGINAL authoritative schema
@@ -1114,13 +1604,21 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                             // action. This is NOT replay of a write. An actual
                             // dispatched write, however, still uses the strict
                             // uncertain-outcome reconciliation path unchanged.
-                            if (!toolFreeKnowledgeFallback && attempt < 2)
+                            if (!toolFreeKnowledgeFallback &&
+                                (attempt < 2 || (capability.Spec.Access == AccessLevel.Modify &&
+                                attempt + 1 < maximumDecisionAttempts)))
                             {
                                 if (attempt == 0 || capability.Spec.Access != AccessLevel.Observe)
                                 {
                                     string reason = capability is IGeneralCapabilityArgumentFeedback feedback
                                         ? feedback.ValidationFeedback(arguments)
                                         : "The proposed arguments violate the native JSON schema.";
+                                    if (capability.Spec.Access == AccessLevel.Modify)
+                                    {
+                                        rejectedToolId = capability.Spec.Id;
+                                        rejectedToolProposal = arguments.ValueKind == JsonValueKind.Object
+                                            ? arguments.GetRawText() : null;
+                                    }
                                     rejectedToolFeedback =
                                         "Function: " + function + "\n" +
                                         "Schema: " + capability.InputSchema.GetRawText() + "\n" +
@@ -1164,6 +1662,17 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                         // tool dispatch remains a separately checkpointed event.
                         string token = await _vault.SaveArgumentAsync(run.Id,
                             capability.Spec.Id, arguments, ct);
+                        if (function == "nira_execute_capability" &&
+                            arguments.ValueKind == JsonValueKind.Object &&
+                            arguments.TryGetProperty("capabilityId", out JsonElement draftedId) &&
+                            draftedId.ValueKind == JsonValueKind.String &&
+                            draftedId.GetString() == NIRACapabilityIds.DocxStudioCreate)
+                        {
+                            _studioPendingRunId = run.Id;
+                            _studioPendingProposal = arguments.Clone();
+                            _studioPendingObservationStart = run.Observations.Count;
+                            _studioPendingRetryUsed = false;
+                        }
                         TraceCandidate("ACCEPTED_TOOL_INTENT");
                         LastFailureCode = null;
                         if (decision.PublicUpdate is string publicNote)
@@ -1195,7 +1704,11 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                         if (mandatoryWorkUnfinished &&
                             CanRetryUnfinishedTask(run.TaskContract, pendingTaskAssessment,
                                 attempt, effectiveSchemas.Length))
-                        { correction = "UNFINISHED_TASK_ACTION_REQUIRED"; continue; }
+                        {
+                            correction = attempt == 0 ? "UNFINISHED_TASK_ACTION_REQUIRED" :
+                                "UNFINISHED_TASK_JSON_ACTION_REQUIRED";
+                            continue;
+                        }
                         if (!mandatoryWorkUnfinished && attempt < 2 && effectiveSchemas.Length > 0)
                         { correction = "PUBLIC_UPDATE_WITHOUT_TOOL"; continue; }
                         if (mandatoryWorkUnfinished && run.TaskContract is not null)
@@ -1211,7 +1724,11 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                         TraceCandidate("REJECTED_PREMATURE_FINAL_UNFINISHED_TASK");
                         if (CanRetryUnfinishedTask(run.TaskContract, pendingTaskAssessment,
                             attempt, effectiveSchemas.Length))
-                        { correction = "UNFINISHED_TASK_ACTION_REQUIRED"; continue; }
+                        {
+                            correction = attempt == 0 ? "UNFINISHED_TASK_ACTION_REQUIRED" :
+                                "UNFINISHED_TASK_JSON_ACTION_REQUIRED";
+                            continue;
+                        }
                         if (run.TaskContract is not null)
                             run.TaskContract.LastUnfinishedReason = pendingTaskAssessment.Reason;
                         return Stop("TASK_DELIVERABLE_UNVERIFIED");
@@ -1274,6 +1791,126 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                 return Stop(decision.ErrorCode ?? "INVALID_MODEL_DECISION");
         }
         return Stop("INVALID_MODEL_DECISION");
+    }
+
+    // The image locator comes from an audited, successful read-only result in
+    // the same run. Untrusted source text cannot nominate local files by itself.
+    // Binding is only a proposal transformation: the original capability
+    // adapter/authorizer/handler still validates and executes the operation.
+    // Generic bibliography binding, not a topic-specific report template.
+    // Only source identities gathered from successful current-run tool receipts
+    // may be published. Never fabricate external links or make an API request here.
+    // The resulting proposal still goes through schema, user authorization,
+    // durable write audit, and post-publication inspection without exceptions.
+    private static JsonElement BindObservedDocxReferences(JsonElement proposed,
+        GeneralObservationContext.Snapshot evidence, AgentTaskContract? contract,
+        Guid runId)
+    {
+        if (contract?.RequiresDocxReferences != true ||
+            evidence.Sources.Count == 0 ||
+            proposed.ValueKind != JsonValueKind.Object ||
+            !proposed.TryGetProperty("capabilityId", out JsonElement id) ||
+            id.ValueKind != JsonValueKind.String ||
+            id.GetString() != NIRACapabilityIds.DocxStudioCreate)
+            return proposed;
+
+        string? problem = AgentTaskContractPolicy.StudioProposalProblem(contract, proposed);
+        if (problem is null || !problem.Contains(
+            "Required reference definitions missing", StringComparison.Ordinal))
+            return proposed;
+
+        // The model's existing blocks are preserved verbatim. Never transform a
+        // malformed document into an executable write using inferred content.
+        JsonObject? envelope;
+        try { envelope = JsonNode.Parse(proposed.GetRawText()) as JsonObject; }
+        catch (JsonException) { return proposed; }
+        if (envelope?["arguments"] is not JsonObject args ||
+            args["blocksJson"] is not JsonArray blocks) return proposed;
+
+        var confirmed = evidence.Sources
+            .Where(kv => System.Text.RegularExpressions.Regex.IsMatch(kv.Key,
+                @"^S[1-9][0-9]*$", System.Text.RegularExpressions.RegexOptions.CultureInvariant) &&
+                Uri.TryCreate(kv.Value, UriKind.Absolute, out Uri? url) &&
+                url.Scheme == Uri.UriSchemeHttps && string.IsNullOrEmpty(url.UserInfo))
+            .Take(6).ToArray();
+        if (confirmed.Length == 0 || blocks.Count + 1 + confirmed.Length > 120)
+            return proposed;
+
+        blocks.Add(new JsonObject { ["type"] = "heading", ["level"] = 2,
+            ["text"] = "References" });
+        foreach (var item in confirmed)
+        {
+            string title = evidence.SourceTitles.TryGetValue(item.Key, out string? label)
+                ? label : "Source";
+            title = new string(title.Where(c => !char.IsControl(c)).Take(120).ToArray()).Trim();
+            // These source labels and URLs come from this run's audited tool
+            // observations; never use a model-authored citation as ground truth.
+            blocks.Add(new JsonObject { ["type"] = "paragraph",
+                ["text"] = $"[{item.Key}] {title}. {item.Value}" });
+        }
+        JsonElement completed = JsonSerializer.SerializeToElement(envelope);
+        if (completed.GetRawText().Length > 180_000) return proposed;
+        NIRADiagnosticTrace.Event("AGENT-DOCX-VERIFIED-REFERENCES",
+            $"Run={runId:N} Bound={confirmed.Length} Evidence=AuditedCurrentRun " +
+            "NoNetwork=True Dispatched=False");
+        return completed;
+    }
+
+    private async Task<JsonElement> BindObservedDocxImagesAsync(AgentRunSnapshot run,
+        JsonElement proposed, CancellationToken ct)
+    {
+        if (!proposed.TryGetProperty("capabilityId", out JsonElement id) ||
+            id.ValueKind != JsonValueKind.String ||
+            id.GetString() != NIRACapabilityIds.DocxStudioCreate ||
+            !proposed.TryGetProperty("arguments", out JsonElement args) ||
+            args.ValueKind != JsonValueKind.Object) return proposed;
+        var sources = new List<NIRACapabilityVisualArtifact>();
+        foreach (AgentObservation observed in run.Observations)
+        {
+            if (sources.Count >= 6) break;
+            if (!observed.Succeeded || string.IsNullOrWhiteSpace(observed.ResultReference)) continue;
+            JsonElement receipt;
+            try { receipt = await _vault.ReadResultAsync(run.Id, observed.ToolId,
+                observed.ResultReference, ct); }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or
+                UnauthorizedAccessException or JsonException) { continue; }
+            if (receipt.ValueKind != JsonValueKind.Object ||
+                !receipt.TryGetProperty("status", out JsonElement status) ||
+                status.ValueKind != JsonValueKind.String || status.GetString() != "Succeeded" ||
+                !receipt.TryGetProperty("auditRecorded", out JsonElement audit) ||
+                audit.ValueKind != JsonValueKind.True ||
+                !receipt.TryGetProperty("visualArtifacts", out JsonElement visuals) ||
+                visuals.ValueKind != JsonValueKind.Array) continue;
+            foreach (JsonElement v in visuals.EnumerateArray())
+            {
+                if (v.ValueKind != JsonValueKind.Object) continue;
+                string PathText(string name) => v.TryGetProperty(name, out JsonElement value) &&
+                    value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
+                string local = PathText("localPath");
+                if (!Path.IsPathFullyQualified(local) || !File.Exists(local)) continue;
+                string sourceUri = PathText("sourceUri");
+                if (!Uri.TryCreate(sourceUri, UriKind.Absolute, out Uri? source) ||
+                    source.Scheme != Uri.UriSchemeHttps) continue;
+                sources.Add(new NIRACapabilityVisualArtifact {
+                    LocalPath = local, Title = PathText("title"), Caption = PathText("caption"),
+                    SourceUri = sourceUri, SubjectQuery = PathText("subjectQuery")
+                });
+                if (sources.Count >= 6) break;
+            }
+        }
+        if (sources.Count == 0) return proposed;
+        var draft = new NIRACapabilityRequest {
+            CapabilityId = NIRACapabilityIds.DocxStudioCreate, Arguments = args.Clone()
+        };
+        NIRACapabilityRequest fixedDraft = NIRADocxVerifiedMediaBinding.Apply(draft, sources,
+            out int bound);
+        if (bound == 0) return proposed;
+        JsonObject? envelope = JsonNode.Parse(proposed.GetRawText()) as JsonObject;
+        if (envelope is null) return proposed;
+        envelope["arguments"] = JsonNode.Parse(fixedDraft.Arguments.GetRawText());
+        NIRADiagnosticTrace.Event("DOCX-OBSERVED-IMAGE-BINDING",
+            $"Run={run.Id:N} Bound={bound} Source=PriorAuditedToolReceipts Only=True");
+        return JsonSerializer.SerializeToElement(envelope);
     }
 
     // Discovery is authoritative INVENTORY, but NOT authority to execute.
@@ -1875,6 +2512,37 @@ public static class GeneralToolProtocol
         return answer.Length > 20_000 ? new("invalid", ErrorCode: "ANSWER_SIZE_INVALID") :
             new("answer", Answer: answer);
     }
+    // Provider-independent recovery for a model that ignores tool_choice.
+    // Only called during a host-triggered unfinished-task correction. This
+    // parser DOES NOT execute or authorize anything: it only produces the same
+    // Decision shape as a native tool call for all existing guards to check.
+    public static bool TryDecodeActionJson(string? answer, out Decision proposed)
+    {
+        proposed = new("invalid", ErrorCode: "STRUCTURED_ACTION_INVALID");
+        if (string.IsNullOrWhiteSpace(answer) || answer.Length > 20_000)
+            return false;
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(answer,
+                new JsonDocumentOptions { MaxDepth = 32 });
+            JsonElement root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || !Unique(root) ||
+                root.EnumerateObject().Count() != 2 ||
+                !root.TryGetProperty("function", out JsonElement function) ||
+                function.ValueKind != JsonValueKind.String ||
+                function.GetString() is not ("nira_execute_capability" or
+                    "nira_observe_capability") ||
+                !root.TryGetProperty("arguments", out JsonElement arguments) ||
+                arguments.ValueKind != JsonValueKind.Object || !Unique(arguments) ||
+                arguments.GetRawText().Length > 16_000)
+                return false;
+            proposed = new("tool", Function: function.GetString(),
+                Arguments: arguments.Clone());
+            return true;
+        }
+        catch (JsonException) { return false; }
+    }
+
     private static bool Unique(JsonElement node)
     {
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

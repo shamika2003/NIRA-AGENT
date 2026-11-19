@@ -2,6 +2,8 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using System.Xml;
 using System.Xml.Linq;
 using NIRAAgent.Diagnostics;
@@ -32,7 +34,7 @@ internal sealed class NIRADocxStudioNoPublishedFileException : ArgumentException
 // Its inputs are explicitly bounded JSON, not executable XML or Word macros.
 internal static partial class NIRADocx
 {
-    internal const string RuntimeDocxContractRevision = "NIRA-DOCX-OPTIONAL-MEDIA-R63";
+    internal const string RuntimeDocxContractRevision = "NIRA-DOCX-NO-SILENT-MEDIA-R12";
     private static readonly XNamespace CT48 = "http://schemas.openxmlformats.org/package/2006/content-types";
     private static readonly XNamespace PR48 = "http://schemas.openxmlformats.org/package/2006/relationships";
     private const string BaseRel48 = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/";
@@ -206,12 +208,9 @@ internal static partial class NIRADocx
         bool captionAltAlias = canonical == "image" && !hasText &&
             raw.TryGetProperty("caption", out imageCaption) &&
             !raw.TryGetProperty("altText", out _);
-        bool imageTextAlias = canonical == "image" && hasText &&
-            !raw.TryGetProperty("caption", out _) && !raw.TryGetProperty("altText", out _);
-        if (canonical == "image" && hasText && !imageTextAlias)
-            throw new ArgumentException("Image text conflicts with caption or altText; use explicit fields.");
+        bool imageTextAlias = canonical == "image" && hasText;
         if (imageTextAlias && sourceText.ValueKind != JsonValueKind.String)
-            throw new ArgumentException("Image description must be a string.");
+            throw new ArgumentException("Image text must be a string, not a structured object.");
         if (captionAltAlias && imageCaption.ValueKind != JsonValueKind.String)
             throw new ArgumentException("Image caption must be a string.");
         if (headingLevel == 0 && !useAlias && canonical == type && !imageTextAlias && !captionAltAlias) return raw.Clone();
@@ -226,16 +225,142 @@ internal static partial class NIRADocx
         result["type"] = canonical;
         if (headingLevel > 0) result["level"] = headingLevel;
         if (useAlias) result["text"] = content.GetString();
-        if (imageTextAlias || captionAltAlias)
+        if (imageTextAlias)
         {
-            string description = imageTextAlias ? (sourceText.GetString() ?? "") :
-                (imageCaption.GetString() ?? "");
-            if (description.Length is < 1 or > 200)
-                throw new ArgumentException("Image description must contain 1-200 characters.");
-            result["altText"] = description;
-            if (imageTextAlias) result["caption"] = description;
+            // Model-authored image `text` is alternate text, NOT a second caption.
+            // Preserve an independent caption and existing altText. When all three
+            // are supplied, preserve both descriptions without losing content.
+            string description = sourceText.GetString()?.Trim() ?? "";
+            if (description.Length == 0)
+                throw new ArgumentException("Image text description cannot be empty.");
+            string oldAlt = "";
+            if (raw.TryGetProperty("altText", out JsonElement explicitAlt))
+            {
+                if (explicitAlt.ValueKind != JsonValueKind.String)
+                    throw new ArgumentException("Image altText must be a string.");
+                oldAlt = explicitAlt.GetString()?.Trim() ?? "";
+            }
+            string combined = oldAlt.Length == 0 || string.Equals(oldAlt, description,
+                StringComparison.Ordinal) ? description : oldAlt + "; " + description;
+            if (combined.Length > 200)
+                throw new ArgumentException("Combined image text and altText exceed 200 characters; shorten one description explicitly.");
+            result["altText"] = combined;
+            // The original explicit caption remains independent and unmodified.
+            if (!raw.TryGetProperty("caption", out _)) result["caption"] = description;
+        }
+        else if (captionAltAlias)
+        {
+            string caption = imageCaption.GetString()?.Trim() ?? "";
+            if (caption.Length == 0)
+                throw new ArgumentException("Image caption cannot be empty when used as altText.");
+            // Caption stays intact; altText is a bounded accessibility summary.
+            result["altText"] = caption[..Math.Min(200, caption.Length)];
         }
         return JsonSerializer.SerializeToElement(result);
+    }
+
+    // R81: Word Studio accepts structured blocks, not Markdown pasted into a
+    // single paragraph. Normalize the model's lossless authoring shorthand
+    // before loading media or publishing anything. No source wording is invented.
+    private static string DecodeStudio48LineBreaks(string value) =>
+        value.Replace("\\r\\n", "\n", StringComparison.Ordinal)
+             .Replace("\\n", "\n", StringComparison.Ordinal)
+             .Replace("\\r", "\n", StringComparison.Ordinal)
+             .Replace("\r\n", "\n", StringComparison.Ordinal)
+             .Replace('\r', '\n');
+
+    private static JsonElement NormalizeStudio48Blocks(JsonElement blocks, string title)
+    {
+        var expanded = new List<JsonElement>();
+        bool cover = blocks.EnumerateArray().Take(6).Any(b =>
+            b.ValueKind == JsonValueKind.Object &&
+            b.TryGetProperty("type", out JsonElement type) &&
+            type.ValueKind == JsonValueKind.String &&
+            string.Equals(type.GetString(), "pagebreak", StringComparison.OrdinalIgnoreCase));
+        bool beforeCoverBreak = cover;
+        bool firstText = true;
+        foreach (JsonElement raw in blocks.EnumerateArray())
+        {
+            JsonElement block = NormalizeStudio48Block(raw);
+            string kind = GetString48(block, "type", 16).ToLowerInvariant();
+            if (kind == "pagebreak")
+            {
+                beforeCoverBreak = false;
+                expanded.Add(block);
+                continue;
+            }
+            if (kind != "paragraph" || !block.TryGetProperty("text", out JsonElement value) ||
+                value.ValueKind != JsonValueKind.String)
+            {
+                expanded.Add(block);
+                if (kind is not ("divider" or "toc")) firstText = false;
+                continue;
+            }
+            string material = DecodeStudio48LineBreaks(value.GetString() ?? "");
+            if (firstText && beforeCoverBreak)
+            {
+                string[] lines = material.Split('\n');
+                if (lines.Length > 0 && string.Equals(lines[0].Trim(), title,
+                    StringComparison.OrdinalIgnoreCase))
+                    material = string.Join("\n", lines.Skip(1)).TrimStart('\n');
+            }
+            firstText = false;
+            // Preserve per-block formatting of ordinary paragraphs; only the
+            // Markdown heading syntax itself is promoted to a native heading.
+            JsonObject? original = JsonNode.Parse(block.GetRawText()) as JsonObject;
+            if (original is null) throw new ArgumentException("Invalid Word paragraph block.");
+            var pending = new StringBuilder();
+            void Flush()
+            {
+                string text = pending.ToString().Trim();
+                pending.Clear();
+                if (text.Length == 0) return;
+                JsonObject copy = (JsonObject)original.DeepClone();
+                copy["text"] = text;
+                if (beforeCoverBreak)
+                {
+                    copy["alignment"] = "center";
+                    copy["fontSizePt"] = 12;
+                }
+                expanded.Add(JsonSerializer.SerializeToElement(copy));
+            }
+            foreach (string originalLine in material.Split('\n'))
+            {
+                string line = originalLine.Trim();
+                Match heading = Regex.Match(line, @"^(#{1,3})\s+(.+?)\s*$",
+                    RegexOptions.CultureInvariant);
+                if (heading.Success)
+                {
+                    Flush();
+                    expanded.Add(JsonSerializer.SerializeToElement(new {
+                        type = "heading", level = heading.Groups[1].Length,
+                        text = heading.Groups[2].Value }));
+                    continue;
+                }
+                // Keep individual source entries individually readable, and
+                // never bury a bibliography inside one large body paragraph.
+                bool sourceEntry = Regex.IsMatch(line, @"^\[S\d{1,3}\]\s+",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+                if (line.Length == 0 || sourceEntry || beforeCoverBreak)
+                    Flush();
+                if (line.Length == 0) continue;
+                if (sourceEntry)
+                {
+                    pending.Append(line);
+                    Flush();
+                }
+                else
+                {
+                    if (pending.Length > 0) pending.Append(' ');
+                    pending.Append(line);
+                    if (beforeCoverBreak) Flush();
+                }
+            }
+            Flush();
+        }
+        if (expanded.Count is < 1 or > 120)
+            throw new ArgumentException("Expanded Word blocks exceed the safe 120-block limit; split the report into fewer meaningful sections.");
+        return JsonSerializer.SerializeToElement(expanded);
     }
 
     private static bool GetBool48(JsonElement obj, string key, bool fallback = false)
@@ -272,7 +397,13 @@ internal static partial class NIRADocx
         if (color != null) props.Add(new XElement(W + "color", new XAttribute(W + "val", color)));
         if (size != 0) props.Add(new XElement(W + "sz", new XAttribute(W + "val", size * 2)));
         if (props.HasElements) r.Add(props);
-        r.Add(new XElement(W + "t", new XAttribute(XNamespace.Xml + "space", "preserve"), text));
+        // A Word line break is a w:br element, never a visible \n token.
+        string[] lines = DecodeStudio48LineBreaks(text).Split('\n');
+        for (int i = 0; i < lines.Length; i++)
+        {
+            if (i != 0) r.Add(new XElement(W + "br"));
+            r.Add(new XElement(W + "t", new XAttribute(XNamespace.Xml + "space", "preserve"), lines[i]));
+        }
         return r;
     }
     private static XElement P48(string alignment, int afterTwips = 120, string? style = null, int listId = 0)
@@ -369,7 +500,24 @@ internal static partial class NIRADocx
                 }
                 if (props.Length == 0 || props.Length > 8)
                     throw new ArgumentException("Object table row needs 1-8 scalar entries.");
-                // Do not discard source field names or assume what they mean.
+                // Positional JSON keys are field *names*, not visible table data.
+                // Preserve arbitrary descriptive maps, but decode unambiguous
+                // cell1..cellN objects as an ordered row without leaking keys.
+                bool numbered = props.All(prop =>
+                    prop.Name.StartsWith("cell", StringComparison.OrdinalIgnoreCase) &&
+                    int.TryParse(prop.Name.AsSpan(4), out int position) &&
+                    position >= 1 && position <= props.Length);
+                if (numbered)
+                {
+                    var positions = props.Select(prop => int.Parse(prop.Name.AsSpan(4)))
+                        .ToArray();
+                    if (positions.Distinct().Count() != props.Length)
+                        throw new ArgumentException("Duplicate positional table cells are ambiguous.");
+                    return props.OrderBy(prop => int.Parse(prop.Name.AsSpan(4)))
+                        .Select(prop => CellText(prop.Value)).ToList();
+                }
+                if (props.Any(prop => prop.Name.StartsWith("cell", StringComparison.OrdinalIgnoreCase)))
+                    throw new ArgumentException("Mixed or invalid positional table cell keys; use arrays or cell1..cellN.");
                 return props.Select(prop =>
                 {
                     string value = CellText(prop.Value);
@@ -695,17 +843,25 @@ internal static partial class NIRADocx
         // Normalize harmless, unambiguous authoring aliases exactly once.
         // Native schemas remain canonical; a wrong alias must never partially
         // publish a Word document or silently discard a block's text.
-        JsonElement canonicalBlocks = JsonSerializer.SerializeToElement(
-            parsed.RootElement.EnumerateArray().Select(NormalizeStudio48Block).ToArray());
+        JsonElement canonicalBlocks = NormalizeStudio48Blocks(parsed.RootElement, title);
         var selectedMedia = await LoadStudio48MediaAsync(canonicalBlocks,
             legacyImagePath, ct).ConfigureAwait(false);
         List<Studio48Media> media = selectedMedia.Media;
         int skippedImages = selectedMedia.OmittedBlockIndices.Count;
+        // A specified image block is document content. Never publish a report
+        // with that content silently missing, even when minimumImages was not
+        // set by the model. Failure occurs before PublishNew and before a write.
+        if (skippedImages > 0)
+            throw new ArgumentException($"Word Studio could not validate {skippedImages} of " +
+                $"{selectedMedia.RequestedImages} requested image blocks. No file was created. " +
+                "Provide existing, verified local imagePath values, or explicitly remove " +
+                "optional image blocks only when the user's request permits omission.");
         if (media.Count < minimumImages)
             throw new ArgumentException($"Document has {media.Count} verified local images " +
                 $"({skippedImages} unusable input(s) omitted), but minimumImages={minimumImages}. No document was created.");
         if (parsed.RootElement.GetArrayLength() == skippedImages)
             throw new ArgumentException("No document body remains after rejecting unusable optional images.");
+        ValidateStudio48References(canonicalBlocks);
         int bodyWords = CountStudio48BodyWords(canonicalBlocks);
         if (bodyWords < minimumBodyWords)
             throw new ArgumentException($"Document content is too short: {bodyWords} body words, " +
@@ -722,10 +878,22 @@ internal static partial class NIRADocx
         XElement body = new(W + "body");
         XElement titleP = P48("center", 280);
         titleP.Element(W + "pPr")!.Add(new XElement(W + "keepNext"));
+        // A true cover page needs deliberate whitespace, not an oversized
+        // ordinary first-page heading left at the top margin.
+        bool hasCoverPage = canonicalBlocks.EnumerateArray().Take(8).Any(b =>
+            b.TryGetProperty("type", out JsonElement t) && t.ValueKind == JsonValueKind.String &&
+            t.GetString() == "pagebreak");
+        if (hasCoverPage)
+        {
+            XElement spacing = titleP.Descendants(W + "spacing").First();
+            spacing.SetAttributeValue(W + "before", 3000);
+            spacing.SetAttributeValue(W + "after", 350);
+        }
         titleP.Add(TextRun48(title, true, false, false, accent, profile == "academic" ? 20 : 24));
         body.Add(titleP);
         int count = 0, headings = 0, tables = 0, charts = 0, lists = 0, breaks = 0, links = 0, images = 0;
         int sourceBlockIndex = -1;
+        bool initialVisibleBlock = true;
         foreach (JsonElement block in canonicalBlocks.EnumerateArray())
         {
             ct.ThrowIfCancellationRequested();
@@ -735,6 +903,20 @@ internal static partial class NIRADocx
             if (selectedMedia.OmittedBlockIndices.Contains(sourceBlockIndex)) continue;
             if (block.ValueKind != JsonValueKind.Object) throw new ArgumentException("Word blocks must be JSON objects.");
             string type = GetString48(block, "type", 12).ToLowerInvariant();
+            // Studio already adds the document title. A model often repeats it
+            // verbatim as the very first level-one heading. Remove ONLY that
+            // exact duplicate; preserve every other heading and body block.
+            if (initialVisibleBlock && type == "heading" &&
+                GetInt48(block, "level", 1, 1, 3) == 1 &&
+                block.TryGetProperty("text", out JsonElement headingText) &&
+                headingText.ValueKind == JsonValueKind.String &&
+                string.Equals((headingText.GetString() ?? "").Trim(), title,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                initialVisibleBlock = false;
+                continue;
+            }
+            initialVisibleBlock = false;
             switch (type)
             {
                 case "paragraph": case "heading": case "bullet": case "number":
@@ -887,16 +1069,91 @@ internal static partial class NIRADocx
     }
 }
 
+// Offline regression gate: checks real native row and source-marker parsers.
+internal static partial class NIRADocx
+{
+    internal static int RunStudioR12QualitySelfCheck()
+    {
+        using JsonDocument numbered = JsonDocument.Parse("{\"rows\":[{\"cell3\":\"C\",\"cell1\":\"A\",\"cell2\":\"B\"},[\"1\",\"2\",\"3\"]]}");
+        List<List<string>> rows = ParseStudio48TableRows(numbered.RootElement);
+        if (!rows[0].SequenceEqual(new[] { "A", "B", "C" }, StringComparer.Ordinal))
+            throw new InvalidOperationException("R12 positional table cells were not normalized.");
+        using JsonDocument ambiguous = JsonDocument.Parse("{\"rows\":[{\"cell1\":\"A\",\"label\":\"B\"},[\"1\",\"2\"]]}");
+        bool rejected = false;
+        try { _ = ParseStudio48TableRows(ambiguous.RootElement); }
+        catch (ArgumentException) { rejected = true; }
+        if (!rejected) throw new InvalidOperationException("R12 mixed positional table cells accepted.");
+        using JsonDocument citations = JsonDocument.Parse("[{\"type\":\"paragraph\",\"text\":\"Report [S1, S2].\"},{\"type\":\"heading\",\"text\":\"References\"},{\"type\":\"paragraph\",\"text\":\"[S1] Real source.\"}]");
+        rejected = false;
+        try { ValidateStudio48References(citations.RootElement); }
+        catch (ArgumentException) { rejected = true; }
+        if (!rejected) throw new InvalidOperationException("R12 dangling citations were published.");
+        // R80: model image text + caption and/or altText must be preserved as
+        // explicit, independent fields before the genuine Studio parser runs.
+        using JsonDocument imageWithCaption = JsonDocument.Parse(
+            "{\"type\":\"image\",\"text\":\"Motor diagram\",\"caption\":\"Figure 1: rotating field\",\"imagePath\":\"C:\\\\verified.png\"}");
+        JsonElement normalized = NormalizeStudio48Block(imageWithCaption.RootElement);
+        if (normalized.TryGetProperty("text", out _) ||
+            normalized.GetProperty("altText").GetString() != "Motor diagram" ||
+            normalized.GetProperty("caption").GetString() != "Figure 1: rotating field" ||
+            !normalized.TryGetProperty("imagePath", out _))
+            throw new InvalidOperationException("R80 image caption and accessible description normalization failed.");
+        using JsonDocument imageWithAllFields = JsonDocument.Parse(
+            "{\"type\":\"image\",\"text\":\"field arrows\",\"altText\":\"stator diagram\",\"caption\":\"Figure 2\"}");
+        normalized = NormalizeStudio48Block(imageWithAllFields.RootElement);
+        if (normalized.TryGetProperty("text", out _) ||
+            normalized.GetProperty("altText").GetString() != "stator diagram; field arrows" ||
+            normalized.GetProperty("caption").GetString() != "Figure 2")
+            throw new InvalidOperationException("R80 explicit image altText/caption preservation failed.");
+        rejected = false;
+        using JsonDocument oversize = JsonDocument.Parse(
+            "{\"type\":\"image\",\"altText\":\"" + new string('a', 199) +
+            "\",\"text\":\"extra\"}");
+        try { _ = NormalizeStudio48Block(oversize.RootElement); }
+        catch (ArgumentException) { rejected = true; }
+        if (!rejected) throw new InvalidOperationException("R80 overlong image altText was silently truncated.");
+        // R81 regression: the exact defect found in the live Tesla DOCX is
+        // model-authored Markdown and literal backslash-n inside a paragraph.
+        using JsonDocument rawMarkdown = JsonDocument.Parse(
+            "[{\"type\":\"paragraph\",\"text\":\"Report title\\\\n\\\\nPrepared by NIRA\\\\nEngineering\"}," +
+            "{\"type\":\"pagebreak\"}," +
+            "{\"type\":\"paragraph\",\"text\":\"# Introduction\\\\n\\\\nThis explains the motor.\"}," +
+            "{\"type\":\"paragraph\",\"text\":\"# References\\\\n\\\\n[S1] Verified source.\"}]");
+        JsonElement structured = NormalizeStudio48Blocks(rawMarkdown.RootElement, "Report title");
+        JsonElement[] native = structured.EnumerateArray().ToArray();
+        if (native.Length != 7 || native[0].GetProperty("text").GetString() != "Prepared by NIRA" ||
+            native[1].GetProperty("text").GetString() != "Engineering" ||
+            native[3].GetProperty("type").GetString() != "heading" ||
+            native[3].GetProperty("text").GetString() != "Introduction" ||
+            native[5].GetProperty("type").GetString() != "heading" ||
+            native[5].GetProperty("text").GetString() != "References" ||
+            native.Any(b => b.TryGetProperty("text", out JsonElement text) &&
+                (text.GetString() ?? "").Contains("\\n", StringComparison.Ordinal)))
+            throw new InvalidOperationException("R81 Markdown/newline block normalization failed.");
+        using JsonDocument duplicateRefs = JsonDocument.Parse(
+            "[{\"type\":\"heading\",\"text\":\"References\"}," +
+            "{\"type\":\"paragraph\",\"text\":\"[S1] Example\"}," +
+            "{\"type\":\"heading\",\"text\":\"References\"}]");
+        rejected = false;
+        try { ValidateStudio48References(duplicateRefs.RootElement); }
+        catch (ArgumentException) { rejected = true; }
+        if (!rejected) throw new InvalidOperationException("R81 duplicated bibliography was accepted.");
+        return 3;
+    }
+}
+
 public sealed class NIRADocxStudioCapabilityHandler : INIRACapabilityHandler
 {
     public static int RunMissingParentPreflightSelfCheck() =>
         NIRADocx.RunMissingParentPreflightSelfCheck();
+    public static int RunStudioR12QualitySelfCheck() =>
+        NIRADocx.RunStudioR12QualitySelfCheck();
 
     public NIRACapabilityDescriptor Descriptor { get; } = new()
     {
         Id = NIRACapabilityIds.DocxStudioCreate,
         DefaultRisk = NIRACapabilityRisk.Modify,
-        Description = "Native Word composer: create a NEW structured DOCX atomically. Academic/business/general typography, substantive paragraphs, headings, bullets, numbering, full-width tables, editable numeric data-bar charts, quotations, images (up to six), captions/credits, hyperlinks, header/footer and PAGE field. Optional minimumBodyWords prevents short content from satisfying longer assignments. Images require verified existing local files and independent reuse-right checks. Verifies saved XML/media, never rendered pagination.",
+        Description = "Native Word composer: create a NEW structured DOCX atomically. Academic/business/general typography, headings, lists, full-width tables, editable numeric data-bar charts, images (up to six), captions/credits, hyperlinks, headers and PAGE field. Authored image blocks must have verified local raster input or the entire write is rejected before publication. Optional minimumBodyWords/minimumImages prevent incomplete reports. Verifies saved XML/media, never rendered pagination.",
         Parameters = [
             NIRADocx.Param("path", true, "NEW unused .docx destination in an authorized folder."),
             NIRADocx.Param("title", true, "Title of document; one line, maximum 180 characters."),

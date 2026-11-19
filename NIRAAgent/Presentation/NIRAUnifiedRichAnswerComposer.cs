@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using NIRAAgent.Runtime.Contracts;
 using NIRAAgent.Diagnostics;
 
 namespace NIRAAgent.Presentation;
@@ -311,5 +312,131 @@ public static class NIRAUnifiedRichAnswerComposer
         if (duplicate.Blocks.Count != 1)
             throw new InvalidOperationException("Duplicate watch URLs created extra player cards.");
         return 3; // Three production smoke families; extended video assertions above.
+    }
+}
+
+/// <summary>
+/// R81: A requested report is a file deliverable, not a cue to repeat its
+/// chapters or downloaded reference pictures in chat. This presentation
+/// projection requires paired, audited current-run Studio-create and DOCX
+/// readback receipts. It never treats model prose as file evidence.
+/// </summary>
+public static class NIRADocxArtifactReplyPolicy
+{
+    public static bool TryCompose(AgentTaskContract? contract,
+        IReadOnlyList<string> verifiedReceipts, out NIRAUnifiedRichAnswer reply)
+    {
+        reply = new NIRAUnifiedRichAnswer(string.Empty, Array.Empty<NIRARichBlock>());
+        if (contract?.RequiresSavedArtifact != true || !contract.RequiresReadBack ||
+            !contract.RequestedFileNames.Any(n => n.EndsWith(".docx", StringComparison.OrdinalIgnoreCase)))
+            return false;
+        var writes = new List<(string Path, string Hash)>();
+        var inspections = new List<(string Path, string Hash, string Output)>();
+        foreach (string raw in verifiedReceipts.Take(64))
+        {
+            if (raw.Length is < 2 or > 100_000) continue;
+            try
+            {
+                using JsonDocument doc = JsonDocument.Parse(raw);
+                JsonElement r = doc.RootElement;
+                if (r.ValueKind != JsonValueKind.Object ||
+                    Read(r, "status") != "Succeeded" ||
+                    r.TryGetProperty("auditRecorded", out JsonElement audit) &&
+                        audit.ValueKind != JsonValueKind.True) continue;
+                // An absent audit field is not a trusted receipt.
+                if (!r.TryGetProperty("auditRecorded", out audit) ||
+                    audit.ValueKind != JsonValueKind.True) continue;
+                string capability = Read(r, "capabilityId");
+                string output = Read(r, "output");
+                if (capability == "filesystem.docx.studio.create" &&
+                    r.TryGetProperty("changedSystemState", out JsonElement changed) &&
+                    changed.ValueKind == JsonValueKind.True &&
+                    Field(output, "PostWriteVerified") == "True" &&
+                    Field(output, "OverwroteExisting") == "False")
+                {
+                    string path = Field(output, "Destination");
+                    string hash = Field(output, "DestinationSHA256");
+                    if (IsRequestedPath(path, contract.RequestedFileNames) && ValidHash(hash))
+                        writes.Add((path, hash));
+                }
+                else if (capability == "filesystem.docx.inspect")
+                {
+                    string path = Field(output, "Path");
+                    string hash = Field(output, "SHA256");
+                    if (IsRequestedPath(path, contract.RequestedFileNames) && ValidHash(hash))
+                        inspections.Add((path, hash, output));
+                }
+            }
+            catch (JsonException) { }
+        }
+        foreach (var saved in writes.AsEnumerable().Reverse())
+        {
+            var read = inspections.LastOrDefault(x =>
+                x.Path.Equals(saved.Path, StringComparison.OrdinalIgnoreCase) &&
+                x.Hash.Equals(saved.Hash, StringComparison.OrdinalIgnoreCase));
+            if (read.Output is null) continue;
+            string fileName = saved.Path.Split('\\', '/').Last();
+            static string Count(string data, string field) =>
+                int.TryParse(Field(data, field), out int value) ? value.ToString() : "not confirmed";
+            string summary = "**Word report saved and inspected**\n\n" +
+                "**File:** `" + saved.Path + "`\n\n" +
+                "**Verified saved content:** " + Count(read.Output, "Paragraphs") +
+                " paragraphs, " + Count(read.Output, "Tables") + " tables, " +
+                Count(read.Output, "EmbeddedMediaParts") + " embedded images, and " +
+                Count(read.Output, "ReferenceEntries") + " reference entries.\n\n" +
+                "Structural inspection passed for **" + fileName +
+                "**. Visual page layout and exact pagination have not been rendered or independently checked.";
+            reply = new NIRAUnifiedRichAnswer(summary, Array.Empty<NIRARichBlock>());
+            return true;
+        }
+        return false;
+    }
+
+    private static string Read(JsonElement root, string key) =>
+        root.TryGetProperty(key, out JsonElement field) && field.ValueKind == JsonValueKind.String
+            ? field.GetString() ?? string.Empty : string.Empty;
+
+    private static string Field(string output, string key)
+    {
+        foreach (string raw in output.Split('\n'))
+            if (raw.StartsWith(key + "=", StringComparison.Ordinal))
+                return raw[(key.Length + 1)..].Trim().TrimEnd('\r');
+        return string.Empty;
+    }
+
+    private static bool ValidHash(string hash) =>
+        hash.Length == 64 && hash.All(Uri.IsHexDigit);
+
+    private static bool IsRequestedPath(string path, IReadOnlyList<string> named) =>
+        path.Length is >= 5 and <= 32760 &&
+        ((path.Length >= 4 && char.IsLetter(path[0]) && path[1] == ':' &&
+          path[2] is '\\' or '/') || path.StartsWith("\\\\", StringComparison.Ordinal)) &&
+        named.Any(n => path.EndsWith("\\" + n, StringComparison.OrdinalIgnoreCase) ||
+                       path.EndsWith("/" + n, StringComparison.OrdinalIgnoreCase));
+
+    public static int RunSelfCheck()
+    {
+        const string destination = @"C:\Users\User\Documents\NIRA_ACCEPTANCE_SANDBOX\Report.docx";
+        string hash = new string('a', 64);
+        AgentTaskContract contract = AgentTaskContractPolicy.Create(
+            "Create a 3 page illustrated Word report Report.docx with references and inspect the saved file.");
+        var receipts = new[] {
+            JsonSerializer.Serialize(new { capabilityId = "filesystem.docx.studio.create",
+                status = "Succeeded", auditRecorded = true, changedSystemState = true,
+                output = $"Destination={destination}\nDestinationSHA256={hash}\nPostWriteVerified=True\nOverwroteExisting=False" }),
+            JsonSerializer.Serialize(new { capabilityId = "filesystem.docx.inspect",
+                status = "Succeeded", auditRecorded = true, changedSystemState = false,
+                output = $"Path={destination}\nSHA256={hash}\nParagraphs=20\nTables=1\nEmbeddedMediaParts=1\nReferenceEntries=5" })
+        };
+        if (!TryCompose(contract, receipts, out NIRAUnifiedRichAnswer response) ||
+            response.Blocks.Count != 0 ||
+            !response.Screen.Contains("Report.docx", StringComparison.Ordinal) ||
+            response.Screen.Contains("Nikola Tesla", StringComparison.Ordinal))
+            throw new InvalidOperationException("R81 verified report reply did not prioritize the file.");
+        if (TryCompose(contract, receipts.Take(1).ToArray(), out _) ||
+            TryCompose(contract, receipts.Select(x => x.Replace(hash, new string('b', 64),
+                StringComparison.Ordinal)).ToArray().Take(1).ToArray(), out _))
+            throw new InvalidOperationException("R81 report reply accepted absent readback.");
+        return 3;
     }
 }

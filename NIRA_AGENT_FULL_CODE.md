@@ -6,9 +6,9 @@
 
 **Source/code files:** 409
 
-**Resource files shown in tree:** 143
+**Resource files shown in tree:** 16
 
-**Total clean project files:** 552
+**Total clean project files:** 425
 
 ---
 
@@ -25,137 +25,6 @@ Generated build folders such as `bin/` and `obj/` are intentionally excluded.
 ```text
 NIRA-AGENT/
 ├── .gitignore
-├── Images
-│   ├── AiGenerated
-│   │   ├── 0fb0322af29348ecb270b5a2e6654754.jpg
-│   │   ├── 1604b1ad89f74a34b53e23a9b9c121a1.jpg
-│   │   └── 6e1f3b936a5a43d38448867bc5723cad.jpg
-│   ├── Uploaded
-│   │   ├── 772acff1d22e4e6cbcafb6622de904a7.png
-│   │   └── b566f8d885264b8da0da06a13fab406b.png
-│   └── WebFound
-│       ├── 02dbd7bf75284d259d05304599bfd7df.gif
-│       ├── 045893321acd449ab06f8a651cc04f13.jpg
-│       ├── 08201b106be9479d80b924ade86db9c4.jpg
-│       ├── 09fc9f3c1f8a471fa4824dba85793519.jpg
-│       ├── 0be313aee76b4ae0bd5f4851847c2796.jpg
-│       ├── 0e8c65079c40456faefe31b15d04082f.jpg
-│       ├── 0fbc5c5b64384fe58e91eaeed09dd51f.png
-│       ├── 0fd42ee5ec9a4ff49041753f7ef1fd9e.jpg
-│       ├── 1024051803b3478fb35b528cfb0f0e01.jpg
-│       ├── 1073cf9f708a4c5e8b1283ef1c1494f0.jpg
-│       ├── 127bad5c77554829bc974074224a8a1a.jpg
-│       ├── 12a9f096488f46ce98abe6e3b5ef1151.jpg
-│       ├── 136bdc156ad2413697e9ae941498851c.jpg
-│       ├── 13eb92391ae94ef4ae077b00d43a73cb.jpg
-│       ├── 172d7929ed56488ca1aeb1dc8cb66876.jpg
-│       ├── 1a1507811815405d9d6b48367211a178.jpg
-│       ├── 1dc53f7c5c26450389e1a88138ae2196.jpg
-│       ├── 2217c4305e4d4294bacdadcc077de92b.jpg
-│       ├── 24bce6aefc684c1983db19ff1998c15f.jpg
-│       ├── 27cfd968f73f4ff1b33583d06b2b8362.jpg
-│       ├── 27ee6420f7a84dfab40856dc80571ccc.jpg
-│       ├── 28a2a0fa4453429eb3ab751fee65ef92.jpg
-│       ├── 29cd0bdd8ed84b21a45186d44dfb6401.jpg
-│       ├── 2f5e5d5b59fb4a43857a123045e66741.jpg
-│       ├── 304bba6b57ac416eaec4fd82ccfa92ff.jpg
-│       ├── 331a60dd0194406eb5d5a37ed2736903.jpg
-│       ├── 344e9ed770444ba4a1a581e0583ba9ac.jpg
-│       ├── 3a64c19375634dd79a0a8fca79d29231.jpg
-│       ├── 43406fcd9bf648a591799fbfb1a23cea.jpg
-│       ├── 4558c403fad8417fb6b4e37e5492b061.jpg
-│       ├── 45a98c444a5e4240a0f9a7a1b6446fdf.jpg
-│       ├── 45b5ae47077a42a3a9e37c80bdbe94ac.jpg
-│       ├── 46d3077b994640eb8e657f4bab247d19.jpg
-│       ├── 4a919e3ea52a4359b748c1b84d184ea9.png
-│       ├── 4db4ef9dd4384ecda16aed87b9c79f19.jpg
-│       ├── 4fed63e867584bd5b1925fd5196daf02.jpg
-│       ├── 507e1dc8ba1e449ebf64f056342e3faa.jpg
-│       ├── 515689f7b5374a638788272f4c298c85.jpg
-│       ├── 54fb22a94d4e45b09a15e336470b769e.jpg
-│       ├── 584257415eea4fa6b6df8aab8921079d.jpg
-│       ├── 585570b38ff646f7ad296ab76d274142.jpg
-│       ├── 588e8b26f38a4b1eb678e03149330327.jpg
-│       ├── 5ac8ad0c9cec4d82be5d1ea82a1219a1.jpg
-│       ├── 5d63d308cf64497f9d45fbd03da11a05.jpg
-│       ├── 5f6b53dbd5664dfca9f22e2421a4ff0d.jpg
-│       ├── 5f9ea09f1e0a462bab38273b757cba50.jpg
-│       ├── 61ac0a9f8dd94fe380957c18dc3035cb.jpg
-│       ├── 639a284e077a41d9ac9bfb421e87b49d.jpg
-│       ├── 6ec710edefc44255bc9e71c36be813c9.jpg
-│       ├── 6f7790e1e7e942e19f420fed495b8d2f.jpg
-│       ├── 706790fa21ff4db7b5c707ef03ddd5b6.jpg
-│       ├── 71720489953143248c81c9be56fb3ec1.jpg
-│       ├── 7375c22eac364493b93b4e1cdceea096.png
-│       ├── 73e086c283c3433b95742625dd1087b7.jpg
-│       ├── 74d9d45efb5b49f1b6ae12087d7dd79c.jpg
-│       ├── 7aff362abdee44f884648d38caa589cc.jpg
-│       ├── 7e0269d13e934e6e92b1aa7ec62023de.jpg
-│       ├── 806b964237df4b0c86a0d5334595e115.jpg
-│       ├── 8288a11841314a61b65529f63684759d.jpg
-│       ├── 86b2c9165db24b81b5c7880a4756b878.png
-│       ├── 872bb72fe3f14b0bbb50026bc3a8014f.jpg
-│       ├── 8823318e4166400298ab2bfc10dd95cf.jpg
-│       ├── 899a567c7af1416ba1309fb65d07e178.jpg
-│       ├── 8a200b4b19b24e69a4d03dbf3a2263ed.png
-│       ├── 8af731bc78954717b06bf02121a425e8.jpg
-│       ├── 8cff5d8998834173b95a1267c98ec005.jpg
-│       ├── 93611629179a4fc2a6f5153975b2cf65.jpg
-│       ├── 94d6a49eb9cc4794b6c3763f34ef3935.png
-│       ├── 966d57ed2f174594a1c73186f6bb6ebe.jpg
-│       ├── 967df48c22cc4bfe9357713d7fb0b015.jpg
-│       ├── 9a46266cb34e4f54919fd8f17a373086.jpg
-│       ├── 9cb9595ac4b542af9c228da297af7808.jpg
-│       ├── 9d133ef2e0ad4a6296bb42612d418b57.jpg
-│       ├── 9e1bbb4c4ebf487282d5b122bf963ab6.jpg
-│       ├── a085fbb31d1143d3ba5d399e269ab982.jpg
-│       ├── a15359c793a043f7ac9267c3fc5a7bf4.jpg
-│       ├── a26311d442fe47d38d2e152bcf81c447.jpg
-│       ├── a2982c35a04e4d4faeef3ae4c2655928.jpg
-│       ├── a79f28b67f164e5ebf3c16fe0c278420.jpg
-│       ├── ac1abdd05b1e4d56907c4e2a8ad2d367.jpg
-│       ├── ad4562fe31854c53a68ea030f0642248.png
-│       ├── ad5b554e6874457ab190f6cf37c17a35.png
-│       ├── b14f4f0a43924445ad3a86d4fdc18883.jpg
-│       ├── b1653a9748944cd2b7ffe6b9293d6f2c.png
-│       ├── b8f827cc83c64330ac9cc534b2768b02.jpg
-│       ├── b9203ce1d6754875bb52c5da418c9934.gif
-│       ├── b9aa715be64c458e9e89299b61236841.jpg
-│       ├── ba9e26f22f7249879eca58575940b12c.jpg
-│       ├── bae67f68d5d74e679fa5d6319eb024f3.jpg
-│       ├── bd32802281c0446c886ee3df5ac2c65d.png
-│       ├── bee3c91f9bb94eb18c8e9f144d4e9c85.jpg
-│       ├── c055745032a74a51bca8be0cdd6780be.jpg
-│       ├── c0778ad1e8fa45179db9f66bfc6436a9.jpg
-│       ├── c70b5cb4cc5d4a30b1e8b0a3b1c66647.jpg
-│       ├── c7bcded59b004cf5bff2254af12153c3.jpg
-│       ├── cf43127f13ff44ab952021a78670a7ab.jpg
-│       ├── cfc758a8fc9b4f45ab97beb1aad9752e.jpg
-│       ├── d0eb13fd793f4fc5a6446eeb79392878.jpg
-│       ├── d1c1296a46dc4d11841afa70d5fcc302.jpg
-│       ├── d1c5676366794b2688313a339676a23e.jpg
-│       ├── d1eb9d72077e4b29ad7c2392b0b7d710.jpg
-│       ├── d663580359924eeb8517543d9e8553d6.jpg
-│       ├── d71e0e1473fe4faeac74ee77a23fdc16.jpg
-│       ├── d81e136ca54442738c839158a291eee4.jpg
-│       ├── d94c45e6427d4b9ab3ee076c85a073b1.jpg
-│       ├── dea16deb21ad41cbaa3452fb8f953cf7.png
-│       ├── dfc0d2e613914c2293e5cb71c4bf98fc.jpg
-│       ├── e2366adba67b4295a7db2cfb6553c162.png
-│       ├── e642de21d34941bdb32b905bd59684c8.png
-│       ├── e7265b5ff70c43b0b74383496ce7ce67.jpg
-│       ├── e780436cb44741c0ab180a656d22b504.jpg
-│       ├── eaf53c741f6d43cfaf6ca5577a0c16e6.jpg
-│       ├── ec4417426cc84f2b8477aacf27fd9d13.jpg
-│       ├── ec4fa8ca52c34e21a4c63e4c5240f51b.jpg
-│       ├── ec82150936834444ba46666fbbc9fa74.jpg
-│       ├── ed5d02eb08784f0cbc75d13d76f7343e.png
-│       ├── ed74a61a41aa4b8caf0fecf67cfb608c.jpg
-│       ├── f087326c748e4d7aa0c99ffd45fd3b34.jpg
-│       ├── f4d772b2ee1e4b389c395d4018db231e.jpg
-│       ├── f5952fd6f34b4c2e85314ad93c7b6a14.jpg
-│       ├── fbafba10d0744b408936e435d8f07b48.jpg
-│       └── fbfe6b7a855a4cacb43a99bc6320fc05.jpg
 ├── NIRAAgent.UI
 │   ├── AgentRuntime
 │   │   ├── NIRALifecyclePermissionGate.cs
@@ -953,6 +822,10 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
                 return;
             }
             NiraProviderSelection selection = NiraProviderSelection.FromEnvironment();
+            // Operator-visible model identity for diagnosing stale binaries or
+            // an inherited process-level NIRA_MODEL_NAME override. No key logged.
+            NIRADiagnosticTrace.Event("NIRA-REASONING-MODEL",
+                $"Provider={selection.Provider} Model={selection.Options.Model} Revision=R82");
             if (!selection.IsReady && !(selection.Provider == "OLLAMA" && _modelKeys.HasKey))
             {
                 Finish(writer, mindEvent.Source,
@@ -1131,15 +1004,23 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
                     catch (Exception ex) when (ex is IOException or InvalidDataException or
                         UnauthorizedAccessException or JsonException) { }
                 }
-                NIRAUnifiedRichAnswer prepared = NIRAUnifiedRichAnswerComposer.Compose(
-                    run.FinalAnswer, request, evidenceTexts);
+                // On a verified DOCX deliverable, the saved document is the
+                // answer. Do not repeat its research chapters or web images in
+                // the chat; derive the short status from matching audited create
+                // and readback receipts, never from model completion claims.
+                bool artifactFirst = NIRADocxArtifactReplyPolicy.TryCompose(
+                    run.TaskContract, evidenceTexts, out NIRAUnifiedRichAnswer prepared);
+                if (!artifactFirst)
+                    prepared = NIRAUnifiedRichAnswerComposer.Compose(
+                        run.FinalAnswer, request, evidenceTexts);
                 string content = prepared.Screen + (receipt ?? "");
                 writer.TryWrite(new NIRAOutputChunk {
                     RunId = run.Id, Source = mindEvent.Source, Type = NIRAOutputChunkType.Text,
                     Content = content, DisplayBlocks = prepared.Blocks,
                     SpeechContent = prepared.Screen + (receipt is null ? "" :
                         " The saved work plan was verified.") });
-                await EmitVerifiedVisualsAsync(run, vault, writer, mindEvent.Source, ct);
+                if (!artifactFirst)
+                    await EmitVerifiedVisualsAsync(run, vault, writer, mindEvent.Source, ct);
                 bool disposableMath = await IsVerifiedDisposableMathAsync(mindEvent, run, vault, ct);
                 writer.TryWrite(new NIRAOutputChunk { RunId = run.Id,
                     Source = mindEvent.Source, Type = NIRAOutputChunkType.Completed,
@@ -1258,6 +1139,8 @@ public sealed class NIRAWpfAgentHost : INIRAAgentExecutionHost
             !ProviderFailureMessage("OLLAMA", "MODEL_TRANSPORT_TIMEOUT", false)
                 .Contains("timed out", StringComparison.Ordinal))
             throw new InvalidOperationException("Operator-facing provider failure messages missing.");
+        if (NIRADocxArtifactReplyPolicy.RunSelfCheck() != 3)
+            throw new InvalidOperationException("R81 artifact-first document presentation check failed.");
         return 4;
     }
 
@@ -2596,6 +2479,9 @@ public partial class App : WpfApplication
                             "A required native observation function is missing.");
                     _ = nativeRegistry.BuildProviderTools(nativeRegistry.Tools
                         .Select(x => x.Spec).ToArray(), allowWrite: true);
+                     int secureTraceChecks = NIRADiagnosticTrace.RunSecureTraceSelfCheck();
+                     if (secureTraceChecks != 2)
+                         throw new InvalidOperationException("Encrypted model forensic trace is unavailable.");
                      int credentialPersistenceChecks = NIRAModelApiKeyService.RunPersistenceSelfCheck();
                      int credentialRetryChecks = GeneralModelReasoner.RunAuthenticationRecoverySelfCheck();
                      if (credentialPersistenceChecks != 3 || credentialRetryChecks != 6)
@@ -2613,6 +2499,17 @@ public partial class App : WpfApplication
                     // Current-run completion contracts must survive checkpoints
                     // and require real tool receipts, not a model's final prose.
                     int taskContractChecks = AgentTaskContractPolicy.RunSelfCheck();
+                    int modelDefaultChecks =
+                        NIRAActiveModelProvider.DefaultModel == "gpt-oss:120b" &&
+                        NIRAModelSelection.VisionDefault == "gemma4:31b" ? 2 : 0;
+                    if (modelDefaultChecks != 2)
+                        throw new InvalidOperationException(
+                            "R82 GPT-OSS reasoning / Gemma vision defaults are not compiled.");
+                    int docxDraftNormalizationChecks =
+                        AgentTaskContractPolicy.RunDocxDraftNormalizationSelfCheck();
+                    if (docxDraftNormalizationChecks != 4)
+                        throw new InvalidOperationException(
+                            "R82 typed DOCX proposal / cover normalization checks failed.");
                     int taskRecoveryChecks = GeneralModelReasoner.RunPendingTaskRecoverySelfCheck();
                     if (taskRecoveryChecks != 8)
                         throw new InvalidOperationException("Pending-work decision recovery checks failed.");
@@ -2625,6 +2522,10 @@ public partial class App : WpfApplication
                         await AgentLoopEngine.RunConfirmedNoEffectRecoverySelfCheckAsync(taskStore);
                     int studioMissingParentChecks =
                         NIRADocxStudioCapabilityHandler.RunMissingParentPreflightSelfCheck();
+                    int studioR12QualityChecks =
+                        NIRADocxStudioCapabilityHandler.RunStudioR12QualitySelfCheck();
+                    if (studioR12QualityChecks != 3)
+                        throw new InvalidOperationException("R12 Word Studio quality regression failed.");
                     if (noEffectRecoveryChecks != 3 || studioMissingParentChecks != 2)
                         throw new InvalidOperationException("Audited missing-folder correction checks failed.");
                     if (taskContractChecks != 3 || taskReceiptChecks != 5 || taskLoopChecks != 3)
@@ -2895,15 +2796,16 @@ public partial class App : WpfApplication
                             status = "PASS", capabilityCount = descriptors.Count,
                             nativeToolCount = nativeRegistry.Count,
                             nativeFunctionsChecked = requiredFunctions.Length,
-                            protocolChecks, noDecisionRecoveryChecks,
+                             secureTraceChecks, protocolChecks, noDecisionRecoveryChecks,
                             discoveryChecks, richChecks, activityChecks,
                             publicThinkingChecks, streamingDraftChecks,
                             sourceLinkRecoveryChecks, readOnlySchemaChecks, boundedSearchChecks,
                             researchProgressChecks, progressPresentationChecks, observedImageChecks,
                             readFailureEvidenceChecks,
                              discoveredRoutingChecks,
-                            taskContractChecks, taskReceiptChecks, taskLoopChecks,
-                            noEffectRecoveryChecks, studioMissingParentChecks,
+                            taskContractChecks, docxDraftNormalizationChecks, modelDefaultChecks,
+                            taskReceiptChecks, taskLoopChecks,
+                            noEffectRecoveryChecks, studioMissingParentChecks, studioR12QualityChecks,
                             taskRecoveryChecks,
                             docxPreflightChecks, docxBoundaryChecks,
                              providerFailureChecks, credentialPersistenceChecks, credentialRetryChecks,
@@ -28717,7 +28619,7 @@ public partial class SettingsWindow : Window
 ```powershell
 [CmdletBinding()]
 param(
-    [string]$Model = 'gemma4:31b',
+    [string]$Model = 'gpt-oss:120b',
     [switch]$SessionOnlyKey,
     [switch]$ForgetSavedKey,
     [switch]$AllowPersonalContext,
@@ -38329,6 +38231,8 @@ public sealed record AgentLoopLimits(int MaxDecisions = 12, int MaxTools = 8)
 
 ```csharp
 using System.Text.RegularExpressions;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace NIRAAgent.Runtime.Contracts;
 
@@ -38345,6 +38249,15 @@ public sealed class AgentTaskContract
     public bool RequiresChangedState { get; init; }
     public bool RequiresSavedArtifact { get; init; }
     public bool RequiresReadBack { get; init; }
+    // Request-derived DOCX content obligations survive model turns/restarts.
+    // They are not inferred from claims in a model answer or from retrieved text.
+    public bool RequiresDocxIllustration { get; init; }
+    public bool RequiresDocxTable { get; init; }
+    public bool RequiresDocxReferences { get; init; }
+    public bool RequiresDocxCover { get; init; }
+    // A conservative content floor, NOT a claim to verify rendered pagination.
+    public int MinimumDocxBodyWords { get; init; }
+    public int RequestedDocxPages { get; init; }
     public List<string> RequestedFileNames { get; init; } = new();
     public List<string> Milestones { get; init; } = new();
     public int RejectedPrematureAnswers { get; set; }
@@ -38369,6 +38282,12 @@ public static class AgentTaskContractPolicy
         @"\b(?:check|verify|inspect|read.back|review.the.saved|confirm.the.saved|open.the.saved)\b",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
         TimeSpan.FromMilliseconds(150));
+    private static readonly Regex DocxVisual = new(
+        @"\b(?:illustrat(?:ed|ion|ions)|photos?|photographs?|figures?|diagrams?|images?|pictures?)\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(150));
+    private static readonly Regex DocxPageHint = new(
+        @"\b(?:around|about|approximately|roughly)?\s*(?<pages>[2-9]|1[0-5])\s*(?:[-–]\s*(?:[2-9]|1[0-5]))?\s*pages?\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(150));
     private static readonly Regex ExplanationOnly = new(
         @"\b(?:how (?:do|can|would|should|to)|explain how|what (?:is|are|would)|tell me how)\b",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
@@ -38396,6 +38315,25 @@ public static class AgentTaskContractPolicy
         bool change = artifact || modelRequiresChange;
         bool action = change || modelRequiresAction;
         bool inspect = artifact && (InspectionIntent.IsMatch(request) || modelRequiresReadBack);
+        bool docx = artifact && (named.Any(n => n.EndsWith(".docx", StringComparison.OrdinalIgnoreCase)) ||
+            Regex.IsMatch(request, @"\b(?:word\s+(?:document|report|file)|docx)\b", RegexOptions.IgnoreCase));
+        // An explicitly conditional image is a preference, not a hard requirement.
+        // Evaluate the qualifier beside each mention, rather than dropping ALL
+        // visual requirements merely because 'if available' appears elsewhere.
+        bool mustIllustrate = docx && DocxVisual.Matches(request).Cast<Match>().Any(m =>
+        {
+            string after = request.Substring(m.Index + m.Length,
+                Math.Min(34, request.Length - m.Index - m.Length));
+            return !Regex.IsMatch(after,
+                @"^\s*(?:if|where)\s+(?:available|possible)\b", RegexOptions.IgnoreCase);
+        });
+        int pages = 0;
+        Match pageHint = docx ? DocxPageHint.Match(request) : Match.Empty;
+        if (pageHint.Success && int.TryParse(pageHint.Groups["pages"].Value, out int parsedPages))
+            pages = parsedPages;
+        // This deliberately rejects extremely thin page-count assignments.
+        // Page count itself cannot be certified without a rendering backend.
+        int wordFloor = pages >= 2 ? Math.Min(2400, pages * 200) : 0;
         var steps = (milestones ?? Array.Empty<string>())
             .Where(s => !string.IsNullOrWhiteSpace(s))
             .Select(s => string.Join(' ', s.Split((char[]?)null,
@@ -38405,9 +38343,250 @@ public static class AgentTaskContractPolicy
         return new AgentTaskContract {
             RequiresVerifiedAction = action, RequiresChangedState = change,
             RequiresSavedArtifact = artifact, RequiresReadBack = inspect,
+            RequiresDocxIllustration = mustIllustrate,
+            RequiresDocxTable = docx && Regex.IsMatch(request, @"\btable\b", RegexOptions.IgnoreCase),
+            RequiresDocxReferences = docx && Regex.IsMatch(request,
+                @"\b(?:references?|citations?|bibliograph(?:y|ies))\b", RegexOptions.IgnoreCase),
+            RequiresDocxCover = docx && Regex.IsMatch(request,
+                @"\b(?:cover\s+page|title\s+page)\b", RegexOptions.IgnoreCase),
+            MinimumDocxBodyWords = wordFloor, RequestedDocxPages = pages,
             RequestedFileNames = explicitArtifact ? named : new List<string>(),
             Milestones = steps
         };
+    }
+
+
+    // R82: pure, lossless repair for the exact observed failure (six blocks
+    // without type). The proposal is not authorized or dispatched here.
+    // Ambiguous or structured objects are deliberately NOT guessed. This
+    // cannot change file paths, use an unobserved image, or confer authority.
+    public static JsonElement NormalizeStudioDraft(AgentTaskContract? contract,
+        JsonElement proposal, out int inferredTextBlocks, out bool coverBreakInserted)
+    {
+        inferredTextBlocks = 0;
+        coverBreakInserted = false;
+        if (contract is null || proposal.ValueKind != JsonValueKind.Object ||
+            !proposal.TryGetProperty("capabilityId", out JsonElement id) ||
+            id.ValueKind != JsonValueKind.String ||
+            id.GetString() != "filesystem.docx.studio.create" ||
+            !proposal.TryGetProperty("arguments", out JsonElement args) ||
+            args.ValueKind != JsonValueKind.Object ||
+            !args.TryGetProperty("blocksJson", out JsonElement raw) ||
+            raw.ValueKind != JsonValueKind.Array || raw.GetArrayLength() is < 1 or > 120 ||
+            proposal.GetRawText().Length > 180000 ||
+            !UniqueProperties(proposal) || !UniqueProperties(args))
+            return proposal;
+        foreach (JsonElement block in raw.EnumerateArray())
+            if (block.ValueKind != JsonValueKind.Object || !UniqueProperties(block))
+                return proposal;
+
+        // A missing type is repaired ONLY if every field is an explicitly
+        // supported paragraph field and exactly one text representation exists.
+        // Never reinterpret a section, image, table, heading or nested object.
+        bool InferParagraph(JsonElement block)
+        {
+            if (block.TryGetProperty("type", out _)) return false;
+            int valueCount = 0;
+            if (block.TryGetProperty("text", out JsonElement text) &&
+                text.ValueKind == JsonValueKind.String) valueCount++;
+            if (block.TryGetProperty("content", out JsonElement content) &&
+                content.ValueKind == JsonValueKind.String) valueCount++;
+            if (block.TryGetProperty("runs", out JsonElement runs) &&
+                runs.ValueKind == JsonValueKind.Array && runs.GetArrayLength() is >= 1 and <= 20 &&
+                runs.EnumerateArray().All(r => r.ValueKind == JsonValueKind.Object &&
+                    r.TryGetProperty("text", out JsonElement t) && t.ValueKind == JsonValueKind.String))
+                valueCount++;
+            if (valueCount != 1) return false;
+            foreach (JsonProperty field in block.EnumerateObject())
+                if (field.Name is not ("text" or "content" or "runs" or "alignment" or
+                    "fontSizePt" or "bold" or "italic" or "underline")) return false;
+            return true;
+        }
+
+        bool needCover = contract.RequiresDocxCover &&
+            !raw.EnumerateArray().Take(6).Any(b =>
+                b.TryGetProperty("type", out JsonElement type) &&
+                type.ValueKind == JsonValueKind.String &&
+                string.Equals(type.GetString(), "pagebreak", StringComparison.OrdinalIgnoreCase));
+        bool needText = raw.EnumerateArray().Any(InferParagraph);
+        if (!needCover && !needText) return proposal;
+        JsonObject? envelope;
+        try { envelope = JsonNode.Parse(proposal.GetRawText()) as JsonObject; }
+        catch (JsonException) { return proposal; }
+        if (envelope?["arguments"] is not JsonObject editedArgs ||
+            editedArgs["blocksJson"] is not JsonArray blocks) return proposal;
+        for (int i = 0; i < raw.GetArrayLength(); i++)
+        {
+            if (!InferParagraph(raw[i])) continue;
+            if (blocks[i] is not JsonObject block) return proposal;
+            block["type"] = "paragraph";
+            inferredTextBlocks++;
+        }
+        if (needCover && blocks.Count < 120)
+        {
+            // The native Studio title is already authored on its title page;
+            // insert only the requested separation, never artificial content.
+            blocks.Insert(0, new JsonObject { ["type"] = "pagebreak" });
+            coverBreakInserted = true;
+        }
+        JsonElement normalized = JsonSerializer.SerializeToElement(envelope);
+        if (normalized.GetRawText().Length <= 180000) return normalized;
+        inferredTextBlocks = 0;
+        coverBreakInserted = false;
+        return proposal;
+    }
+
+    private static bool UniqueProperties(JsonElement obj) =>
+        obj.ValueKind == JsonValueKind.Object &&
+        obj.EnumerateObject().Select(p => p.Name).Distinct(StringComparer.Ordinal)
+            .Count() == obj.EnumerateObject().Count();
+
+    public static int RunDocxDraftNormalizationSelfCheck()
+    {
+        AgentTaskContract contract = Create("Create an illustrated Motor.docx report of approximately 3 pages " +
+            "with a title page, comparison table, references, then inspect the saved document.");
+        string report = string.Join(" ", Enumerable.Repeat(
+            "Three phase currents establish a rotating magnetic field and induce rotor torque.", 65));
+        JsonElement candidate = JsonSerializer.SerializeToElement(new {
+            capabilityId = "filesystem.docx.studio.create",
+            arguments = new { path = "C:\\nira-test\\Motor.docx", title = "Motor",
+                blocksJson = new object[] {
+                    new { text = "# Introduction\\n" + report },
+                    new { type = "image", altText = "Stator and rotor", imagePath = "C:\\evidence.png" },
+                    new { type = "table", rows = new object[] { new[] { "AC", "DC" }, new[] { "Induction", "Brushed" } } },
+                    new { type = "heading", text = "References", level = 2 },
+                    new { text = "[S1] Verified source. https://example.org/source" }
+                } }
+        });
+        JsonElement fixedDraft = NormalizeStudioDraft(contract, candidate, out int inferred,
+            out bool cover);
+        if (contract.MinimumDocxBodyWords != 600 || inferred != 2 || !cover ||
+            fixedDraft.GetProperty("arguments").GetProperty("blocksJson")[0]
+                .GetProperty("type").GetString() != "pagebreak" ||
+            StudioProposalProblem(contract, fixedDraft) is not null)
+            throw new InvalidOperationException("R82 DOCX text/cover repair not accepted by task validator.");
+        JsonElement unsafeDraft = JsonSerializer.SerializeToElement(new {
+            capabilityId = "filesystem.docx.studio.create", arguments = new {
+                blocksJson = new object[] { new { heading = "Invented structure", body = report } } }
+        });
+        JsonElement untouched = NormalizeStudioDraft(contract, unsafeDraft, out int unsafeCount,
+            out _);
+        if (unsafeCount != 0 || StudioProposalProblem(contract, untouched) is not string problem ||
+            !problem.Contains("missing type", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("R82 ambiguous Word blocks were accepted or silently dropped.");
+        JsonElement other = JsonSerializer.SerializeToElement(new {
+            capabilityId = "filesystem.write", arguments = new { path = "test.txt" } });
+        if (NormalizeStudioDraft(contract, other, out int otherCount, out _).GetRawText() !=
+            other.GetRawText() || otherCount != 0)
+            throw new InvalidOperationException("R82 modified an unrelated capability proposal.");
+        if (candidate.GetProperty("arguments").GetProperty("blocksJson")[0]
+            .TryGetProperty("type", out _))
+            throw new InvalidOperationException("R82 mutated the model's original proposal.");
+        return 4;
+    }
+
+    // Pure pre-dispatch check. The model cannot reduce a host-derived requirement
+    // by leaving minimumImages/word counts out of the DOCX tool arguments.
+    // A validation failure is a model-proposal correction, NOT an attempted write.
+    public static string? StudioProposalProblem(AgentTaskContract? contract,
+        JsonElement proposal)
+    {
+        if (contract is null || proposal.ValueKind != JsonValueKind.Object ||
+            !proposal.TryGetProperty("capabilityId", out JsonElement id) ||
+            id.ValueKind != JsonValueKind.String ||
+            id.GetString() != "filesystem.docx.studio.create" ||
+            !proposal.TryGetProperty("arguments", out JsonElement args) ||
+            args.ValueKind != JsonValueKind.Object) return null;
+        if (!args.TryGetProperty("blocksJson", out JsonElement raw))
+            return "Word Studio needs blocksJson containing the requested report.";
+        JsonDocument? holder = null;
+        try
+        {
+            if (raw.ValueKind == JsonValueKind.String)
+            {
+                holder = JsonDocument.Parse(raw.GetString() ?? "", new JsonDocumentOptions { MaxDepth = 12 });
+                raw = holder.RootElement;
+            }
+            if (raw.ValueKind != JsonValueKind.Array) return "Word Studio blocksJson must be an array.";
+            bool hasImage = false, hasTable = false, hasCoverBreak = false, hasReferences = false;
+            int words = 0;
+            int untyped = 0;
+            var unsupported = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (JsonElement block in raw.EnumerateArray())
+            {
+                if (block.ValueKind != JsonValueKind.Object) continue;
+                string kind = block.TryGetProperty("type", out JsonElement btype) &&
+                    btype.ValueKind == JsonValueKind.String ? (btype.GetString() ?? "").ToLowerInvariant() : "";
+                if (kind.Length == 0) untyped++;
+                else if (kind is not ("paragraph" or "text" or "heading" or "bullet" or
+                    "number" or "quote" or "table" or "image" or "chart" or "toc" or
+                    "divider" or "pagebreak" or "link" or "h1" or "h2" or "h3" or
+                    "heading1" or "heading2" or "heading3" or "heading_1" or
+                    "heading_2" or "heading_3")) unsupported.Add(kind);
+                if (kind == "image") hasImage = true;
+                if (kind is "table" or "chart") hasTable = true;
+                if (kind == "pagebreak" && words <= 80) hasCoverBreak = true;
+                if (kind is "paragraph" or "text" or "bullet" or "number" or "quote")
+                {
+                    if (block.TryGetProperty("text", out JsonElement value) && value.ValueKind == JsonValueKind.String)
+                    {
+                        string text = value.GetString() ?? "";
+                        words += Regex.Matches(text, @"[\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*").Count;
+                        // Model input can use literal \n sequences and Markdown
+                        // heading syntax. Detect its real bibliography BEFORE
+                        // the evidence binder decides to append another one.
+                        bool referencesHeading = Regex.IsMatch(text,
+                            @"(?:^|\n|\\n)\s*#{1,3}\s*(?:References|Bibliography|Works Cited)(?:\s|\\n|$)",
+                            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+                        bool citedDefinitions = Regex.IsMatch(text,
+                            @"\[S[1-9]\d{0,2}\]\s+\S+",
+                            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+                        if ((referencesHeading && citedDefinitions) ||
+                            Regex.IsMatch(text, @"(?:^|\n)\s*\[?S\d+\]?\s*[-.:]\s+", RegexOptions.IgnoreCase))
+                            hasReferences = true;
+                    }
+                    if (block.TryGetProperty("content", out value) && value.ValueKind == JsonValueKind.String)
+                        words += Regex.Matches(value.GetString() ?? "", @"[\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*").Count;
+                    if (block.TryGetProperty("runs", out JsonElement runs) &&
+                        runs.ValueKind == JsonValueKind.Array)
+                        foreach (JsonElement run in runs.EnumerateArray())
+                            if (run.ValueKind == JsonValueKind.Object &&
+                                run.TryGetProperty("text", out JsonElement part) &&
+                                part.ValueKind == JsonValueKind.String)
+                                words += Regex.Matches(part.GetString() ?? "",
+                                    @"[\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*").Count;
+                }
+                if (kind == "heading" && block.TryGetProperty("text", out JsonElement label) &&
+                    label.ValueKind == JsonValueKind.String &&
+                    Regex.IsMatch(label.GetString() ?? "", @"^\s*(?:references|bibliography|sources)\s*$",
+                        RegexOptions.IgnoreCase)) hasReferences = true;
+            }
+            // Return the complete actionable deficiency set in ONE correction.
+            // Returning only the first problem makes a tool model fix one field
+            // per turn, exhaust its revision budget, and abandon the action.
+            var problems = new List<string>();
+            if (untyped != 0)
+                problems.Add($"{untyped} DOCX blocks have missing type fields. " +
+                    "Every block needs an explicit supported type; flatten ambiguous " +
+                    "section wrappers into heading and paragraph text blocks without losing wording.");
+            if (unsupported.Count != 0)
+                problems.Add("Unsupported DOCX block type(s): " +
+                    string.Join(", ", unsupported.OrderBy(t => t)) +
+                    ". Use the supported Word Studio block names.");
+            if (contract.RequiresDocxIllustration && !hasImage)
+                problems.Add("Required embedded illustration missing: include an image block bound to verified source evidence.");
+            if (contract.RequiresDocxTable && !hasTable)
+                problems.Add("Required native comparison/data table missing: include a table block.");
+            if (contract.RequiresDocxReferences && !hasReferences)
+                problems.Add("Required reference definitions missing: include a references section with genuine observed source IDs.");
+            if (contract.RequiresDocxCover && !hasCoverBreak)
+                problems.Add("Required separate title/cover page missing: add a pagebreak before the report body.");
+            if (contract.MinimumDocxBodyWords > 0 && words < contract.MinimumDocxBodyWords)
+                problems.Add($"Draft narrative is {words} words; at least {contract.MinimumDocxBodyWords} source-grounded words required for the user-requested length. Expand the report before publishing; this does not certify actual pagination.");
+            return problems.Count == 0 ? null : string.Join(" ", problems);
+        }
+        catch (JsonException) { return "Word Studio blocksJson is malformed JSON."; }
+        finally { holder?.Dispose(); }
     }
 
     public static int RunSelfCheck()
@@ -38428,6 +38607,31 @@ public static class AgentTaskContractPolicy
             milestones: new[] { "Gather requirements", "Complete authorized actions" });
         if (!model.RequiresChangedState || model.Milestones.Count != 2)
             throw new InvalidOperationException("Model-authored work contract ignored.");
+        AgentTaskContract quality = Create("Create a 3-4 page illustrated Tesla.docx " +
+            "with a comparison table, a title page, and references, then inspect the saved file.");
+        if (!quality.RequiresDocxIllustration || !quality.RequiresDocxTable ||
+            !quality.RequiresDocxReferences || quality.MinimumDocxBodyWords != 600)
+            throw new InvalidOperationException("Host missed Word requirements.");
+        JsonElement inadequate = JsonSerializer.SerializeToElement(new {
+            capabilityId = "filesystem.docx.studio.create",
+            arguments = new { blocksJson = new[] { new { type = "paragraph", text = "Too short" } } }
+        });
+        string? issues = StudioProposalProblem(quality, inadequate);
+        if (issues is null || !issues.Contains("illustration", StringComparison.Ordinal) ||
+            !issues.Contains("table", StringComparison.Ordinal) ||
+            !issues.Contains("reference definitions", StringComparison.Ordinal) ||
+            !issues.Contains("title/cover", StringComparison.Ordinal) ||
+            !issues.Contains("600", StringComparison.Ordinal))
+            throw new InvalidOperationException("Multiple Word draft problems were not reported together.");
+        var embeddedReferences = JsonSerializer.SerializeToElement(new {
+            capabilityId = "filesystem.docx.studio.create", arguments = new {
+                blocksJson = new[] { new { type = "paragraph", text =
+                    "# References\\n\\n[S1] Verified source. https://example.org/verified" } } }
+        });
+        AgentTaskContract bibliographyOnly = Create(
+            "Create Verified.docx with trustworthy references and inspect the saved file.");
+        if (StudioProposalProblem(bibliographyOnly, embeddedReferences) is not null)
+            throw new InvalidOperationException("R81 embedded bibliography was not recognized; would duplicate references.");
         return 3;
     }
 }
@@ -39137,6 +39341,9 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using NIRAAgent.Diagnostics;
+using NIRAAgent.Capabilities;
+using NIRAAgent.Mind;
+using System.Text.Json.Nodes;
 using NIRAAgent.Runtime.Contracts;
 using NIRAAgent.Runtime.ModelProvider;
 using NIRAAgent.Runtime.Runtime.AgentLoop;
@@ -39177,6 +39384,13 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
     private readonly Action<string>? _publicThinkingUpdate;
     private bool _publicThinkingPublished;
     private bool _publicThinkingFallbackAttempted;
+    // SAME live run only: the model's exact previously validated report intent.
+    // A confirmed no-publication failure + an audited exact parent-create may
+    // permit ONE fresh, re-authorized proposal; no uncertain write is replayed.
+    private Guid _studioPendingRunId;
+    private JsonElement _studioPendingProposal;
+    private int _studioPendingObservationStart;
+    private bool _studioPendingRetryUsed;
     public int PublicThinkingFallbackRequests { get; private set; }
 
     public static int RunGroundingRecoverySelfCheck() =>
@@ -39248,24 +39462,200 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
     // for Tesla, DOCX paths, or the machine running NIRA.
     private static bool CanRetryUnfinishedTask(AgentTaskContract? contract,
         AgentTaskCompletionAssessment assessment, int attempt, int toolCount) =>
-        contract is not null && !assessment.Accept && attempt < 2 && toolCount > 0;
+        contract is not null && !assessment.Accept && toolCount > 0 &&
+        attempt < (contract.RequestedFileNames.Any(n =>
+            n.EndsWith(".docx", StringComparison.OrdinalIgnoreCase)) ? 4 : 2);
 
-    // Only for an unfinished saved-artifact task, prioritize the registered
-    // action adapters in a corrective turn instead
-    // of inviting another search when the requested mutation has not run at all.
-    // These tools are ALREADY advertised/authorized through the normal registry;
-    // this only narrows model suggestions, never expands permissions.
+    // Prioritize the ALREADY REGISTERED adapters during a corrective artifact
+    // turn. A successful directory.create is NOT evidence that the requested
+    // DOCX was written. Do not switch this focus off merely because ANY write
+    // succeeded. Include observe for the post-create independent inspection.
+    // Only a failed task assessment activates this path; normal turns are intact.
     private static IReadOnlyList<AgentToolSpec> FocusUnstartedActionTools(
         IReadOnlyList<AgentToolSpec> advertised, AgentTaskContract? contract,
         IReadOnlyList<AgentObservation> observations, string? correction)
     {
-        if (correction != "UNFINISHED_TASK_ACTION_REQUIRED" ||
-            contract?.RequiresSavedArtifact != true ||
-            observations.Any(o => o.Succeeded && o.ToolId == "nira.capabilities.execute"))
+        if (correction is not ("UNFINISHED_TASK_ACTION_REQUIRED" or
+                "UNFINISHED_TASK_JSON_ACTION_REQUIRED" or
+                "DOCX_CREATE_BEFORE_INSPECT") ||
+            contract?.RequiresSavedArtifact != true)
             return advertised;
         AgentToolSpec[] focused = advertised.Where(t =>
-            t.Id is "nira.capabilities.execute" or "nira.capabilities.discover").ToArray();
+            t.Id is "nira.capabilities.execute" or "nira.capabilities.observe" or
+                "nira.capabilities.discover").ToArray();
         return focused.Any(t => t.Id == "nira.capabilities.execute") ? focused : advertised;
+    }
+
+    // An invalid model proposal was never an executed tool. Constrain its
+    // revision to the SAME registered adapter; a successful audited mutation
+    // or uncertain write cannot reach this path. No tool authority is added.
+    private static IReadOnlyList<AgentToolSpec> FocusRejectedNativeTool(
+        IReadOnlyList<AgentToolSpec> advertised, string? correction,
+        string? rejectedToolId)
+    {
+        if (correction is not ("UNEXECUTED_MUTATION_ARGUMENT_INVALID" or
+                "UNFINISHED_TASK_ACTION_REQUIRED") ||
+            string.IsNullOrWhiteSpace(rejectedToolId)) return advertised;
+        AgentToolSpec[] focused = advertised.Where(t =>
+            t.Id == rejectedToolId && t.Access == AccessLevel.Modify).ToArray();
+        return focused.Length == 1 ? focused : advertised;
+    }
+
+    // OpenAI-compatible Ollama advertises tool_choice. On a correction for
+    // unfulfilled authorized work, require a native structured proposal,
+    // rather than allowing an unverified public update to consume the turn.
+    // The selected call still passes the same native schema, permission gate,
+    // checkpoint and definitive/uncertain outcome rules as any other call.
+    private static bool RequireCorrectiveNativeTool(IDictionary<string, object> payload,
+        NiraModelEndpointOptions provider, string? correction,
+        bool mandatoryWorkUnfinished, IReadOnlyList<AgentToolSpec> advertised)
+    {
+        if (!provider.IsOllama || !mandatoryWorkUnfinished ||
+            correction is not ("UNEXECUTED_MUTATION_ARGUMENT_INVALID" or
+                "UNFINISHED_TASK_ACTION_REQUIRED" or
+                "DOCX_CREATE_BEFORE_INSPECT") ||
+            !advertised.Any(t => t.Access == AccessLevel.Modify ||
+                t.Id == "nira.capabilities.observe")) return false;
+        if (!payload.TryGetValue("tools", out object? tools) ||
+            tools is not object[] definitions || definitions.Length == 0) return false;
+        payload["tool_choice"] = "required";
+        return true;
+    }
+
+    // The model must receive the *actual* proposal it produced and the host's
+    // reason for rejecting it. This is review-only data, NEVER a tool result,
+    // authority grant, or replay. No untrusted proposal is executed from here.
+    private static string? RejectedToolRevisionContext(
+        string? rejectedToolJson, string? feedback)
+    {
+        if (string.IsNullOrWhiteSpace(rejectedToolJson) ||
+            rejectedToolJson.Length > 14_000 ||
+            string.IsNullOrWhiteSpace(feedback)) return null;
+        return "PREVIOUS ASSISTANT TOOL PROPOSAL (NOT EXECUTED; review only):\n" +
+            rejectedToolJson +
+            "\n\nAUTHORITATIVE PRE-DISPATCH VALIDATION RESULT (no tool ran):\n" +
+            feedback +
+            "\nRevise the existing JSON proposal to satisfy ALL listed issues. " +
+            "Submit a fresh native tool call with the revised arguments. " +
+            "Do not use a progress-only message or claim a saved file.";
+    }
+
+    // A read-after-write requirement cannot be satisfied by inspecting a file
+    // that has never been published. Observation remains available for ordinary
+    // inspect-only tasks and for an already existing requested document.
+    private static bool IsPrematureMissingDocxInspect(
+        AgentTaskContract? contract, string function, JsonElement envelope)
+    {
+        if (contract?.RequiresSavedArtifact != true ||
+            function != "nira_observe_capability" ||
+            envelope.ValueKind != JsonValueKind.Object ||
+            !envelope.TryGetProperty("capabilityId", out JsonElement capability) ||
+            capability.ValueKind != JsonValueKind.String ||
+            capability.GetString() != NIRACapabilityIds.DocxInspect ||
+            !envelope.TryGetProperty("arguments", out JsonElement args) ||
+            args.ValueKind != JsonValueKind.Object ||
+            !args.TryGetProperty("path", out JsonElement destination) ||
+            destination.ValueKind != JsonValueKind.String) return false;
+        string? path = destination.GetString();
+        if (string.IsNullOrWhiteSpace(path) ||
+            !Path.IsPathFullyQualified(path) ||
+            !path.EndsWith(".docx", StringComparison.OrdinalIgnoreCase) ||
+            !contract.RequestedFileNames.Any(n =>
+                string.Equals(n, Path.GetFileName(path), StringComparison.OrdinalIgnoreCase)))
+            return false;
+        return !File.Exists(path);
+    }
+
+    private static bool IsConfirmedNoFileReceipt(JsonElement receipt) =>
+        receipt.ValueKind == JsonValueKind.Object &&
+        receipt.TryGetProperty("capabilityId", out JsonElement id) &&
+        id.ValueKind == JsonValueKind.String &&
+        id.GetString() == NIRACapabilityIds.DocxStudioCreate &&
+        receipt.TryGetProperty("auditRecorded", out JsonElement audited) &&
+        audited.ValueKind == JsonValueKind.True &&
+        receipt.TryGetProperty("definiteNoEffect", out JsonElement noEffect) &&
+        noEffect.ValueKind == JsonValueKind.True &&
+        receipt.TryGetProperty("summary", out JsonElement reason) &&
+        reason.ValueKind == JsonValueKind.String &&
+        (reason.GetString() ?? "").Contains(
+            "The destination parent folder does not exist", StringComparison.Ordinal);
+
+    private static bool IsVerifiedExactParentReceipt(JsonElement receipt, string parent) =>
+        receipt.ValueKind == JsonValueKind.Object &&
+        receipt.TryGetProperty("capabilityId", out JsonElement id) &&
+        id.ValueKind == JsonValueKind.String &&
+        id.GetString() == NIRACapabilityIds.DirectoryCreate &&
+        receipt.TryGetProperty("auditRecorded", out JsonElement audit) &&
+        audit.ValueKind == JsonValueKind.True &&
+        receipt.TryGetProperty("status", out JsonElement status) &&
+        status.ValueKind == JsonValueKind.String &&
+        status.GetString() == "Succeeded" &&
+        receipt.TryGetProperty("summary", out JsonElement summary) &&
+        summary.ValueKind == JsonValueKind.String &&
+        (summary.GetString() ?? "").Contains("'" + parent + "'", StringComparison.OrdinalIgnoreCase);
+
+    private async Task<AgentDecision?> TryResumeStudioAfterVerifiedParentAsync(
+        AgentRunSnapshot run, IReadOnlyList<AgentToolSpec> advertised,
+        AgentTaskCompletionAssessment assessment, CancellationToken ct)
+    {
+        if (assessment.Accept || _studioPendingRetryUsed ||
+            _studioPendingRunId != run.Id ||
+            _studioPendingProposal.ValueKind != JsonValueKind.Object ||
+            run.ToolCallCount >= _maximumTools ||
+            run.TaskContract?.RequiresSavedArtifact != true ||
+            !_allowAuthoritativeCapabilities ||
+            !advertised.Any(t => t.Id == "nira.capabilities.execute" &&
+                t.Access == AccessLevel.Modify) ||
+            !_registry.TryGetFunction("nira_execute_capability", out IGeneralCapability execute) ||
+            !execute.ValidateArguments(_studioPendingProposal) ||
+            !_studioPendingProposal.TryGetProperty("arguments", out JsonElement parameters) ||
+            parameters.ValueKind != JsonValueKind.Object ||
+            !parameters.TryGetProperty("path", out JsonElement destination) ||
+            destination.ValueKind != JsonValueKind.String) return null;
+        string? target = destination.GetString();
+        if (string.IsNullOrWhiteSpace(target) || !Path.IsPathFullyQualified(target) ||
+            !target.EndsWith(".docx", StringComparison.OrdinalIgnoreCase) ||
+            !run.TaskContract.RequestedFileNames.Any(n => string.Equals(n,
+                Path.GetFileName(target), StringComparison.OrdinalIgnoreCase))) return null;
+        string? parent = Path.GetDirectoryName(target);
+        if (string.IsNullOrWhiteSpace(parent) || !Directory.Exists(parent) ||
+            File.Exists(target) || Directory.Exists(target)) return null;
+        AgentObservation[] steps = run.Observations
+            .Skip(_studioPendingObservationStart).ToArray();
+        if (steps.Length is < 2 or > 6 ||
+            steps[0].ToolId != "nira.capabilities.execute" ||
+            steps[0].Succeeded ||
+            steps[0].OutcomeCode != "CAPABILITY_REJECTED_NO_EFFECT" ||
+            steps[^1].ToolId != "nira.capabilities.execute" ||
+            !steps[^1].Succeeded ||
+            steps.Skip(1).SkipLast(1).Any(o =>
+                o.ToolId == "nira.capabilities.execute") ||
+            string.IsNullOrWhiteSpace(steps[0].ResultReference) ||
+            string.IsNullOrWhiteSpace(steps[^1].ResultReference)) return null;
+        JsonElement failed, created;
+        try
+        {
+            failed = await _vault.ReadResultAsync(run.Id, steps[0].ToolId,
+                steps[0].ResultReference!, ct);
+            created = await _vault.ReadResultAsync(run.Id, steps[^1].ToolId,
+                steps[^1].ResultReference!, ct);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or
+            UnauthorizedAccessException or JsonException) { return null; }
+        if (!IsConfirmedNoFileReceipt(failed) ||
+            !IsVerifiedExactParentReceipt(created, parent)) return null;
+        // A SECOND durable action intent: the old attempt was proven no-effect.
+        // The existing AgentLoopEngine still independently checks scope,
+        // authorization, idempotency, audit, and uncertain outcomes.
+        string reference = await _vault.SaveArgumentAsync(run.Id, execute.Spec.Id,
+            _studioPendingProposal, ct);
+        _studioPendingRetryUsed = true;
+        NIRADiagnosticTrace.Event("AGENT-DOCX-PARENT-RESUME",
+            $"Run={run.Id:N} ExactParentVerified=True DefiniteNoEffect=True " +
+            "NewIntent=True PriorMutationNotReplayed=True");
+        return AgentDecision.Tool(execute.Spec.Id, reference,
+            "nira-" + execute.Spec.Id + "-" + run.Id.ToString("N") +
+            "-" + run.ToolCallCount);
     }
 
     public static int RunPendingTaskRecoverySelfCheck()
@@ -39275,11 +39665,24 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
         var unfinished = new AgentTaskCompletionAssessment(false,
             "No verified creation receipt for Motor_Report.docx");
         var finished = new AgentTaskCompletionAssessment(true, "Verified");
+        // R82C: this test must agree with the actual DOCX retry budget.
+        // A DOCX task receives FOUR corrective opportunities (attempts 0..3),
+        // while ordinary tasks keep their original TWO (attempts 0..1).
+        // The earlier test incorrectly required attempt 2 to be rejected,
+        // causing a guaranteed failure after an otherwise successful rebuild.
+        AgentTaskContract ordinary = AgentTaskContractPolicy.Create(
+            "Create Recovery_Notes.txt and inspect the saved file.");
         if (!CanRetryUnfinishedTask(requested, unfinished, 0, 3) ||
             !CanRetryUnfinishedTask(requested, unfinished, 1, 3) ||
-            CanRetryUnfinishedTask(requested, unfinished, 2, 3) ||
+            !CanRetryUnfinishedTask(requested, unfinished, 2, 3) ||
+            !CanRetryUnfinishedTask(requested, unfinished, 3, 3) ||
+            CanRetryUnfinishedTask(requested, unfinished, 4, 3) ||
+            !CanRetryUnfinishedTask(ordinary, unfinished, 0, 3) ||
+            !CanRetryUnfinishedTask(ordinary, unfinished, 1, 3) ||
+            CanRetryUnfinishedTask(ordinary, unfinished, 2, 3) ||
             CanRetryUnfinishedTask(requested, finished, 0, 3) ||
-            CanRetryUnfinishedTask(requested, unfinished, 0, 0))
+            CanRetryUnfinishedTask(requested, unfinished, 0, 0) ||
+            CanRetryUnfinishedTask(null, unfinished, 0, 3))
             throw new InvalidOperationException("Pending-task correction gate is incorrect.");
         var tools = new AgentToolSpec[] {
             new("nira.direct.web.search", "Real search", AccessLevel.Observe),
@@ -39289,16 +39692,69 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
         };
         IReadOnlyList<AgentToolSpec> focused = FocusUnstartedActionTools(tools,
             requested, Array.Empty<AgentObservation>(), "UNFINISHED_TASK_ACTION_REQUIRED");
-        if (focused.Count != 2 || focused.Any(t => t.Id == "nira.direct.web.search") ||
-            !focused.Any(t => t.Id == "nira.capabilities.execute"))
+        if (focused.Count != 3 || focused.Any(t => t.Id == "nira.direct.web.search") ||
+            !focused.Any(t => t.Id == "nira.capabilities.execute") ||
+            !focused.Any(t => t.Id == "nira.capabilities.observe"))
             throw new InvalidOperationException("Unfinished action did not prioritize registered adapters.");
-        var afterWrite = new[] { new AgentObservation("nira.capabilities.execute",
-            "verified", true, "OK", DateTimeOffset.UtcNow) };
-        if (FocusUnstartedActionTools(tools, requested, afterWrite,
-                "UNFINISHED_TASK_ACTION_REQUIRED").Count != tools.Length ||
+        // Reproduce the actual 2026-11-19 failure: directory.create succeeded,
+        // but the requested report was NOT published. Prior implementation
+        // incorrectly reinstated web/other functions after that directory write.
+        var afterDirectoryOnly = new[] { new AgentObservation("nira.capabilities.execute",
+            "directory-created", true, "OK", DateTimeOffset.UtcNow) };
+        if (FocusUnstartedActionTools(tools, requested, afterDirectoryOnly,
+                "UNFINISHED_TASK_ACTION_REQUIRED").Count != 3 ||
+            FocusUnstartedActionTools(tools, requested, afterDirectoryOnly,
+                "UNFINISHED_TASK_JSON_ACTION_REQUIRED").Count != 3 ||
             FocusUnstartedActionTools(tools, requested, Array.Empty<AgentObservation>(),
                 null).Count != tools.Length)
-            throw new InvalidOperationException("Read-back tools were removed after an action.");
+            throw new InvalidOperationException("Directory creation incorrectly ended artifact recovery focus.");
+        // Only a strict model-authored action JSON envelope is allowed to enter
+        // the original native preflight/permission/checkpoint path.
+        if (!GeneralToolProtocol.TryDecodeActionJson(
+                "{\"function\":\"nira_execute_capability\",\"arguments\":{\"capabilityId\":\"filesystem.docx.studio.create\",\"arguments\":{}}}",
+                out var fallbackAction) || fallbackAction.Function != "nira_execute_capability" ||
+            GeneralToolProtocol.TryDecodeActionJson(
+                "NIRA_PUBLIC_UPDATE: preparing the document", out _) ||
+            GeneralToolProtocol.TryDecodeActionJson(
+                "{\"function\":\"nira_execute_capability\",\"arguments\":{},\"extra\":true}", out _) ||
+            GeneralToolProtocol.TryDecodeActionJson(
+                "{\"function\":\"nira_execute_capability\",\"function\":\"nira_execute_capability\",\"arguments\":{}}", out _) ||
+            GeneralToolProtocol.TryDecodeActionJson(
+                "{\"function\":\"shell_execute\",\"arguments\":{}}", out _))
+            throw new InvalidOperationException("Strict structured action fallback accepted invalid provider content.");
+        // R80: the original request must prevent inspection of a missing
+        // deliverable; inspection-only tasks must remain available.
+        string absent = Path.Combine(Path.GetTempPath(),
+            "R80_DOCX_INSPECT_MISSING_" + Guid.NewGuid().ToString("N") + ".docx");
+        var inspected = JsonSerializer.SerializeToElement(new { capabilityId =
+            NIRACapabilityIds.DocxInspect, arguments = new { path = absent } });
+        var mustCreate = AgentTaskContractPolicy.Create(
+            "Create and verify " + Path.GetFileName(absent) + " inside my test folder.");
+        if (!IsPrematureMissingDocxInspect(mustCreate,
+                "nira_observe_capability", inspected) ||
+            IsPrematureMissingDocxInspect(AgentTaskContractPolicy.Create(
+                "Inspect " + Path.GetFileName(absent) + "."),
+                "nira_observe_capability", inspected))
+            throw new InvalidOperationException("R80 missing-document read guard is incorrect.");
+        JsonElement noFileReceipt = JsonSerializer.SerializeToElement(new {
+            capabilityId = NIRACapabilityIds.DocxStudioCreate,
+            auditRecorded = true, definiteNoEffect = true,
+            summary = "STUDIO_INPUT_REJECTED_NO_FILE: The destination parent folder does not exist."
+        });
+        JsonElement parentReceipt = JsonSerializer.SerializeToElement(new {
+            capabilityId = NIRACapabilityIds.DirectoryCreate,
+            auditRecorded = true, status = "Succeeded",
+            summary = "Directory created and verified: 'C:\\Evidence'."
+        });
+        if (!IsConfirmedNoFileReceipt(noFileReceipt) ||
+            !IsVerifiedExactParentReceipt(parentReceipt, @"C:\Evidence") ||
+            IsVerifiedExactParentReceipt(parentReceipt, @"C:\Other") ||
+            IsConfirmedNoFileReceipt(JsonSerializer.SerializeToElement(new {
+                capabilityId = NIRACapabilityIds.DocxStudioCreate,
+                auditRecorded = true, definiteNoEffect = false,
+                summary = "The destination parent folder does not exist."
+            })))
+            throw new InvalidOperationException("R80 missing-parent retry evidence checks failed.");
         // Replay the same wire SHAPE seen on the home PC: a valid provider
         // message, no tool_calls, and only a NIRA_PUBLIC_UPDATE announcement.
         using JsonDocument providerMessage = JsonDocument.Parse(
@@ -39308,6 +39764,63 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
         if (decoded.Kind != "answer" ||
             !NiraPublicThinkingNote.TryParse(decoded.Answer, out _))
             throw new InvalidOperationException("Standalone progress message replay was not recognized.");
+        var ollama = NiraModelEndpointOptions.Ollama("gemma4:31b");
+        var correctionPayload = new Dictionary<string, object> {
+            ["tools"] = new object[] { new { type = "function", function =
+                new { name = "nira_execute_capability" } } },
+            ["tool_choice"] = "auto" };
+        IReadOnlyList<AgentToolSpec> narrowed = FocusRejectedNativeTool(tools,
+            "UNEXECUTED_MUTATION_ARGUMENT_INVALID", "nira.capabilities.execute");
+        IReadOnlyList<AgentToolSpec> stillFocused = FocusRejectedNativeTool(tools,
+            "UNFINISHED_TASK_ACTION_REQUIRED", "nira.capabilities.execute");
+        if (narrowed.Count != 1 || narrowed[0].Id != "nira.capabilities.execute" ||
+            stillFocused.Count != 1 || stillFocused[0].Id != "nira.capabilities.execute" ||
+            !RequireCorrectiveNativeTool(correctionPayload, ollama,
+                "UNEXECUTED_MUTATION_ARGUMENT_INVALID", true, narrowed) ||
+            !Equals(correctionPayload["tool_choice"], "required"))
+            throw new InvalidOperationException("Ollama mutation correction did not require a real native tool.");
+        var noTools = new Dictionary<string, object> { ["tool_choice"] = "auto" };
+        if (RequireCorrectiveNativeTool(noTools, ollama,
+                "UNFINISHED_TASK_ACTION_REQUIRED", true, narrowed) ||
+            RequireCorrectiveNativeTool(correctionPayload, ollama,
+                "UNFINISHED_TASK_ACTION_REQUIRED", false, narrowed) ||
+            RequireCorrectiveNativeTool(correctionPayload,
+                NiraModelEndpointOptions.Nvidia("test-model"),
+                "UNFINISHED_TASK_ACTION_REQUIRED", true, narrowed))
+            throw new InvalidOperationException("Tool-choice recovery crossed its safety boundary.");
+        string? revision = RejectedToolRevisionContext(
+            "{\"capabilityId\":\"filesystem.docx.studio.create\",\"arguments\":{}}",
+            "Missing native table and six hundred words");
+        if (revision is null || !revision.Contains("NOT EXECUTED", StringComparison.Ordinal) ||
+            !revision.Contains("six hundred words", StringComparison.Ordinal) ||
+            RejectedToolRevisionContext(new string('x', 14_001), "error") is not null)
+            throw new InvalidOperationException("Rejected model draft was not retained safely.");
+        // Actual citation binding uses trusted observation IDs only. It
+        // preserves original narrative and never invents an absent source.
+        AgentTaskContract citationTask = AgentTaskContractPolicy.Create(
+            "Create Research.docx with references and inspect it.");
+        var evidence = new GeneralObservationContext.Snapshot("observed",
+            new Dictionary<string, string> { ["S1"] = "https://example.org/science" },
+            new Dictionary<string, string> { ["S1"] = "Observed science source" },
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase), 1, 0);
+        JsonElement missing = JsonSerializer.SerializeToElement(new {
+            capabilityId = NIRACapabilityIds.DocxStudioCreate,
+            arguments = new { blocksJson = new[] {
+                new { type = "paragraph", text = "Research explanation with observed citation [S1]." } } }
+        });
+        JsonElement repaired = BindObservedDocxReferences(missing, evidence,
+            citationTask, Guid.NewGuid());
+        string repairedText = repaired.GetRawText();
+        if (AgentTaskContractPolicy.StudioProposalProblem(citationTask, repaired) is not null ||
+            !repairedText.Contains("https://example.org/science", StringComparison.Ordinal) ||
+            !repairedText.Contains("Research explanation", StringComparison.Ordinal) ||
+            BindObservedDocxReferences(missing, evidence with {
+                Sources = new Dictionary<string, string>() }, citationTask,
+                Guid.Empty).GetRawText() != missing.GetRawText() ||
+            BindObservedDocxReferences(repaired, evidence, citationTask,
+                Guid.Empty).GetRawText() != repairedText)
+            throw new InvalidOperationException("Verified bibliography binding regression.");
+        // The old self-check count is preserved for existing WPF acceptance.
         return 8;
     }
 
@@ -39792,6 +40305,9 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
             await _taskCompletion.AssessAsync(run, ct);
         bool mandatoryWorkUnfinished = run.TaskContract is not null &&
             !pendingTaskAssessment.Accept;
+        AgentDecision? resumedReport = await TryResumeStudioAfterVerifiedParentAsync(
+            run, advertised, pendingTaskAssessment, ct);
+        if (resumedReport is not null) return resumedReport;
         // Some OpenAI-compatible tool providers emit content=null for EVERY
         // tool call regardless of prompt instructions. When that happens,
         // produce ONE independently model-authored *public commentary* from
@@ -39832,13 +40348,21 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
         string? correction = null;
         string? rejectedAnswer = null;
         string? rejectedToolFeedback = null;
+        string? rejectedToolProposal = null;
+        string? rejectedToolId = null;
         // Retry at most one malformed read-only model proposal. If the same
         // class of mistake recurs, make one final tool-free knowledge attempt.
         // Never use this route to retry or claim a modifying operation.
         bool toolFreeKnowledgeFallback = false;
         bool credentialRecoveryAttempted = false;
         bool emptyDecisionRecoveryAttempted = false;
-        for (int attempt = 0; attempt < 3; attempt++)
+        // A substantial DOCX authoring proposal may need a schema correction
+        // after the provider returns text-only or missing-type blocks. These are
+        // pre-dispatch MODEL revisions; not retries of any executed write. Keep
+        // the general agent correction budget unchanged and bound DOCX to five.
+        int maximumDecisionAttempts = run.TaskContract?.RequestedFileNames.Any(name =>
+            name.EndsWith(".docx", StringComparison.OrdinalIgnoreCase)) == true ? 5 : 3;
+        for (int attempt = 0; attempt < maximumDecisionAttempts; attempt++)
         {
             ct.ThrowIfCancellationRequested();
             var messages = new List<object> {
@@ -39939,10 +40463,38 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                               "with the EXACT parameters already returned in the discovery. " +
                               "If a successful write already exists but inspection is missing, " +
                               "use the actual read-only inspection tool instead. " +
+                              "A previous model proposal may have been rejected BEFORE dispatch; " +
+                              "its original JSON and the specific validation issues appear " +
+                              "in the correction evidence below. REVISE that draft instead " +
+                              "of starting another research or commentary round. " +
                               "Use NIRA_PUBLIC_UPDATE only alongside an actual tool_calls " +
                               "field; an announcement alone cannot complete the user's task. " +
                               "Do not re-research an already evidenced topic just to avoid the action. " +
                               "The original scope and permissions remain unchanged."
+                        : correction == "UNFINISHED_TASK_JSON_ACTION_REQUIRED"
+                            ? "The provider has TWICE returned prose instead of the requested " +
+                              "native tool call, even after a required-tool correction. " +
+                              "This turn deliberately has no native function declarations. " +
+                              "Author ONE real action proposal as PLAIN JSON, with exactly " +
+                              "two root properties: function and arguments. " +
+                              "Use this structure (fill with REAL, correctly typed arguments): " +
+                              "{\"function\":\"nira_execute_capability\",\"arguments\": " +
+                              "{\"capabilityId\":\"EXACT_DISCOVERED_ID\",\"arguments\":{}}}. " +
+                              "For verified read-back, use function nira_observe_capability " +
+                              "with a REAL registered inspect capability instead. " +
+                              "Do not surround JSON with Markdown fences; do not write a " +
+                              "progress note, explanation, fabricated ID or unsupported result. " +
+                              "The host WILL reject invalid JSON, invalid capabilities, " +
+                              "missing fields, missing permission and unwarranted claims. " +
+                              "Populate the document with complete user-requested content " +
+                              "using the actual capability schema already discovered."
+                        : correction == "DOCX_CREATE_BEFORE_INSPECT"
+                            ? "The requested NEW Word document has not been created and " +
+                              "does not exist at the exact requested path. Do not inspect " +
+                              "it yet; an inspection now would be a guaranteed file-not-found. " +
+                              "Use the registered execute adapter to publish the complete " +
+                              "DOCX using its schema and current evidence first. After a " +
+                              "confirmed save receipt, inspect the saved document."
                         : correction == "PUBLIC_UPDATE_WITHOUT_TOOL"
                             ? "Your previous reply was ONLY a NIRA_PUBLIC_UPDATE status note " +
                               "and had no tool_calls. Such a note is never a final answer. " +
@@ -39972,17 +40524,27 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                             : "Your answer failed final evidence validation (" + correction + "). " +
                               "Use only verified observations and citation IDs from this run. " +
                               "Give a grounded answer or one registered tool call." });
+                string? revision = RejectedToolRevisionContext(
+                    rejectedToolProposal, rejectedToolFeedback);
+                if (revision is not null)
+                    messages.Add(new { role = "user", content = revision });
             }
             // Only the transport chooses an endpoint and model. NIRA still owns
             // observation validation, evidence binding, approval and tool dispatch.
             GeneralToolProtocol.Decision decision;
             IReadOnlyList<AgentToolSpec> effectiveAdvertised =
-                FocusUnstartedActionTools(advertised, run.TaskContract,
-                    run.Observations, correction);
+                FocusRejectedNativeTool(
+                    FocusUnstartedActionTools(advertised, run.TaskContract,
+                        run.Observations, correction), correction, rejectedToolId);
             object[] effectiveSchemas = toolFreeKnowledgeFallback ? Array.Empty<object>() :
                 ReferenceEquals(effectiveAdvertised, advertised) ? schemas :
                 _registry.BuildProviderTools(effectiveAdvertised,
                     allowWrite: _allowAuthoritativeCapabilities || _allowNiraManagedGoals);
+            // Recovery from a provider that ignored native tool_choice. We keep
+            // this original real capability set for validation and authorization.
+            bool structuredActionFallback =
+                correction == "UNFINISHED_TASK_JSON_ACTION_REQUIRED" &&
+                mandatoryWorkUnfinished && effectiveSchemas.Length > 0;
             var payload = new Dictionary<string, object> {
                 ["model"] = _options.Model,
                 // SSE is used even when native tools are offered. Their arguments
@@ -39993,11 +40555,22 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                     _previewText is not null),
                 ["messages"] = messages
             };
-            if (effectiveSchemas.Length > 0) payload["tools"] = effectiveSchemas;
+            if (effectiveSchemas.Length > 0 && !structuredActionFallback)
+                payload["tools"] = effectiveSchemas;
             bool lightConversation = NiraLatencyPolicy.IsLightConversation(
                 run.UserRequest, run.Observations.Count, availableTools);
-            _options.ConfigureRequest(payload, effectiveSchemas.Length > 0,
-                fastConversation: lightConversation);
+            _options.ConfigureRequest(payload, effectiveSchemas.Length > 0 &&
+                !structuredActionFallback, fastConversation: lightConversation);
+            if (structuredActionFallback)
+                NIRADiagnosticTrace.Event("AGENT-STRUCTURED-ACTION-FALLBACK",
+                    $"Run={run.Id:N} NativeToolsAdvertised=False " +
+                    $"HostValidationTools={effectiveSchemas.Length} " +
+                    "Context=CurrentVerifiedRun Stage=ProposalOnly");
+            if (RequireCorrectiveNativeTool(payload, _options, correction,
+                mandatoryWorkUnfinished, effectiveAdvertised))
+                NIRADiagnosticTrace.Event("AGENT-NATIVE-TOOL-CORRECTION",
+                    $"Run={run.Id:N} Mode=required NativeToolCount={effectiveSchemas.Length} " +
+                    "PriorProposalUnexecuted=True");
             ApplyNoDecisionTransportRecovery(payload, _options,
                 emptyDecisionRecoveryAttempted);
             string? key = _key()?.Trim();
@@ -40007,8 +40580,17 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                 Content = JsonContent.Create(payload) };
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
             ModelRequests++;
+            NIRADiagnosticTrace.Event("AGENT-NATIVE-REQUEST",
+                $"Run={run.Id:N} ModelRequest={ModelRequests} " +
+                $"Correction={correction ?? "none"} " +
+                $"ToolsAdvertised={effectiveSchemas.Length} " +
+                $"ToolChoice={(payload.TryGetValue("tool_choice", out object? selectedChoice) ? selectedChoice : "auto")} " +
+                $"Stream={payload["stream"]} Observations={run.Observations.Count} " +
+                $"VerifiedSources={context.Sources.Count} " +
+                $"WritesDispatched={run.Observations.Count(o => o.ToolId == "nira.capabilities.execute")}");
             LastFirstTextMilliseconds = -1;
             LastRoundMilliseconds = -1;
+            NIRADiagnosticTrace.AgentProviderRequest(run.Id, ModelRequests, payload);
             var roundClock = Stopwatch.StartNew();
             HttpResponseMessage response;
             try { response = await SendAsync(request, ct); }
@@ -40054,7 +40636,8 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                     }
                     string statusCode = "MODEL_HTTP_" + (int)response.StatusCode;
                     string? errorBody = null;
-                    if (NIRADiagnosticTrace.AgentDecisionCaptureEnabled)
+                    if (NIRADiagnosticTrace.SecureAgentCaptureEnabled ||
+                        NIRADiagnosticTrace.AgentDecisionCaptureEnabled)
                     {
                         try
                         {
@@ -40085,7 +40668,8 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                 // mode the capture stays bounded and inside NIRA diagnostics.
                 void CaptureDiagnostic(string payloadText)
                 {
-                    if (!NIRADiagnosticTrace.AgentDecisionCaptureEnabled) return;
+                    if (!NIRADiagnosticTrace.SecureAgentCaptureEnabled &&
+                        !NIRADiagnosticTrace.AgentDecisionCaptureEnabled) return;
                     string bounded = payloadText.Length > 24000 ? payloadText[..24000] : payloadText;
                     rawDiagnostic = rawDiagnostic is null ? bounded :
                         (rawDiagnostic.Length + bounded.Length > 32000 ? rawDiagnostic :
@@ -40118,6 +40702,18 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                             " Offered=" + batch.GetArrayLength() +
                             " Selected=1 DeferredNotDispatched=" + (batch.GetArrayLength() - 1));
                     decision = GeneralToolProtocol.Decode(parsed.Message);
+                    if (structuredActionFallback && decision.Kind == "answer" &&
+                        GeneralToolProtocol.TryDecodeActionJson(decision.Answer,
+                            out GeneralToolProtocol.Decision structuredProposal))
+                    {
+                        // A candidate model proposal, NOT an executed action.
+                        // The same native schema, discovered-ID binding, actual
+                        // authorization, encrypted checkpoint and auditing follow.
+                        decision = structuredProposal;
+                        NIRADiagnosticTrace.Event("AGENT-STRUCTURED-ACTION-PROPOSAL",
+                            $"Run={run.Id:N} Function={decision.Function} " +
+                            "ValidatedEnvelope=True Dispatched=False");
+                    }
                     NIRADiagnosticTrace.Event("AGENT-MODEL-PROTOCOL",
                         "Run=" + run.Id.ToString("N") + " ModelRequest=" + ModelRequests +
                         " StreamRequested=" + streamRequested +
@@ -40209,6 +40805,74 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                                     ? "TOOL_BUDGET_EXHAUSTED" :
                                       "UNKNOWN_OR_UNAVAILABLE_CAPABILITY");
                         }
+                        // Never waste a tool dispatch inspecting a requested NEW
+                        // document before it exists. This is a no-effect proposal
+                        // rejection, not an authoritative read or a claim of saving.
+                        if (IsPrematureMissingDocxInspect(run.TaskContract, function, arguments))
+                        {
+                            TraceCandidate("REJECTED_INSPECT_BEFORE_DOCX_CREATE");
+                            if (attempt < 2)
+                            {
+                                correction = "DOCX_CREATE_BEFORE_INSPECT";
+                                continue;
+                            }
+                            return Stop("TASK_DELIVERABLE_UNVERIFIED");
+                        }
+                        // Reuse verified local raster evidence from THIS run for
+                        // Word Studio image blocks. Never invent a URL/path or
+                        // bypass registered schema, permission or write audit.
+                        if (function == "nira_execute_capability" &&
+                            arguments.ValueKind == JsonValueKind.Object)
+                        {
+                            // Normalization is PURE and pre-dispatch. Unambiguous
+                            // model-authored text without a `type` becomes an
+                            // explicit paragraph; an explicitly requested cover
+                            // receives a native page break. No invented wording,
+                            // capability or path is introduced.
+                            arguments = AgentTaskContractPolicy.NormalizeStudioDraft(
+                                run.TaskContract, arguments, out int inferredTextBlocks,
+                                out bool coverBreakInserted);
+                            if (inferredTextBlocks != 0 || coverBreakInserted)
+                                NIRADiagnosticTrace.Event("AGENT-DOCX-SAFE-SHAPE-REPAIR",
+                                    $"Run={run.Id:N} TextBlocks={inferredTextBlocks} " +
+                                    $"CoverBreak={coverBreakInserted} Dispatched=False");
+                            arguments = await BindObservedDocxImagesAsync(run, arguments, ct);
+                            // A bibliography is a deterministic, read-only projection of
+                            // source IDs/URLs already accepted from audited web receipts.
+                            // Do not waste model revisions asking it to copy citations
+                            // already held in this run's verified observation context.
+                            arguments = BindObservedDocxReferences(arguments, context,
+                                run.TaskContract, run.Id);
+                            NIRADiagnosticTrace.DocumentDraftShape(run.Id, ModelRequests, arguments);
+                            string? docxProblem = AgentTaskContractPolicy.StudioProposalProblem(
+                                run.TaskContract, arguments);
+                            if (docxProblem is not null)
+                            {
+                                TraceCandidate("REJECTED_INCOMPLETE_DOCX_PROPOSAL");
+                                // Structural findings only: no private tool arguments,
+                                // original prompt, local paths or source material.
+                                NIRADiagnosticTrace.Event("AGENT-DOCX-DRAFT-REJECTED",
+                                    $"Run={run.Id:N} Attempt={attempt + 1} " + docxProblem);
+                                if (attempt + 1 < maximumDecisionAttempts)
+                                {
+                                    rejectedToolId = capability.Spec.Id;
+                                    rejectedToolProposal = arguments.GetRawText();
+                                    rejectedToolFeedback = "Word draft fails the original user task: " +
+                                        docxProblem + " No file has been written. The DOCX blocksJson " +
+                                        "MUST be a JSON array of objects with a supported type. " +
+                                        "Use paragraph(text), heading(text,level), pagebreak, " +
+                                        "image(altText,imagePath,caption), and table(rows) " +
+                                        "rather than unnamed nested section objects. " +
+                                        "Preserve researched paragraphs and their source IDs; " +
+                                        "do NOT replace a long report with a shorter outline. " +
+                                        "Correct only the invalid blocks and resubmit the same " +
+                                        "registered tool after correction.";
+                                    correction = "UNEXECUTED_MUTATION_ARGUMENT_INVALID";
+                                    continue;
+                                }
+                                return Stop("TASK_DELIVERABLE_UNVERIFIED");
+                            }
+                        }
                         // A bounded, read-only retrieval count is not a write
                         // request. Correct this ONE known model error before
                         // preflight, then run the ORIGINAL authoritative schema
@@ -40248,13 +40912,21 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                             // action. This is NOT replay of a write. An actual
                             // dispatched write, however, still uses the strict
                             // uncertain-outcome reconciliation path unchanged.
-                            if (!toolFreeKnowledgeFallback && attempt < 2)
+                            if (!toolFreeKnowledgeFallback &&
+                                (attempt < 2 || (capability.Spec.Access == AccessLevel.Modify &&
+                                attempt + 1 < maximumDecisionAttempts)))
                             {
                                 if (attempt == 0 || capability.Spec.Access != AccessLevel.Observe)
                                 {
                                     string reason = capability is IGeneralCapabilityArgumentFeedback feedback
                                         ? feedback.ValidationFeedback(arguments)
                                         : "The proposed arguments violate the native JSON schema.";
+                                    if (capability.Spec.Access == AccessLevel.Modify)
+                                    {
+                                        rejectedToolId = capability.Spec.Id;
+                                        rejectedToolProposal = arguments.ValueKind == JsonValueKind.Object
+                                            ? arguments.GetRawText() : null;
+                                    }
                                     rejectedToolFeedback =
                                         "Function: " + function + "\n" +
                                         "Schema: " + capability.InputSchema.GetRawText() + "\n" +
@@ -40298,6 +40970,17 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                         // tool dispatch remains a separately checkpointed event.
                         string token = await _vault.SaveArgumentAsync(run.Id,
                             capability.Spec.Id, arguments, ct);
+                        if (function == "nira_execute_capability" &&
+                            arguments.ValueKind == JsonValueKind.Object &&
+                            arguments.TryGetProperty("capabilityId", out JsonElement draftedId) &&
+                            draftedId.ValueKind == JsonValueKind.String &&
+                            draftedId.GetString() == NIRACapabilityIds.DocxStudioCreate)
+                        {
+                            _studioPendingRunId = run.Id;
+                            _studioPendingProposal = arguments.Clone();
+                            _studioPendingObservationStart = run.Observations.Count;
+                            _studioPendingRetryUsed = false;
+                        }
                         TraceCandidate("ACCEPTED_TOOL_INTENT");
                         LastFailureCode = null;
                         if (decision.PublicUpdate is string publicNote)
@@ -40329,7 +41012,11 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                         if (mandatoryWorkUnfinished &&
                             CanRetryUnfinishedTask(run.TaskContract, pendingTaskAssessment,
                                 attempt, effectiveSchemas.Length))
-                        { correction = "UNFINISHED_TASK_ACTION_REQUIRED"; continue; }
+                        {
+                            correction = attempt == 0 ? "UNFINISHED_TASK_ACTION_REQUIRED" :
+                                "UNFINISHED_TASK_JSON_ACTION_REQUIRED";
+                            continue;
+                        }
                         if (!mandatoryWorkUnfinished && attempt < 2 && effectiveSchemas.Length > 0)
                         { correction = "PUBLIC_UPDATE_WITHOUT_TOOL"; continue; }
                         if (mandatoryWorkUnfinished && run.TaskContract is not null)
@@ -40345,7 +41032,11 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                         TraceCandidate("REJECTED_PREMATURE_FINAL_UNFINISHED_TASK");
                         if (CanRetryUnfinishedTask(run.TaskContract, pendingTaskAssessment,
                             attempt, effectiveSchemas.Length))
-                        { correction = "UNFINISHED_TASK_ACTION_REQUIRED"; continue; }
+                        {
+                            correction = attempt == 0 ? "UNFINISHED_TASK_ACTION_REQUIRED" :
+                                "UNFINISHED_TASK_JSON_ACTION_REQUIRED";
+                            continue;
+                        }
                         if (run.TaskContract is not null)
                             run.TaskContract.LastUnfinishedReason = pendingTaskAssessment.Reason;
                         return Stop("TASK_DELIVERABLE_UNVERIFIED");
@@ -40408,6 +41099,126 @@ public sealed class GeneralModelReasoner : IAgentReasoner, IAgentTaskLifecycle
                 return Stop(decision.ErrorCode ?? "INVALID_MODEL_DECISION");
         }
         return Stop("INVALID_MODEL_DECISION");
+    }
+
+    // The image locator comes from an audited, successful read-only result in
+    // the same run. Untrusted source text cannot nominate local files by itself.
+    // Binding is only a proposal transformation: the original capability
+    // adapter/authorizer/handler still validates and executes the operation.
+    // Generic bibliography binding, not a topic-specific report template.
+    // Only source identities gathered from successful current-run tool receipts
+    // may be published. Never fabricate external links or make an API request here.
+    // The resulting proposal still goes through schema, user authorization,
+    // durable write audit, and post-publication inspection without exceptions.
+    private static JsonElement BindObservedDocxReferences(JsonElement proposed,
+        GeneralObservationContext.Snapshot evidence, AgentTaskContract? contract,
+        Guid runId)
+    {
+        if (contract?.RequiresDocxReferences != true ||
+            evidence.Sources.Count == 0 ||
+            proposed.ValueKind != JsonValueKind.Object ||
+            !proposed.TryGetProperty("capabilityId", out JsonElement id) ||
+            id.ValueKind != JsonValueKind.String ||
+            id.GetString() != NIRACapabilityIds.DocxStudioCreate)
+            return proposed;
+
+        string? problem = AgentTaskContractPolicy.StudioProposalProblem(contract, proposed);
+        if (problem is null || !problem.Contains(
+            "Required reference definitions missing", StringComparison.Ordinal))
+            return proposed;
+
+        // The model's existing blocks are preserved verbatim. Never transform a
+        // malformed document into an executable write using inferred content.
+        JsonObject? envelope;
+        try { envelope = JsonNode.Parse(proposed.GetRawText()) as JsonObject; }
+        catch (JsonException) { return proposed; }
+        if (envelope?["arguments"] is not JsonObject args ||
+            args["blocksJson"] is not JsonArray blocks) return proposed;
+
+        var confirmed = evidence.Sources
+            .Where(kv => System.Text.RegularExpressions.Regex.IsMatch(kv.Key,
+                @"^S[1-9][0-9]*$", System.Text.RegularExpressions.RegexOptions.CultureInvariant) &&
+                Uri.TryCreate(kv.Value, UriKind.Absolute, out Uri? url) &&
+                url.Scheme == Uri.UriSchemeHttps && string.IsNullOrEmpty(url.UserInfo))
+            .Take(6).ToArray();
+        if (confirmed.Length == 0 || blocks.Count + 1 + confirmed.Length > 120)
+            return proposed;
+
+        blocks.Add(new JsonObject { ["type"] = "heading", ["level"] = 2,
+            ["text"] = "References" });
+        foreach (var item in confirmed)
+        {
+            string title = evidence.SourceTitles.TryGetValue(item.Key, out string? label)
+                ? label : "Source";
+            title = new string(title.Where(c => !char.IsControl(c)).Take(120).ToArray()).Trim();
+            // These source labels and URLs come from this run's audited tool
+            // observations; never use a model-authored citation as ground truth.
+            blocks.Add(new JsonObject { ["type"] = "paragraph",
+                ["text"] = $"[{item.Key}] {title}. {item.Value}" });
+        }
+        JsonElement completed = JsonSerializer.SerializeToElement(envelope);
+        if (completed.GetRawText().Length > 180_000) return proposed;
+        NIRADiagnosticTrace.Event("AGENT-DOCX-VERIFIED-REFERENCES",
+            $"Run={runId:N} Bound={confirmed.Length} Evidence=AuditedCurrentRun " +
+            "NoNetwork=True Dispatched=False");
+        return completed;
+    }
+
+    private async Task<JsonElement> BindObservedDocxImagesAsync(AgentRunSnapshot run,
+        JsonElement proposed, CancellationToken ct)
+    {
+        if (!proposed.TryGetProperty("capabilityId", out JsonElement id) ||
+            id.ValueKind != JsonValueKind.String ||
+            id.GetString() != NIRACapabilityIds.DocxStudioCreate ||
+            !proposed.TryGetProperty("arguments", out JsonElement args) ||
+            args.ValueKind != JsonValueKind.Object) return proposed;
+        var sources = new List<NIRACapabilityVisualArtifact>();
+        foreach (AgentObservation observed in run.Observations)
+        {
+            if (sources.Count >= 6) break;
+            if (!observed.Succeeded || string.IsNullOrWhiteSpace(observed.ResultReference)) continue;
+            JsonElement receipt;
+            try { receipt = await _vault.ReadResultAsync(run.Id, observed.ToolId,
+                observed.ResultReference, ct); }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or
+                UnauthorizedAccessException or JsonException) { continue; }
+            if (receipt.ValueKind != JsonValueKind.Object ||
+                !receipt.TryGetProperty("status", out JsonElement status) ||
+                status.ValueKind != JsonValueKind.String || status.GetString() != "Succeeded" ||
+                !receipt.TryGetProperty("auditRecorded", out JsonElement audit) ||
+                audit.ValueKind != JsonValueKind.True ||
+                !receipt.TryGetProperty("visualArtifacts", out JsonElement visuals) ||
+                visuals.ValueKind != JsonValueKind.Array) continue;
+            foreach (JsonElement v in visuals.EnumerateArray())
+            {
+                if (v.ValueKind != JsonValueKind.Object) continue;
+                string PathText(string name) => v.TryGetProperty(name, out JsonElement value) &&
+                    value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
+                string local = PathText("localPath");
+                if (!Path.IsPathFullyQualified(local) || !File.Exists(local)) continue;
+                string sourceUri = PathText("sourceUri");
+                if (!Uri.TryCreate(sourceUri, UriKind.Absolute, out Uri? source) ||
+                    source.Scheme != Uri.UriSchemeHttps) continue;
+                sources.Add(new NIRACapabilityVisualArtifact {
+                    LocalPath = local, Title = PathText("title"), Caption = PathText("caption"),
+                    SourceUri = sourceUri, SubjectQuery = PathText("subjectQuery")
+                });
+                if (sources.Count >= 6) break;
+            }
+        }
+        if (sources.Count == 0) return proposed;
+        var draft = new NIRACapabilityRequest {
+            CapabilityId = NIRACapabilityIds.DocxStudioCreate, Arguments = args.Clone()
+        };
+        NIRACapabilityRequest fixedDraft = NIRADocxVerifiedMediaBinding.Apply(draft, sources,
+            out int bound);
+        if (bound == 0) return proposed;
+        JsonObject? envelope = JsonNode.Parse(proposed.GetRawText()) as JsonObject;
+        if (envelope is null) return proposed;
+        envelope["arguments"] = JsonNode.Parse(fixedDraft.Arguments.GetRawText());
+        NIRADiagnosticTrace.Event("DOCX-OBSERVED-IMAGE-BINDING",
+            $"Run={run.Id:N} Bound={bound} Source=PriorAuditedToolReceipts Only=True");
+        return JsonSerializer.SerializeToElement(envelope);
     }
 
     // Discovery is authoritative INVENTORY, but NOT authority to execute.
@@ -41009,6 +41820,37 @@ public static class GeneralToolProtocol
         return answer.Length > 20_000 ? new("invalid", ErrorCode: "ANSWER_SIZE_INVALID") :
             new("answer", Answer: answer);
     }
+    // Provider-independent recovery for a model that ignores tool_choice.
+    // Only called during a host-triggered unfinished-task correction. This
+    // parser DOES NOT execute or authorize anything: it only produces the same
+    // Decision shape as a native tool call for all existing guards to check.
+    public static bool TryDecodeActionJson(string? answer, out Decision proposed)
+    {
+        proposed = new("invalid", ErrorCode: "STRUCTURED_ACTION_INVALID");
+        if (string.IsNullOrWhiteSpace(answer) || answer.Length > 20_000)
+            return false;
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(answer,
+                new JsonDocumentOptions { MaxDepth = 32 });
+            JsonElement root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || !Unique(root) ||
+                root.EnumerateObject().Count() != 2 ||
+                !root.TryGetProperty("function", out JsonElement function) ||
+                function.ValueKind != JsonValueKind.String ||
+                function.GetString() is not ("nira_execute_capability" or
+                    "nira_observe_capability") ||
+                !root.TryGetProperty("arguments", out JsonElement arguments) ||
+                arguments.ValueKind != JsonValueKind.Object || !Unique(arguments) ||
+                arguments.GetRawText().Length > 16_000)
+                return false;
+            proposed = new("tool", Function: function.GetString(),
+                Arguments: arguments.Clone());
+            return true;
+        }
+        catch (JsonException) { return false; }
+    }
+
     private static bool Unique(JsonElement node)
     {
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -41713,7 +42555,7 @@ public sealed class GeneralTaskCompletionGuard
         if (contract.SchemaVersion != 1)
             return new AgentTaskCompletionAssessment(false, "Task checkpoint uses an unsupported contract version.");
         var changed = new List<(string Name, string Hash, int Index)>();
-        var reads = new List<(string Name, string Hash, int Index)>();
+        var reads = new List<(string Name, string Hash, int Index, string Output)>();
         bool sawAction = false, sawChange = false;
         int i = 0;
         foreach (AgentObservation observation in run.Observations)
@@ -41756,7 +42598,7 @@ public sealed class GeneralTaskCompletionGuard
             {
                 string name = NameFromOutput(output, "Path", "Destination", "File");
                 if (name.Length > 0)
-                    reads.Add((name, ReadLine(output, "SHA256"), at));
+                    reads.Add((name, ReadLine(output, "SHA256"), at, output));
             }
         }
         if (contract.RequiresVerifiedAction && !sawAction)
@@ -41776,14 +42618,57 @@ public sealed class GeneralTaskCompletionGuard
                     return new(false, name.Length > 0
                         ? "No verified creation receipt exists for the requested file: " + name
                         : "No successful saved-artifact receipt exists for the requested output.");
-                if (contract.RequiresReadBack && !published.Any(write => reads.Any(read =>
-                    read.Index > write.Index &&
-                    string.Equals(read.Name, write.Name, StringComparison.OrdinalIgnoreCase) &&
-                    (write.Hash.Length == 0 || read.Hash.Length == 0 ||
-                     string.Equals(read.Hash, write.Hash, StringComparison.OrdinalIgnoreCase)))))
+                var matchingReads = (from write in published
+                    from read in reads
+                    where read.Index > write.Index &&
+                        string.Equals(read.Name, write.Name, StringComparison.OrdinalIgnoreCase) &&
+                        (write.Hash.Length == 0 || read.Hash.Length == 0 ||
+                         string.Equals(read.Hash, write.Hash, StringComparison.OrdinalIgnoreCase))
+                    orderby read.Index descending
+                    select read).ToArray();
+                bool docx = published.Any(x => x.Name.EndsWith(".docx", StringComparison.OrdinalIgnoreCase));
+                // A generic file.hash receipt does not prove Word structure.
+                // For DOCX quality, choose the latest ACTUAL DOCX inspector
+                // receipt, even if a later independent hash was also taken.
+                var paired = docx ? matchingReads.FirstOrDefault(read =>
+                    ReadLine(read.Output, "EmbeddedMediaParts").Length > 0) :
+                    matchingReads.FirstOrDefault();
+                if (contract.RequiresReadBack && paired.Output is null)
                     return new(false, "The saved artifact " +
                         (name.Length > 0 ? name : published[^1].Name) +
                         " has not been verified by a later matching read-only inspection.");
+                if (paired.Output is not null && docx)
+                {
+                    string readback = paired.Output;
+                    static int? Number(string output, string key) =>
+                        int.TryParse(ReadLine(output, key), out int number) ? number : null;
+                    // Honest independent readback: a matching SHA alone does
+                    // not prove the requested images/table/references exist.
+                    if (contract.RequiresDocxIllustration && Number(readback, "EmbeddedMediaParts") is not > 0)
+                        return new(false, "The saved DOCX does not contain a verified embedded illustration.");
+                    if (contract.RequiresDocxTable && Number(readback, "Tables") is not > 0)
+                        return new(false, "The saved DOCX does not contain the requested table.");
+                    if (contract.RequiresDocxReferences && Number(readback, "ReferenceEntries") is not > 0)
+                        return new(false, "The saved DOCX has no independently observed source definitions.");
+                    if (contract.MinimumDocxBodyWords > 0 &&
+                        (Number(readback, "WordsApprox") ?? 0) < contract.MinimumDocxBodyWords)
+                        return new(false, "The saved DOCX is materially shorter than the user's requested page-length content floor.");
+                    if (Number(readback, "UnresolvedCitationCount") is > 0)
+                        return new(false, "The saved DOCX contains unresolved source references.");
+                    if (Number(readback, "PositionalTableLabelCount") is > 0)
+                        return new(false, "The saved DOCX table exposes JSON positional key names.");
+                    if (ReadLine(readback, "DuplicateLeadingTitle") == "True")
+                        return new(false, "The saved DOCX starts with a duplicated document title.");
+                    // R81: a ZIP-valid Word file is not enough when visible
+                    // Markdown and escaped line breaks were saved as document
+                    // prose. Do not claim quality/completion from a bad readback.
+                    if (Number(readback, "LiteralEscapedBreakParagraphs") is > 0 ||
+                        Number(readback, "RawMarkdownHeadingParagraphs") is > 0)
+                        return new(false, "The saved DOCX contains raw Markdown or escaped line-break text instead of formatted Word content.");
+                    if (contract.RequiresDocxReferences &&
+                        Number(readback, "BibliographyHeadingCount") is > 1)
+                        return new(false, "The saved DOCX has duplicate bibliography sections.");
+                }
             }
         }
         return new(true, "The recorded tool receipts satisfy the mandatory external-action " +
@@ -41803,9 +42688,28 @@ public sealed class GeneralTaskCompletionGuard
         if (contract.RequestedFileNames.Count > 0)
             text.AppendLine("Required named outputs: " + string.Join(", ", contract.RequestedFileNames));
         if (contract.RequiresSavedArtifact)
+        {
             text.AppendLine("A real saved artifact needs an audited success receipt, not narration.");
+            if (contract.RequestedFileNames.Any(name =>
+                name.EndsWith(".docx", StringComparison.OrdinalIgnoreCase)))
+                text.AppendLine("The user requested an ACTUAL Word file. Put the substantive " +
+                    "report, tables, references and verified images INSIDE the document. " +
+                    "A lengthy chat reply is not a substitute. After file verification, " +
+                    "respond with a brief accurate status and destination. " +
+                    "Never claim rendered page count without a renderer.");
+        }
         if (contract.RequiresReadBack)
             text.AppendLine("The user also requires independent read-back verification AFTER publication.");
+        if (contract.RequiresDocxIllustration)
+            text.AppendLine("Required DOCX content: at least one real embedded, verified illustration. A chat image is not an embedded document illustration.");
+        if (contract.RequiresDocxTable)
+            text.AppendLine("Required DOCX content: a native comparison/data table.");
+        if (contract.RequiresDocxReferences)
+            text.AppendLine("Required DOCX content: a references section with source definitions; no dangling [S#] markers.");
+        if (contract.RequiresDocxCover)
+            text.AppendLine("Required DOCX layout: a distinct cover/title page with a native page break.");
+        if (contract.MinimumDocxBodyWords > 0)
+            text.AppendLine($"Approximate DOCX content floor: {contract.MinimumDocxBodyWords} narrative words from {contract.RequestedDocxPages}-page request. This does NOT establish rendered page count.");
         text.AppendLine("Mandatory execution proof: " +
             (assessment.Accept ? "Observed required actions" : "UNFULFILLED — " + assessment.Reason));
         if (contract.RejectedPrematureAnswers > 0)
@@ -41881,12 +42785,17 @@ public sealed class GeneralTaskCompletionGuard
         var inspected = JsonSerializer.SerializeToElement(new {
             capabilityId = "filesystem.docx.inspect", status = "Succeeded",
             auditRecorded = true, changedSystemState = false, outcomeUncertain = false,
-            output = "Path=C:\\Docs\\Tesla_Report.docx\nSHA256=abc\nParagraphs=12" });
+            output = "Path=C:\\Docs\\Tesla_Report.docx\nSHA256=abc\nParagraphs=12\nTables=0\nEmbeddedMediaParts=0\nReferenceEntries=0\nWordsApprox=140" });
         string si = await vault.SaveResultAsync(run.Id, "nira.capabilities.observe", inspected, ct);
         run.Observations.Add(new AgentObservation("nira.capabilities.observe", si, true,
             "OK", DateTimeOffset.UtcNow));
         if (!(await guard.AssessAsync(run, ct)).Accept)
             throw new InvalidOperationException("Valid saved and inspected artifact rejected.");
+        run.TaskContract = AgentTaskContractPolicy.Create(
+            "Create Tesla_Report.docx with an illustration and comparison table " +
+            "and references. Inspect the saved file.");
+        if ((await guard.AssessAsync(run, ct)).Accept)
+            throw new InvalidOperationException("Unillustrated document passed content-quality gate.");
         return 5;
     }
 }
@@ -43811,7 +44720,7 @@ public sealed record NiraProviderSelection(
         string? requested = Environment.GetEnvironmentVariable("NIRA_MODEL_NAME")?.Trim();
         if (provider == "OLLAMA")
         {
-            string model = string.IsNullOrWhiteSpace(requested) ? "gemma4:31b" : requested;
+            string model = string.IsNullOrWhiteSpace(requested) ? "gpt-oss:120b" : requested;
             var ollama = NiraModelEndpointOptions.Ollama(model);
             ollama.Validate();
             return new NiraProviderSelection("OLLAMA", ollama,
@@ -50876,7 +51785,7 @@ namespace NIRAAgent.AI.Models;
 /// </summary>
 public static class NIRAActiveModelProvider
 {
-    public const string DefaultModel = "gemma4:31b";
+    public const string DefaultModel = "gpt-oss:120b";
     public const string ProcessCredentialName = "NIRA_OLLAMA_API_KEY";
     public const string AlternateCredentialName = "OLLAMA_API_KEY";
     public static Uri ChatEndpoint { get; } =
@@ -51356,7 +52265,9 @@ public enum NIRAReasoningRole
 public static class NIRAModelSelection
 {
     public const string PrimaryDefault = NIRAActiveModelProvider.DefaultModel;
-    public const string VisionDefault = NIRAActiveModelProvider.DefaultModel;
+    // GPT-OSS 120B is text-only. Keep image observation on the separate
+    // multimodal Gemma resource; it cannot inherit the text-agent default.
+    public const string VisionDefault = "gemma4:31b";
     public const string DeepDefault = "nemotron-3-ultra";
 
     // Used only for identifying source/runtime alignment in diagnostics and tests.
@@ -82819,10 +83730,60 @@ internal static partial class NIRADocx
                     $"\nMarginBottomMm={ToMm(bottom)}\nMarginLeftMm={ToMm(left)}";
             }
         }
+        // Analyze the SAVED Word XML, never the model's proposed contents.
+        // Markers are a source-list integrity check, not a truth/citation audit.
+        var referenceDefinitions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var sourceMentions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        bool inReferenceSection = false;
+        int referenceEntries = 0;
+        foreach (string paragraph in paragraphs)
+        {
+            if (Regex.IsMatch(paragraph.Trim(),
+                @"^(?:References|Bibliography|Sources|Works Cited)$", RegexOptions.IgnoreCase))
+            { inReferenceSection = true; continue; }
+            foreach (Match group in Regex.Matches(paragraph,
+                @"\[S[0-9]{1,3}(?:\s*,\s*S?[0-9]{1,3})*\]", RegexOptions.IgnoreCase))
+                foreach (Match num in Regex.Matches(group.Value, @"[0-9]{1,3}"))
+                    sourceMentions.Add(num.Value);
+            if (inReferenceSection)
+            {
+                referenceEntries++;
+                foreach (Match match in Regex.Matches(paragraph,
+                    @"^\s*\[S(?<n>[0-9]{1,3})\]\s*[-.:]?\s+", RegexOptions.IgnoreCase))
+                    referenceDefinitions.Add(match.Groups["n"].Value);
+            }
+        }
+        int unresolvedSources = sourceMentions.Except(referenceDefinitions,
+            StringComparer.OrdinalIgnoreCase).Count();
+        int tablePositionLabels = document.Descendants(W + "tbl")
+            .SelectMany(table => table.Descendants(W + "tc"))
+            .Count(cell => Regex.IsMatch(
+                string.Concat(cell.Descendants(W + "t").Select(t => t.Value)).Trim(),
+                @"^cell[1-8]:\s", RegexOptions.IgnoreCase));
+        bool duplicatedTitle = paragraphs.Count > 1 &&
+            string.Equals(paragraphs[0].Trim(), paragraphs[1].Trim(),
+                StringComparison.OrdinalIgnoreCase);
+        // R81: inspect the ACTUAL saved Word text for visible serialization
+        // defects that were previously mistaken for professionally formatted
+        // headings/paragraphs. These are structural metrics, not page rendering.
+        int literalEscapedBreakParagraphs = paragraphs.Count(p =>
+            p.Contains("\\n", StringComparison.Ordinal) ||
+            p.Contains("\\r", StringComparison.Ordinal));
+        int rawMarkdownHeadingParagraphs = paragraphs.Count(p =>
+            Regex.IsMatch(p, @"^\s*#{1,6}\s+\S", RegexOptions.CultureInvariant));
+        int bibliographyHeadingCount = paragraphs.Count(p =>
+            Regex.IsMatch(p.Trim(), @"^(?:References|Bibliography|Sources|Works Cited)$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant));
+        string documentQualityEvidence =
+            $"ReferenceDefinitions={referenceDefinitions.Count}\nReferenceEntries={referenceEntries}\nUnresolvedCitationCount={unresolvedSources}\n" +
+            $"PositionalTableLabelCount={tablePositionLabels}\nDuplicateLeadingTitle={duplicatedTitle}\n" +
+            $"LiteralEscapedBreakParagraphs={literalEscapedBreakParagraphs}\n" +
+            $"RawMarkdownHeadingParagraphs={rawMarkdownHeadingParagraphs}\n" +
+            $"BibliographyHeadingCount={bibliographyHeadingCount}\n";
         string headerFooterEvidence = InspectHeaderFooterParts(zip, document);
         return new NIRACapabilityHandlerResult { ChangedSystemState = false,
             Summary = "DOCX inspected read-only; verified file contents, section layout and bounded text preview returned.",
-            Output = $"Path={path}\nSHA256={fingerprint.Sha256}\nBytes={fingerprint.Bytes}\nParagraphs={paragraphs.Count}\nHeadings={headings}\nTables={tables}\nManualPageBreaks={manualPageBreaks}\n{headerEvidence}{pageEvidence}\n{headerFooterEvidence}\nEmbeddedMediaParts={images}\nWordsApprox={words}\nPreviewLimited=True\nPreview:\n{preview}" };
+            Output = $"Path={path}\nSHA256={fingerprint.Sha256}\nBytes={fingerprint.Bytes}\nParagraphs={paragraphs.Count}\nHeadings={headings}\nTables={tables}\nManualPageBreaks={manualPageBreaks}\n{headerEvidence}{pageEvidence}\n{headerFooterEvidence}\n{documentQualityEvidence}EmbeddedMediaParts={images}\nWordsApprox={words}\nPreviewLimited=True\nPreview:\n{preview}" };
     }
 
     internal static async Task<NIRACapabilityHandlerResult> AppendAsync(
@@ -85198,6 +86159,8 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using System.Xml;
 using System.Xml.Linq;
 using NIRAAgent.Diagnostics;
@@ -85228,7 +86191,7 @@ internal sealed class NIRADocxStudioNoPublishedFileException : ArgumentException
 // Its inputs are explicitly bounded JSON, not executable XML or Word macros.
 internal static partial class NIRADocx
 {
-    internal const string RuntimeDocxContractRevision = "NIRA-DOCX-OPTIONAL-MEDIA-R63";
+    internal const string RuntimeDocxContractRevision = "NIRA-DOCX-NO-SILENT-MEDIA-R12";
     private static readonly XNamespace CT48 = "http://schemas.openxmlformats.org/package/2006/content-types";
     private static readonly XNamespace PR48 = "http://schemas.openxmlformats.org/package/2006/relationships";
     private const string BaseRel48 = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/";
@@ -85402,12 +86365,9 @@ internal static partial class NIRADocx
         bool captionAltAlias = canonical == "image" && !hasText &&
             raw.TryGetProperty("caption", out imageCaption) &&
             !raw.TryGetProperty("altText", out _);
-        bool imageTextAlias = canonical == "image" && hasText &&
-            !raw.TryGetProperty("caption", out _) && !raw.TryGetProperty("altText", out _);
-        if (canonical == "image" && hasText && !imageTextAlias)
-            throw new ArgumentException("Image text conflicts with caption or altText; use explicit fields.");
+        bool imageTextAlias = canonical == "image" && hasText;
         if (imageTextAlias && sourceText.ValueKind != JsonValueKind.String)
-            throw new ArgumentException("Image description must be a string.");
+            throw new ArgumentException("Image text must be a string, not a structured object.");
         if (captionAltAlias && imageCaption.ValueKind != JsonValueKind.String)
             throw new ArgumentException("Image caption must be a string.");
         if (headingLevel == 0 && !useAlias && canonical == type && !imageTextAlias && !captionAltAlias) return raw.Clone();
@@ -85422,16 +86382,142 @@ internal static partial class NIRADocx
         result["type"] = canonical;
         if (headingLevel > 0) result["level"] = headingLevel;
         if (useAlias) result["text"] = content.GetString();
-        if (imageTextAlias || captionAltAlias)
+        if (imageTextAlias)
         {
-            string description = imageTextAlias ? (sourceText.GetString() ?? "") :
-                (imageCaption.GetString() ?? "");
-            if (description.Length is < 1 or > 200)
-                throw new ArgumentException("Image description must contain 1-200 characters.");
-            result["altText"] = description;
-            if (imageTextAlias) result["caption"] = description;
+            // Model-authored image `text` is alternate text, NOT a second caption.
+            // Preserve an independent caption and existing altText. When all three
+            // are supplied, preserve both descriptions without losing content.
+            string description = sourceText.GetString()?.Trim() ?? "";
+            if (description.Length == 0)
+                throw new ArgumentException("Image text description cannot be empty.");
+            string oldAlt = "";
+            if (raw.TryGetProperty("altText", out JsonElement explicitAlt))
+            {
+                if (explicitAlt.ValueKind != JsonValueKind.String)
+                    throw new ArgumentException("Image altText must be a string.");
+                oldAlt = explicitAlt.GetString()?.Trim() ?? "";
+            }
+            string combined = oldAlt.Length == 0 || string.Equals(oldAlt, description,
+                StringComparison.Ordinal) ? description : oldAlt + "; " + description;
+            if (combined.Length > 200)
+                throw new ArgumentException("Combined image text and altText exceed 200 characters; shorten one description explicitly.");
+            result["altText"] = combined;
+            // The original explicit caption remains independent and unmodified.
+            if (!raw.TryGetProperty("caption", out _)) result["caption"] = description;
+        }
+        else if (captionAltAlias)
+        {
+            string caption = imageCaption.GetString()?.Trim() ?? "";
+            if (caption.Length == 0)
+                throw new ArgumentException("Image caption cannot be empty when used as altText.");
+            // Caption stays intact; altText is a bounded accessibility summary.
+            result["altText"] = caption[..Math.Min(200, caption.Length)];
         }
         return JsonSerializer.SerializeToElement(result);
+    }
+
+    // R81: Word Studio accepts structured blocks, not Markdown pasted into a
+    // single paragraph. Normalize the model's lossless authoring shorthand
+    // before loading media or publishing anything. No source wording is invented.
+    private static string DecodeStudio48LineBreaks(string value) =>
+        value.Replace("\\r\\n", "\n", StringComparison.Ordinal)
+             .Replace("\\n", "\n", StringComparison.Ordinal)
+             .Replace("\\r", "\n", StringComparison.Ordinal)
+             .Replace("\r\n", "\n", StringComparison.Ordinal)
+             .Replace('\r', '\n');
+
+    private static JsonElement NormalizeStudio48Blocks(JsonElement blocks, string title)
+    {
+        var expanded = new List<JsonElement>();
+        bool cover = blocks.EnumerateArray().Take(6).Any(b =>
+            b.ValueKind == JsonValueKind.Object &&
+            b.TryGetProperty("type", out JsonElement type) &&
+            type.ValueKind == JsonValueKind.String &&
+            string.Equals(type.GetString(), "pagebreak", StringComparison.OrdinalIgnoreCase));
+        bool beforeCoverBreak = cover;
+        bool firstText = true;
+        foreach (JsonElement raw in blocks.EnumerateArray())
+        {
+            JsonElement block = NormalizeStudio48Block(raw);
+            string kind = GetString48(block, "type", 16).ToLowerInvariant();
+            if (kind == "pagebreak")
+            {
+                beforeCoverBreak = false;
+                expanded.Add(block);
+                continue;
+            }
+            if (kind != "paragraph" || !block.TryGetProperty("text", out JsonElement value) ||
+                value.ValueKind != JsonValueKind.String)
+            {
+                expanded.Add(block);
+                if (kind is not ("divider" or "toc")) firstText = false;
+                continue;
+            }
+            string material = DecodeStudio48LineBreaks(value.GetString() ?? "");
+            if (firstText && beforeCoverBreak)
+            {
+                string[] lines = material.Split('\n');
+                if (lines.Length > 0 && string.Equals(lines[0].Trim(), title,
+                    StringComparison.OrdinalIgnoreCase))
+                    material = string.Join("\n", lines.Skip(1)).TrimStart('\n');
+            }
+            firstText = false;
+            // Preserve per-block formatting of ordinary paragraphs; only the
+            // Markdown heading syntax itself is promoted to a native heading.
+            JsonObject? original = JsonNode.Parse(block.GetRawText()) as JsonObject;
+            if (original is null) throw new ArgumentException("Invalid Word paragraph block.");
+            var pending = new StringBuilder();
+            void Flush()
+            {
+                string text = pending.ToString().Trim();
+                pending.Clear();
+                if (text.Length == 0) return;
+                JsonObject copy = (JsonObject)original.DeepClone();
+                copy["text"] = text;
+                if (beforeCoverBreak)
+                {
+                    copy["alignment"] = "center";
+                    copy["fontSizePt"] = 12;
+                }
+                expanded.Add(JsonSerializer.SerializeToElement(copy));
+            }
+            foreach (string originalLine in material.Split('\n'))
+            {
+                string line = originalLine.Trim();
+                Match heading = Regex.Match(line, @"^(#{1,3})\s+(.+?)\s*$",
+                    RegexOptions.CultureInvariant);
+                if (heading.Success)
+                {
+                    Flush();
+                    expanded.Add(JsonSerializer.SerializeToElement(new {
+                        type = "heading", level = heading.Groups[1].Length,
+                        text = heading.Groups[2].Value }));
+                    continue;
+                }
+                // Keep individual source entries individually readable, and
+                // never bury a bibliography inside one large body paragraph.
+                bool sourceEntry = Regex.IsMatch(line, @"^\[S\d{1,3}\]\s+",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+                if (line.Length == 0 || sourceEntry || beforeCoverBreak)
+                    Flush();
+                if (line.Length == 0) continue;
+                if (sourceEntry)
+                {
+                    pending.Append(line);
+                    Flush();
+                }
+                else
+                {
+                    if (pending.Length > 0) pending.Append(' ');
+                    pending.Append(line);
+                    if (beforeCoverBreak) Flush();
+                }
+            }
+            Flush();
+        }
+        if (expanded.Count is < 1 or > 120)
+            throw new ArgumentException("Expanded Word blocks exceed the safe 120-block limit; split the report into fewer meaningful sections.");
+        return JsonSerializer.SerializeToElement(expanded);
     }
 
     private static bool GetBool48(JsonElement obj, string key, bool fallback = false)
@@ -85468,7 +86554,13 @@ internal static partial class NIRADocx
         if (color != null) props.Add(new XElement(W + "color", new XAttribute(W + "val", color)));
         if (size != 0) props.Add(new XElement(W + "sz", new XAttribute(W + "val", size * 2)));
         if (props.HasElements) r.Add(props);
-        r.Add(new XElement(W + "t", new XAttribute(XNamespace.Xml + "space", "preserve"), text));
+        // A Word line break is a w:br element, never a visible \n token.
+        string[] lines = DecodeStudio48LineBreaks(text).Split('\n');
+        for (int i = 0; i < lines.Length; i++)
+        {
+            if (i != 0) r.Add(new XElement(W + "br"));
+            r.Add(new XElement(W + "t", new XAttribute(XNamespace.Xml + "space", "preserve"), lines[i]));
+        }
         return r;
     }
     private static XElement P48(string alignment, int afterTwips = 120, string? style = null, int listId = 0)
@@ -85565,7 +86657,24 @@ internal static partial class NIRADocx
                 }
                 if (props.Length == 0 || props.Length > 8)
                     throw new ArgumentException("Object table row needs 1-8 scalar entries.");
-                // Do not discard source field names or assume what they mean.
+                // Positional JSON keys are field *names*, not visible table data.
+                // Preserve arbitrary descriptive maps, but decode unambiguous
+                // cell1..cellN objects as an ordered row without leaking keys.
+                bool numbered = props.All(prop =>
+                    prop.Name.StartsWith("cell", StringComparison.OrdinalIgnoreCase) &&
+                    int.TryParse(prop.Name.AsSpan(4), out int position) &&
+                    position >= 1 && position <= props.Length);
+                if (numbered)
+                {
+                    var positions = props.Select(prop => int.Parse(prop.Name.AsSpan(4)))
+                        .ToArray();
+                    if (positions.Distinct().Count() != props.Length)
+                        throw new ArgumentException("Duplicate positional table cells are ambiguous.");
+                    return props.OrderBy(prop => int.Parse(prop.Name.AsSpan(4)))
+                        .Select(prop => CellText(prop.Value)).ToList();
+                }
+                if (props.Any(prop => prop.Name.StartsWith("cell", StringComparison.OrdinalIgnoreCase)))
+                    throw new ArgumentException("Mixed or invalid positional table cell keys; use arrays or cell1..cellN.");
                 return props.Select(prop =>
                 {
                     string value = CellText(prop.Value);
@@ -85891,17 +87000,25 @@ internal static partial class NIRADocx
         // Normalize harmless, unambiguous authoring aliases exactly once.
         // Native schemas remain canonical; a wrong alias must never partially
         // publish a Word document or silently discard a block's text.
-        JsonElement canonicalBlocks = JsonSerializer.SerializeToElement(
-            parsed.RootElement.EnumerateArray().Select(NormalizeStudio48Block).ToArray());
+        JsonElement canonicalBlocks = NormalizeStudio48Blocks(parsed.RootElement, title);
         var selectedMedia = await LoadStudio48MediaAsync(canonicalBlocks,
             legacyImagePath, ct).ConfigureAwait(false);
         List<Studio48Media> media = selectedMedia.Media;
         int skippedImages = selectedMedia.OmittedBlockIndices.Count;
+        // A specified image block is document content. Never publish a report
+        // with that content silently missing, even when minimumImages was not
+        // set by the model. Failure occurs before PublishNew and before a write.
+        if (skippedImages > 0)
+            throw new ArgumentException($"Word Studio could not validate {skippedImages} of " +
+                $"{selectedMedia.RequestedImages} requested image blocks. No file was created. " +
+                "Provide existing, verified local imagePath values, or explicitly remove " +
+                "optional image blocks only when the user's request permits omission.");
         if (media.Count < minimumImages)
             throw new ArgumentException($"Document has {media.Count} verified local images " +
                 $"({skippedImages} unusable input(s) omitted), but minimumImages={minimumImages}. No document was created.");
         if (parsed.RootElement.GetArrayLength() == skippedImages)
             throw new ArgumentException("No document body remains after rejecting unusable optional images.");
+        ValidateStudio48References(canonicalBlocks);
         int bodyWords = CountStudio48BodyWords(canonicalBlocks);
         if (bodyWords < minimumBodyWords)
             throw new ArgumentException($"Document content is too short: {bodyWords} body words, " +
@@ -85918,10 +87035,22 @@ internal static partial class NIRADocx
         XElement body = new(W + "body");
         XElement titleP = P48("center", 280);
         titleP.Element(W + "pPr")!.Add(new XElement(W + "keepNext"));
+        // A true cover page needs deliberate whitespace, not an oversized
+        // ordinary first-page heading left at the top margin.
+        bool hasCoverPage = canonicalBlocks.EnumerateArray().Take(8).Any(b =>
+            b.TryGetProperty("type", out JsonElement t) && t.ValueKind == JsonValueKind.String &&
+            t.GetString() == "pagebreak");
+        if (hasCoverPage)
+        {
+            XElement spacing = titleP.Descendants(W + "spacing").First();
+            spacing.SetAttributeValue(W + "before", 3000);
+            spacing.SetAttributeValue(W + "after", 350);
+        }
         titleP.Add(TextRun48(title, true, false, false, accent, profile == "academic" ? 20 : 24));
         body.Add(titleP);
         int count = 0, headings = 0, tables = 0, charts = 0, lists = 0, breaks = 0, links = 0, images = 0;
         int sourceBlockIndex = -1;
+        bool initialVisibleBlock = true;
         foreach (JsonElement block in canonicalBlocks.EnumerateArray())
         {
             ct.ThrowIfCancellationRequested();
@@ -85931,6 +87060,20 @@ internal static partial class NIRADocx
             if (selectedMedia.OmittedBlockIndices.Contains(sourceBlockIndex)) continue;
             if (block.ValueKind != JsonValueKind.Object) throw new ArgumentException("Word blocks must be JSON objects.");
             string type = GetString48(block, "type", 12).ToLowerInvariant();
+            // Studio already adds the document title. A model often repeats it
+            // verbatim as the very first level-one heading. Remove ONLY that
+            // exact duplicate; preserve every other heading and body block.
+            if (initialVisibleBlock && type == "heading" &&
+                GetInt48(block, "level", 1, 1, 3) == 1 &&
+                block.TryGetProperty("text", out JsonElement headingText) &&
+                headingText.ValueKind == JsonValueKind.String &&
+                string.Equals((headingText.GetString() ?? "").Trim(), title,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                initialVisibleBlock = false;
+                continue;
+            }
+            initialVisibleBlock = false;
             switch (type)
             {
                 case "paragraph": case "heading": case "bullet": case "number":
@@ -86083,16 +87226,91 @@ internal static partial class NIRADocx
     }
 }
 
+// Offline regression gate: checks real native row and source-marker parsers.
+internal static partial class NIRADocx
+{
+    internal static int RunStudioR12QualitySelfCheck()
+    {
+        using JsonDocument numbered = JsonDocument.Parse("{\"rows\":[{\"cell3\":\"C\",\"cell1\":\"A\",\"cell2\":\"B\"},[\"1\",\"2\",\"3\"]]}");
+        List<List<string>> rows = ParseStudio48TableRows(numbered.RootElement);
+        if (!rows[0].SequenceEqual(new[] { "A", "B", "C" }, StringComparer.Ordinal))
+            throw new InvalidOperationException("R12 positional table cells were not normalized.");
+        using JsonDocument ambiguous = JsonDocument.Parse("{\"rows\":[{\"cell1\":\"A\",\"label\":\"B\"},[\"1\",\"2\"]]}");
+        bool rejected = false;
+        try { _ = ParseStudio48TableRows(ambiguous.RootElement); }
+        catch (ArgumentException) { rejected = true; }
+        if (!rejected) throw new InvalidOperationException("R12 mixed positional table cells accepted.");
+        using JsonDocument citations = JsonDocument.Parse("[{\"type\":\"paragraph\",\"text\":\"Report [S1, S2].\"},{\"type\":\"heading\",\"text\":\"References\"},{\"type\":\"paragraph\",\"text\":\"[S1] Real source.\"}]");
+        rejected = false;
+        try { ValidateStudio48References(citations.RootElement); }
+        catch (ArgumentException) { rejected = true; }
+        if (!rejected) throw new InvalidOperationException("R12 dangling citations were published.");
+        // R80: model image text + caption and/or altText must be preserved as
+        // explicit, independent fields before the genuine Studio parser runs.
+        using JsonDocument imageWithCaption = JsonDocument.Parse(
+            "{\"type\":\"image\",\"text\":\"Motor diagram\",\"caption\":\"Figure 1: rotating field\",\"imagePath\":\"C:\\\\verified.png\"}");
+        JsonElement normalized = NormalizeStudio48Block(imageWithCaption.RootElement);
+        if (normalized.TryGetProperty("text", out _) ||
+            normalized.GetProperty("altText").GetString() != "Motor diagram" ||
+            normalized.GetProperty("caption").GetString() != "Figure 1: rotating field" ||
+            !normalized.TryGetProperty("imagePath", out _))
+            throw new InvalidOperationException("R80 image caption and accessible description normalization failed.");
+        using JsonDocument imageWithAllFields = JsonDocument.Parse(
+            "{\"type\":\"image\",\"text\":\"field arrows\",\"altText\":\"stator diagram\",\"caption\":\"Figure 2\"}");
+        normalized = NormalizeStudio48Block(imageWithAllFields.RootElement);
+        if (normalized.TryGetProperty("text", out _) ||
+            normalized.GetProperty("altText").GetString() != "stator diagram; field arrows" ||
+            normalized.GetProperty("caption").GetString() != "Figure 2")
+            throw new InvalidOperationException("R80 explicit image altText/caption preservation failed.");
+        rejected = false;
+        using JsonDocument oversize = JsonDocument.Parse(
+            "{\"type\":\"image\",\"altText\":\"" + new string('a', 199) +
+            "\",\"text\":\"extra\"}");
+        try { _ = NormalizeStudio48Block(oversize.RootElement); }
+        catch (ArgumentException) { rejected = true; }
+        if (!rejected) throw new InvalidOperationException("R80 overlong image altText was silently truncated.");
+        // R81 regression: the exact defect found in the live Tesla DOCX is
+        // model-authored Markdown and literal backslash-n inside a paragraph.
+        using JsonDocument rawMarkdown = JsonDocument.Parse(
+            "[{\"type\":\"paragraph\",\"text\":\"Report title\\\\n\\\\nPrepared by NIRA\\\\nEngineering\"}," +
+            "{\"type\":\"pagebreak\"}," +
+            "{\"type\":\"paragraph\",\"text\":\"# Introduction\\\\n\\\\nThis explains the motor.\"}," +
+            "{\"type\":\"paragraph\",\"text\":\"# References\\\\n\\\\n[S1] Verified source.\"}]");
+        JsonElement structured = NormalizeStudio48Blocks(rawMarkdown.RootElement, "Report title");
+        JsonElement[] native = structured.EnumerateArray().ToArray();
+        if (native.Length != 7 || native[0].GetProperty("text").GetString() != "Prepared by NIRA" ||
+            native[1].GetProperty("text").GetString() != "Engineering" ||
+            native[3].GetProperty("type").GetString() != "heading" ||
+            native[3].GetProperty("text").GetString() != "Introduction" ||
+            native[5].GetProperty("type").GetString() != "heading" ||
+            native[5].GetProperty("text").GetString() != "References" ||
+            native.Any(b => b.TryGetProperty("text", out JsonElement text) &&
+                (text.GetString() ?? "").Contains("\\n", StringComparison.Ordinal)))
+            throw new InvalidOperationException("R81 Markdown/newline block normalization failed.");
+        using JsonDocument duplicateRefs = JsonDocument.Parse(
+            "[{\"type\":\"heading\",\"text\":\"References\"}," +
+            "{\"type\":\"paragraph\",\"text\":\"[S1] Example\"}," +
+            "{\"type\":\"heading\",\"text\":\"References\"}]");
+        rejected = false;
+        try { ValidateStudio48References(duplicateRefs.RootElement); }
+        catch (ArgumentException) { rejected = true; }
+        if (!rejected) throw new InvalidOperationException("R81 duplicated bibliography was accepted.");
+        return 3;
+    }
+}
+
 public sealed class NIRADocxStudioCapabilityHandler : INIRACapabilityHandler
 {
     public static int RunMissingParentPreflightSelfCheck() =>
         NIRADocx.RunMissingParentPreflightSelfCheck();
+    public static int RunStudioR12QualitySelfCheck() =>
+        NIRADocx.RunStudioR12QualitySelfCheck();
 
     public NIRACapabilityDescriptor Descriptor { get; } = new()
     {
         Id = NIRACapabilityIds.DocxStudioCreate,
         DefaultRisk = NIRACapabilityRisk.Modify,
-        Description = "Native Word composer: create a NEW structured DOCX atomically. Academic/business/general typography, substantive paragraphs, headings, bullets, numbering, full-width tables, editable numeric data-bar charts, quotations, images (up to six), captions/credits, hyperlinks, header/footer and PAGE field. Optional minimumBodyWords prevents short content from satisfying longer assignments. Images require verified existing local files and independent reuse-right checks. Verifies saved XML/media, never rendered pagination.",
+        Description = "Native Word composer: create a NEW structured DOCX atomically. Academic/business/general typography, headings, lists, full-width tables, editable numeric data-bar charts, images (up to six), captions/credits, hyperlinks, headers and PAGE field. Authored image blocks must have verified local raster input or the entire write is rejected before publication. Optional minimumBodyWords/minimumImages prevent incomplete reports. Verifies saved XML/media, never rendered pagination.",
         Parameters = [
             NIRADocx.Param("path", true, "NEW unused .docx destination in an authorized folder."),
             NIRADocx.Param("title", true, "Title of document; one line, maximum 180 characters."),
@@ -86199,6 +87417,52 @@ internal static partial class NIRADocx
         if (!string.IsNullOrWhiteSpace(legacyImagePath) && imageOrdinal != 1)
             throw new ArgumentException("Top-level imagePath is only supported for one image block; use per-block imagePath for multiple images.");
         return new Studio48MediaSelection(media, omitted, imageOrdinal);
+    }
+
+    // Source markers in the authored document must have a matching definition.
+    // This is about reference-list integrity, NOT independent fact verification.
+    private static void ValidateStudio48References(JsonElement blocks)
+    {
+        var cited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var defined = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        bool referencesSection = false;
+        int referencesHeadings = 0;
+        foreach (JsonElement block in blocks.EnumerateArray())
+        {
+            if (block.ValueKind != JsonValueKind.Object) continue;
+            string kind = block.TryGetProperty("type", out JsonElement type) &&
+                type.ValueKind == JsonValueKind.String ? type.GetString() ?? "" : "";
+            string text = block.TryGetProperty("text", out JsonElement value) &&
+                value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
+            if (kind == "heading")
+            {
+                referencesSection = Regex.IsMatch(text.Trim(),
+                    @"^(?:references|bibliography|sources|works cited)$",
+                    RegexOptions.IgnoreCase);
+                if (referencesSection) referencesHeadings++;
+            }
+            foreach (Match group in Regex.Matches(text,
+                @"\[S[0-9]{1,3}(?:\s*,\s*S?[0-9]{1,3})*\]", RegexOptions.IgnoreCase))
+                foreach (Match number in Regex.Matches(group.Value, @"[0-9]{1,3}"))
+                    cited.Add(number.Value);
+            if (referencesSection)
+                foreach (Match definition in Regex.Matches(text,
+                    @"(?:^|\n)\s*\[S(?<n>[0-9]{1,3})\]\s*[-.:]?\s+",
+                    RegexOptions.IgnoreCase))
+                    defined.Add(definition.Groups["n"].Value);
+        }
+        // Do not publish two bibliography sections. This can occur when the
+        // model supplied Markdown references and the evidence binder added a
+        // second list. Never silently discard either list of source evidence.
+        if (referencesHeadings > 1)
+            throw new ArgumentException("Word Studio has duplicate References sections. " +
+                "Consolidate the source definitions into one section before saving.");
+        string[] unresolved = cited.Except(defined, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => int.Parse(x)).ToArray();
+        if (unresolved.Length != 0)
+            throw new ArgumentException("Word Studio contains unresolved research source markers: " +
+                string.Join(", ", unresolved.Select(id => "[S" + id + "]")) +
+                ". Add their complete definitions in References before creating the file.");
     }
 
     private static int CountStudio48BodyWords(JsonElement blocks)
@@ -100514,6 +101778,7 @@ public sealed record NIRAArchivedConversationHit(
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Security.Cryptography;
 
 namespace NIRAAgent.Diagnostics;
 
@@ -100565,6 +101830,110 @@ public static class NIRADiagnosticTrace
     public static string PublicResponseLogPath => Path.Combine(DirectoryPath,
         $"nira-public-{Environment.ProcessId}.jsonl");
 
+    // Default ON, DPAPI CurrentUser encrypted: full forensic records of every
+    // model request, provider decision, rejected draft and protocol failure.
+    // The provider API key is never serialized (Authorization is HTTP-header only).
+    // Ordinary event logs remain metadata-only, safe to inspect/share after review.
+    public static bool SecureAgentCaptureEnabled => OperatingSystem.IsWindows();
+    public static string SecureAgentDecisionLogPath => Path.Combine(DirectoryPath,
+        $"nira-agent-secure-{Environment.ProcessId}.jsonl.dpapi");
+    private static readonly byte[] AgentTraceEntropy =
+        Encoding.UTF8.GetBytes("NIRAAgent-DPAPI-DecisionTrace-V1");
+
+    private static void AppendSecureAgentRecord(object record)
+    {
+        if (!SecureAgentCaptureEnabled) return;
+        byte[]? plaintext = null;
+        try
+        {
+            plaintext = JsonSerializer.SerializeToUtf8Bytes(record);
+            byte[] ciphertext = ProtectedData.Protect(plaintext, AgentTraceEntropy,
+                DataProtectionScope.CurrentUser);
+            Append(SecureAgentDecisionLogPath, Convert.ToBase64String(ciphertext));
+        }
+        catch (Exception ex) when (ex is CryptographicException or JsonException or
+            UnauthorizedAccessException or IOException or ArgumentException or
+            NotSupportedException or InvalidOperationException)
+        {
+            // Never fall back to plaintext logging when DPAPI fails.
+            Event("SECURE-AGENT-TRACE-ERROR", "EncryptionOrWrite=" + ex.GetType().Name);
+        }
+        finally
+        {
+            if (plaintext is not null) CryptographicOperations.ZeroMemory(plaintext);
+        }
+    }
+
+    // The exact non-secret Ollama request body and native tool definitions are
+    // encrypted BEFORE network submission. The API key/header is not part of it.
+    public static void AgentProviderRequest(Guid runId, int modelRequest,
+        IDictionary<string, object> payload)
+    {
+        AppendSecureAgentRecord(new {
+            TimestampUtc = DateTimeOffset.UtcNow, Event = "AGENT-HTTP-REQUEST",
+            RunId = runId, ModelRequest = modelRequest, RequestPayload = payload
+        });
+    }
+
+    // Always-safe block STRUCTURE summary; never log a document's private text,
+    // file paths, source URLs, or typed content in the ordinary event log.
+    public static void DocumentDraftShape(Guid runId, int modelRequest,
+        JsonElement proposal)
+    {
+        if (proposal.ValueKind != JsonValueKind.Object ||
+            !proposal.TryGetProperty("arguments", out JsonElement args) ||
+            args.ValueKind != JsonValueKind.Object ||
+            !args.TryGetProperty("blocksJson", out JsonElement blocks)) return;
+        try
+        {
+            using JsonDocument? owner = blocks.ValueKind == JsonValueKind.String
+                ? JsonDocument.Parse(blocks.GetString() ?? "") : null;
+            if (owner is not null) blocks = owner.RootElement;
+            if (blocks.ValueKind != JsonValueKind.Array) return;
+            var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            int citationMarkers = 0, linkTokens = 0, textChars = 0;
+            foreach (JsonElement block in blocks.EnumerateArray())
+            {
+                if (block.ValueKind != JsonValueKind.Object) continue;
+                string kind = block.TryGetProperty("type", out JsonElement type) &&
+                    type.ValueKind == JsonValueKind.String ? type.GetString() ?? "" : "unknown";
+                kind = OneLine(kind, 18);
+                counts[kind] = counts.TryGetValue(kind, out int n) ? n + 1 : 1;
+                foreach (string field in new[] { "text", "content" })
+                {
+                    if (!block.TryGetProperty(field, out JsonElement content) ||
+                        content.ValueKind != JsonValueKind.String) continue;
+                    string val = content.GetString() ?? "";
+                    textChars += val.Length;
+                    citationMarkers += System.Text.RegularExpressions.Regex.Matches(val,
+                        @"\[S[0-9]+\]", System.Text.RegularExpressions.RegexOptions.IgnoreCase).Count;
+                    linkTokens += System.Text.RegularExpressions.Regex.Matches(val,
+                        @"https://", System.Text.RegularExpressions.RegexOptions.IgnoreCase).Count;
+                }
+            }
+            Event("AGENT-DOCX-DRAFT-SHAPE", $"Run={runId:N} ModelRequest={modelRequest} " +
+                $"Blocks={blocks.GetArrayLength()} Types={string.Join(",", counts.OrderBy(x => x.Key).Select(x => x.Key + ":" + x.Value))} " +
+                $"CitationMarkers={citationMarkers} UrlMarkers={linkTokens} TextChars={textChars}");
+        }
+        catch (JsonException) { Event("AGENT-DOCX-DRAFT-SHAPE", $"Run={runId:N} InvalidBlocksJson=True"); }
+    }
+
+    public static int RunSecureTraceSelfCheck()
+    {
+        if (!OperatingSystem.IsWindows()) return 2;
+        byte[] plaintext = Encoding.UTF8.GetBytes("NIRA forensic audit self-check");
+        byte[] encrypted = ProtectedData.Protect(plaintext, AgentTraceEntropy,
+            DataProtectionScope.CurrentUser);
+        byte[] recovered = ProtectedData.Unprotect(encrypted, AgentTraceEntropy,
+            DataProtectionScope.CurrentUser);
+        if (!plaintext.AsSpan().SequenceEqual(recovered) ||
+            Encoding.UTF8.GetString(encrypted).Contains("NIRA forensic", StringComparison.Ordinal))
+            throw new InvalidOperationException("DPAPI decision trace cannot be recovered safely.");
+        CryptographicOperations.ZeroMemory(plaintext);
+        CryptographicOperations.ZeroMemory(recovered);
+        return 2;
+    }
+
     // Full agent decisions (including candidates rejected by grounding and
     // quality gates) may contain file paths, private answers or tool inputs.
     // Default event log records ONLY metadata; complete text is opt-in locally.
@@ -100579,6 +101948,12 @@ public static class NIRADiagnosticTrace
     public static void AgentModelRawMessage(Guid runId, int requestNumber,
         int decisionNumber, JsonElement message)
     {
+        AppendSecureAgentRecord(new {
+            TimestampUtc = DateTimeOffset.UtcNow,
+            Event = "AGENT-RAW-MODEL-MESSAGE", RunId = runId,
+            ModelRequest = requestNumber, Decision = decisionNumber,
+            Message = message
+        });
         if (!AgentDecisionCaptureEnabled) return;
         Append(AgentDecisionLogPath, JsonSerializer.Serialize(new {
             TimestampUtc = DateTimeOffset.UtcNow,
@@ -100598,6 +101973,12 @@ public static class NIRADiagnosticTrace
         Event("AGENT-MODEL-PROTOCOL-FAILURE", "Run=" + runId.ToString("N") +
             " Request=" + modelRequest + " Code=" + reason +
             " Phase=" + OneLine(phase, 110));
+        AppendSecureAgentRecord(new {
+            TimestampUtc = DateTimeOffset.UtcNow,
+            Event = "AGENT-PROVIDER-RESPONSE-REJECTED",
+            RunId = runId, ModelRequest = modelRequest,
+            ReasonCode = reasonCode, Phase = phase, RawResponse = rawResponse
+        });
         if (!AgentDecisionCaptureEnabled) return;
         Append(AgentDecisionLogPath, JsonSerializer.Serialize(new {
             TimestampUtc = DateTimeOffset.UtcNow,
@@ -100621,6 +102002,12 @@ public static class NIRADiagnosticTrace
             $"Decision={decisionNumber} Kind={safeKind} Function={safeFunction} " +
             $"Verdict={safeVerdict} AnswerChars={answer?.Length ?? 0} " +
             $"ArgsChars={(arguments?.GetRawText().Length ?? 0)}");
+        AppendSecureAgentRecord(new {
+            TimestampUtc = DateTimeOffset.UtcNow, Event = "AGENT-MODEL-CANDIDATE",
+            RunId = runId, ModelRequest = requestNumber, Decision = decisionNumber,
+            Kind = kind, Function = function, Verdict = verdict,
+            Arguments = arguments, Answer = answer
+        });
         if (!AgentDecisionCaptureEnabled) return;
         Append(AgentDecisionLogPath, JsonSerializer.Serialize(new {
             TimestampUtc = DateTimeOffset.UtcNow, Event = "AGENT-MODEL-CANDIDATE",
@@ -100785,6 +102172,10 @@ public static class NIRADiagnosticTrace
                         $"PublicResponseLog={PublicResponseLogPath}\n" +
                         $"AgentDecisionCapture={AgentDecisionCaptureEnabled}\n" +
                         $"AgentDecisionLog={AgentDecisionLogPath}\n" +
+                        $"SecureAgentLog={SecureAgentDecisionLogPath}\n" +
+                        $"SecureAgentCapture={SecureAgentCaptureEnabled}\n" +
+                        "SecureAgentLog is encrypted under the current Windows account; " +
+                        "it captures model requests, candidate tool calls and rejections by default.\n" +
                         "To capture accepted/rejected model text and tool arguments: " +
                         "NIRA_DEBUG_AGENT_DECISIONS=1\n" +
                         "To capture delivered Markdown and native blocks: NIRA_DEBUG_PUBLIC_RESPONSES=1\n" +
@@ -100800,7 +102191,9 @@ public static class NIRADiagnosticTrace
                 long limit = string.Equals(filePath, LlmLogPath, StringComparison.OrdinalIgnoreCase)
                     || string.Equals(filePath, PublicResponseLogPath, StringComparison.OrdinalIgnoreCase)
                     || string.Equals(filePath, AgentDecisionLogPath, StringComparison.OrdinalIgnoreCase)
-                    ? 32_000_000 : 4_000_000;
+                    ? 32_000_000 :
+                    string.Equals(filePath, SecureAgentDecisionLogPath, StringComparison.OrdinalIgnoreCase)
+                    ? 64_000_000 : 4_000_000;
                 if (File.Exists(filePath) && new FileInfo(filePath).Length > limit)
                     File.Move(filePath, filePath + ".previous", overwrite: true);
                 File.AppendAllText(filePath, line + Environment.NewLine, Encoding.UTF8);
@@ -127374,32 +128767,68 @@ internal static class NIRADocxVerifiedMediaBinding
             .GroupBy(asset => asset.LocalPath, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First()).Take(6).ToArray();
         var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (JsonNode? item in blocks)
+        for (int blockIndex = 0; blockIndex < blocks.Count; blockIndex++)
         {
-            if (item is not JsonObject obj ||
+            if (blocks[blockIndex] is not JsonObject obj ||
                 !string.Equals(Text(obj, "type"), "image", StringComparison.OrdinalIgnoreCase)) continue;
 
             string existing = Text(obj, "imagePath");
+            NIRACapabilityVisualArtifact? exact = candidates.FirstOrDefault(asset =>
+                string.Equals(asset.LocalPath, existing, StringComparison.OrdinalIgnoreCase));
             if (!string.IsNullOrWhiteSpace(existing) && File.Exists(existing))
             {
+                // Do not replace a valid model-supplied image. Enrich only if
+                // THIS local file was independently returned by a prior tool.
+                if (exact is not null)
+                {
+                    if (Text(obj, "altText").Length == 0 && exact.Title.Length > 0)
+                    {
+                        obj["altText"] = exact.Title[..Math.Min(200, exact.Title.Length)];
+                        bound++;
+                    }
+                    if (Text(obj, "credit").Length == 0 && exact.SourceUri.Length > 0)
+                    {
+                        obj["credit"] = "Source: " + exact.SourceUri[..Math.Min(360, exact.SourceUri.Length)];
+                        bound++;
+                    }
+                }
                 used.Add(existing);
-                continue; // Preserve the author's valid explicit image file.
+                continue;
             }
 
             string description = string.Join(' ', Text(obj, "altText"), Text(obj, "caption"));
             HashSet<string> desired = Tokens(description);
-            // Do not fill unspecified or unrelated pictures with an arbitrary
-            // image simply to pass minimumImages; provenance and subject matter.
+            bool inferred = desired.Count == 0;
+            if (inferred)
+            {
+                // An empty image block still has local document context.
+                // Match only against the 1-3 immediately preceding text blocks;
+                // do not choose an arbitrary web photograph merely to pass QA.
+                int from = Math.Max(0, blockIndex - 3);
+                string neighborhood = string.Join(' ', Enumerable.Range(from, blockIndex - from)
+                    .Select(index => blocks[index] is JsonObject preceding
+                        ? string.Join(' ', Text(preceding, "text"), Text(preceding, "content")) : ""));
+                desired = Tokens(neighborhood);
+            }
             if (desired.Count == 0) continue;
             NIRACapabilityVisualArtifact? match = candidates
                 .Where(asset => !used.Contains(asset.LocalPath))
                 .Select(asset => (Asset: asset, Score: Tokens(string.Join(' ', asset.Title,
                     asset.SubjectQuery, asset.Caption)).Intersect(desired).Count()))
-                .Where(entry => entry.Score > 0)
+                .Where(entry => entry.Score >= (inferred ? 2 : 1))
                 .OrderByDescending(entry => entry.Score)
                 .Select(entry => entry.Asset).FirstOrDefault();
             if (match is null) continue;
             obj["imagePath"] = match.LocalPath;
+            if (Text(obj, "altText").Length == 0)
+            {
+                string label = match.Title.Length > 0 ? match.Title : match.Caption;
+                if (label.Length > 0) obj["altText"] = label[..Math.Min(200, label.Length)];
+            }
+            if (Text(obj, "caption").Length == 0 && match.Caption.Length > 0)
+                obj["caption"] = match.Caption[..Math.Min(300, match.Caption.Length)];
+            if (Text(obj, "credit").Length == 0 && match.SourceUri.Length > 0)
+                obj["credit"] = "Source: " + match.SourceUri[..Math.Min(360, match.SourceUri.Length)];
             used.Add(match.LocalPath);
             bound++;
         }
@@ -137314,6 +138743,7 @@ public static class NIRATableCellLayout
 ```csharp
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using NIRAAgent.Runtime.Contracts;
 using NIRAAgent.Diagnostics;
 
 namespace NIRAAgent.Presentation;
@@ -137625,6 +139055,132 @@ public static class NIRAUnifiedRichAnswerComposer
         if (duplicate.Blocks.Count != 1)
             throw new InvalidOperationException("Duplicate watch URLs created extra player cards.");
         return 3; // Three production smoke families; extended video assertions above.
+    }
+}
+
+/// <summary>
+/// R81: A requested report is a file deliverable, not a cue to repeat its
+/// chapters or downloaded reference pictures in chat. This presentation
+/// projection requires paired, audited current-run Studio-create and DOCX
+/// readback receipts. It never treats model prose as file evidence.
+/// </summary>
+public static class NIRADocxArtifactReplyPolicy
+{
+    public static bool TryCompose(AgentTaskContract? contract,
+        IReadOnlyList<string> verifiedReceipts, out NIRAUnifiedRichAnswer reply)
+    {
+        reply = new NIRAUnifiedRichAnswer(string.Empty, Array.Empty<NIRARichBlock>());
+        if (contract?.RequiresSavedArtifact != true || !contract.RequiresReadBack ||
+            !contract.RequestedFileNames.Any(n => n.EndsWith(".docx", StringComparison.OrdinalIgnoreCase)))
+            return false;
+        var writes = new List<(string Path, string Hash)>();
+        var inspections = new List<(string Path, string Hash, string Output)>();
+        foreach (string raw in verifiedReceipts.Take(64))
+        {
+            if (raw.Length is < 2 or > 100_000) continue;
+            try
+            {
+                using JsonDocument doc = JsonDocument.Parse(raw);
+                JsonElement r = doc.RootElement;
+                if (r.ValueKind != JsonValueKind.Object ||
+                    Read(r, "status") != "Succeeded" ||
+                    r.TryGetProperty("auditRecorded", out JsonElement audit) &&
+                        audit.ValueKind != JsonValueKind.True) continue;
+                // An absent audit field is not a trusted receipt.
+                if (!r.TryGetProperty("auditRecorded", out audit) ||
+                    audit.ValueKind != JsonValueKind.True) continue;
+                string capability = Read(r, "capabilityId");
+                string output = Read(r, "output");
+                if (capability == "filesystem.docx.studio.create" &&
+                    r.TryGetProperty("changedSystemState", out JsonElement changed) &&
+                    changed.ValueKind == JsonValueKind.True &&
+                    Field(output, "PostWriteVerified") == "True" &&
+                    Field(output, "OverwroteExisting") == "False")
+                {
+                    string path = Field(output, "Destination");
+                    string hash = Field(output, "DestinationSHA256");
+                    if (IsRequestedPath(path, contract.RequestedFileNames) && ValidHash(hash))
+                        writes.Add((path, hash));
+                }
+                else if (capability == "filesystem.docx.inspect")
+                {
+                    string path = Field(output, "Path");
+                    string hash = Field(output, "SHA256");
+                    if (IsRequestedPath(path, contract.RequestedFileNames) && ValidHash(hash))
+                        inspections.Add((path, hash, output));
+                }
+            }
+            catch (JsonException) { }
+        }
+        foreach (var saved in writes.AsEnumerable().Reverse())
+        {
+            var read = inspections.LastOrDefault(x =>
+                x.Path.Equals(saved.Path, StringComparison.OrdinalIgnoreCase) &&
+                x.Hash.Equals(saved.Hash, StringComparison.OrdinalIgnoreCase));
+            if (read.Output is null) continue;
+            string fileName = saved.Path.Split('\\', '/').Last();
+            static string Count(string data, string field) =>
+                int.TryParse(Field(data, field), out int value) ? value.ToString() : "not confirmed";
+            string summary = "**Word report saved and inspected**\n\n" +
+                "**File:** `" + saved.Path + "`\n\n" +
+                "**Verified saved content:** " + Count(read.Output, "Paragraphs") +
+                " paragraphs, " + Count(read.Output, "Tables") + " tables, " +
+                Count(read.Output, "EmbeddedMediaParts") + " embedded images, and " +
+                Count(read.Output, "ReferenceEntries") + " reference entries.\n\n" +
+                "Structural inspection passed for **" + fileName +
+                "**. Visual page layout and exact pagination have not been rendered or independently checked.";
+            reply = new NIRAUnifiedRichAnswer(summary, Array.Empty<NIRARichBlock>());
+            return true;
+        }
+        return false;
+    }
+
+    private static string Read(JsonElement root, string key) =>
+        root.TryGetProperty(key, out JsonElement field) && field.ValueKind == JsonValueKind.String
+            ? field.GetString() ?? string.Empty : string.Empty;
+
+    private static string Field(string output, string key)
+    {
+        foreach (string raw in output.Split('\n'))
+            if (raw.StartsWith(key + "=", StringComparison.Ordinal))
+                return raw[(key.Length + 1)..].Trim().TrimEnd('\r');
+        return string.Empty;
+    }
+
+    private static bool ValidHash(string hash) =>
+        hash.Length == 64 && hash.All(Uri.IsHexDigit);
+
+    private static bool IsRequestedPath(string path, IReadOnlyList<string> named) =>
+        path.Length is >= 5 and <= 32760 &&
+        ((path.Length >= 4 && char.IsLetter(path[0]) && path[1] == ':' &&
+          path[2] is '\\' or '/') || path.StartsWith("\\\\", StringComparison.Ordinal)) &&
+        named.Any(n => path.EndsWith("\\" + n, StringComparison.OrdinalIgnoreCase) ||
+                       path.EndsWith("/" + n, StringComparison.OrdinalIgnoreCase));
+
+    public static int RunSelfCheck()
+    {
+        const string destination = @"C:\Users\User\Documents\NIRA_ACCEPTANCE_SANDBOX\Report.docx";
+        string hash = new string('a', 64);
+        AgentTaskContract contract = AgentTaskContractPolicy.Create(
+            "Create a 3 page illustrated Word report Report.docx with references and inspect the saved file.");
+        var receipts = new[] {
+            JsonSerializer.Serialize(new { capabilityId = "filesystem.docx.studio.create",
+                status = "Succeeded", auditRecorded = true, changedSystemState = true,
+                output = $"Destination={destination}\nDestinationSHA256={hash}\nPostWriteVerified=True\nOverwroteExisting=False" }),
+            JsonSerializer.Serialize(new { capabilityId = "filesystem.docx.inspect",
+                status = "Succeeded", auditRecorded = true, changedSystemState = false,
+                output = $"Path={destination}\nSHA256={hash}\nParagraphs=20\nTables=1\nEmbeddedMediaParts=1\nReferenceEntries=5" })
+        };
+        if (!TryCompose(contract, receipts, out NIRAUnifiedRichAnswer response) ||
+            response.Blocks.Count != 0 ||
+            !response.Screen.Contains("Report.docx", StringComparison.Ordinal) ||
+            response.Screen.Contains("Nikola Tesla", StringComparison.Ordinal))
+            throw new InvalidOperationException("R81 verified report reply did not prioritize the file.");
+        if (TryCompose(contract, receipts.Take(1).ToArray(), out _) ||
+            TryCompose(contract, receipts.Select(x => x.Replace(hash, new string('b', 64),
+                StringComparison.Ordinal)).ToArray().Take(1).ToArray(), out _))
+            throw new InvalidOperationException("R81 report reply accepted absent readback.");
+        return 3;
     }
 }
 ```
@@ -197292,133 +198848,6 @@ public sealed record VoiceUtterance
 
 These files are part of the project and are shown in the tree, but their binary data is intentionally not written into this Markdown file.
 
-- `Images\AiGenerated\0fb0322af29348ecb270b5a2e6654754.jpg` — 569.44 KB
-- `Images\AiGenerated\1604b1ad89f74a34b53e23a9b9c121a1.jpg` — 485.09 KB
-- `Images\AiGenerated\6e1f3b936a5a43d38448867bc5723cad.jpg` — 622.86 KB
-- `Images\Uploaded\772acff1d22e4e6cbcafb6622de904a7.png` — 2.01 MB
-- `Images\Uploaded\b566f8d885264b8da0da06a13fab406b.png` — 363.98 KB
-- `Images\WebFound\02dbd7bf75284d259d05304599bfd7df.gif` — 47.86 KB
-- `Images\WebFound\045893321acd449ab06f8a651cc04f13.jpg` — 11.24 KB
-- `Images\WebFound\08201b106be9479d80b924ade86db9c4.jpg` — 134.21 KB
-- `Images\WebFound\09fc9f3c1f8a471fa4824dba85793519.jpg` — 143.59 KB
-- `Images\WebFound\0be313aee76b4ae0bd5f4851847c2796.jpg` — 946.27 KB
-- `Images\WebFound\0e8c65079c40456faefe31b15d04082f.jpg` — 436.73 KB
-- `Images\WebFound\0fbc5c5b64384fe58e91eaeed09dd51f.png` — 640 bytes
-- `Images\WebFound\0fd42ee5ec9a4ff49041753f7ef1fd9e.jpg` — 251.36 KB
-- `Images\WebFound\1024051803b3478fb35b528cfb0f0e01.jpg` — 140.23 KB
-- `Images\WebFound\1073cf9f708a4c5e8b1283ef1c1494f0.jpg` — 93.84 KB
-- `Images\WebFound\127bad5c77554829bc974074224a8a1a.jpg` — 244.90 KB
-- `Images\WebFound\12a9f096488f46ce98abe6e3b5ef1151.jpg` — 252.61 KB
-- `Images\WebFound\136bdc156ad2413697e9ae941498851c.jpg` — 34.06 KB
-- `Images\WebFound\13eb92391ae94ef4ae077b00d43a73cb.jpg` — 304.70 KB
-- `Images\WebFound\172d7929ed56488ca1aeb1dc8cb66876.jpg` — 55.59 KB
-- `Images\WebFound\1a1507811815405d9d6b48367211a178.jpg` — 23.86 KB
-- `Images\WebFound\1dc53f7c5c26450389e1a88138ae2196.jpg` — 115.10 KB
-- `Images\WebFound\2217c4305e4d4294bacdadcc077de92b.jpg` — 91.62 KB
-- `Images\WebFound\24bce6aefc684c1983db19ff1998c15f.jpg` — 12.28 KB
-- `Images\WebFound\27cfd968f73f4ff1b33583d06b2b8362.jpg` — 163.46 KB
-- `Images\WebFound\27ee6420f7a84dfab40856dc80571ccc.jpg` — 23.65 KB
-- `Images\WebFound\28a2a0fa4453429eb3ab751fee65ef92.jpg` — 27.13 KB
-- `Images\WebFound\29cd0bdd8ed84b21a45186d44dfb6401.jpg` — 27.09 KB
-- `Images\WebFound\2f5e5d5b59fb4a43857a123045e66741.jpg` — 20.00 KB
-- `Images\WebFound\304bba6b57ac416eaec4fd82ccfa92ff.jpg` — 152.08 KB
-- `Images\WebFound\331a60dd0194406eb5d5a37ed2736903.jpg` — 209.36 KB
-- `Images\WebFound\344e9ed770444ba4a1a581e0583ba9ac.jpg` — 2.83 MB
-- `Images\WebFound\3a64c19375634dd79a0a8fca79d29231.jpg` — 117.65 KB
-- `Images\WebFound\43406fcd9bf648a591799fbfb1a23cea.jpg` — 170.59 KB
-- `Images\WebFound\4558c403fad8417fb6b4e37e5492b061.jpg` — 872.05 KB
-- `Images\WebFound\45a98c444a5e4240a0f9a7a1b6446fdf.jpg` — 3.19 KB
-- `Images\WebFound\45b5ae47077a42a3a9e37c80bdbe94ac.jpg` — 104.30 KB
-- `Images\WebFound\46d3077b994640eb8e657f4bab247d19.jpg` — 114.46 KB
-- `Images\WebFound\4a919e3ea52a4359b748c1b84d184ea9.png` — 920.29 KB
-- `Images\WebFound\4db4ef9dd4384ecda16aed87b9c79f19.jpg` — 106.59 KB
-- `Images\WebFound\4fed63e867584bd5b1925fd5196daf02.jpg` — 57.70 KB
-- `Images\WebFound\507e1dc8ba1e449ebf64f056342e3faa.jpg` — 132.59 KB
-- `Images\WebFound\515689f7b5374a638788272f4c298c85.jpg` — 154.55 KB
-- `Images\WebFound\54fb22a94d4e45b09a15e336470b769e.jpg` — 42.58 KB
-- `Images\WebFound\584257415eea4fa6b6df8aab8921079d.jpg` — 148.71 KB
-- `Images\WebFound\585570b38ff646f7ad296ab76d274142.jpg` — 136.87 KB
-- `Images\WebFound\588e8b26f38a4b1eb678e03149330327.jpg` — 38.23 KB
-- `Images\WebFound\5ac8ad0c9cec4d82be5d1ea82a1219a1.jpg` — 95.52 KB
-- `Images\WebFound\5d63d308cf64497f9d45fbd03da11a05.jpg` — 72.00 KB
-- `Images\WebFound\5f6b53dbd5664dfca9f22e2421a4ff0d.jpg` — 52.31 KB
-- `Images\WebFound\5f9ea09f1e0a462bab38273b757cba50.jpg` — 99.39 KB
-- `Images\WebFound\61ac0a9f8dd94fe380957c18dc3035cb.jpg` — 66.70 KB
-- `Images\WebFound\639a284e077a41d9ac9bfb421e87b49d.jpg` — 48.10 KB
-- `Images\WebFound\6ec710edefc44255bc9e71c36be813c9.jpg` — 51.30 KB
-- `Images\WebFound\6f7790e1e7e942e19f420fed495b8d2f.jpg` — 97.10 KB
-- `Images\WebFound\706790fa21ff4db7b5c707ef03ddd5b6.jpg` — 69.66 KB
-- `Images\WebFound\71720489953143248c81c9be56fb3ec1.jpg` — 137.90 KB
-- `Images\WebFound\7375c22eac364493b93b4e1cdceea096.png` — 128.80 KB
-- `Images\WebFound\73e086c283c3433b95742625dd1087b7.jpg` — 104.78 KB
-- `Images\WebFound\74d9d45efb5b49f1b6ae12087d7dd79c.jpg` — 40.96 KB
-- `Images\WebFound\7aff362abdee44f884648d38caa589cc.jpg` — 66.68 KB
-- `Images\WebFound\7e0269d13e934e6e92b1aa7ec62023de.jpg` — 608.13 KB
-- `Images\WebFound\806b964237df4b0c86a0d5334595e115.jpg` — 79.59 KB
-- `Images\WebFound\8288a11841314a61b65529f63684759d.jpg` — 1.49 MB
-- `Images\WebFound\86b2c9165db24b81b5c7880a4756b878.png` — 292.41 KB
-- `Images\WebFound\872bb72fe3f14b0bbb50026bc3a8014f.jpg` — 38.57 KB
-- `Images\WebFound\8823318e4166400298ab2bfc10dd95cf.jpg` — 1.05 MB
-- `Images\WebFound\899a567c7af1416ba1309fb65d07e178.jpg` — 84.30 KB
-- `Images\WebFound\8a200b4b19b24e69a4d03dbf3a2263ed.png` — 61.83 KB
-- `Images\WebFound\8af731bc78954717b06bf02121a425e8.jpg` — 91.81 KB
-- `Images\WebFound\8cff5d8998834173b95a1267c98ec005.jpg` — 122.47 KB
-- `Images\WebFound\93611629179a4fc2a6f5153975b2cf65.jpg` — 149.35 KB
-- `Images\WebFound\94d6a49eb9cc4794b6c3763f34ef3935.png` — 791.26 KB
-- `Images\WebFound\966d57ed2f174594a1c73186f6bb6ebe.jpg` — 42.35 KB
-- `Images\WebFound\967df48c22cc4bfe9357713d7fb0b015.jpg` — 142.89 KB
-- `Images\WebFound\9a46266cb34e4f54919fd8f17a373086.jpg` — 143.34 KB
-- `Images\WebFound\9cb9595ac4b542af9c228da297af7808.jpg` — 48.37 KB
-- `Images\WebFound\9d133ef2e0ad4a6296bb42612d418b57.jpg` — 559.57 KB
-- `Images\WebFound\9e1bbb4c4ebf487282d5b122bf963ab6.jpg` — 260.80 KB
-- `Images\WebFound\a085fbb31d1143d3ba5d399e269ab982.jpg` — 122.11 KB
-- `Images\WebFound\a15359c793a043f7ac9267c3fc5a7bf4.jpg` — 49.51 KB
-- `Images\WebFound\a26311d442fe47d38d2e152bcf81c447.jpg` — 125.25 KB
-- `Images\WebFound\a2982c35a04e4d4faeef3ae4c2655928.jpg` — 44.65 KB
-- `Images\WebFound\a79f28b67f164e5ebf3c16fe0c278420.jpg` — 174.35 KB
-- `Images\WebFound\ac1abdd05b1e4d56907c4e2a8ad2d367.jpg` — 85.75 KB
-- `Images\WebFound\ad4562fe31854c53a68ea030f0642248.png` — 220.38 KB
-- `Images\WebFound\ad5b554e6874457ab190f6cf37c17a35.png` — 1002.00 KB
-- `Images\WebFound\b14f4f0a43924445ad3a86d4fdc18883.jpg` — 27.43 KB
-- `Images\WebFound\b1653a9748944cd2b7ffe6b9293d6f2c.png` — 352.75 KB
-- `Images\WebFound\b8f827cc83c64330ac9cc534b2768b02.jpg` — 84.85 KB
-- `Images\WebFound\b9203ce1d6754875bb52c5da418c9934.gif` — 62.65 KB
-- `Images\WebFound\b9aa715be64c458e9e89299b61236841.jpg` — 239.00 KB
-- `Images\WebFound\ba9e26f22f7249879eca58575940b12c.jpg` — 80.90 KB
-- `Images\WebFound\bae67f68d5d74e679fa5d6319eb024f3.jpg` — 119.91 KB
-- `Images\WebFound\bd32802281c0446c886ee3df5ac2c65d.png` — 2.28 MB
-- `Images\WebFound\bee3c91f9bb94eb18c8e9f144d4e9c85.jpg` — 230.34 KB
-- `Images\WebFound\c055745032a74a51bca8be0cdd6780be.jpg` — 146.47 KB
-- `Images\WebFound\c0778ad1e8fa45179db9f66bfc6436a9.jpg` — 571.64 KB
-- `Images\WebFound\c70b5cb4cc5d4a30b1e8b0a3b1c66647.jpg` — 33.27 KB
-- `Images\WebFound\c7bcded59b004cf5bff2254af12153c3.jpg` — 295.92 KB
-- `Images\WebFound\cf43127f13ff44ab952021a78670a7ab.jpg` — 160.00 KB
-- `Images\WebFound\cfc758a8fc9b4f45ab97beb1aad9752e.jpg` — 244.13 KB
-- `Images\WebFound\d0eb13fd793f4fc5a6446eeb79392878.jpg` — 347.93 KB
-- `Images\WebFound\d1c1296a46dc4d11841afa70d5fcc302.jpg` — 221.08 KB
-- `Images\WebFound\d1c5676366794b2688313a339676a23e.jpg` — 30.52 KB
-- `Images\WebFound\d1eb9d72077e4b29ad7c2392b0b7d710.jpg` — 183.17 KB
-- `Images\WebFound\d663580359924eeb8517543d9e8553d6.jpg` — 45.70 KB
-- `Images\WebFound\d71e0e1473fe4faeac74ee77a23fdc16.jpg` — 333.16 KB
-- `Images\WebFound\d81e136ca54442738c839158a291eee4.jpg` — 164.57 KB
-- `Images\WebFound\d94c45e6427d4b9ab3ee076c85a073b1.jpg` — 169.75 KB
-- `Images\WebFound\dea16deb21ad41cbaa3452fb8f953cf7.png` — 5.09 MB
-- `Images\WebFound\dfc0d2e613914c2293e5cb71c4bf98fc.jpg` — 404.56 KB
-- `Images\WebFound\e2366adba67b4295a7db2cfb6553c162.png` — 35.84 KB
-- `Images\WebFound\e642de21d34941bdb32b905bd59684c8.png` — 320.71 KB
-- `Images\WebFound\e7265b5ff70c43b0b74383496ce7ce67.jpg` — 10.05 KB
-- `Images\WebFound\e780436cb44741c0ab180a656d22b504.jpg` — 688.62 KB
-- `Images\WebFound\eaf53c741f6d43cfaf6ca5577a0c16e6.jpg` — 139.27 KB
-- `Images\WebFound\ec4417426cc84f2b8477aacf27fd9d13.jpg` — 155.64 KB
-- `Images\WebFound\ec4fa8ca52c34e21a4c63e4c5240f51b.jpg` — 145.36 KB
-- `Images\WebFound\ec82150936834444ba46666fbbc9fa74.jpg` — 47.23 KB
-- `Images\WebFound\ed5d02eb08784f0cbc75d13d76f7343e.png` — 18.61 KB
-- `Images\WebFound\ed74a61a41aa4b8caf0fecf67cfb608c.jpg` — 194.52 KB
-- `Images\WebFound\f087326c748e4d7aa0c99ffd45fd3b34.jpg` — 20.11 KB
-- `Images\WebFound\f4d772b2ee1e4b389c395d4018db231e.jpg` — 148.56 KB
-- `Images\WebFound\f5952fd6f34b4c2e85314ad93c7b6a14.jpg` — 108.37 KB
-- `Images\WebFound\fbafba10d0744b408936e435d8f07b48.jpg` — 161.83 KB
-- `Images\WebFound\fbfe6b7a855a4cacb43a99bc6320fc05.jpg` — 112.00 KB
 - `NIRAAgent.UI\Assets\close.png` — 10.58 KB
 - `NIRAAgent.UI\Assets\ELVARA-NIRA-DARK.png` — 1.46 MB
 - `NIRAAgent.UI\Assets\ELVARA-NIRA-LIGHT.png` — 1.59 MB

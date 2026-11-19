@@ -158,6 +158,25 @@ public static class NiraProtocolSelfCheck
             ToolFragment(1, "y", "nira_file_metadata", "{\"path\":") +
             Frame(new { }, "tool_calls");
         await VerifyReject("SSE_SECOND_TOOL_TRUNCATED", malformedSecond, "text/event-stream");
+        // R83: an upstream error/shape frame must NOT become a model answer
+        // or an executable tool. The reasoner separately decides whether the
+        // Ollama inference is eligible for one non-streaming JSON retry.
+        string badChoices = "data: {\"error\":{\"message\":\"provider interrupted\"}}\n\n";
+        bool badChoicesRejected = false;
+        using (var badChoicesStream = new MemoryStream(Encoding.UTF8.GetBytes(badChoices)))
+        {
+            try
+            {
+                _ = await NiraChatProtocolReader.ReadAsync(badChoicesStream,
+                    "text/event-stream", 64 * 1024, null, ct);
+            }
+            catch (InvalidDataException ex) when (ex.Message == "MODEL_SSE_CHOICES_INVALID")
+            { badChoicesRejected = true; }
+        }
+        if (!badChoicesRejected)
+            throw new InvalidDataException(
+                "R83: malformed choices SSE frame was accepted or misclassified.");
+        passed++;
         string annotatedSse =
             Frame(new { content = publicContent }) +
             ToolFragment(0, "x", "nira_list_directory", "{\"path\":\"Documents\"}") +

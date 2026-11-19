@@ -15,7 +15,7 @@ public sealed record NiraProviderSelection(
         string? requested = Environment.GetEnvironmentVariable("NIRA_MODEL_NAME")?.Trim();
         if (provider == "OLLAMA")
         {
-            string model = string.IsNullOrWhiteSpace(requested) ? "gemma4:31b" : requested;
+            string model = string.IsNullOrWhiteSpace(requested) ? "gpt-oss:120b" : requested;
             var ollama = NiraModelEndpointOptions.Ollama(model);
             ollama.Validate();
             return new NiraProviderSelection("OLLAMA", ollama,

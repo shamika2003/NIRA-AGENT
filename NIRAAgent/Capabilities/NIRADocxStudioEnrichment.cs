@@ -75,6 +75,52 @@ internal static partial class NIRADocx
         return new Studio48MediaSelection(media, omitted, imageOrdinal);
     }
 
+    // Source markers in the authored document must have a matching definition.
+    // This is about reference-list integrity, NOT independent fact verification.
+    private static void ValidateStudio48References(JsonElement blocks)
+    {
+        var cited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var defined = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        bool referencesSection = false;
+        int referencesHeadings = 0;
+        foreach (JsonElement block in blocks.EnumerateArray())
+        {
+            if (block.ValueKind != JsonValueKind.Object) continue;
+            string kind = block.TryGetProperty("type", out JsonElement type) &&
+                type.ValueKind == JsonValueKind.String ? type.GetString() ?? "" : "";
+            string text = block.TryGetProperty("text", out JsonElement value) &&
+                value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
+            if (kind == "heading")
+            {
+                referencesSection = Regex.IsMatch(text.Trim(),
+                    @"^(?:references|bibliography|sources|works cited)$",
+                    RegexOptions.IgnoreCase);
+                if (referencesSection) referencesHeadings++;
+            }
+            foreach (Match group in Regex.Matches(text,
+                @"\[S[0-9]{1,3}(?:\s*,\s*S?[0-9]{1,3})*\]", RegexOptions.IgnoreCase))
+                foreach (Match number in Regex.Matches(group.Value, @"[0-9]{1,3}"))
+                    cited.Add(number.Value);
+            if (referencesSection)
+                foreach (Match definition in Regex.Matches(text,
+                    @"(?:^|\n)\s*\[S(?<n>[0-9]{1,3})\]\s*[-.:]?\s+",
+                    RegexOptions.IgnoreCase))
+                    defined.Add(definition.Groups["n"].Value);
+        }
+        // Do not publish two bibliography sections. This can occur when the
+        // model supplied Markdown references and the evidence binder added a
+        // second list. Never silently discard either list of source evidence.
+        if (referencesHeadings > 1)
+            throw new ArgumentException("Word Studio has duplicate References sections. " +
+                "Consolidate the source definitions into one section before saving.");
+        string[] unresolved = cited.Except(defined, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => int.Parse(x)).ToArray();
+        if (unresolved.Length != 0)
+            throw new ArgumentException("Word Studio contains unresolved research source markers: " +
+                string.Join(", ", unresolved.Select(id => "[S" + id + "]")) +
+                ". Add their complete definitions in References before creating the file.");
+    }
+
     private static int CountStudio48BodyWords(JsonElement blocks)
     {
         int total = 0;
