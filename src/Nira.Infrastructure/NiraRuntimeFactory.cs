@@ -5,6 +5,7 @@ namespace Nira.Infrastructure;
 public sealed class NiraRuntime : IDisposable
 {
     private readonly HttpClient _http;
+    private readonly EdgePublicBrowserSessions _browserSessions;
     public NiraEngine Engine { get; }
     public IConversationStore Conversations { get; }
     public string Workspace { get; }
@@ -12,8 +13,10 @@ public sealed class NiraRuntime : IDisposable
     public NiraModelCredentialStore ModelCredentials { get; }
 
     private NiraRuntime(NiraEngine engine, IConversationStore conversations,
-        HttpClient http, string workspace, string database, NiraModelCredentialStore modelCredentials)
-    { Engine = engine; Conversations = conversations; _http = http; Workspace = workspace; DatabasePath = database; ModelCredentials = modelCredentials; }
+        HttpClient http, string workspace, string database, NiraModelCredentialStore modelCredentials,
+        EdgePublicBrowserSessions browserSessions)
+    { Engine = engine; Conversations = conversations; _http = http; _browserSessions = browserSessions;
+      Workspace = workspace; DatabasePath = database; ModelCredentials = modelCredentials; }
 
     public static NiraRuntime CreateDefault()
     {
@@ -39,12 +42,17 @@ public sealed class NiraRuntime : IDisposable
         string model = Environment.GetEnvironmentVariable("NIRA_MODEL_NAME") ?? "gpt-oss:120b";
         var modelCredentials = new NiraModelCredentialStore(appRoot, endpoint);
         var client = new OpenAiCompatibleModel(http, endpoint, model, modelCredentials.Resolve);
-        var tools = NiraStandardTools.Create(workspace, state, http);
+        var sessions = new EdgePublicBrowserSessions();
+        var tools = NiraStandardTools.Create(workspace, state, http, sessions);
         var engine = new NiraEngine(client, tools, state, new WorkspaceAuthority(workspace));
-        return new NiraRuntime(engine, state, http, workspace, database, modelCredentials);
+        return new NiraRuntime(engine, state, http, workspace, database, modelCredentials, sessions);
     }
 
-    public void Dispose() => _http.Dispose();
+    public void Dispose()
+    {
+        try { _browserSessions.Dispose(); }
+        finally { _http.Dispose(); }
+    }
 }
 
 /// <summary>

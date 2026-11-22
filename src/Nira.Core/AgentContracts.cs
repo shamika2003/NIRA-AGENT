@@ -84,6 +84,13 @@ public sealed record AgentProgress(string Kind, string Summary, string? ToolId =
 public sealed record ApprovalRequest(
     string ToolName, ToolRisk Risk, string Description, string Target, string ArgumentsJson);
 
+/// <summary>Only an explicit yes token authorizes the particular displayed action.</summary>
+public static class ApprovalInput
+{
+    public static bool IsExplicitYes(string? input) =>
+        string.Equals(input?.Trim(), "YES", StringComparison.OrdinalIgnoreCase);
+}
+
 public interface IApprovalBroker
 {
     Task<bool> RequestApprovalAsync(ApprovalRequest request, CancellationToken ct);

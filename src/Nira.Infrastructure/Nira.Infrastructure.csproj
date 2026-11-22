@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="../Nira.Core/Nira.Core.csproj" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.15" />
+    <PackageReference Include="Microsoft.Playwright" Version="1.65.1" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.15" />
   </ItemGroup>
 </Project>

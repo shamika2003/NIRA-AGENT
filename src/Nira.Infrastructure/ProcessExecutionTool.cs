@@ -17,7 +17,7 @@ public sealed class ProcessRunTool(WorkspacePathResolver paths) : IAgentTool
     private const int OutputCharacterLimit = 16000;
     private const int MaximumArguments = 48;
     private static readonly string[] EnvironmentVariables = [
-        "PATH", "PATHEXT", "SystemRoot", "WINDIR", "TEMP", "TMP", "USERPROFILE",
+        "PATH", "PATHEXT", "OS", "SystemRoot", "WINDIR", "TEMP", "TMP", "USERPROFILE",
         "LOCALAPPDATA", "APPDATA", "ProgramFiles", "ProgramFiles(x86)",
         "ProgramW6432", "DOTNET_ROOT", "DOTNET_CLI_HOME", "NUGET_PACKAGES"
     ];

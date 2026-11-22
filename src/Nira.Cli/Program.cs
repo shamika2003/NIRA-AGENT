@@ -149,7 +149,7 @@ internal sealed class CliApprovalBroker : IApprovalBroker
     public Task<bool> RequestApprovalAsync(ApprovalRequest request, CancellationToken ct)
     {
         Console.WriteLine("ACTION APPROVAL REQUIRED: " + request.Description);
-        Console.Write("Approve this operation? Type YES: ");
-        return Task.FromResult(string.Equals(Console.ReadLine(), "YES", StringComparison.Ordinal));
+        Console.Write("Approve this operation? Type YES (case-insensitive; anything else denies): ");
+        return Task.FromResult(ApprovalInput.IsExplicitYes(Console.ReadLine()));
     }
 }

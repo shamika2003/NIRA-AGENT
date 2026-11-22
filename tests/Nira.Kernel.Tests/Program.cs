@@ -33,8 +33,8 @@ var cases = new (string Name, Func<Task> Test)[] {
     ("provider-401-is-typed-authentication-failure", ProviderUnauthorized),
     ("provider-uses-encrypted-saved-bearer-key", ProviderUsesSavedKey),
     ("credential-retry-does-not-duplicate-user-input", CredentialRetryDoesNotDuplicate),
-    ("mutation-plain-reply-requires-receipt-confirmation", MutationPlainReplyNeedsEvidence),
-    ("repeated-mutation-plain-replies-pause-safely", MutationPlainReplyPauses),
+    ("mutation-plain-final-attaches-host-receipt", MutationPlainReplyNeedsEvidence),
+    ("mutation-plain-final-does-not-loop", MutationPlainReplyPauses),
     ("action-cannot-be-finished-as-information", MutationMustFinishAsAction),
     ("failed-tool-call-can-recover-with-new-action", ToolFailureCanRecover),
     ("unfinished-plan-cannot-be-marked-complete", UnfinishedPlanRejectsFinish),
@@ -53,7 +53,76 @@ var cases = new (string Name, Func<Task> Test)[] {
     ("process-does-not-inherit-api-key", ProcessSecretsExcluded),
     ("process-kills-timeout-and-records-it", ProcessTimeout),
     ("process-nonzero-exit-still-reports-effects", ProcessNonzeroExit),
-    ("process-agent-reports-approved-execution-evidence", ProcessAgentExecution)
+    ("process-agent-reports-approved-execution-evidence", ProcessAgentExecution),
+    ("process-plain-final-host-attests-stdout-and-exit", ProcessPlainFinalEvidence),
+    ("mutation-after-recoverable-failure-attests-only-success", PlainFinalRecoverableFailure),
+    ("mutation-plain-final-refuses-unfinished-plan", MutationPlainPendingPlan),
+    ("uncertain-operation-cannot-plain-complete", UnknownOperationPlainFinal),
+    ("tool-approval-question-routes-to-registered-action", ToolApprovalQuestionRoutesToAction),
+    ("outside-write-denial-cannot-be-replaced-by-chat-consent", DeniedActionCannotBeBypassed),
+    ("legitimate-missing-detail-still-asks-user", LegitimateMissingDetailQuestion),
+    ("repeated-permission-probes-pause-without-user-interruption", RepeatedPermissionProbesPause),
+    ("http-permission-question-gate-preserves-tool-transcript", HttpPermissionQuestionGate),
+    ("process-inherits-safe-windows-os-identity", ProcessInheritsOsIdentity),
+    ("explicit-lowercase-yes-authorizes-only-yes", ExplicitYesVariants),
+    ("denied-process-pauses-with-no-repeat", DeniedProcessPausesWithoutReplay),
+    ("plain-permission-question-recovers-to-process-tool", PlainPermissionRecoversToProcess),
+    ("repeated-plain-permission-questions-pause", RepeatedPlainPermissionPauses),
+    ("structured-finish-cannot-ask-tool-permission", StructuredFinishPermissionRejected),
+    ("denial-after-write-preserves-partial-evidence", DenialAfterWritePreservesReceipt),
+    ("permission-question-after-success-does-not-rerun", ObservedProcessNotRepeatedOnPermissionReply),
+    ("tool-free-fallback-permission-prose-cannot-complete", ToolFreePermissionFallbackPauses),
+    ("permission-probe-counter-resets-after-observed-tool", PermissionProbeCounterResetsAfterTool),
+    ("browser-rejects-http-and-credentials", BrowserRejectsNonHttpsAndCredentials),
+    ("browser-rejects-internal-hosts-and-ports", BrowserRejectsInternalHostAndPorts),
+    ("browser-dns-address-filter-blocks-private", BrowserPublicDnsAddressGuards),
+    ("browser-origin-and-method-routing", BrowserSameHostAndMethodEnforced),
+    ("browser-tool-schema-is-strict", BrowserInspectSchemaIsStrict),
+    ("browser-approval-denial-never-visits", BrowserDenialPreventsVisit),
+    ("browser-approved-page-observation-is-audited", BrowserApprovedObservationIsAudited),
+    ("browser-cross-origin-redirect-refused", BrowserRedirectOutsideApprovedOriginRejected),
+    ("browser-accepts-public-url-and-dns", BrowserValidPublicAddressAndUrl),
+    ("browser-http-wire-tool-transcript", BrowserHttpWireProtocolRoundTrip),
+    ("browser-elements-disclose-metadata-not-values", BrowserElementsMetadataOnly),
+    ("browser-link-schema-requires-exact-approved-url", BrowserLinkStrictSchema),
+    ("browser-link-target-requires-valid-same-host-url", BrowserLinkTargetGuard),
+    ("browser-link-denied-before-visiting", BrowserLinkDenialNeverVisits),
+    ("browser-link-approved-two-page-observation", BrowserLinkApprovedTwoPageObservation),
+    ("browser-link-changed-href-never-visits-destination", BrowserLinkChangedHrefStops),
+    ("browser-link-missing-index-never-visits-destination", BrowserLinkMissingIndexStops),
+    ("browser-link-source-redirect-blocked", BrowserLinkSourceRedirectStopped),
+    ("browser-link-target-redirect-blocked", BrowserLinkDestinationRedirectStopped),
+    ("browser-link-http-wire-receipt-reaches-model", BrowserLinkWireReceipt),
+    ("browser-follow-permission-question-routes-to-host", BrowserFollowPermissionRoutes),
+    ("browser-session-schema-and-destination-guards", SessionSchemasAndDestinations),
+    ("browser-session-open-denial-prevents-launch", SessionOpenDenied),
+    ("browser-session-open-approved-records-receipt", SessionOpenApproved),
+    ("browser-session-inspection-reuses-current-page", SessionInspectUsesExisting),
+    ("browser-session-follow-denied-before-navigation", SessionFollowDenied),
+    ("browser-session-follow-recorded-after-approval", SessionFollowApproved),
+    ("browser-session-link-changed-refused", SessionChangedLinkRefused),
+    ("browser-session-cross-host-approval-denied", SessionCrossHostRejected),
+    ("browser-session-close-disposes-and-expires", SessionCloseAndExpired),
+    ("browser-text-entry-dom-index-visible", TextEntryDomIndexVisible),
+    ("browser-text-entry-target-validation", TextEntryTargetValidation),
+    ("browser-text-entry-is-dangerous", TextEntryDangerousRisk),
+    ("browser-text-entry-denial-prevents-fill", TextEntryDenied),
+    ("browser-text-entry-approved-receipt-redacted", TextEntryApprovedAndRedacted),
+    ("browser-text-entry-stale-label-refused", TextEntryStaleLabel),
+    ("browser-text-entry-password-and-disabled-refused", TextEntryPasswordAndDisabled),
+    ("browser-text-entry-close-prevents-retry", TextEntryAfterClose),
+    ("browser-text-entry-second-fill-refused", TextEntrySecondFillRefused),
+    ("browser-text-entry-uncertain-effect-reconciled", TextEntryUncertainReconciliation),
+    ("browser-button-click-strict-schema", ButtonClickStrictSchema),
+    ("browser-button-click-target-guards", ButtonClickTargetGuards),
+    ("browser-button-click-dangerous-approval-details", ButtonClickDangerousApproval),
+    ("browser-button-click-denial-prevents-action", ButtonClickDenied),
+    ("browser-button-click-approved-records-receipt", ButtonClickApproved),
+    ("browser-button-click-stale-metadata-refused", ButtonClickStaleMetadata),
+    ("browser-button-click-submit-and-disabled-refused", ButtonClickSubmitAndDisabled),
+    ("browser-button-click-after-close-refused", ButtonClickClosedSession),
+    ("browser-button-click-only-once-per-session", ButtonClickOnceOnly),
+    ("browser-button-click-uncertain-effect-reconciled", ButtonClickUncertainReconciliation),
 };
 int failed = 0;
 foreach (var (name, test) in cases)
@@ -127,7 +196,8 @@ static async Task ExternalWriteDenied()
             outcome="answer", answer="I did not write outside the workspace.", evidence_ids=Array.Empty<string>() })])
     ]);
     var result = await setup.Engine(model).RunAsync(Guid.NewGuid(), "Write to this outside path", new FakeApprovals(false));
-    Assert(result.Status == ConversationStatus.Completed, "Denial can end with an honest answer");
+    Assert(result.Status == ConversationStatus.Paused && result.Message.Contains("Not executed", StringComparison.Ordinal),
+        "A declined outside write must pause immediately without another model round");
     Assert(!File.Exists(external), "No unauthorized file should exist");
 }
 
@@ -586,49 +656,48 @@ static async Task MutationPlainReplyNeedsEvidence()
         if (rounds == 1)
             return new ModelReply(null, [Call("write", "filesystem.write_text",
                 new { path = "verified.txt", content = "Verified contents" })]);
-        if (rounds == 2)
-            return new ModelReply("I created the file.", []);
-        Assert(messages.Any(m => m.Role == "system" &&
-            m.Content?.Contains("recorded changed-state receipt ID", StringComparison.Ordinal) == true),
-            "The engine must give transient, evidence-based completion guidance");
-        string receipt = ReceiptIdForMutation(messages);
-        return new ModelReply(null, [Call("finish", "nira_finish", new {
-            outcome = "action", answer = "The file was created and verified.",
-            evidence_ids = new[] { receipt }
-        })]);
+        return new ModelReply("I created the file.", []);
     });
     Guid id = Guid.NewGuid();
     var result = await setup.Engine(model).RunAsync(id, "Create a file", new FakeApprovals(false));
-    Assert(rounds == 3 && result.Status == ConversationStatus.Completed,
-        "The model should correct an unverified plain answer without another user turn");
-    Assert(result.EvidenceIds.Count == 1, "Changed-state receipt required");
+    Assert(rounds == 2 && result.Status == ConversationStatus.Completed,
+        "A normal final answer after verified write must finish without a special tool roundtrip");
+    Assert(result.EvidenceIds.Count == 1, "Changed-state receipt must be attached by the host");
+    Assert(result.Message.Contains("filesystem.write_text", StringComparison.Ordinal) &&
+           result.Message.Contains(result.EvidenceIds[0], StringComparison.Ordinal) &&
+           result.Message.Contains("verified.txt", StringComparison.Ordinal),
+        "Final answer must include host-attested tool identity, receipt ID, and saved location");
     Assert(File.ReadAllText(Path.Combine(setup.Workspace, "verified.txt")) == "Verified contents",
         "The real file must exist");
     var state = (await setup.Store.LoadAsync(id, default))!;
-    Assert(state.Messages.All(m => m.Content != "I created the file."),
-        "An unverified intermediate claim must not become part of the answer transcript");
+    Assert(state.Status == ConversationStatus.Completed && state.LastAnswer == result.Message,
+        "The host-attested answer must be durably checkpointed");
 }
 
 static async Task MutationPlainReplyPauses()
 {
     using var setup = new TestContext();
-    var model = new FakeModel([
-        new ModelReply(null, [Call("write", "filesystem.write_text",
-            new { path = "pending.txt", content = "Persisted" })]),
-        new ModelReply("Done!", []),
-        new ModelReply("Completed!", []),
-        new ModelReply("Success!", [])
-    ]);
+    int rounds = 0;
+    var model = new FakeModel(messages => {
+        rounds++;
+        if (rounds == 1)
+            return new ModelReply(null, [Call("write", "filesystem.write_text",
+                new { path = "pending.txt", content = "Persisted" })]);
+        if (rounds == 2) return new ModelReply("Created the file.", []);
+        throw new InvalidOperationException("A third model request is an unnecessary retry");
+    });
     Guid id = Guid.NewGuid();
     var result = await setup.Engine(model).RunAsync(id, "Write and verify", new FakeApprovals(false));
-    Assert(result.Status == ConversationStatus.Paused, "Repeated unsupported claims must not complete");
-    Assert(!result.Message.Contains("Success!", StringComparison.Ordinal),
-        "Final output must not repeat an unverified model claim");
+    Assert(result.Status == ConversationStatus.Completed && rounds == 2,
+        "An already observed write must not trigger repetitive completion rounds");
+    Assert(result.EvidenceIds.Count == 1 &&
+           result.Message.Contains("Host-recorded execution evidence:", StringComparison.Ordinal),
+        "Host evidence must accompany model text");
     Assert(File.Exists(Path.Combine(setup.Workspace, "pending.txt")),
-        "Pausing must not undo or silently replay a completed operation");
+        "Completing must not undo or silently replay an observed operation");
     var saved = (await setup.Store.LoadAsync(id, default))!;
     Assert(saved.Operations.Count == 1 && saved.Operations[0].Status == OperationStatus.Succeeded,
-        "The receipt must be retained for future resume");
+        "The operation must still be durably audited");
 }
 
 static async Task MutationMustFinishAsAction()
@@ -732,8 +801,8 @@ static async Task ProcessDenied()
     ]);
     var answer = await setup.Engine(model).RunAsync(Guid.NewGuid(),
         "Attempt to run a command", new FakeApprovals(false));
-    Assert(answer.Status == ConversationStatus.Completed && !File.Exists(marker),
-        "Process execution must require explicit approval even inside the workspace");
+    Assert(answer.Status == ConversationStatus.Paused && !File.Exists(marker),
+        "A declined process must be paused without executing or retrying it");
 }
 
 static async Task ProcessDotnetVersion()
@@ -834,6 +903,98 @@ static async Task ProcessAgentExecution()
            "Subprocess execution must be durably recorded");
 }
 
+static async Task ProcessPlainFinalEvidence()
+{
+    using var setup = new TestContext();
+    int rounds = 0;
+    var model = new FakeModel(messages => {
+        rounds++;
+        if (rounds == 1)
+            return new ModelReply(null, [Call("process1", "process.run", new {
+                executable = "dotnet", arguments = new[] { "--version" },
+                workingDirectory = setup.Workspace
+            })]);
+        if (rounds == 2)
+            return new ModelReply("The dotnet version command returned a result.", []);
+        throw new InvalidOperationException("Do not re-execute the process for completion formatting");
+    });
+    Guid id = Guid.NewGuid();
+    var result = await setup.Engine(model).RunAsync(id, "Check installed SDK version", new FakeApprovals(true));
+    Assert(result.Status == ConversationStatus.Completed && rounds == 2,
+        "An observed approved process must finish after a normal final text answer");
+    Assert(result.EvidenceIds.Count == 1 &&
+           result.Message.Contains(result.EvidenceIds[0], StringComparison.Ordinal) &&
+           result.Message.Contains("exitCode: 0", StringComparison.Ordinal) &&
+           result.Message.Contains("stdout:", StringComparison.Ordinal),
+        "Host must report real stdout, exit code, and audited receipt independent of model text");
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(saved.Operations.Count == 1 && saved.Status == ConversationStatus.Completed,
+        "A process must execute once and its completion must persist");
+}
+
+static async Task PlainFinalRecoverableFailure()
+{
+    using var setup = new TestContext();
+    await File.WriteAllTextAsync(Path.Combine(setup.Workspace, "exists.txt"), "ORIGINAL");
+    int rounds = 0;
+    var model = new FakeModel(messages => {
+        rounds++;
+        if (rounds == 1) return new ModelReply(null, [Call("failed", "filesystem.write_text",
+            new { path = "exists.txt", content = "new" })]);
+        if (rounds == 2) return new ModelReply(null, [Call("success", "filesystem.write_text",
+            new { path = "new-file.txt", content = "new" })]);
+        return new ModelReply("Created the replacement file without overwriting.", []);
+    });
+    var result = await setup.Engine(model).RunAsync(Guid.NewGuid(),
+        "Create an unused file", new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.Completed && result.EvidenceIds.Count == 1,
+        "Only successful effects receive completion evidence");
+    Assert(result.Message.Contains("new-file.txt", StringComparison.Ordinal) &&
+           !result.Message.Contains("exists.txt", StringComparison.Ordinal),
+        "Failed tool attempts cannot appear as successful host-attested operations");
+    Assert(await File.ReadAllTextAsync(Path.Combine(setup.Workspace, "exists.txt")) == "ORIGINAL",
+        "The original file must be preserved");
+}
+
+static async Task MutationPlainPendingPlan()
+{
+    using var setup = new TestContext();
+    var model = new FakeModel([
+        new ModelReply(null, [Call("plan", "nira_plan", new { steps = new[] {
+            new { description="Create a file", successCriterion="File exists" },
+            new { description="Verify final content", successCriterion="Readback observed" }
+        } })]),
+        new ModelReply(null, [Call("write", "filesystem.write_text",
+            new { path = "pending-plan.txt", content = "data" })]),
+        new ModelReply("Done!", [])
+    ]);
+    Guid id = Guid.NewGuid();
+    var result = await setup.Engine(model).RunAsync(id, "Create and verify", new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.Paused,
+        "Host must reject a plain final when recorded plan steps are unfinished");
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(saved.Operations.Count == 1 && saved.Operations[0].Status == OperationStatus.Succeeded &&
+           saved.Status == ConversationStatus.Paused,
+        "The actual write must persist without falsely completing the plan");
+}
+
+static async Task UnknownOperationPlainFinal()
+{
+    using var setup = new TestContext();
+    Guid id = Guid.NewGuid();
+    var state = new ConversationState { Id=id, Objective="Report prior action", Status=ConversationStatus.Paused };
+    state.Operations.Add(new AgentOperation {
+        Id="uncertain", ToolName="process.run", Status=OperationStatus.Unknown,
+        ArgumentsJson="{}"
+    });
+    await setup.Store.SaveAsync(state, default);
+    var result = await setup.Engine(new FakeModel([
+        new ModelReply("Completed!", [])
+    ])).RunAsync(id, null, new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.NeedsReconciliation,
+        "Unknown process effects must never be converted into trusted completion");
+}
+
 static Task<ToolReceipt> InvokeProcessTool(TestContext context, string executable,
     string[] arguments, int timeout = 30)
 {
@@ -923,8 +1084,8 @@ static async Task DirectoryOutsideDenied()
         new ModelReply("The external directory was not created because consent was denied.", [])
     ]);
     var result = await setup.Engine(model).RunAsync(Guid.NewGuid(), "Create an external directory", new FakeApprovals(false));
-    Assert(result.Status == ConversationStatus.Completed && !Directory.Exists(outside),
-        "Workspace authority must prevent external mkdir without authorization");
+    Assert(result.Status == ConversationStatus.Paused && !Directory.Exists(outside),
+        "Workspace authority must halt denied external mkdir without retrying");
 }
 
 static async Task EditTextPreservesBytes()
@@ -1031,11 +1192,1145 @@ static async Task WireEditTextPipeline()
     Assert(await File.ReadAllTextAsync(file) == "V2 UPDATED\n", "Actual file must contain the edited content");
 }
 
+static async Task ToolApprovalQuestionRoutesToAction()
+{
+    using var setup = new TestContext();
+    var model = new FakeModel([
+        new ModelReply(null, [Call("permission", "nira_ask_user", new {
+            question = "May I create a directory and write source code in the workspace?" })]),
+        new ModelReply(null, [Call("write", "filesystem.write_text", new {
+            path = "routed.txt", content = "ROUTED_BY_HOST" })]),
+        new ModelReply("File was created through the registered tool.", [])
+    ]);
+    Guid id = Guid.NewGuid();
+    var result = await setup.Engine(model).RunAsync(id, "Create a new file", new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.Completed, "Model-only approval must not interrupt task");
+    Assert(await File.ReadAllTextAsync(Path.Combine(setup.Workspace, "routed.txt")) == "ROUTED_BY_HOST",
+        "Registered workspace tool must perform the actual action");
+    Assert(result.EvidenceIds.Count == 1, "Actual file write must have one host receipt");
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(saved.PendingQuestion is null, "Permission question must never be displayed to user");
+    Assert(saved.Messages.Any(x => x.Role == "tool" &&
+        x.Content?.Contains("USE_HOST_TOOL_APPROVAL", StringComparison.Ordinal) == true),
+        "The model must receive actionable, auditable tool feedback");
+}
+
+static async Task DeniedActionCannotBeBypassed()
+{
+    using var setup = new TestContext();
+    string outside = Path.Combine(setup.Root, "unapproved-outside.txt");
+    var model = new FakeModel([
+        new ModelReply(null, [Call("write", "filesystem.write_text", new {
+            path = outside, content = "FORBIDDEN" })]),
+        new ModelReply(null, [Call("permission", "nira_ask_user", new {
+            question = "May I write to the outside directory instead?" })]),
+        new ModelReply("The operation was not approved; I did not write the file.", [])
+    ]);
+    Guid id = Guid.NewGuid();
+    var result = await setup.Engine(model).RunAsync(id,
+        "Write this file outside the workspace only with approval", new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.Paused, "A declined outside write must stop model execution");
+    Assert(!File.Exists(outside) && result.EvidenceIds.Count == 0,
+        "A conversational request must not bypass the denied host operation");
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(saved.Operations.Count == 1 && saved.Operations[0].Status == OperationStatus.Rejected,
+        "Operation must remain rejected after attempted conversational approval");
+}
+
+static async Task LegitimateMissingDetailQuestion()
+{
+    using var setup = new TestContext();
+    var model = new FakeModel([
+        new ModelReply(null, [Call("clarify", "nira_ask_user", new {
+            question = "Can you tell me which existing folder contains the project?" })])
+    ]);
+    Guid id = Guid.NewGuid();
+    var result = await setup.Engine(model).RunAsync(id,
+        "Inspect the project in my selected folder", new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.AwaitingUser,
+        "A request for truly missing information must still reach the user");
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(saved.PendingQuestion?.Contains("which existing folder", StringComparison.Ordinal) == true,
+        "Actual clarification must be preserved and resumable");
+}
+
+static async Task RepeatedPermissionProbesPause()
+{
+    using var setup = new TestContext();
+    var responses = Enumerable.Range(0, 24).Select(i =>
+        new ModelReply(null, [Call("permission" + i, "nira_ask_user", new {
+            question = "May I execute the next registered tool?" })]));
+    Guid id = Guid.NewGuid();
+    var result = await setup.Engine(new FakeModel(responses)).RunAsync(id,
+        "Run a previously described task", new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.Paused,
+        "A looping provider must pause safely rather than ask permission indefinitely");
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(saved.PendingQuestion is null && saved.Operations.Count == 0,
+        "Repeated approval probes may neither interrupt the user nor run tools");
+    Assert(saved.Messages.Count(x => x.Role == "tool" &&
+        x.Content?.Contains("USE_HOST_TOOL_APPROVAL", StringComparison.Ordinal) == true) == 24,
+        "Every repeated probe should receive deterministic tool feedback");
+}
+
+static async Task HttpPermissionQuestionGate()
+{
+    using var setup = new TestContext();
+    using var handler = new WirePermissionGateHandler();
+    using var http = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(http, new Uri("https://example.invalid/v1/"),
+        "mock", () => "wire-auth");
+    Guid id = Guid.NewGuid();
+    var result = await setup.Engine(model).RunAsync(id,
+        "Describe the current workspace using available tools", new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.Completed && result.Message.Contains("Workspace inspected"),
+        "HTTP transcript should recover from a conversational permission probe");
+    Assert(handler.Rounds == 3 && handler.HostDenialObserved,
+        "Real transport must return the host guidance to the provider before tool execution");
+    Assert(result.EvidenceIds.Count == 0,
+        "Read-only workspace information must not fabricate mutation evidence");
+}
+
+static async Task ProcessInheritsOsIdentity()
+{
+    using var setup = new TestContext();
+    string? prior = Environment.GetEnvironmentVariable("OS");
+    try
+    {
+        Environment.SetEnvironmentVariable("OS", "Windows_NT");
+        ToolReceipt receipt = await InvokeProcessTool(setup, "powershell.exe", [
+            "-NoProfile", "-NonInteractive", "-Command", "$env:OS"
+        ]);
+        Assert(receipt.Success && receipt.Data.GetProperty("exitCode").GetInt32() == 0,
+            "OS identity probe must execute successfully");
+        Assert(receipt.Data.GetProperty("stdout").GetString()!.Trim() == "Windows_NT",
+            "Approved child must receive only the allowlisted OS identity needed by dotnet templates");
+    }
+    finally { Environment.SetEnvironmentVariable("OS", prior); }
+}
+
+
+static Task ExplicitYesVariants()
+{
+    foreach (string input in new[] { "yes", "YES", "YeS", " yes ", "\tYES\t" })
+        Assert(ApprovalInput.IsExplicitYes(input), "Explicit case-insensitive yes must authorize: " + input);
+    foreach (string? input in new string?[] { null, "", " ", "y", "no", "yes please", "yes!", "yes\nno" })
+        Assert(!ApprovalInput.IsExplicitYes(input), "Only an unambiguous yes token may authorize: " + input);
+    return Task.CompletedTask;
+}
+
+static async Task DeniedProcessPausesWithoutReplay()
+{
+    using var setup = new TestContext();
+    int rounds = 0;
+    var model = new FakeModel(_ => {
+        if (++rounds != 1) throw new InvalidOperationException("Model retried a denied command");
+        return new ModelReply(null, [Call("process", "process.run", new {
+            executable = "dotnet", arguments = new[] { "--version" }, workingDirectory = setup.Workspace
+        })]);
+    });
+    var broker = new FakeApprovals(false);
+    Guid id = Guid.NewGuid();
+    var answer = await setup.Engine(model).RunAsync(id,
+        "Check dotnet version", broker);
+    Assert(answer.Status == ConversationStatus.Paused && rounds == 1 && broker.Calls == 1,
+        "Refusal must result in one authorization attempt and no retry");
+    Assert(answer.EvidenceIds.Count == 0 && answer.Message.Contains("Not executed", StringComparison.Ordinal),
+        "A denied process must not look completed or create execution evidence");
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(saved.Status == ConversationStatus.Paused && saved.Operations.Count == 1 &&
+        saved.Operations[0].Status == OperationStatus.Rejected &&
+        saved.Messages.Any(m => m.Role == "tool" && m.Content?.Contains("NOT_AUTHORIZED", StringComparison.Ordinal) == true),
+        "The denied invocation and model-facing tool result must be persisted");
+}
+
+static async Task PlainPermissionRecoversToProcess()
+{
+    using var setup = new TestContext();
+    int rounds = 0;
+    var model = new FakeModel(messages => {
+        rounds++;
+        if (rounds == 1) return new ModelReply("May I run `dotnet --version` to check the SDK?", []);
+        if (rounds == 2)
+        {
+            Assert(messages.Any(m => m.Role == "system" &&
+                m.Content?.Contains("previous visible reply was only a request for permission", StringComparison.Ordinal) == true),
+                "Permission-only prose must be recovered using transient guidance");
+            return new ModelReply(null, [Call("version", "process.run", new {
+                executable = "dotnet", arguments = new[] { "--version" }, workingDirectory = setup.Workspace
+            })]);
+        }
+        return new ModelReply("The installed .NET SDK version was observed from the process output.", []);
+    });
+    var approvals = new FakeApprovals(true);
+    Guid id = Guid.NewGuid();
+    var result = await setup.Engine(model).RunAsync(id,
+        "Report actual dotnet SDK version using an execution tool", approvals);
+    Assert(result.Status == ConversationStatus.Completed && result.EvidenceIds.Count == 1 &&
+        result.Message.Contains("exitCode: 0", StringComparison.Ordinal) && approvals.Calls == 1,
+        "Recovered permission text must lead to exactly one authorized process with host evidence");
+    Assert(rounds == 3, "Permission-only text should recover without additional model loops");
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(!state.Messages.Any(m => m.Role == "assistant" &&
+        m.Content?.StartsWith("May I run", StringComparison.Ordinal) == true),
+        "Rejected permission prose must not pollute durable user-facing transcript");
+}
+
+static async Task RepeatedPlainPermissionPauses()
+{
+    using var setup = new TestContext();
+    int rounds = 0;
+    var model = new FakeModel(_ => {
+        rounds++;
+        return new ModelReply("May I execute `dotnet --version`?", []);
+    });
+    Guid id = Guid.NewGuid();
+    var result = await setup.Engine(model).RunAsync(id, "Execute dotnet --version", new FakeApprovals(true));
+    Assert(result.Status == ConversationStatus.Paused && rounds == 2 && result.EvidenceIds.Count == 0,
+        "Repeated permission prose must pause without any executed action");
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(state.Status == ConversationStatus.Paused && state.Operations.Count == 0 &&
+        state.LastAnswer is null && state.Messages.All(m => m.Role == "user"),
+        "Permission prose must not become a fabricated completed answer");
+}
+
+static async Task StructuredFinishPermissionRejected()
+{
+    using var setup = new TestContext();
+    var model = new FakeModel([
+        new ModelReply(null, [Call("bad-finish", "nira_finish", new {
+            outcome = "answer", answer = "May I execute dotnet --version?", evidence_ids = Array.Empty<string>()
+        })]),
+        new ModelReply("I did not execute a process or obtain a version.", [])
+    ]);
+    Guid id = Guid.NewGuid();
+    var result = await setup.Engine(model).RunAsync(id, "Find dotnet version", new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.Completed && result.EvidenceIds.Count == 0 &&
+        result.Message.Contains("did not execute", StringComparison.Ordinal),
+        "A corrected honest answer can finish, but a permission request cannot");
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(state.Messages.Any(m => m.Role == "tool" &&
+        m.Content?.Contains("PERMISSION_QUESTION_NOT_COMPLETION", StringComparison.Ordinal) == true),
+        "Structured finish permission request must receive explicit tool error");
+}
+
+static async Task DenialAfterWritePreservesReceipt()
+{
+    using var setup = new TestContext();
+    int rounds = 0;
+    var model = new FakeModel(_ => {
+        rounds++;
+        if (rounds == 1) return new ModelReply(null, [Call("write", "filesystem.write_text", new {
+            path = "partial.txt", content = "PARTIAL" })]);
+        if (rounds == 2) return new ModelReply(null, [Call("run", "process.run", new {
+            executable = "dotnet", arguments = new[] { "--version" }, workingDirectory = setup.Workspace
+        })]);
+        throw new InvalidOperationException("A rejected execution must not be re-proposed automatically");
+    });
+    var broker = new FakeApprovals(false);
+    Guid id = Guid.NewGuid();
+    var result = await setup.Engine(model).RunAsync(id,
+        "Create a file and check dotnet version", broker);
+    Assert(result.Status == ConversationStatus.Paused && rounds == 2 && broker.Calls == 1 &&
+        result.EvidenceIds.Count == 1, "Partial authorized actions must stay audited after later denial");
+    Assert(await File.ReadAllTextAsync(Path.Combine(setup.Workspace, "partial.txt")) == "PARTIAL",
+        "Previously committed workspace file must not be rolled back on subsequent denial");
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(state.Operations.Count == 2 && state.Operations[0].Status == OperationStatus.Succeeded &&
+        state.Operations[1].Status == OperationStatus.Rejected && state.Status == ConversationStatus.Paused,
+        "Partial success and refusal must be separately recorded without declaring completion");
+}
+
+static async Task ObservedProcessNotRepeatedOnPermissionReply()
+{
+    using var setup = new TestContext();
+    int rounds = 0;
+    var model = new FakeModel(messages => {
+        rounds++;
+        if (rounds == 1) return new ModelReply(null, [Call("run", "process.run", new {
+            executable = "dotnet", arguments = new[] { "--version" }, workingDirectory = setup.Workspace
+        })]);
+        if (rounds == 2) return new ModelReply("May I run dotnet --version?", []);
+        Assert(messages.Any(m => m.Role == "system" &&
+            m.Content?.Contains("already executed", StringComparison.Ordinal) == true),
+            "Recovery should tell model to report existing receipts, not rerun an approved process");
+        return new ModelReply("The previously executed command's version is recorded in stdout.", []);
+    });
+    var broker = new FakeApprovals(true);
+    Guid id = Guid.NewGuid();
+    var result = await setup.Engine(model).RunAsync(id, "Get installed dotnet version", broker);
+    Assert(result.Status == ConversationStatus.Completed && rounds == 3 && broker.Calls == 1 &&
+        result.EvidenceIds.Count == 1 && result.Message.Contains("stdout:", StringComparison.Ordinal),
+        "An already observed invocation must not need another approval to format its final result");
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(state.Operations.Count == 1 && state.Operations[0].Status == OperationStatus.Succeeded,
+        "One actual command execution expected");
+}
+
+static async Task ToolFreePermissionFallbackPauses()
+{
+    using var setup = new TestContext();
+    var model = new FakeModel([
+        new ModelReply(null, []), new ModelReply(null, []),
+        new ModelReply("May I run dotnet --version?", [])
+    ]);
+    Guid id = Guid.NewGuid();
+    var result = await setup.Engine(model).RunAsync(id,
+        "Check the installed dotnet version", new FakeApprovals(true));
+    Assert(result.Status == ConversationStatus.Paused && result.EvidenceIds.Count == 0 &&
+        result.Message.Contains("No action was verified", StringComparison.Ordinal),
+        "Tool-free fallback must not turn an unexecuted permission question into Completed");
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(state.Operations.Count == 0 && state.LastAnswer is null,
+        "Fallback permission prose must not be saved as a verified user answer");
+}
+
+static async Task PermissionProbeCounterResetsAfterTool()
+{
+    using var setup = new TestContext();
+    int rounds = 0;
+    var model = new FakeModel(messages => {
+        rounds++;
+        if (rounds == 1) return new ModelReply("May I inspect the workspace?", []);
+        if (rounds == 2) return new ModelReply(null, [Call("inspect", "workspace.info", new { })]);
+        if (rounds == 3) return new ModelReply("May I execute dotnet --version?", []);
+        if (rounds == 4) return new ModelReply(null, [Call("version", "process.run", new {
+            executable = "dotnet", arguments = new[] { "--version" }, workingDirectory = setup.Workspace
+        })]);
+        return new ModelReply("The command returned the installed SDK version.", []);
+    });
+    var approval = new FakeApprovals(true);
+    var result = await setup.Engine(model).RunAsync(Guid.NewGuid(),
+        "Inspect the workspace then execute dotnet --version", approval);
+    Assert(result.Status == ConversationStatus.Completed && rounds == 5 && approval.Calls == 1 &&
+        result.EvidenceIds.Count == 1 && result.Message.Contains("exitCode: 0", StringComparison.Ordinal),
+        "Permission-probe recovery should reset after a valid tool observation");
+}
+
+static Task BrowserRejectsNonHttpsAndCredentials()
+{
+    foreach (string bad in new[] { "http://www.example.com", "https://user:secret@www.example.com/",
+        "https://www.example.com/#section", "ftp://www.example.com/" })
+    {
+        bool rejected = false;
+        try { _ = PublicBrowserUrlPolicy.Parse(bad); }
+        catch (ArgumentException) { rejected = true; }
+        Assert(rejected, "Browser URL policy must reject: " + bad);
+    }
+    return Task.CompletedTask;
+}
+
+static Task BrowserRejectsInternalHostAndPorts()
+{
+    foreach (string bad in new[] { "https://localhost", "https://inside.local/",
+        "https://admin.internal/", "https://host.test/", "https://10.0.0.1/",
+        "https://127.0.0.1/", "https://[::1]/", "https://www.example.com:8443/" })
+    {
+        bool rejected = false;
+        try { _ = PublicBrowserUrlPolicy.Parse(bad); }
+        catch (ArgumentException) { rejected = true; }
+        Assert(rejected, "Browser URL policy must reject internal target: " + bad);
+    }
+    return Task.CompletedTask;
+}
+
+static Task BrowserPublicDnsAddressGuards()
+{
+    string[] blocked = { "10.0.1.2", "127.0.0.1", "169.254.12.2", "172.20.0.1",
+        "192.168.1.2", "100.64.1.1", "198.18.0.1", "203.0.113.9", "::1", "fc00::1", "fe80::1", "2001:db8::2" };
+    foreach (string bad in blocked)
+        Assert(!PublicBrowserUrlPolicy.IsPublicAddress(System.Net.IPAddress.Parse(bad)),
+            "Non-public address must never be allowed: " + bad);
+    Assert(PublicBrowserUrlPolicy.IsPublicAddress(System.Net.IPAddress.Parse("8.8.8.8")) &&
+        PublicBrowserUrlPolicy.IsPublicAddress(System.Net.IPAddress.Parse("2606:4700:4700::1111")),
+        "Valid globally routable addresses should be recognized");
+    bool failed = false;
+    try { PublicBrowserUrlPolicy.RequirePublicDns(new[] {
+        System.Net.IPAddress.Parse("8.8.8.8"), System.Net.IPAddress.Parse("192.168.1.15") }); }
+    catch (InvalidOperationException) { failed = true; }
+    Assert(failed, "Mixed DNS results containing private IP must fail closed");
+    return Task.CompletedTask;
+}
+
+static Task BrowserSameHostAndMethodEnforced()
+{
+    Assert(PublicBrowserUrlPolicy.AllowsSameHostGet("https://www.example.com/path", "www.example.com", "GET"),
+        "Approved host HTTPS GET should pass");
+    Assert(PublicBrowserUrlPolicy.AllowsSameHostGet("https://www.example.com/a.css", "www.example.com", "HEAD"),
+        "HEAD resources should pass");
+    Assert(!PublicBrowserUrlPolicy.AllowsSameHostGet("https://not.example.com/", "www.example.com", "GET") &&
+        !PublicBrowserUrlPolicy.AllowsSameHostGet("http://www.example.com/", "www.example.com", "GET") &&
+        !PublicBrowserUrlPolicy.AllowsSameHostGet("https://www.example.com/api", "www.example.com", "POST"),
+        "Other origins, insecure transport and POST must be blocked");
+    return Task.CompletedTask;
+}
+
+static Task BrowserInspectSchemaIsStrict()
+{
+    IAgentTool tool = new PublicBrowserInspectionTool(new FakeBrowserReader());
+    Assert(!JsonToolSchema.Validate(tool.Descriptor.Parameters,
+        JsonSerializer.SerializeToElement(new { url="https://www.example.com", dangerous=true }), out _),
+        "Unexpected browser arguments must fail schema validation");
+    Assert(tool.Descriptor.Risk == ToolRisk.ReadExternal && !tool.Descriptor.HasSideEffects,
+        "Browser inspection must require the network approval path and not claim local writes");
+    return Task.CompletedTask;
+}
+
+static async Task BrowserDenialPreventsVisit()
+{
+    using var setup = new TestContext();
+    var reader = new FakeBrowserReader();
+    var registry = new ToolRegistry([new PublicBrowserInspectionTool(reader)]);
+    var model = new FakeModel([new ModelReply(null, [Call("browser-denied", "browser.inspect_public",
+        new { url = "https://www.example.com/" })])]);
+    var engine = new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace));
+    Guid conversation = Guid.NewGuid();
+    var denied = await engine.RunAsync(conversation, "Inspect a public page", new FakeApprovals(false));
+    Assert(denied.Status == ConversationStatus.Paused && reader.Calls == 0,
+        "Declined browser visit must pause without making any network request");
+    var persisted = (await setup.Store.LoadAsync(conversation, default))!;
+    Assert(persisted.Operations.Count == 1 && persisted.Operations[0].Status == OperationStatus.Rejected &&
+        persisted.Operations[0].ErrorCode == "NOT_AUTHORIZED", "Denied browser visit must be audited");
+}
+
+static async Task BrowserApprovedObservationIsAudited()
+{
+    using var setup = new TestContext();
+    var reader = new FakeBrowserReader();
+    var registry = new ToolRegistry([new PublicBrowserInspectionTool(reader)]);
+    var model = new FakeModel([
+        new ModelReply(null, [Call("browser-approved", "browser.inspect_public", new {
+            url = "https://www.example.com/" })]),
+        new ModelReply("Observed a public page with title Example.", [])
+    ]);
+    var approvals = new FakeApprovals(true);
+    var engine = new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace));
+    Guid id = Guid.NewGuid();
+    var result = await engine.RunAsync(id, "Inspect public example page", approvals);
+    Assert(result.Status == ConversationStatus.Completed && approvals.Calls == 1 && reader.Calls == 1,
+        "Approved browser visit must run once and finish from the actual observation");
+    var persisted = (await setup.Store.LoadAsync(id, default))!;
+    Assert(persisted.Operations.Count == 1 && persisted.Operations[0].Status == OperationStatus.Succeeded &&
+        persisted.Operations[0].ResultJson!.Contains("Example Page", StringComparison.Ordinal),
+        "Browser observation must be present in the durable tool journal");
+}
+
+static async Task BrowserRedirectOutsideApprovedOriginRejected()
+{
+    var reader = new FakeBrowserReader { FinalUrl = "https://other.example.net/" };
+    var tool = new PublicBrowserInspectionTool(reader);
+    var receipt = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new { url = "https://www.example.com/" }), default);
+    Assert(!receipt.Success && receipt.ErrorCode == "BROWSER_REDIRECT_BLOCKED" && reader.Calls == 1,
+        "Tool must reject any final page outside the explicitly approved hostname");
+}
+
+static Task BrowserValidPublicAddressAndUrl()
+{
+    Uri uri = PublicBrowserUrlPolicy.Parse("https://www.example.com:443/path?q=1");
+    Assert(uri.Scheme == "https" && uri.Port == 443 && uri.Host == "www.example.com",
+        "Public HTTPS URL with standard port and query should be accepted");
+    PublicBrowserUrlPolicy.RequirePublicDns(new[] { System.Net.IPAddress.Parse("8.8.8.8") });
+    bool emptyRejected = false;
+    try { PublicBrowserUrlPolicy.RequirePublicDns(Array.Empty<System.Net.IPAddress>()); }
+    catch (InvalidOperationException) { emptyRejected = true; }
+    Assert(emptyRejected, "Empty DNS reply must fail closed");
+    return Task.CompletedTask;
+}
+
+static async Task BrowserHttpWireProtocolRoundTrip()
+{
+    using var setup = new TestContext();
+    using var handler = new BrowserWireHandler();
+    using var http = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(http, new Uri("https://api.example.invalid/v1/"),
+        "mock", () => "wire-browser-key");
+    var reader = new FakeBrowserReader();
+    var engine = new NiraEngine(model, new ToolRegistry([new PublicBrowserInspectionTool(reader)]),
+        setup.Store, new WorkspaceAuthority(setup.Workspace));
+    var approved = new FakeApprovals(true);
+    var result = await engine.RunAsync(Guid.NewGuid(), "Inspect https://www.example.com/", approved);
+    Assert(result.Status == ConversationStatus.Completed && handler.Rounds == 2 &&
+        handler.ObservedReceipt && reader.Calls == 1 && approved.Calls == 1,
+        "Real model HTTP protocol must carry the observed page receipt back to GPT-OSS tool transcript");
+}
+
 static ModelToolCall Call(string id, string name, object args) =>
     new(id, name, JsonSerializer.Serialize(args));
 static void Assert(bool condition, string message)
 {
     if (!condition) throw new InvalidOperationException(message);
+}
+
+static Task BrowserElementsMetadataOnly()
+{
+    var snapshot = new BrowserSnapshot("https://www.example.com/", "https://www.example.com/",
+        "Example", 200, "Public text", false, [], [
+            new BrowserElement("button", "", "Search", "button", "Search", false),
+            new BrowserElement("input", "", "Keyword", "text", "", false)]);
+    string json = JsonSerializer.Serialize(snapshot);
+    Assert(json.Contains("Keyword", StringComparison.Ordinal) && json.Contains("Search", StringComparison.Ordinal),
+        "A page should report visible control labels");
+    Assert(typeof(BrowserElement).GetProperties().All(p => p.Name is not ("Value" or "Password" or "Html")),
+        "Public DOM element contract must not return input contents or page HTML");
+    Assert(snapshot.Elements?.Count == 2, "Control metadata count incorrect");
+    return Task.CompletedTask;
+}
+
+static Task BrowserLinkStrictSchema()
+{
+    var tool = new PublicBrowserLinkTool(new BrowserJourneyReader());
+    var valid = JsonSerializer.SerializeToElement(new {
+        sourceUrl="https://www.example.com/", linkIndex=0, expectedLinkUrl="https://www.example.com/about" });
+    Assert(JsonToolSchema.Validate(tool.Descriptor.Parameters, valid, out _), "Valid link payload rejected");
+    Assert(!JsonToolSchema.Validate(tool.Descriptor.Parameters,
+        JsonSerializer.SerializeToElement(new { sourceUrl="https://www.example.com/", linkIndex=0 }), out _),
+        "Missing expected exact link destination must be rejected");
+    Assert(!JsonToolSchema.Validate(tool.Descriptor.Parameters,
+        JsonSerializer.SerializeToElement(new { sourceUrl="https://www.example.com/", linkIndex=0,
+            expectedLinkUrl="https://www.example.com/about", allowWrites=true }), out _),
+        "Unexpected property must be rejected");
+    return Task.CompletedTask;
+}
+
+static Task BrowserLinkTargetGuard()
+{
+    var tool = new PublicBrowserLinkTool(new BrowserJourneyReader());
+    static object Args(string source, int index, string target) => new {
+        sourceUrl=source, linkIndex=index, expectedLinkUrl=target };
+    string target = tool.GetTarget(JsonSerializer.SerializeToElement(
+        Args("https://www.example.com/",0,"https://www.example.com/about")));
+    Assert(target.Contains("https://www.example.com/about",StringComparison.Ordinal),
+        "Authorization must display exact intended destination");
+    foreach (var args in new[] {
+        Args("http://www.example.com/",0,"https://www.example.com/about"),
+        Args("https://www.example.com/",-1,"https://www.example.com/about"),
+        Args("https://www.example.com/",24,"https://www.example.com/about"),
+        Args("https://www.example.com/",0,"https://iana.org/help"),
+        Args("https://www.example.com/",0,"http://www.example.com/about") })
+    {
+        bool denied=false;
+        try { _ = tool.GetTarget(JsonSerializer.SerializeToElement(args)); }
+        catch (ArgumentException) { denied=true; }
+        Assert(denied, "Malformed, cross-host or out-of-bounds link target must fail before approval");
+    }
+    return Task.CompletedTask;
+}
+
+static async Task BrowserLinkDenialNeverVisits()
+{
+    using var setup = new TestContext();
+    var reader = new BrowserJourneyReader();
+    var tools = new ToolRegistry([new PublicBrowserLinkTool(reader)]);
+    var engine = new NiraEngine(new FakeModel([
+        new ModelReply(null, [Call("deny-link", "browser.follow_public_link", new {
+            sourceUrl="https://www.example.com/", linkIndex=0,
+            expectedLinkUrl="https://www.example.com/about" })])
+    ]), tools, setup.Store, new WorkspaceAuthority(setup.Workspace));
+    var auth = new FakeApprovals(false);
+    var result = await engine.RunAsync(Guid.NewGuid(), "Follow the public example link", auth);
+    Assert(result.Status == ConversationStatus.Paused && reader.Calls == 0 && auth.Calls == 1,
+        "Declined link follow must pause before opening a browser");
+}
+
+static async Task BrowserLinkApprovedTwoPageObservation()
+{
+    using var setup = new TestContext();
+    var reader = new BrowserJourneyReader();
+    var tools = new ToolRegistry([new PublicBrowserLinkTool(reader)]);
+    var engine = new NiraEngine(new FakeModel([
+        new ModelReply(null, [Call("follow", "browser.follow_public_link", new {
+            sourceUrl="https://www.example.com/", linkIndex=0,
+            expectedLinkUrl="https://www.example.com/about" })]),
+        new ModelReply("Visited the About page based on the recorded destination title.", [])
+    ]), tools, setup.Store, new WorkspaceAuthority(setup.Workspace));
+    var auth = new FakeApprovals(true);
+    Guid id = Guid.NewGuid();
+    var result = await engine.RunAsync(id, "Follow the observed public link", auth);
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Completed && reader.Calls == 2 && auth.Calls == 1,
+        "Approved link should visit source and destination once, under one specific authorization");
+    Assert(state.Operations.Count==1 && state.Operations[0].Status==OperationStatus.Succeeded &&
+        state.Operations[0].ResultJson!.Contains("About Page",StringComparison.Ordinal),
+        "Audit receipt must contain actually observed destination data");
+}
+
+static async Task BrowserLinkChangedHrefStops()
+{
+    var reader = new BrowserJourneyReader { SourceLinkUrl="https://www.example.com/changed" };
+    var tool = new PublicBrowserLinkTool(reader);
+    var receipt = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new {
+        sourceUrl="https://www.example.com/", linkIndex=0,
+        expectedLinkUrl="https://www.example.com/about" }), default);
+    Assert(!receipt.Success && receipt.ErrorCode=="BROWSER_LINK_CHANGED" && reader.Calls==1,
+        "A changed link must never cause navigation to a different approved target");
+}
+
+static async Task BrowserLinkMissingIndexStops()
+{
+    var reader = new BrowserJourneyReader();
+    var tool = new PublicBrowserLinkTool(reader);
+    var receipt = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new {
+        sourceUrl="https://www.example.com/", linkIndex=5,
+        expectedLinkUrl="https://www.example.com/about" }), default);
+    Assert(!receipt.Success && receipt.ErrorCode=="BROWSER_LINK_MISSING" && reader.Calls==1,
+        "Missing index must not navigate to another URL");
+}
+
+static async Task BrowserLinkSourceRedirectStopped()
+{
+    var reader = new BrowserJourneyReader { SourceFinalUrl="https://iana.org/help" };
+    var tool = new PublicBrowserLinkTool(reader);
+    var receipt = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new {
+        sourceUrl="https://www.example.com/", linkIndex=0,
+        expectedLinkUrl="https://www.example.com/about" }), default);
+    Assert(!receipt.Success && receipt.ErrorCode=="BROWSER_SOURCE_CHANGED_ORIGIN" && reader.Calls==1,
+        "A source redirect off the approved host must be rejected before second visit");
+}
+
+static async Task BrowserLinkDestinationRedirectStopped()
+{
+    var reader = new BrowserJourneyReader { DestinationFinalUrl="https://iana.org/help" };
+    var tool = new PublicBrowserLinkTool(reader);
+    var receipt = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new {
+        sourceUrl="https://www.example.com/", linkIndex=0,
+        expectedLinkUrl="https://www.example.com/about" }), default);
+    Assert(!receipt.Success && receipt.ErrorCode=="BROWSER_TARGET_CHANGED_ORIGIN" && reader.Calls==2,
+        "Destination redirect must never yield a successful result");
+}
+
+static async Task BrowserLinkWireReceipt()
+{
+    using var setup = new TestContext();
+    var browser = new BrowserJourneyReader();
+    using var handler = new BrowserLinkWireHandler();
+    using var http = new HttpClient(handler);
+    var client = new OpenAiCompatibleModel(http, new Uri("https://fake.example/v1/"),
+        "test-model", () => "wire-link-key");
+    var engine = new NiraEngine(client, new ToolRegistry([new PublicBrowserLinkTool(browser)]),
+        setup.Store, new WorkspaceAuthority(setup.Workspace));
+    var output = await engine.RunAsync(Guid.NewGuid(), "Follow an observed same-host page link", new FakeApprovals(true));
+    Assert(output.Status==ConversationStatus.Completed && handler.ObservedReceipt &&
+        handler.Rounds==2 && browser.Calls==2,
+        "Model HTTP transcript must contain real link observation and use one tool invocation");
+}
+
+
+static async Task BrowserFollowPermissionRoutes()
+{
+    using var setup = new TestContext();
+    var sessions = new FakePublicBrowserSessions();
+    var registry = new ToolRegistry([new BrowserSessionFollowTool(sessions)]);
+    var model = new FakeModel([
+        new ModelReply(null, [Call("permission", "nira_ask_user", new {
+            question="Shall I follow the link to https://www.example.com/about?" })]),
+        new ModelReply(null, [Call("follow", "browser.session_follow", new {
+            sessionId=sessions.Id, expectedSourceUrl="https://www.example.com/",
+            linkIndex=0, expectedLinkUrl="https://www.example.com/about" })]),
+        new ModelReply("Observed the destination page after host approval.", [])
+    ]);
+    var engine = new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace));
+    var approvals = new FakeApprovals(true);
+    var result = await engine.RunAsync(Guid.NewGuid(), "Follow an observed link using my existing public browser session", approvals);
+    Assert(result.Status==ConversationStatus.Completed && sessions.FollowCalls==1 && approvals.Calls==1,
+        "A 'Shall I follow' permission probe must route to host-approved action without AwaitingUser");
+}
+
+static Task SessionSchemasAndDestinations()
+{
+    var sessions = new FakePublicBrowserSessions();
+    var open = new BrowserSessionOpenTool(sessions);
+    var follow = new BrowserSessionFollowTool(sessions);
+    var inspect = new BrowserSessionInspectTool(sessions);
+    var close = new BrowserSessionCloseTool(sessions);
+    var valid = JsonSerializer.SerializeToElement(new { sessionId=sessions.Id,
+        expectedSourceUrl="https://www.example.com/", linkIndex=0,
+        expectedLinkUrl="https://www.example.com/about" });
+    Assert(JsonToolSchema.Validate(follow.Descriptor.Parameters,valid,out _), "Valid session-follow schema rejected");
+    Assert(!JsonToolSchema.Validate(follow.Descriptor.Parameters,
+        JsonSerializer.SerializeToElement(new { sessionId=sessions.Id,
+            expectedSourceUrl="https://www.example.com/",linkIndex=0 }), out _),
+        "Destination must be required in session follow");
+    Assert(!JsonToolSchema.Validate(open.Descriptor.Parameters,
+        JsonSerializer.SerializeToElement(new { url="https://www.example.com/", password="secret" }),out _),
+        "Session open may not accept arbitrary inputs or credentials");
+    foreach (var tool in new IAgentTool[] { inspect, close })
+        Assert(!JsonToolSchema.Validate(tool.Descriptor.Parameters,
+            JsonSerializer.SerializeToElement(new { sessionId=sessions.Id, arbitrary=true }),out _),
+            "Session tools must reject unexpected parameters");
+    Assert(follow.GetTarget(valid).Contains("https://www.example.com/about",StringComparison.Ordinal),
+        "User approval must display exact link URL");
+    Assert(open.Descriptor.Risk==ToolRisk.ReadExternal && follow.Descriptor.Risk==ToolRisk.ReadExternal,
+        "Navigation must require host read-external approval");
+    Assert(close.Descriptor.Risk==ToolRisk.ReadLocal, "Closing a session is a local cleanup");
+    return Task.CompletedTask;
+}
+
+static async Task SessionOpenDenied()
+{
+    using var setup = new TestContext();
+    var sessions = new FakePublicBrowserSessions();
+    var engine = new NiraEngine(new FakeModel([
+        new ModelReply(null,[Call("open","browser.session_open",new {url="https://www.example.com/"})])
+    ]), new ToolRegistry([new BrowserSessionOpenTool(sessions)]), setup.Store,
+        new WorkspaceAuthority(setup.Workspace));
+    var approver = new FakeApprovals(false);
+    var answer=await engine.RunAsync(Guid.NewGuid(),"Open a public browser session",approver);
+    Assert(answer.Status==ConversationStatus.Paused && sessions.OpenCalls==0 && approver.Calls==1,
+        "A rejected browser session must not start a browser");
+}
+
+static async Task SessionOpenApproved()
+{
+    using var setup = new TestContext();
+    var sessions = new FakePublicBrowserSessions();
+    var engine = new NiraEngine(new FakeModel([
+        new ModelReply(null,[Call("open","browser.session_open",new {url="https://www.example.com/"})]),
+        new ModelReply("Opened the temporary browser session.",[])
+    ]), new ToolRegistry([new BrowserSessionOpenTool(sessions)]), setup.Store,
+        new WorkspaceAuthority(setup.Workspace));
+    Guid conversation=Guid.NewGuid();
+    var answer=await engine.RunAsync(conversation,"Open a public browser session",new FakeApprovals(true));
+    var state=(await setup.Store.LoadAsync(conversation,default))!;
+    Assert(answer.Status==ConversationStatus.Completed && sessions.OpenCalls==1,
+        "Approved session opening must run once");
+    Assert(state.Operations.Count==1 && state.Operations[0].Status==OperationStatus.Succeeded &&
+        state.Operations[0].ResultJson!.Contains(sessions.Id,StringComparison.Ordinal),
+        "Session ID and page observation must be saved as durable evidence");
+}
+
+static async Task SessionInspectUsesExisting()
+{
+    var sessions=new FakePublicBrowserSessions();
+    var tool=new BrowserSessionInspectTool(sessions);
+    var first=await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new{sessionId=sessions.Id}),default);
+    var next=await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new{sessionId=sessions.Id}),default);
+    Assert(first.Success && next.Success && sessions.InspectCalls==2 && sessions.OpenCalls==0 &&
+        sessions.FollowCalls==0 && first.Data.GetProperty("FinalUrl").GetString()=="https://www.example.com/",
+        "Repeated inspection should reuse the open session without navigating");
+}
+
+static async Task SessionFollowDenied()
+{
+    using var setup=new TestContext();
+    var sessions=new FakePublicBrowserSessions();
+    var engine=new NiraEngine(new FakeModel([
+        new ModelReply(null,[Call("follow","browser.session_follow",new {
+            sessionId=sessions.Id, expectedSourceUrl="https://www.example.com/",
+            linkIndex=0, expectedLinkUrl="https://www.example.com/about" })])
+    ]),new ToolRegistry([new BrowserSessionFollowTool(sessions)]),setup.Store,
+        new WorkspaceAuthority(setup.Workspace));
+    var approver=new FakeApprovals(false);
+    var result=await engine.RunAsync(Guid.NewGuid(),"Follow a public link",approver);
+    Assert(result.Status==ConversationStatus.Paused && approver.Calls==1 && sessions.FollowCalls==0,
+        "Denied navigation must pause without touching the session");
+}
+
+static async Task SessionFollowApproved()
+{
+    using var setup=new TestContext();
+    var sessions=new FakePublicBrowserSessions();
+    var engine=new NiraEngine(new FakeModel([
+        new ModelReply(null,[Call("follow","browser.session_follow",new {
+            sessionId=sessions.Id, expectedSourceUrl="https://www.example.com/",
+            linkIndex=0, expectedLinkUrl="https://www.example.com/about" })]),
+        new ModelReply("Observed About page within the same browser session.",[])
+    ]),new ToolRegistry([new BrowserSessionFollowTool(sessions)]),setup.Store,
+        new WorkspaceAuthority(setup.Workspace));
+    Guid conversation=Guid.NewGuid();
+    var output=await engine.RunAsync(conversation,"Follow observed public link",new FakeApprovals(true));
+    var state=(await setup.Store.LoadAsync(conversation,default))!;
+    Assert(output.Status==ConversationStatus.Completed && sessions.FollowCalls==1 && sessions.Current=="https://www.example.com/about",
+        "Approved exact URL should navigate once and preserve the session ID");
+    Assert(state.Operations[0].ResultJson!.Contains("About Page",StringComparison.Ordinal),
+        "Observed destination page must be in the audit receipt");
+}
+
+static async Task SessionChangedLinkRefused()
+{
+    var sessions=new FakePublicBrowserSessions { ChangedLink=true };
+    var tool=new BrowserSessionFollowTool(sessions);
+    var result=await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new {
+        sessionId=sessions.Id, expectedSourceUrl="https://www.example.com/",linkIndex=0,
+        expectedLinkUrl="https://www.example.com/about" }),default);
+    Assert(!result.Success && result.ErrorCode=="BROWSER_SESSION_FOLLOW_FAILED" &&
+        sessions.Current=="https://www.example.com/" && sessions.SuccessfulNavigations==0,
+        "Changed links must not perform navigation");
+}
+
+static Task SessionCrossHostRejected()
+{
+    var sessions=new FakePublicBrowserSessions();
+    var tool=new BrowserSessionFollowTool(sessions);
+    foreach(var args in new object[] {
+        new { sessionId=sessions.Id,expectedSourceUrl="https://www.example.com/",linkIndex=0,
+            expectedLinkUrl="https://other.example.org/" },
+        new { sessionId=sessions.Id,expectedSourceUrl="https://www.example.com/",linkIndex=99,
+            expectedLinkUrl="https://www.example.com/about" },
+        new { sessionId="not-a-real-session",expectedSourceUrl="https://www.example.com/",linkIndex=0,
+            expectedLinkUrl="https://www.example.com/about" } })
+    {
+        bool rejected=false;
+        try { _=tool.GetTarget(JsonSerializer.SerializeToElement(args)); }
+        catch(ArgumentException) { rejected=true; }
+        Assert(rejected,"Cross-host, out-of-range, or malformed session navigation must fail before approval");
+    }
+    Assert(sessions.FollowCalls==0,"Rejected inputs must not invoke browser operations");
+    return Task.CompletedTask;
+}
+
+static async Task SessionCloseAndExpired()
+{
+    var sessions=new FakePublicBrowserSessions();
+    var close=new BrowserSessionCloseTool(sessions);
+    var inspect=new BrowserSessionInspectTool(sessions);
+    var args=JsonSerializer.SerializeToElement(new {sessionId=sessions.Id});
+    var first=await close.ExecuteAsync(args,default);
+    var again=await close.ExecuteAsync(args,default);
+    var dead=await inspect.ExecuteAsync(args,default);
+    Assert(first.Success && !again.Success && !dead.Success && sessions.CloseCalls==2,
+        "Closing a session must discard it and prevent future inspection");
+}
+
+static Task TextEntryDomIndexVisible()
+{
+    var field = new BrowserElement("input", "", "Keyword", "search", "", false, 3);
+    Assert(field.DomIndex == 3 && BrowserSessionFillTextTool.IsAllowedControl(field),
+        "Observed fields must disclose the actual DOM index without reading their values");
+    Assert(!typeof(BrowserElement).GetProperties().Any(p => p.Name is "Value" or "Password"),
+        "Browser observation must not include input values or password content");
+    return Task.CompletedTask;
+}
+
+static Task TextEntryTargetValidation()
+{
+    var tool = new BrowserSessionFillTextTool(new FakePublicBrowserSessions());
+    var registry = new ToolRegistry([tool]);
+    var good = new {sessionId="aabbccddeeff00112233445566778899",
+        expectedPageUrl="https://www.example.com/",domIndex=2,
+        expectedTag="input",expectedLabel="Keyword",text="hello world"};
+    Assert(registry.Validate(tool.Descriptor.Name,JsonSerializer.Serialize(good),out _,out _),
+        "Valid exact-target text entry should meet the tool schema");
+    foreach (string args in new [] {
+        "{\"sessionId\":\"aabbccddeeff00112233445566778899\",\"expectedPageUrl\":\"https://www.example.com/\",\"domIndex\":2,\"expectedTag\":\"input\",\"expectedLabel\":\"Keyword\",\"text\":\"hello\",\"extra\":true}",
+        JsonSerializer.Serialize(new {good.sessionId,good.expectedPageUrl,domIndex=24,good.expectedTag,good.expectedLabel,good.text}),
+        JsonSerializer.Serialize(new {good.sessionId,expectedPageUrl="http://www.example.com/",good.domIndex,good.expectedTag,good.expectedLabel,good.text}),
+        JsonSerializer.Serialize(new {good.sessionId,good.expectedPageUrl,good.domIndex,expectedTag="button",good.expectedLabel,good.text}),
+        JsonSerializer.Serialize(new {good.sessionId,good.expectedPageUrl,good.domIndex,good.expectedTag,expectedLabel="",good.text}),
+    })
+    {
+        bool refused = !registry.Validate(tool.Descriptor.Name,args,out var values,out _);
+        if (!refused) { try { tool.GetTarget(values); } catch (ArgumentException) { refused = true; } }
+        Assert(refused,"Malformed field, private link or out-of-range index must be rejected before authorization");
+    }
+    string description = tool.GetTarget(JsonSerializer.SerializeToElement(good));
+    Assert(description.Contains("hello world",StringComparison.Ordinal) &&
+        description.Contains("DOM index 2",StringComparison.Ordinal) &&
+        description.Contains("https://www.example.com/",StringComparison.Ordinal),
+        "Approval must display exact supplied text, DOM index and destination page");
+    return Task.CompletedTask;
+}
+
+static Task TextEntryDangerousRisk()
+{
+    var descriptor = new BrowserSessionFillTextTool(new FakePublicBrowserSessions()).Descriptor;
+    Assert(descriptor.Risk == ToolRisk.Dangerous && descriptor.HasSideEffects,
+        "Text entry can trigger scripts and must always require explicit approval and journaling");
+    using var setup = new TestContext();
+    Assert(!new WorkspaceAuthority(setup.Workspace).IsPreapproved(descriptor,"workspace"),
+        "No text-entry action may be preapproved inside the workspace");
+    return Task.CompletedTask;
+}
+
+static async Task TextEntryDenied()
+{
+    using var setup = new TestContext();
+    var sessions = new FakePublicBrowserSessions();
+    var engine = new NiraEngine(new FakeModel([
+        new ModelReply(null,[Call("fill","browser.session_fill_text",new {
+            sessionId=sessions.Id,expectedPageUrl=sessions.Current,domIndex=2,
+            expectedTag="input",expectedLabel="Keyword",text="nonsecret test"})])
+    ]),new ToolRegistry([new BrowserSessionFillTextTool(sessions)]),setup.Store,
+        new WorkspaceAuthority(setup.Workspace));
+    var approvals = new FakeApprovals(false);
+    Guid id=Guid.NewGuid();
+    var output=await engine.RunAsync(id,"Fill the search field",approvals);
+    Assert(output.Status==ConversationStatus.Paused && approvals.Calls==1 && sessions.FillCalls==0,
+        "Denied action must pause without sending a keystroke");
+    var state=(await setup.Store.LoadAsync(id,default))!;
+    Assert(state.Operations.Count==1 && state.Operations[0].Status==OperationStatus.Rejected &&
+        state.Operations[0].ErrorCode=="NOT_AUTHORIZED", "Denial must be durably recorded");
+}
+
+static async Task TextEntryApprovedAndRedacted()
+{
+    using var setup = new TestContext();
+    var sessions = new FakePublicBrowserSessions();
+    const string value="ordinary search phrase";
+    var engine = new NiraEngine(new FakeModel([
+        new ModelReply(null,[Call("fill","browser.session_fill_text",new {
+            sessionId=sessions.Id,expectedPageUrl=sessions.Current,domIndex=2,
+            expectedTag="input",expectedLabel="Keyword",text=value})]),
+        new ModelReply("Entered text into the public search input without submitting.",[])
+    ]),new ToolRegistry([new BrowserSessionFillTextTool(sessions)]),setup.Store,
+        new WorkspaceAuthority(setup.Workspace));
+    Guid id=Guid.NewGuid();
+    var output=await engine.RunAsync(id,"Fill a public search field",new FakeApprovals(true));
+    var state=(await setup.Store.LoadAsync(id,default))!;
+    Assert(output.Status==ConversationStatus.Completed && sessions.FillCalls==1,
+        "An approved fill should call the selected field once and finish with observed evidence");
+    Assert(state.Operations.Count==1 && state.Operations[0].Status==OperationStatus.Succeeded &&
+        state.Operations[0].ResultJson!.Contains("CharactersEntered",StringComparison.Ordinal) &&
+        !state.Operations[0].ResultJson!.Contains(value,StringComparison.Ordinal) &&
+        output.Message.Contains("browser.session_fill_text",StringComparison.Ordinal),
+        "Receipt must contain field verification and character count, but not entered text");
+}
+
+static async Task TextEntryStaleLabel()
+{
+    var sessions = new FakePublicBrowserSessions { ChangedLabel=true };
+    var tool = new BrowserSessionFillTextTool(sessions);
+    var result=await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new {
+        sessionId=sessions.Id,expectedPageUrl=sessions.Current,domIndex=2,
+        expectedTag="input",expectedLabel="Keyword",text="safe" }),default);
+    Assert(!result.Success && result.ErrorCode=="BROWSER_TEXT_CONTROL_REFUSED" &&
+        sessions.SuccessfulEntries==0,"Changed label should be refused before any fill");
+}
+
+static async Task TextEntryPasswordAndDisabled()
+{
+    foreach (bool password in new [] {true,false})
+    {
+        var sessions = new FakePublicBrowserSessions { PasswordField=password, DisabledField=!password };
+        var tool = new BrowserSessionFillTextTool(sessions);
+        var result=await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new {
+            sessionId=sessions.Id,expectedPageUrl=sessions.Current,domIndex=2,
+            expectedTag="input",expectedLabel="Keyword",text="safe" }),default);
+        Assert(!result.Success && sessions.SuccessfulEntries==0,
+            "Password or disabled fields must reject text entry without modifying the page");
+    }
+}
+
+static async Task TextEntryAfterClose()
+{
+    var sessions = new FakePublicBrowserSessions();
+    _=await new BrowserSessionCloseTool(sessions).ExecuteAsync(
+        JsonSerializer.SerializeToElement(new {sessionId=sessions.Id}),default);
+    var result=await new BrowserSessionFillTextTool(sessions).ExecuteAsync(
+        JsonSerializer.SerializeToElement(new {sessionId=sessions.Id,expectedPageUrl=sessions.Current,
+            domIndex=2,expectedTag="input",expectedLabel="Keyword",text="safe"}),default);
+    Assert(!result.Success && sessions.SuccessfulEntries==0,
+        "Closed or expired sessions must not allow text entry");
+}
+
+static async Task TextEntrySecondFillRefused()
+{
+    var sessions = new FakePublicBrowserSessions();
+    var tool = new BrowserSessionFillTextTool(sessions);
+    var args=JsonSerializer.SerializeToElement(new {sessionId=sessions.Id,
+        expectedPageUrl=sessions.Current,domIndex=2,expectedTag="input",expectedLabel="Keyword",text="safe"});
+    var first=await tool.ExecuteAsync(args,default);
+    var second=await tool.ExecuteAsync(args,default);
+    Assert(first.Success && !second.Success && sessions.SuccessfulEntries==1,
+        "Only one entry is allowed per temporary session; no silent second interaction");
+}
+
+static async Task TextEntryUncertainReconciliation()
+{
+    using var setup = new TestContext();
+    var sessions = new FakePublicBrowserSessions { ThrowUncertain=true };
+    var engine = new NiraEngine(new FakeModel([
+        new ModelReply(null,[Call("fill","browser.session_fill_text",new {
+            sessionId=sessions.Id,expectedPageUrl=sessions.Current,domIndex=2,
+            expectedTag="input",expectedLabel="Keyword",text="safe" })])
+    ]),new ToolRegistry([new BrowserSessionFillTextTool(sessions)]),setup.Store,
+        new WorkspaceAuthority(setup.Workspace));
+    Guid id=Guid.NewGuid();
+    var answer=await engine.RunAsync(id,"Fill public text field",new FakeApprovals(true));
+    var state=(await setup.Store.LoadAsync(id,default))!;
+    Assert(answer.Status==ConversationStatus.NeedsReconciliation &&
+        state.Operations.Count==1 && state.Operations[0].Status==OperationStatus.Unknown,
+        "Uncertain browser effect must not be reported as failed/no-change or silently retried");
+}
+
+static Task ButtonClickStrictSchema()
+{
+    var sessions=new FakePublicBrowserSessions();
+    var tool=new BrowserSessionClickButtonTool(sessions);
+    var valid=ButtonArgs(sessions);
+    Assert(JsonToolSchema.Validate(tool.Descriptor.Parameters,valid,out _),
+        "Exact native button schema should be valid");
+    Assert(!JsonToolSchema.Validate(tool.Descriptor.Parameters,JsonSerializer.SerializeToElement(new {
+        sessionId=sessions.Id,expectedPageUrl=sessions.Current,domIndex=3,expectedTag="button",
+        expectedType="button",expectedLabel="Show more",expectedText="Expand details",script="alert(1)"}),out _),
+        "Arbitrary selectors and script fields must not be allowed");
+    Assert(!JsonToolSchema.Validate(tool.Descriptor.Parameters,JsonSerializer.SerializeToElement(new {
+        sessionId=sessions.Id,expectedPageUrl=sessions.Current,domIndex=3,expectedTag="button",
+        expectedType="submit",expectedLabel="Show more",expectedText="Expand details"}),out _),
+        "Submit button type must fail schema validation");
+    return Task.CompletedTask;
+}
+
+static JsonElement ButtonArgs(FakePublicBrowserSessions sessions) =>
+    JsonSerializer.SerializeToElement(new { sessionId=sessions.Id,expectedPageUrl=sessions.Current,
+        domIndex=3,expectedTag="button",expectedType="button",
+        expectedLabel="Show more",expectedText="Expand details" });
+
+static Task ButtonClickTargetGuards()
+{
+    var sessions=new FakePublicBrowserSessions();
+    var tool=new BrowserSessionClickButtonTool(sessions);
+    foreach(var args in new object[] {
+        new {sessionId=sessions.Id,expectedPageUrl=sessions.Current,domIndex=99,
+            expectedTag="button",expectedType="button",expectedLabel="Show more",expectedText="Expand details"},
+        new {sessionId=sessions.Id,expectedPageUrl="http://www.example.com/",domIndex=3,
+            expectedTag="button",expectedType="button",expectedLabel="Show more",expectedText="Expand details"},
+        new {sessionId=sessions.Id,expectedPageUrl=sessions.Current,domIndex=3,
+            expectedTag="input",expectedType="button",expectedLabel="Show more",expectedText="Expand details"},
+        new {sessionId=sessions.Id,expectedPageUrl=sessions.Current,domIndex=3,
+            expectedTag="button",expectedType="submit",expectedLabel="Show more",expectedText="Expand details"},
+        new {sessionId=sessions.Id,expectedPageUrl=sessions.Current,domIndex=3,
+            expectedTag="button",expectedType="button",expectedLabel="",expectedText=""} })
+    {
+        bool failed=false;
+        try { _=tool.GetTarget(JsonSerializer.SerializeToElement(args)); }
+        catch (ArgumentException) { failed=true; }
+        Assert(failed,"Non-public URL, absent target, submit type and invalid labels must fail before approval");
+    }
+    Assert(sessions.ClickCalls==0,"Invalid targets must never click");
+    return Task.CompletedTask;
+}
+
+static Task ButtonClickDangerousApproval()
+{
+    var sessions=new FakePublicBrowserSessions();
+    var tool=new BrowserSessionClickButtonTool(sessions);
+    string preview=tool.GetTarget(ButtonArgs(sessions));
+    Assert(tool.Descriptor.Risk==ToolRisk.Dangerous && tool.Descriptor.HasSideEffects,
+        "DOM click requires Dangerous approval and a durable effect receipt");
+    Assert(preview.Contains(sessions.Current,StringComparison.Ordinal) &&
+        preview.Contains("DOM index 3",StringComparison.Ordinal) &&
+        preview.Contains("Show more",StringComparison.Ordinal) &&
+        preview.Contains("Expand details",StringComparison.Ordinal) &&
+        preview.Contains("WARNING",StringComparison.Ordinal),
+        "Approval must identify exact page/button, and explain script side effects");
+    Assert(BrowserSessionClickButtonTool.IsAllowedControl(new BrowserElement(
+        "button","","Show more","button","Expand details",false,3)),
+        "Native type=button is permitted");
+    Assert(!BrowserSessionClickButtonTool.IsAllowedControl(new BrowserElement(
+        "button","","Delete","submit","Delete",false,3)),
+        "Submit button is not permitted");
+    return Task.CompletedTask;
+}
+
+static async Task ButtonClickDenied()
+{
+    using var setup=new TestContext();
+    var sessions=new FakePublicBrowserSessions();
+    var engine=new NiraEngine(new FakeModel([
+        new ModelReply(null,[Call("click","browser.session_click_button",new {
+            sessionId=sessions.Id,expectedPageUrl=sessions.Current,domIndex=3,expectedTag="button",
+            expectedType="button",expectedLabel="Show more",expectedText="Expand details"})])
+    ]),new ToolRegistry([new BrowserSessionClickButtonTool(sessions)]),setup.Store,
+        new WorkspaceAuthority(setup.Workspace));
+    var approver=new FakeApprovals(false);
+    Guid conversation=Guid.NewGuid();
+    var response=await engine.RunAsync(conversation,"Click a native demo button",approver);
+    var state=(await setup.Store.LoadAsync(conversation,default))!;
+    Assert(response.Status==ConversationStatus.Paused && approver.Calls==1 &&
+        sessions.ClickCalls==0 && state.Operations.Count==1 &&
+        state.Operations[0].Status==OperationStatus.Rejected,
+        "Denied click must not touch the DOM and must preserve the denial");
+}
+
+static async Task ButtonClickApproved()
+{
+    using var setup=new TestContext();
+    var sessions=new FakePublicBrowserSessions();
+    var engine=new NiraEngine(new FakeModel([
+        new ModelReply(null,[Call("click","browser.session_click_button",new {
+            sessionId=sessions.Id,expectedPageUrl=sessions.Current,domIndex=3,expectedTag="button",
+            expectedType="button",expectedLabel="Show more",expectedText="Expand details"})]),
+        new ModelReply("Approved native demo button was clicked; no navigation observed.",[])
+    ]),new ToolRegistry([new BrowserSessionClickButtonTool(sessions)]),setup.Store,
+        new WorkspaceAuthority(setup.Workspace));
+    Guid conversation=Guid.NewGuid();
+    var response=await engine.RunAsync(conversation,"Click a native demo button",new FakeApprovals(true));
+    var state=(await setup.Store.LoadAsync(conversation,default))!;
+    Assert(response.Status==ConversationStatus.Completed && sessions.SuccessfulClicks==1 &&
+        state.Operations.Count==1 && state.Operations[0].Status==OperationStatus.Succeeded &&
+        state.Operations[0].ResultJson!.Contains("ElementText",StringComparison.Ordinal) &&
+        response.Message.Contains("browser.session_click_button",StringComparison.Ordinal),
+        "Approved click must produce a recorded page observation and host evidence");
+}
+
+static async Task ButtonClickStaleMetadata()
+{
+    var sessions=new FakePublicBrowserSessions { ChangedButtonText=true };
+    var result=await new BrowserSessionClickButtonTool(sessions).ExecuteAsync(ButtonArgs(sessions),default);
+    Assert(!result.Success && result.ErrorCode=="BROWSER_BUTTON_CLICK_REFUSED" &&
+        sessions.SuccessfulClicks==0,
+        "Changed text or stale metadata must be rejected before clicking");
+}
+
+static async Task ButtonClickSubmitAndDisabled()
+{
+    foreach (bool isSubmit in new[]{true,false})
+    {
+        var sessions=new FakePublicBrowserSessions { ButtonSubmit=isSubmit,ButtonDisabled=!isSubmit };
+        var result=await new BrowserSessionClickButtonTool(sessions).ExecuteAsync(ButtonArgs(sessions),default);
+        Assert(!result.Success && sessions.SuccessfulClicks==0,
+            "Form submit/reset and disabled buttons are not permitted");
+    }
+}
+
+static async Task ButtonClickClosedSession()
+{
+    var sessions=new FakePublicBrowserSessions();
+    _=await new BrowserSessionCloseTool(sessions).ExecuteAsync(
+        JsonSerializer.SerializeToElement(new{sessionId=sessions.Id}),default);
+    var result=await new BrowserSessionClickButtonTool(sessions).ExecuteAsync(ButtonArgs(sessions),default);
+    Assert(!result.Success && sessions.SuccessfulClicks==0,
+        "Closed browser session must not be implicitly reopened");
+}
+
+static async Task ButtonClickOnceOnly()
+{
+    var sessions=new FakePublicBrowserSessions();
+    var tool=new BrowserSessionClickButtonTool(sessions);
+    var first=await tool.ExecuteAsync(ButtonArgs(sessions),default);
+    var second=await tool.ExecuteAsync(ButtonArgs(sessions),default);
+    var fillAfterClick=await new BrowserSessionFillTextTool(sessions).ExecuteAsync(
+        JsonSerializer.SerializeToElement(new{sessionId=sessions.Id,expectedPageUrl=sessions.Current,
+            domIndex=2,expectedTag="input",expectedLabel="Keyword",text="safe"}),default);
+    Assert(first.Success && !second.Success && !fillAfterClick.Success &&
+        sessions.SuccessfulClicks==1 && sessions.SuccessfulEntries==0,
+        "A click locks the session against any further click or fill");
+    var secondSession=new FakePublicBrowserSessions();
+    _=await new BrowserSessionFillTextTool(secondSession).ExecuteAsync(
+        JsonSerializer.SerializeToElement(new{sessionId=secondSession.Id,expectedPageUrl=secondSession.Current,
+            domIndex=2,expectedTag="input",expectedLabel="Keyword",text="safe"}),default);
+    var clickAfterFill=await new BrowserSessionClickButtonTool(secondSession)
+        .ExecuteAsync(ButtonArgs(secondSession),default);
+    Assert(!clickAfterFill.Success && secondSession.SuccessfulClicks==0,
+        "A prior text entry must also lock the session against later clicks");
+}
+
+static async Task ButtonClickUncertainReconciliation()
+{
+    using var setup=new TestContext();
+    var sessions=new FakePublicBrowserSessions { ThrowClickUncertain=true };
+    var engine=new NiraEngine(new FakeModel([
+        new ModelReply(null,[Call("click","browser.session_click_button",new{
+            sessionId=sessions.Id,expectedPageUrl=sessions.Current,domIndex=3,expectedTag="button",
+            expectedType="button",expectedLabel="Show more",expectedText="Expand details"})])
+    ]),new ToolRegistry([new BrowserSessionClickButtonTool(sessions)]),setup.Store,
+        new WorkspaceAuthority(setup.Workspace));
+    Guid conversation=Guid.NewGuid();
+    var output=await engine.RunAsync(conversation,"Click demo button",new FakeApprovals(true));
+    var state=(await setup.Store.LoadAsync(conversation,default))!;
+    Assert(output.Status==ConversationStatus.NeedsReconciliation &&
+        state.Operations.Count==1 && state.Operations[0].Status==OperationStatus.Unknown,
+        "An uncertain click is not a clean failure and must never be retried silently");
 }
 
 internal sealed class TestContext : IDisposable
@@ -1066,7 +2361,12 @@ internal sealed class TestContext : IDisposable
 
 internal sealed class FakeApprovals(bool approved) : IApprovalBroker
 {
-    public Task<bool> RequestApprovalAsync(ApprovalRequest request, CancellationToken ct) => Task.FromResult(approved);
+    public int Calls { get; private set; }
+    public Task<bool> RequestApprovalAsync(ApprovalRequest request, CancellationToken ct)
+    {
+        Calls++;
+        return Task.FromResult(approved);
+    }
 }
 
 internal sealed class FakeModel : IChatModel
@@ -1250,6 +2550,51 @@ internal sealed class WireEditPipelineHandler(string path) : HttpMessageHandler
     }
 }
 
+internal sealed class WirePermissionGateHandler : HttpMessageHandler
+{
+    public int Rounds { get; private set; }
+    public bool HostDenialObserved { get; private set; }
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
+        CancellationToken cancellationToken)
+    {
+        if (request.Headers.Authorization?.ToString() != "Bearer wire-auth")
+            throw new InvalidOperationException("Wire gate request lost model credential");
+        using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+        JsonElement[] entries = body.RootElement.GetProperty("messages").EnumerateArray().ToArray();
+        int turn = Rounds++;
+        JsonElement[] receipts = entries.Where(x => x.GetProperty("role").GetString() == "tool").ToArray();
+        if (turn == 1)
+        {
+            HostDenialObserved = receipts.Length == 1 &&
+                receipts[0].GetProperty("content").GetString()?.Contains(
+                    "USE_HOST_TOOL_APPROVAL", StringComparison.Ordinal) == true;
+            if (!HostDenialObserved) throw new InvalidOperationException("Permission rejection was not preserved");
+        }
+        if (turn == 2 && (receipts.Length != 2 ||
+            !receipts[1].GetProperty("content").GetString()!.Contains("Current workspace", StringComparison.Ordinal)))
+            throw new InvalidOperationException("Missing actual workspace observation");
+        string response = turn switch
+        {
+            0 => ToolReply("ask-permission", "nira_ask_user",
+                new { question = "May I inspect the workspace with the registered tool?" }),
+            1 => ToolReply("inspect", "workspace.info", new { }),
+            2 => JsonSerializer.Serialize(new { choices = new[] {
+                new { message = new { role = "assistant", content = "Workspace inspected using the available tool." } }
+            } }),
+            _ => throw new InvalidOperationException("Unexpected provider round")
+        };
+        return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
+            Content = new StringContent(response, System.Text.Encoding.UTF8, "application/json")
+        };
+    }
+    private static string ToolReply(string id, string name, object args) => JsonSerializer.Serialize(new {
+        choices = new[] { new { message = new { role = "assistant", content = (string?)null,
+            tool_calls = new[] { new { id, type = "function",
+                function = new { name, arguments = JsonSerializer.Serialize(args) } } }
+        } } }
+    });
+}
+
 internal sealed class ModelAuthHttpHandler(System.Net.HttpStatusCode code) : HttpMessageHandler
 {
     public string? RequestAuthorization { get; private set; }
@@ -1258,5 +2603,212 @@ internal sealed class ModelAuthHttpHandler(System.Net.HttpStatusCode code) : Htt
     {
         RequestAuthorization = request.Headers.Authorization?.ToString();
         return Task.FromResult(new HttpResponseMessage(code));
+    }
+}
+
+internal sealed class FakeBrowserReader : IBrowserPageReader
+{
+    public int Calls { get; private set; }
+    public string FinalUrl { get; set; } = "https://www.example.com/";
+    public Task<BrowserSnapshot> ReadAsync(Uri target, CancellationToken ct)
+    {
+        Calls++;
+        return Task.FromResult(new BrowserSnapshot(target.AbsoluteUri, FinalUrl,
+            "Example Page", 200, "Example body", false,
+            new[] { new BrowserLink("About", "https://www.example.com/about") }));
+    }
+}
+
+internal sealed class BrowserWireHandler : HttpMessageHandler
+{
+    public int Rounds { get; private set; }
+    public bool ObservedReceipt { get; private set; }
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
+        CancellationToken cancellationToken)
+    {
+        if (request.Headers.Authorization?.ToString() != "Bearer wire-browser-key")
+            throw new InvalidOperationException("Browser wire tool lost model API authorization");
+        using var document = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+        int step = Rounds++;
+        JsonElement[] wire = document.RootElement.GetProperty("messages").EnumerateArray().ToArray();
+        if (step == 1)
+        {
+            JsonElement[] toolMessages = wire.Where(m => m.GetProperty("role").GetString() == "tool").ToArray();
+            ObservedReceipt = toolMessages.Length == 1 &&
+                toolMessages[0].GetProperty("content").GetString()!.Contains("Example Page", StringComparison.Ordinal);
+            if (!ObservedReceipt) throw new InvalidOperationException("Page observation missing from wire transcript");
+        }
+        string body = step switch
+        {
+            0 => JsonSerializer.Serialize(new { choices = new[] { new { message = new {
+                role = "assistant", content = (string?)null, tool_calls = new[] { new {
+                    id = "browser-wire-0", type = "function", function = new {
+                        name = "browser.inspect_public", arguments = "{\"url\":\"https://www.example.com/\"}" } } }
+            } } } }),
+            1 => JsonSerializer.Serialize(new { choices = new[] { new { message = new {
+                role = "assistant", content = "The observed title was Example Page."
+            } } } }),
+            _ => throw new InvalidOperationException("Unexpected additional browser tool round")
+        };
+        return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
+            Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json")
+        };
+    }
+}
+
+internal sealed class BrowserJourneyReader : IBrowserPageReader
+{
+    public int Calls { get; private set; }
+    public string SourceLinkUrl { get; set; } = "https://www.example.com/about";
+    public string SourceFinalUrl { get; set; } = "https://www.example.com/";
+    public string DestinationFinalUrl { get; set; } = "https://www.example.com/about";
+    public Task<BrowserSnapshot> ReadAsync(Uri target, CancellationToken ct)
+    {
+        Calls++;
+        return Task.FromResult(Calls == 1
+            ? new BrowserSnapshot(target.AbsoluteUri, SourceFinalUrl, "Source Page", 200,
+                "source content", false, [new BrowserLink("About", SourceLinkUrl)])
+            : new BrowserSnapshot(target.AbsoluteUri, DestinationFinalUrl, "About Page", 200,
+                "destination content", false, []));
+    }
+}
+
+internal sealed class BrowserLinkWireHandler : HttpMessageHandler
+{
+    public int Rounds { get; private set; }
+    public bool ObservedReceipt { get; private set; }
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
+        CancellationToken cancellationToken)
+    {
+        if (request.Headers.Authorization?.ToString()!="Bearer wire-link-key")
+            throw new InvalidOperationException("Link wire authorization header not forwarded");
+        using var requestJson=JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+        JsonElement[] entries=requestJson.RootElement.GetProperty("messages").EnumerateArray().ToArray();
+        int round=Rounds++;
+        if (round==1)
+        {
+            JsonElement[] messages=entries.Where(x=>x.GetProperty("role").GetString()=="tool").ToArray();
+            ObservedReceipt=messages.Length==1 && messages[0].GetProperty("content").GetString()!
+                .Contains("About Page",StringComparison.Ordinal);
+            if (!ObservedReceipt) throw new InvalidOperationException("Model never received observed destination title");
+        }
+        string response=round switch
+        {
+            0 => JsonSerializer.Serialize(new { choices=new[] { new { message=new {
+                role="assistant", content=(string?)null, tool_calls=new[] { new {
+                    id="follow-wire", type="function", function=new {name="browser.follow_public_link",
+                    arguments=JsonSerializer.Serialize(new {sourceUrl="https://www.example.com/",
+                        linkIndex=0, expectedLinkUrl="https://www.example.com/about"})} }
+                } } } } }),
+            1 => JsonSerializer.Serialize(new { choices=new[] { new { message=new {
+                role="assistant", content="Observed destination title: About Page." } } } }),
+            _ => throw new InvalidOperationException("Unexpected wire link round")
+        };
+        return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
+            Content=new StringContent(response,System.Text.Encoding.UTF8,"application/json") };
+    }
+}
+
+internal sealed class FakePublicBrowserSessions : IPublicBrowserSessions
+{
+    public string Id { get; } = "aabbccddeeff00112233445566778899";
+    public int OpenCalls { get; private set; }
+    public int InspectCalls { get; private set; }
+    public int FollowCalls { get; private set; }
+    public int CloseCalls { get; private set; }
+    public int SuccessfulNavigations { get; private set; }
+    public bool ChangedLink { get; set; }
+    public bool ChangedLabel { get; set; }
+    public bool PasswordField { get; set; }
+    public bool DisabledField { get; set; }
+    public bool ThrowUncertain { get; set; }
+    public bool ChangedButtonText { get; set; }
+    public bool ButtonSubmit { get; set; }
+    public bool ButtonDisabled { get; set; }
+    public bool ThrowClickUncertain { get; set; }
+    public int ClickCalls { get; private set; }
+    public int SuccessfulClicks { get; private set; }
+    public int FillCalls { get; private set; }
+    public int SuccessfulEntries { get; private set; }
+    public bool Closed { get; private set; }
+    public string Current { get; private set; } = "https://www.example.com/";
+
+    private BrowserSnapshot Snapshot() => new(Current,Current,
+        Current.EndsWith("/about",StringComparison.Ordinal) ? "About Page" : "Example",
+        200,"Observed public text",false,
+        Current.EndsWith("/about",StringComparison.Ordinal)
+            ? Array.Empty<BrowserLink>()
+            : new[] { new BrowserLink("About",ChangedLink ? "https://www.example.com/changed" :
+                "https://www.example.com/about") },
+        new [] {
+            new BrowserElement("input", "", ChangedLabel ? "Altered" : "Keyword",
+                PasswordField ? "password" : "search", "", DisabledField, 2),
+            new BrowserElement("button", "", "Show more",
+                ButtonSubmit ? "submit" : "button",
+                ChangedButtonText ? "Different" : "Expand details", ButtonDisabled, 3)
+        });
+
+    public Task<BrowserSessionObservation> OpenAsync(Uri url,CancellationToken ct)
+    {
+        OpenCalls++;
+        if(Closed) throw new InvalidOperationException("Closed");
+        if(url.AbsoluteUri!="https://www.example.com/") throw new InvalidOperationException("Invalid URL");
+        return Task.FromResult(new BrowserSessionObservation(Id,Snapshot()));
+    }
+    public Task<BrowserSnapshot> InspectAsync(string id,CancellationToken ct)
+    {
+        InspectCalls++;
+        if(Closed || id!=Id) throw new InvalidOperationException("Session missing");
+        return Task.FromResult(Snapshot());
+    }
+    public Task<BrowserSessionLinkObservation> FollowAsync(string id,Uri source,int index,
+        Uri expected,CancellationToken ct)
+    {
+        FollowCalls++;
+        if(Closed || id!=Id || source.AbsoluteUri!=Current || index!=0 ||
+            expected.AbsoluteUri!="https://www.example.com/about" ||
+            Snapshot().Links[index].Url!=expected.AbsoluteUri)
+            throw new InvalidOperationException("Link changed or session unavailable");
+        Current=expected.AbsoluteUri;
+        SuccessfulNavigations++;
+        return Task.FromResult(new BrowserSessionLinkObservation(Id,source.AbsoluteUri,"About",
+            expected.AbsoluteUri,Snapshot()));
+    }
+    public Task<BrowserSessionTextObservation> FillTextAsync(string id,Uri page,int index,
+        string tag,string label,string text,CancellationToken ct)
+    {
+        FillCalls++;
+        if (ThrowUncertain)
+            throw new BrowserInteractionUncertainException("Uncertain browser write",
+                new InvalidOperationException("Test uncertainty"));
+        if (Closed || id != Id || page.AbsoluteUri != Current || index != 2 ||
+            tag != "input" || label != "Keyword" || ChangedLabel || PasswordField ||
+            DisabledField || SuccessfulEntries > 0 || SuccessfulClicks > 0)
+            throw new InvalidOperationException("Field absent or previously changed");
+        SuccessfulEntries++;
+        return Task.FromResult(new BrowserSessionTextObservation(id,Current,index,tag,label,
+            text.Length,Snapshot()));
+    }
+    public Task<BrowserSessionButtonObservation> ClickButtonAsync(string id,Uri page,int index,
+        string label,string text,CancellationToken ct)
+    {
+        ClickCalls++;
+        if (ThrowClickUncertain)
+            throw new BrowserInteractionUncertainException("Uncertain button click",
+                new InvalidOperationException("Test uncertainty"));
+        if (Closed || id != Id || page.AbsoluteUri != Current || index != 3 ||
+            label != "Show more" || text != "Expand details" || ChangedButtonText ||
+            ButtonSubmit || ButtonDisabled || SuccessfulEntries > 0 || SuccessfulClicks > 0)
+            throw new InvalidOperationException("Button absent, changed or already interacted with");
+        SuccessfulClicks++;
+        return Task.FromResult(new BrowserSessionButtonObservation(
+            id,Current,index,label,text,Snapshot()));
+    }
+    public Task<bool> CloseAsync(string id,CancellationToken ct)
+    {
+        CloseCalls++;
+        if(Closed || id!=Id) return Task.FromResult(false);
+        Closed=true;
+        return Task.FromResult(true);
     }
 }

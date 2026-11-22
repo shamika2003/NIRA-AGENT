@@ -7,16 +7,23 @@ namespace Nira.Infrastructure;
 
 public static class NiraStandardTools
 {
-    public static ToolRegistry Create(string root, SqliteConversationStore store, HttpClient http)
+    public static ToolRegistry Create(string root, SqliteConversationStore store, HttpClient http,
+        IPublicBrowserSessions? browserSessions = null)
     {
         Directory.CreateDirectory(root);
         var resolver = new WorkspacePathResolver(root);
+        browserSessions ??= new EdgePublicBrowserSessions();
         return new ToolRegistry([
             new WorkspaceInfoTool(resolver), new FileListTool(resolver),
             new FileReadTool(resolver), new FileWriteTool(resolver),
             new FileFindTool(resolver), new FileHashTool(resolver),
             new DirectoryCreateTool(resolver), new FileEditTextTool(resolver),
-            new ProcessRunTool(resolver),
+            new ProcessRunTool(resolver), new PublicBrowserInspectionTool(),
+            new PublicBrowserLinkTool(),
+            new BrowserSessionOpenTool(browserSessions), new BrowserSessionInspectTool(browserSessions),
+            new BrowserSessionFollowTool(browserSessions), new BrowserSessionCloseTool(browserSessions),
+            new BrowserSessionFillTextTool(browserSessions),
+            new BrowserSessionClickButtonTool(browserSessions),
             new MemorySearchTool(store), new MemoryRememberTool(store),
             new TavilySearchTool(http)
         ]);
