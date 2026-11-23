@@ -22,8 +22,9 @@ public sealed class BrowserSessionFillTextTool(IPublicBrowserSessions sessions) 
         "Use the exact page URL, DomIndex, tag and label from browser.session_inspect. " +
         "This can trigger website scripts: requires Dangerous per-action approval. " +
         "Never use for passwords, tokens, personal or financial information. " +
-        "Does not submit forms, click buttons or permit further navigation in this session. " +
-        "A new session is required for subsequent navigation. No OS/network sandbox.",
+        "Does not submit forms, click buttons or permit navigation after entry. " +
+        "Further same-page interactions require separate host approvals and fresh checks. " +
+        "Network requests remain blocked after the first interaction. No OS/network sandbox.",
         ToolRisk.Dangerous, JsonToolSchema.Schema("""
         {"type":"object","properties":{
           "sessionId":{"type":"string","minLength":32,"maxLength":32},

@@ -17,10 +17,13 @@ public sealed class BrowserSessionClickButtonTool(IPublicBrowserSessions session
         "Click ONE user-approved native HTML <button type=button> on a previously inspected " +
         "public HTTPS page. Requires the exact page URL, DOM index, label and visible button text " +
         "from session inspection. Host requests Dangerous approval for the exact target. " +
-        "No submit/reset buttons, links, forms, arbitrary selectors or subsequent interaction " +
-        "in the same session. Blocks subsequent HTTP requests but site scripts or already-open " +
+        "No submit/reset buttons, links, forms or arbitrary selectors. Subsequent same-page " +
+        "actions require fresh independent approval and inspection. Blocks HTTP requests " +
+        "after the first interaction but site scripts or already-open " +
         "connections may still cause effects. NOT a sandbox. Never use for purchases, deletion, " +
-        "account operations, credentials or other consequential actions.",
+        "account operations, credentials or other consequential actions. " +
+        "Only explicit before/after accessibility-state fields in the receipt establish " +
+        "a verified UI state change; successful click dispatch alone does not.",
         ToolRisk.Dangerous, JsonToolSchema.Schema("""
         {"type":"object","properties":{
           "sessionId":{"type":"string","minLength":32,"maxLength":32},
@@ -68,7 +71,8 @@ public sealed class BrowserSessionClickButtonTool(IPublicBrowserSessions session
             JsonSerializer.Serialize(e.Label) + ", text " +
             JsonSerializer.Serialize(e.Text) + "]" +
             " WARNING: Clicking triggers site scripts; network routing is blocked " +
-            "but other effects may occur. One click only; no form submission or navigation approved.";
+            "but other effects may occur. Every click needs separate approval; " +
+            "no form submission or navigation approved.";
     }
 
     public async Task<ToolReceipt> ExecuteAsync(JsonElement args, CancellationToken ct)
@@ -78,8 +82,11 @@ public sealed class BrowserSessionClickButtonTool(IPublicBrowserSessions session
         {
             BrowserSessionButtonObservation observed = await sessions.ClickButtonAsync(
                 e.SessionId, e.PageUrl, e.DomIndex, e.Label, e.Text, ct);
+            string evidence = observed.AccessibleState?.VerifiedStateChange == true
+                ? "Observed an accessible-state transition for matching control metadata"
+                : "No accessible state change was independently verified";
             return ToolReceipt.Ok(
-                "Dispatched approved native button click; current page was inspected without navigation",
+                "Dispatched approved native button click without navigation. " + evidence + ".",
                 observed, changedState: true);
         }
         catch (Exception ex) when (ex is InvalidOperationException or IOException or TimeoutException)

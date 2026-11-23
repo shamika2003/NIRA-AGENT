@@ -39,6 +39,13 @@ public sealed class NiraEngine(
         answer is valid; the host binds successful observed execution receipts to it.
         The optional nira_finish tool supports explicit structured action completion.
         Never invent receipts or claim that an unobserved command succeeded.
+        In browser tasks, a successful click receipt proves dispatch, not the intended
+        UI outcome. Claim an accessible-control state changed only when matching
+        before-and-after observations explicitly support it; otherwise say unverified.
+        Never invent aria-expanded, aria-pressed, aria-checked or other DOM details.
+        Temporary browser sessions opened for a task must be explicitly closed. The
+        host independently closes any remaining sessions before completion and
+        audits those closures; do not claim a session was closed without evidence.
         If work remains unfinished, continue tool use or ask the user a necessary question.
         State uncertainty accurately. You cannot override tool authorization rules.
         """;
@@ -324,6 +331,8 @@ public sealed class NiraEngine(
                             "observed results, or ask the user if the task is blocked.", ct);
                         continue;
                     }
+                    string? cleanupError = await CloseTaskBrowserSessionsAsync(state, ct);
+                    if (cleanupError is not null) return Result(state, cleanupError);
                     string groundedAnswer = AttachRecordedEvidence(state, answer);
                     state.Messages.Add(new ChatEntry("tool", "Completion checked.", call.Id));
                     state.Status = ConversationStatus.Completed;
@@ -467,6 +476,8 @@ public sealed class NiraEngine(
             progress?.Report(new AgentProgress("paused", "Plan has unfinished steps"));
             return Result(state, "The recorded plan has unfinished steps. Task state was preserved; resume to continue.");
         }
+        string? cleanupError = await CloseTaskBrowserSessionsAsync(state, ct);
+        if (cleanupError is not null) return Result(state, cleanupError);
         string groundedAnswer = AttachRecordedEvidence(state, content);
         state.Messages.Add(new ChatEntry("assistant", groundedAnswer));
         state.Status = ConversationStatus.Completed;
@@ -474,6 +485,127 @@ public sealed class NiraEngine(
         await store.SaveAsync(state, ct);
         progress?.Report(new AgentProgress("completed", "Assistant answer and host evidence recorded"));
         return Result(state, groundedAnswer);
+    }
+
+
+    /// <summary>
+    /// Complete tasks cannot leave their isolated browser contexts running. The
+    /// host, not the model, performs close-only cleanup using the registered,
+    /// preapproved local session_close tool. Each effect is durably journaled.
+    /// The browser open and close receipts, not assistant prose, determine which
+    /// sessions remain outstanding. Never retry an uncertain close automatically.
+    /// </summary>
+    private async Task<string?> CloseTaskBrowserSessionsAsync(
+        ConversationState state, CancellationToken ct)
+    {
+        var opened = state.Operations.Where(operation =>
+            operation.ToolName == "browser.session_open" &&
+            operation.Status == OperationStatus.Succeeded).ToArray();
+        if (opened.Length == 0) return null;
+
+        var outstanding = new HashSet<string>(StringComparer.Ordinal);
+        foreach (AgentOperation open in opened)
+        {
+            if (!ReceiptSessionId(open.ResultJson, out string? sessionId))
+            {
+                state.Status = ConversationStatus.Paused;
+                await store.SaveAsync(state, ct);
+                return "A successful browser open lacks a verifiable session ID. " +
+                    "Completion paused; inspect the durable audit and close the browser context.";
+            }
+            outstanding.Add(sessionId!);
+        }
+        foreach (AgentOperation close in state.Operations.Where(operation =>
+            operation.ToolName == "browser.session_close" &&
+            operation.Status == OperationStatus.Succeeded))
+        {
+            if (ReceiptSessionId(close.ResultJson, out string? closedId))
+                outstanding.Remove(closedId!);
+        }
+        if (outstanding.Count == 0) return null;
+
+        if (!registry.TryGet("browser.session_close", out IAgentTool? closer) || closer is null ||
+            closer.Descriptor.Risk != ToolRisk.ReadLocal || !closer.Descriptor.HasSideEffects)
+        {
+            state.Status = ConversationStatus.Paused;
+            await store.SaveAsync(state, ct);
+            return "Browser sessions remain open, but the trusted local close tool is unavailable. " +
+                "Completion paused rather than claiming cleanup succeeded.";
+        }
+
+        foreach (string sessionId in outstanding.OrderBy(id => id, StringComparer.Ordinal))
+        {
+            ct.ThrowIfCancellationRequested();
+            string argsJson = JsonSerializer.Serialize(new { sessionId });
+            JsonElement args = JsonSerializer.SerializeToElement(new { sessionId });
+            if (!JsonToolSchema.Validate(closer.Descriptor.Parameters, args, out _) ||
+                !authorization.IsPreapproved(closer.Descriptor, closer.GetTarget(args)))
+            {
+                state.Status = ConversationStatus.Paused;
+                await store.SaveAsync(state, ct);
+                return "The local browser-close operation failed authorization preflight. " +
+                    "Completion paused; no additional browser action was dispatched.";
+            }
+
+            var operation = new AgentOperation {
+                Id = state.Id.ToString("N") + "-cleanup-" + Guid.NewGuid().ToString("N"),
+                ToolName = closer.Descriptor.Name, ArgumentsJson = argsJson,
+                Status = OperationStatus.Proposed
+            };
+            state.Operations.Add(operation);
+            await store.SaveAsync(state, ct);
+            operation.Status = OperationStatus.Dispatched;
+            await store.SaveAsync(state, ct);
+
+            ToolReceipt receipt;
+            try { receipt = await closer.ExecuteAsync(args, ct); }
+            catch (Exception)
+            {
+                operation.Status = OperationStatus.Unknown;
+                operation.ErrorCode = "BROWSER_CLOSE_UNCERTAIN";
+                state.Status = ConversationStatus.NeedsReconciliation;
+                await store.SaveAsync(state, CancellationToken.None);
+                return "Temporary browser-session closure has an uncertain result. " +
+                    "NIRA stopped before completion; inspect its audit instead of retrying blindly.";
+            }
+            operation.ResultJson = JsonSerializer.Serialize(receipt);
+            operation.Status = receipt.Success ? OperationStatus.Succeeded : OperationStatus.Failed;
+            operation.ErrorCode = receipt.ErrorCode;
+            operation.CompletedUtc = DateTimeOffset.UtcNow;
+            await store.SaveAsync(state, ct);
+            if (!receipt.Success || !ReceiptSessionId(operation.ResultJson, out string? confirmed) ||
+                confirmed != sessionId)
+            {
+                state.Status = ConversationStatus.Paused;
+                await store.SaveAsync(state, ct);
+                return "Temporary browser session closure was not verified. " +
+                    "NIRA preserved the closure receipt and paused instead of claiming completion.";
+            }
+        }
+        return null;
+    }
+
+    private static bool ReceiptSessionId(string? receiptJson, out string? sessionId)
+    {
+        sessionId = null;
+        if (string.IsNullOrWhiteSpace(receiptJson)) return false;
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(receiptJson);
+            JsonElement receipt = document.RootElement;
+            if (!receipt.TryGetProperty("Success", out JsonElement success) ||
+                success.ValueKind != JsonValueKind.True ||
+                !receipt.TryGetProperty("Data", out JsonElement data) ||
+                data.ValueKind != JsonValueKind.Object) return false;
+            string name = data.TryGetProperty("SessionId", out _) ? "SessionId" : "sessionId";
+            if (!data.TryGetProperty(name, out JsonElement value) ||
+                value.ValueKind != JsonValueKind.String) return false;
+            string? id = value.GetString();
+            if (!Guid.TryParseExact(id, "N", out _)) return false;
+            sessionId = id;
+            return true;
+        }
+        catch (JsonException) { return false; }
     }
 
     // The executable host auto-attests its own receipts. These are not model claims.

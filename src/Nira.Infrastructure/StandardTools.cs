@@ -21,9 +21,15 @@ public static class NiraStandardTools
             new ProcessRunTool(resolver), new PublicBrowserInspectionTool(),
             new PublicBrowserLinkTool(),
             new BrowserSessionOpenTool(browserSessions), new BrowserSessionInspectTool(browserSessions),
-            new BrowserSessionFollowTool(browserSessions), new BrowserSessionCloseTool(browserSessions),
+            new BrowserSessionInspectControlsTool(browserSessions),
+            new BrowserSessionInspectLinksTool(browserSessions),
+            new BrowserSessionFollowTool(browserSessions), new BrowserSessionSemanticLinkTool(browserSessions),
+            new BrowserSessionCloseTool(browserSessions),
             new BrowserSessionFillTextTool(browserSessions),
             new BrowserSessionClickButtonTool(browserSessions),
+            new BrowserSessionSemanticActionTool(browserSessions),
+            new BrowserSessionSelectOptionTool(browserSessions),
+            new BrowserSessionSetCheckedTool(browserSessions),
             new MemorySearchTool(store), new MemoryRememberTool(store),
             new TavilySearchTool(http)
         ]);
