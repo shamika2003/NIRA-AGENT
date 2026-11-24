@@ -1,0 +1,1249 @@
+using System.Globalization;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Data;
+using System.Windows.Documents;
+using System.Windows.Media;
+using System.Windows.Shapes;
+using NIRAAgent.Presentation;
+
+namespace NIRAAgent.UI.Presentation;
+
+// Typed presentation only. No arbitrary XAML, HTML, script or model-owned bindings.
+// All layout is local WPF and follows the active NIRA Eclipse/Halo resources.
+public static class NIRARichBlockRenderer
+{
+    private static void Theme(FrameworkElement element, DependencyProperty property, string key) =>
+        element.SetResourceReference(property, key);
+
+    private static TextBlock Text(string value, double size = 14, bool bold = false, string brush = "NIRATextBrush")
+    {
+        var text = new TextBlock
+        {
+            TextWrapping = TextWrapping.Wrap,
+            FontSize = size,
+            FontWeight = bold ? FontWeights.SemiBold : FontWeights.Normal,
+            LineHeight = size * 1.53
+        };
+        Theme(text, TextBlock.ForegroundProperty, brush);
+        // Unified safe Markdown/URL renderer: source URLs are clickable in
+        // ordinary chat AND in rich card/table text. No navigation on render.
+        NIRAStyledChatText.SetText(text, value ?? string.Empty);
+        return text;
+    }
+
+    private static Border Frame(UIElement child, bool boxed = true, double padding = 14, double maxWidth = double.PositiveInfinity)
+    {
+        var frame = new Border
+        {
+            Child = child,
+            CornerRadius = new CornerRadius(boxed ? 14 : 0),
+            BorderThickness = new Thickness(boxed ? 1 : 0),
+            Padding = new Thickness(boxed ? padding : 0),
+            Margin = new Thickness(0, 6, 0, 6),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            MaxWidth = maxWidth
+        };
+        if (boxed)
+        {
+            Theme(frame, Border.BackgroundProperty, "NIRAGlassStrongTintBrush");
+            Theme(frame, Border.BorderBrushProperty, "NIRAGlassBorderBrush");
+        }
+        return frame;
+    }
+
+    public static FrameworkElement Render(NIRARichBlock block,
+        NIRARichInteractionState? state = null,
+        Action<NIRARichInteractionState>? onStateChanged = null,
+        Action<string>? followUp = null) => block.Type switch
+    {
+        "heading" => Frame(Text(block.Title.Length > 0 ? block.Title : block.Text, 17.5, true, "NIRATextBrush"), false),
+        "hero" => Hero(block),
+        "insight" => Insight(block),
+        "source" => Source(block),
+        "video" => VideoLinkFallback(block),
+        "text" => Frame(Body(block), false),
+        "card" => Card(block),
+        "status" => Status(block),
+        "bar" => DesignedSurface(Bars(block), Palette[2], 12),
+        "file" => FileResult(block),
+        "metric" => Frame(Metric(block)),
+        "equation" => Frame(NIRAMathEquationRenderer.Render(block), false),
+        "table" => DesignedSurface(Table(block), Palette[0], 11),
+        "chart" => DesignedSurface(Chart(block), Palette[0], 12),
+        "code" => DesignedSurface(Code(block), Palette[0], 12),
+        "details" => Frame(Details(block, state, onStateChanged)),
+        "tabs" => DesignedSurface(Tabs(block, state, onStateChanged), Palette[0], 13),
+        "followups" => Frame(FollowUps(block, state, onStateChanged, followUp), false),
+        "list" => Frame(BulletList(block), false),
+        "quote" => Frame(Quote(block)),
+        "timeline" => Frame(Timeline(block), false, maxWidth: 850),
+        "checklist" => Frame(Checklist(block, state, onStateChanged), true, 16, maxWidth: 850),
+        "progress" => DesignedSurface(Progress(block), Palette[0], 13),
+        _ => Frame(Text(block.Text), false)
+    };
+
+    // R21: restrained editorial surfaces. The conversation is the design;
+    // optional structured information must visually belong to its prose.
+    // Colors supply slight emphasis, never giant colored chapter panels.
+    private static readonly Color[] Palette =
+    {
+        Color.FromRgb(61, 111, 180),   // restrained blue
+        Color.FromRgb(101, 103, 156),  // restrained indigo
+        Color.FromRgb(48, 128, 144),   // restrained teal
+        Color.FromRgb(148, 116, 77),   // restrained bronze
+        Color.FromRgb(57, 125, 106)    // restrained green
+    };
+
+    private static SolidColorBrush Tint(Color color, byte alpha) =>
+        new(Color.FromArgb(alpha, color.R, color.G, color.B));
+
+    private static LinearGradientBrush TintGradient(Color color) => new(
+        new GradientStopCollection
+        {
+            new(Color.FromArgb(23, color.R, color.G, color.B), 0),
+            new(Color.FromArgb(10, color.R, color.G, color.B), 0.60),
+            new(Color.FromArgb(5, color.R, color.G, color.B), 1)
+        }, new Point(0, 0), new Point(1, 1));
+
+    private static Border DesignedSurface(UIElement content, Color tone, double pad = 14)
+    {
+        var layer = new Grid { ClipToBounds = true };
+        layer.Children.Add(new Border { Background = TintGradient(tone), IsHitTestVisible = false });
+        layer.Children.Add(new Border
+        {
+            Width = 2, Background = Tint(tone, 151),
+            HorizontalAlignment = HorizontalAlignment.Left, IsHitTestVisible = false
+        });
+        layer.Children.Add(new Border
+        {
+            Padding = new Thickness(pad + 3, pad, pad, pad), Child = content
+        });
+        var frame = new Border
+        {
+            Child = layer, CornerRadius = new CornerRadius(11), ClipToBounds = true,
+            BorderThickness = new Thickness(1), Margin = new Thickness(0, 5, 0, 5),
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        Theme(frame, Border.BackgroundProperty, "NIRAGlassStrongTintBrush");
+        Theme(frame, Border.BorderBrushProperty, "NIRAGlassBorderBrush");
+        return frame;
+    }
+
+    private static FrameworkElement ResponsiveTiles(IReadOnlyList<FrameworkElement> tiles,
+        int maximumColumns, double minimumWidth, double gap)
+    {
+        var panel = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Stretch,
+            Orientation = Orientation.Horizontal, Margin = new Thickness(0, 5, 0, 7) };
+        foreach (var tile in tiles)
+        {
+            tile.Margin = new Thickness(0, 0, gap, gap);
+            tile.MinWidth = 0;
+            panel.Children.Add(tile);
+        }
+        void Reflow()
+        {
+            if (panel.ActualWidth < 1) return;
+            int columns = Math.Clamp((int)Math.Floor((panel.ActualWidth + gap) / (minimumWidth + gap)),
+                1, Math.Min(maximumColumns, Math.Max(1, tiles.Count)));
+            double width = Math.Max(160, (panel.ActualWidth - columns * gap) / columns);
+            foreach (var tile in tiles) tile.Width = width;
+        }
+        panel.Loaded += (_, _) => Reflow();
+        panel.SizeChanged += (_, _) => Reflow();
+        return panel;
+    }
+
+    public static FrameworkElement RenderCardGroup(IEnumerable<NIRARichBlock> cards)
+    {
+        var collection = cards.ToList();
+        // Long explanatory cards need generous reading width. Three columns are
+        // reserved for genuinely compact cards, not dense technical prose.
+        bool substantial = collection.Any(card => card.Text.Length > 175 || card.Title.Length > 29);
+        return ResponsiveTiles(collection.Select((card, i) => (FrameworkElement)Card(card, i, true))
+            .ToList(), substantial ? 2 : 3, substantial ? 355 : 260, 13);
+    }
+
+    public static FrameworkElement RenderMetricGroup(IEnumerable<NIRARichBlock> metrics)
+    {
+        var collection = metrics.ToList();
+        return ResponsiveTiles(collection.Select((block, i) => (FrameworkElement)MetricTile(block, i))
+            .ToList(), 4, 188, 9);
+    }
+
+    private static Border MetricTile(NIRARichBlock block, int index) =>
+        DesignedSurface(Metric(block), Palette[0], 11);
+
+    private static Border Hero(NIRARichBlock block)
+    {
+        // Hero is an editorial emphasis, NOT an automatic full-width billboard.
+        var root = new StackPanel();
+        if (block.Title.Length > 0)
+        {
+            var header = Text(block.Title, 18, true);
+            header.Margin = new Thickness(0, 0, 0, 7);
+            root.Children.Add(header);
+        }
+        if (block.Text.Length > 0) root.Children.Add(Text(block.Text, 13.5));
+        return Frame(root, false);
+    }
+
+    // A tiny, accessible WPF symbol label for meaningful block types only.
+    // No emoji, remote icon files, model-owned paths or automatic card badges.
+    private static FrameworkElement SemanticHeading(string symbol, string title, Color color)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center };
+        var badge = new Border { Width = 27, Height = 27,
+            CornerRadius = new CornerRadius(8),
+            Background = Tint(color, 23), BorderBrush = Tint(color, 64),
+            BorderThickness = new Thickness(1), Margin = new Thickness(0, 0, 10, 0) };
+        badge.Child = new TextBlock { Text = symbol,
+            FontFamily = new FontFamily("Segoe UI Symbol, Segoe UI"), FontSize = 14,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = NIRAResponsePalette.AccentBrush(color),
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center };
+        row.Children.Add(badge);
+        var label = Text(title, 14.2, true);
+        label.MaxWidth = 580;
+        label.VerticalAlignment = VerticalAlignment.Center;
+        row.Children.Add(label);
+        return row;
+    }
+
+    private static Border Insight(NIRARichBlock block)
+    {
+        var content = new StackPanel();
+        // R23: An insight is a quiet inline emphasis, not a fixed gold footer.
+        // The cognition decision controls whether the note exists at all.
+        content.Children.Add(SemanticHeading("✦", block.Title.Length > 0 ?
+            block.Title : "Note", Tone(block, 1)));
+        if (block.Text.Length > 0)
+        {
+            var body = Text(block.Text, 13.4);
+            body.Margin = new Thickness(37, 9, 0, 0);
+            content.Children.Add(body);
+        }
+        return DesignedSurface(content, Tone(block, 1), 13);
+    }
+
+    private static Border Source(NIRARichBlock block)
+    {
+        // A model-authored source block is a useful resource LINK, not proof
+        // that the page has been fetched. Keep the actual URL in the click
+        // destination and use a legible title/host instead of dumping it raw.
+        var content = new StackPanel();
+        string title = block.Title.Length > 0 ? block.Title : "Reference";
+        content.Children.Add(SemanticHeading("↗", title, Palette[4]));
+        string shown = block.Text;
+        if (Uri.TryCreate(block.Text, UriKind.Absolute, out Uri? url) &&
+            url.Scheme is "http" or "https")
+        {
+            shown = $"[Visit {url.Host}  ↗]({url.AbsoluteUri})";
+        }
+        var link = Text(shown, 13.1, true, "NIRACyanBrush");
+        link.Margin = new Thickness(37, 10, 0, 0);
+        content.Children.Add(link);
+        return DesignedSurface(content, Palette[4], 17);
+    }
+
+    // Fallback for links without a supported embedded video host. The existing
+    // safe rich-text host owns external navigation; no automatic video fetching.
+    internal static Border VideoLinkFallback(NIRARichBlock block)
+    {
+        var content = new StackPanel();
+        string title = block.Title.Length > 0 ? block.Title : "Watch demonstration";
+        content.Children.Add(SemanticHeading("▶", title, Palette[0]));
+        string link = block.Text;
+        if (Uri.TryCreate(block.Text, UriKind.Absolute, out Uri? uri) &&
+            uri.Scheme is "http" or "https")
+            link = $"[Watch at {uri.Host}  ↗]({uri.AbsoluteUri})";
+        var body = Text(link, 13.1, true, "NIRACyanBrush");
+        body.Margin = new Thickness(37, 10, 0, 0);
+        content.Children.Add(body);
+        return DesignedSurface(content, Palette[0], 17);
+    }
+
+    private static Border FileResult(NIRARichBlock block)
+    {
+        var root = new StackPanel();
+        var header = new DockPanel { LastChildFill = false };
+        var status = Text(block.Unit.Length > 0 ? block.Unit : "FILE", 10, true, "NIRACyanBrush");
+        status.VerticalAlignment = VerticalAlignment.Center;
+        DockPanel.SetDock(status, Dock.Left);
+        header.Children.Add(status);
+
+        Button? copyButton = null;
+        copyButton = ActionButton("Copy path", () =>
+        {
+            try
+            {
+                System.Windows.Clipboard.SetText(block.Text);
+                if (copyButton != null) copyButton.Content = "Copied";
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[FileCard] Clipboard unavailable: {ex.GetType().Name}");
+            }
+        });
+        var copy = copyButton!;
+        copy.ToolTip = "Copy the observed file path; no file operation is performed";
+        DockPanel.SetDock(copy, Dock.Right);
+        header.Children.Add(copy);
+        root.Children.Add(header);
+
+        var name = Text(block.Title, 17, true);
+        name.Margin = new Thickness(0, 8, 0, 3);
+        root.Children.Add(name);
+
+        var locationLabel = Text("LOCATION", 10, true, "NIRASecondaryBrush");
+        locationLabel.Margin = new Thickness(0, 8, 0, 3);
+        root.Children.Add(locationLabel);
+        var path = Text(block.Text, 12);
+        path.FontFamily = new FontFamily("Consolas");
+        root.Children.Add(path);
+
+        if (block.Items.Count > 0 && !string.IsNullOrWhiteSpace(block.Items[0]))
+        {
+            var sourceLabel = Text("COPIED FROM", 10, true, "NIRASecondaryBrush");
+            sourceLabel.Margin = new Thickness(0, 12, 0, 3);
+            root.Children.Add(sourceLabel);
+            var source = Text(block.Items[0], 11, false, "NIRASecondaryBrush");
+            source.FontFamily = new FontFamily("Consolas");
+            root.Children.Add(source);
+        }
+        return Frame(root, true, 15, 760);
+    }
+
+    private static Border Card(NIRARichBlock block, int index = 0,
+        bool grouped = false)
+    {
+        var root = new StackPanel();
+        if (block.Title.Length > 0)
+        {
+            var heading = BlockHeading(block, index);
+            heading.Margin = new Thickness(0, 0, 0, 12);
+            root.Children.Add(heading);
+        }
+        if (!string.IsNullOrWhiteSpace(block.Text))
+        {
+            // Labeled, multiline explanations deserve distinct subheadings
+            // instead of an uninterrupted dense paragraph. Do not invent labels.
+            string copy = block.Text.Replace("\r\n", "\n").Replace('\r', '\n');
+            copy = Regex.Replace(copy,
+                @"(?<=\S)[ \t]+(?=\*{0,2}(?:Benefits|Challenges|Applications|Advantages|Disadvantages|Risks|Limitations|Best for|Trade-offs)\*{0,2}:\*{0,2})",
+                "\n", RegexOptions.CultureInvariant);
+            var lines = copy.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            int labeled = lines.Count(line => Regex.IsMatch(line.Trim(),
+                @"^\*{0,2}[\p{L}][\p{L}0-9 &/()\-]{2,34}\*{0,2}:\*{0,2}\s*\S", RegexOptions.CultureInvariant));
+            if (labeled >= 2)
+            {
+                foreach (string original in lines)
+                {
+                    string line = original.Trim();
+                    var part = Regex.Match(line, @"^\*{0,2}(?<name>[\p{L}][\p{L}0-9 &/()\-]{2,34})\*{0,2}:\*{0,2}\s*(?<detail>.*)$");
+                    if (part.Success)
+                    {
+                        var label = Text(part.Groups["name"].Value.ToUpperInvariant(), 10.7, true, "NIRACyanBrush");
+                        label.Margin = new Thickness(0, 13, 0, 4);
+                        root.Children.Add(label);
+                        if (!string.IsNullOrWhiteSpace(part.Groups["detail"].Value))
+                            root.Children.Add(Text(part.Groups["detail"].Value, 13.4));
+                    }
+                    else
+                    {
+                        var paragraph = Text(line, 13.4);
+                        paragraph.Margin = new Thickness(0, 7, 0, 0);
+                        root.Children.Add(paragraph);
+                    }
+                }
+            }
+            else root.Children.Add(Text(block.Text, 13.4));
+        }
+        // Subtle hue variation only for an ACTUAL group, never arbitrary
+        // numbering: cards are often choices rather than sequential actions.
+        return DesignedSurface(root, Tone(block, grouped ? index % 3 : 0), 16);
+    }
+
+    private static UIElement Body(NIRARichBlock block)
+    {
+        var stack = new StackPanel();
+        if (block.Title.Length > 0) stack.Children.Add(Text(block.Title, 15, true, "NIRACyanBrush"));
+        if (block.Text.Length > 0)
+        {
+            var details = Text(block.Text);
+            if (block.Title.Length > 0) details.Margin = new Thickness(0, 5, 0, 0);
+            stack.Children.Add(details);
+        }
+        return stack;
+    }
+
+    private static UIElement Metric(NIRARichBlock block)
+    {
+        var stack = new StackPanel();
+        stack.Children.Add(BlockHeading(block, 2));
+        string unit = block.Unit.Trim();
+        string valueText = block.Text.Trim();
+        if (unit.Length > 0 && !valueText.EndsWith(unit, StringComparison.OrdinalIgnoreCase))
+            valueText += " " + unit;
+        var value = Text(valueText, 25, true, "NIRACyanBrush");
+        value.Foreground = NIRAResponsePalette.AccentBrush(Tone(block, 2));
+        value.Margin = new Thickness(0, 9, 0, 0);
+        stack.Children.Add(value);
+        return stack;
+    }
+
+    // Local-only UI commands never become model-owned capabilities.
+    private static Button ActionButton(string label, Action action)
+    {
+        var button = new Button
+        {
+            Content = label,
+            FontSize = 12,
+            FontWeight = FontWeights.SemiBold,
+            Padding = new Thickness(12, 5, 12, 5),
+            Margin = new Thickness(7, 0, 0, 0),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Cursor = System.Windows.Input.Cursors.Hand,
+            MinHeight = 30,
+            BorderThickness = new Thickness(1)
+        };
+        Theme(button, Control.ForegroundProperty, "NIRACyanBrush");
+        Theme(button, Control.BackgroundProperty, "NIRAGlassStrongTintBrush");
+        Theme(button, Control.BorderBrushProperty, "NIRAGlassBorderBrush");
+        button.Click += (_, _) => action();
+        return button;
+    }
+
+    private static Color Tone(NIRARichBlock block, int fallback)
+    {
+        string hex = block.Color;
+        if (hex.Length == 7 && hex[0] == '#' && uint.TryParse(hex.AsSpan(1), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint rgb))
+            return Color.FromRgb((byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb);
+        return Palette[fallback % Palette.Length];
+    }
+
+    private static FrameworkElement BlockHeading(NIRARichBlock block, int index)
+    {
+        string symbol = block.Icon switch
+        {
+            "brain" => "✦", "info" => "ⓘ", "check" => "✓", "warning" => "!",
+            "search" => "⌕", "code" => "⌘", "chart" => "▥", "time" => "◷",
+            "star" => "★", "link" => "↗", "target" => "◎", "file" => "▤",
+            "shield" => "◇", "idea" => "✧", "bolt" => "ϟ", _ => ""
+        };
+        return symbol.Length == 0 ? Text(block.Title, 16.1, true) : SemanticHeading(symbol, block.Title, Tone(block, index));
+    }
+
+    private static Border Status(NIRARichBlock block)
+    {
+        var panel = new StackPanel();
+        panel.Children.Add(BlockHeading(block, 4));
+        if (block.Text.Length > 0) panel.Children.Add(Text(block.Text, 13.5));
+        return Frame(panel, false);
+    }
+
+    private static UIElement Bars(NIRARichBlock block)
+    {
+        var root = new StackPanel();
+        if (block.Title.Length > 0) root.Children.Add(BlockHeading(block, 2));
+        double max = block.Values.Max();
+        for (int i = 0; i < block.Values.Count; i++)
+        {
+            var row = new DockPanel { Margin = new Thickness(0, 8, 0, 2) };
+            var number = Text(block.Values[i].ToString("G", CultureInfo.InvariantCulture) + " " + block.Unit, 12, true);
+            DockPanel.SetDock(number, Dock.Right); row.Children.Add(number);
+            row.Children.Add(Text(block.Labels[i], 13)); root.Children.Add(row);
+            var bar = new ProgressBar { Minimum = 0, Maximum = max > 0 ? max : 1, Value = block.Values[i], Height = 7, IsHitTestVisible = false };
+            bar.Foreground = new SolidColorBrush(Tone(block, i)); root.Children.Add(bar);
+        }
+        return root;
+    }
+
+    private static readonly Regex CodeTokens = new(
+        @"(?<comment>//[^\r\n]*|#[^\r\n]*)|(?<string>""(?:\\.|[^""\\])*""|'(?:\\.|[^'\\])*')|(?<number>\b\d+(?:\.\d+)?\b)|(?<keyword>\b(?:abstract|as|async|await|bool|break|byte|case|catch|char|class|const|continue|decimal|default|def|delete|do|double|elif|else|enum|event|except|export|extends|false|False|finally|float|for|foreach|from|function|if|import|in|int|interface|internal|is|let|long|namespace|new|null|None|object|out|override|private|protected|public|readonly|record|return|sealed|short|static|string|struct|super|switch|this|throw|throws|true|True|try|typeof|using|var|virtual|void|while|yield)\b)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Brush CodeComment = Frozen("#8395AC");
+    private static readonly Brush CodeString = Frozen("#91D5B1");
+    private static readonly Brush CodeNumber = Frozen("#EBC182");
+    private static readonly Brush CodeKeyword = Frozen("#6CCAF3");
+    private static Brush Frozen(string hex)
+    {
+        var brush = (SolidColorBrush)new BrushConverter().ConvertFromString(hex)!;
+        brush.Freeze();
+        return brush;
+    }
+
+    private static TextBlock HighlightedSource(string source)
+    {
+        var body = new TextBlock
+        {
+            TextWrapping = TextWrapping.NoWrap,
+            FontSize = 13,
+            LineHeight = 21,
+            FontFamily = new FontFamily("Cascadia Code, Consolas"),
+            Padding = new Thickness(2)
+        };
+        Theme(body, TextBlock.ForegroundProperty, "NIRATextBrush");
+        string[] lines = source.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        for (int i = 0; i < lines.Length; i++)
+        {
+            body.Inlines.Add(new Run($"{i + 1,3}  ") { Foreground = CodeComment });
+            string line = lines[i];
+            int cursor = 0;
+            foreach (Match match in CodeTokens.Matches(line))
+            {
+                if (match.Index > cursor)
+                    body.Inlines.Add(new Run(line[cursor..match.Index]));
+                Brush brush = match.Groups["comment"].Success ? CodeComment :
+                    match.Groups["string"].Success ? CodeString :
+                    match.Groups["number"].Success ? CodeNumber : CodeKeyword;
+                body.Inlines.Add(new Run(match.Value) { Foreground = brush });
+                cursor = match.Index + match.Length;
+            }
+            if (cursor < line.Length) body.Inlines.Add(new Run(line[cursor..]));
+            if (i < lines.Length - 1) body.Inlines.Add(new LineBreak());
+        }
+        return body;
+    }
+
+    // A short code/table block cannot scroll vertically, and a long one
+    // eventually reaches its top or bottom. In either case, keep the mouse
+    // wheel moving through the conversation instead of swallowing the input.
+    // Apply only to the nested rich-content viewers, not the main ChatScroll.
+    private static ScrollViewer ChainVerticalWheel(ScrollViewer nested)
+    {
+        nested.PreviewMouseWheel += (_, e) =>
+        {
+            if (e.Handled || e.Delta == 0) return;
+
+            // One standard wheel notch is 120 units. Carry any unconsumed
+            // distance to the nearest outer viewer when the inner one ends.
+            double remaining = -e.Delta / 120.0 * 72.0;
+            bool moved = false;
+            ScrollViewer? viewer = nested;
+            while (viewer != null && Math.Abs(remaining) > 0.5)
+            {
+                double max = Math.Max(0, viewer.ScrollableHeight);
+                if (max > 0.5)
+                {
+                    double start = viewer.VerticalOffset;
+                    double target = Math.Clamp(start + remaining, 0, max);
+                    double consumed = target - start;
+                    if (Math.Abs(consumed) > 0.5)
+                    {
+                        viewer.ScrollToVerticalOffset(target);
+                        remaining -= consumed;
+                        moved = true;
+                    }
+                }
+                viewer = ParentScrollViewer(viewer);
+            }
+            if (moved) e.Handled = true;
+            // If no viewer moved, leave the event alone for normal WPF handling.
+        };
+        return nested;
+    }
+
+    private static ScrollViewer? ParentScrollViewer(DependencyObject child)
+    {
+        DependencyObject? parent = VisualTreeHelper.GetParent(child);
+        while (parent != null)
+        {
+            if (parent is ScrollViewer viewer) return viewer;
+            parent = VisualTreeHelper.GetParent(parent);
+        }
+        return null;
+    }
+
+    private static UIElement Code(NIRARichBlock block)
+    {
+        string source = block.Text.Replace("\r\n", "\n").Replace('\r', '\n');
+        var root = new StackPanel();
+        var toolbar = new DockPanel { LastChildFill = true };
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right };
+        DockPanel.SetDock(buttons, Dock.Right);
+        toolbar.Children.Add(buttons);
+        var label = Text(block.Title.Length > 0 ? block.Title :
+            (block.Language.Length > 0 ? block.Language.ToUpperInvariant() : "CODE"),
+            12, true, "NIRACyanBrush");
+        label.VerticalAlignment = VerticalAlignment.Center;
+        toolbar.Children.Add(label);
+        root.Children.Add(toolbar);
+        buttons.Children.Add(ActionButton("Copy", () => Clipboard.SetText(source)));
+
+        var highlighted = HighlightedSource(source);
+        var scroller = new ScrollViewer
+        {
+            Content = highlighted,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            MaxHeight = 390,
+            Margin = new Thickness(0, 10, 0, 0)
+        };
+        int lineCount = source.Count(c => c == '\n') + 1;
+        if (lineCount > 20)
+        {
+            bool expanded = false;
+            scroller.MaxHeight = 20 * 21 + 12;
+            Button? toggle = null;
+            toggle = ActionButton($"Expand · {lineCount} lines", () =>
+            {
+                expanded = !expanded;
+                scroller.MaxHeight = expanded ? 720 : 20 * 21 + 12;
+                if (toggle != null) toggle.Content = expanded ? "Collapse" : $"Expand · {lineCount} lines";
+            });
+            buttons.Children.Insert(0, toggle);
+        }
+        root.Children.Add(ChainVerticalWheel(scroller));
+        return root;
+    }
+
+    private static UIElement Details(NIRARichBlock block,
+        NIRARichInteractionState? saved, Action<NIRARichInteractionState>? changed)
+    {
+        var root = new StackPanel();
+        bool expanded = saved?.Expanded == true;
+        var content = Text(block.Text, 13);
+        content.Margin = new Thickness(3, 10, 3, 5);
+        content.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
+        string label = block.Title.Length > 0 ? block.Title : "More details";
+        Button? toggle = null;
+        toggle = ActionButton((expanded ? "▾  " : "▸  ") + label, () =>
+        {
+            expanded = !expanded;
+            content.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
+            if (toggle != null) toggle.Content = (expanded ? "▾  " : "▸  ") + label;
+            changed?.Invoke(new NIRARichInteractionState { Expanded = expanded });
+        });
+        toggle.HorizontalAlignment = HorizontalAlignment.Stretch;
+        toggle.HorizontalContentAlignment = HorizontalAlignment.Left;
+        toggle.Margin = new Thickness(0);
+        toggle.FontSize = 14;
+        toggle.Padding = new Thickness(14, 11, 14, 11);
+        root.Children.Add(toggle);
+        root.Children.Add(content);
+        return root;
+    }
+
+    // A tab panel can mix explanatory prose and fenced source. A plain
+    // TextBlock would show source as unformatted text and lose code tooling.
+    // Render source using the same syntax highlighter/copy/scroll surface as
+    // an ordinary "code" block, including when a model omits code fences in
+    // a clearly named Example/Code tab.
+    private static readonly Regex TabCodeFence = new(
+        @"```(?<language>[^`\r\n]*)\r?\n(?<source>[\s\S]*?)\r?\n?```",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    // The chat document parser renders actual headings, bullets and tables in
+    // tab panels. It never evaluates scripts or model-defined UI actions.
+    private static FrameworkElement TabMarkdown(string markdown)
+    {
+        var panel = new StackPanel { HorizontalAlignment = HorizontalAlignment.Stretch };
+        panel.Children.Add(NIRAResponseDocument.Create(markdown));
+        return panel;
+    }
+
+    private static UIElement TabPanelContent(string text, string tabLabel)
+    {
+        var content = new StackPanel { Margin = new Thickness(3, 5, 3, 9) };
+        string source = (text ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n');
+        // R24 archives may already contain the older flattened object form.
+        // Strip only the leading field label, not actual authored content.
+        source = Regex.Replace(source, @"^\s*(?:text|body|content):\s*(?=\S)", string.Empty,
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        MatchCollection fences = TabCodeFence.Matches(source);
+        if (fences.Count == 0)
+        {
+            bool codeTab = Regex.IsMatch(tabLabel,
+                @"\b(example|code|snippet)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            bool codeBody = source.Contains('\n') && Regex.IsMatch(source,
+                @"(?m)^\s*(?:for\s*\(|(?:int|var|bool|string|double|float|decimal)\s+\w+\s*=|(?:Console\.|print\s*\(|//)|[{}]\s*$)",
+                RegexOptions.CultureInvariant);
+            if (codeTab && codeBody)
+            {
+                content.Children.Add(Code(new NIRARichBlock
+                {
+                    Type = "code", Text = source.Trim(), Title = "Example"
+                }));
+            }
+            else content.Children.Add(TabMarkdown(source));
+            return content;
+        }
+
+        int cursor = 0;
+        foreach (Match fence in fences)
+        {
+            if (fence.Index > cursor)
+            {
+                string prose = source[cursor..fence.Index].Trim();
+                if (prose.Length > 0)
+                {
+                    content.Children.Add(TabMarkdown(prose));
+                }
+            }
+            string code = fence.Groups["source"].Value.Trim('\n');
+            if (code.Length > 0)
+            {
+                var codeBlock = Code(new NIRARichBlock
+                {
+                    Type = "code", Language = fence.Groups["language"].Value.Trim(),
+                    Text = code
+                });
+                var frame = Frame(codeBlock, true, 11);
+                frame.Margin = new Thickness(0, 4, 0, 10);
+                content.Children.Add(frame);
+            }
+            cursor = fence.Index + fence.Length;
+        }
+        if (cursor < source.Length)
+        {
+            string trailing = source[cursor..].Trim();
+            if (trailing.Length > 0) content.Children.Add(TabMarkdown(trailing));
+        }
+        return content;
+    }
+
+    private static UIElement Tabs(NIRARichBlock block,
+        NIRARichInteractionState? saved, Action<NIRARichInteractionState>? changed)
+    {
+        int selected = saved?.SelectedIndex is int index && index >= 0 &&
+            index < block.Items.Count ? index : 0;
+        var root = new StackPanel();
+        if (block.Title.Length > 0)
+            root.Children.Add(Text(block.Title, 16, true, "NIRACyanBrush"));
+        var strip = new WrapPanel { Margin = new Thickness(0, 9, 0, 10) };
+        var controls = new List<Button>();
+        var panelHost = new StackPanel();
+        panelHost.Children.Add(TabPanelContent(block.Panels[selected], block.Items[selected]));
+        void Select(int next)
+        {
+            selected = next;
+            panelHost.Children.Clear();
+            panelHost.Children.Add(TabPanelContent(block.Panels[next], block.Items[next]));
+            for (int i = 0; i < controls.Count; i++)
+            {
+                controls[i].FontWeight = i == selected ? FontWeights.Bold : FontWeights.Normal;
+                controls[i].SetResourceReference(Control.ForegroundProperty,
+                    i == selected ? "NIRACyanBrush" : "NIRATextBrush");
+            }
+            changed?.Invoke(new NIRARichInteractionState { SelectedIndex = selected });
+        }
+        for (int i = 0; i < block.Items.Count; i++)
+        {
+            int choice = i;
+            var button = ActionButton(block.Items[i], () => Select(choice));
+            button.Margin = new Thickness(0, 0, 7, 6);
+            button.Padding = new Thickness(13, 8, 13, 8);
+            button.FontSize = 13;
+            button.FontWeight = i == selected ? FontWeights.Bold : FontWeights.Normal;
+            button.SetResourceReference(Control.ForegroundProperty,
+                i == selected ? "NIRACyanBrush" : "NIRATextBrush");
+            controls.Add(button);
+            strip.Children.Add(button);
+        }
+        root.Children.Add(strip);
+        root.Children.Add(panelHost);
+        return root;
+    }
+
+    // Only a real click submits a follow-up, never a model-authored callback.
+    private static UIElement FollowUps(NIRARichBlock block,
+        NIRARichInteractionState? saved, Action<NIRARichInteractionState>? changed,
+        Action<string>? submit)
+    {
+        var root = new StackPanel();
+        root.Children.Add(Text(block.Title.Length == 0 ? "Continue with" : block.Title,
+            14, true, "NIRACyanBrush"));
+        var strip = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) };
+        int selected = saved?.SelectedIndex ?? -1;
+        for (int i = 0; i < block.Items.Count; i++)
+        {
+            int index = i;
+            string choice = block.Items[i];
+            var button = ActionButton((index == selected ? "✓  " : "↗  ") + choice, () =>
+            {
+                selected = index;
+                changed?.Invoke(new NIRARichInteractionState { SelectedIndex = index });
+                submit?.Invoke(choice);
+            });
+            button.HorizontalAlignment = HorizontalAlignment.Left;
+            button.Margin = new Thickness(0, 0, 8, 7);
+            button.Padding = new Thickness(14, 9, 14, 9);
+            button.FontSize = 13;
+            strip.Children.Add(button);
+        }
+        root.Children.Add(strip);
+        return root;
+    }
+
+    private static UIElement BulletList(NIRARichBlock block)
+    {
+        var root = new StackPanel();
+        if (block.Title.Length > 0) root.Children.Add(Text(block.Title, 15, true, "NIRACyanBrush"));
+        foreach (string item in block.Items)
+        {
+            // A DockPanel allows wrapped text to take available chat width.
+            var row = new DockPanel();
+            var bullet = Text("•", 14, true, "NIRACyanBrush");
+            DockPanel.SetDock(bullet, Dock.Left);
+            row.Children.Add(bullet);
+            var text = Text(item, 13);
+            text.Margin = new Thickness(10, 0, 0, 0);
+            row.Children.Add(text);
+            row.Margin = new Thickness(0, 7, 0, 0);
+            root.Children.Add(row);
+        }
+        return root;
+    }
+
+    private static UIElement Quote(NIRARichBlock block)
+    {
+        var root = new StackPanel();
+        if (block.Title.Length > 0) root.Children.Add(Text(block.Title, 12, true, "NIRACyanBrush"));
+        var quote = Text(block.Text, 14);
+        quote.FontStyle = FontStyles.Italic;
+        quote.Margin = new Thickness(12, 7, 0, 0);
+        root.Children.Add(quote);
+        return root;
+    }
+
+    // A milestone rail, not a plain list. The model supplies only content/order;
+    // the UI supplies stage numbers and decorative structure. No dates inferred.
+    private static UIElement Timeline(NIRARichBlock block)
+    {
+        var root = new StackPanel();
+        var header = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 0, 0, 17) };
+        var count = Text($"{block.Items.Count} MILESTONES", 11, true, "NIRASecondaryBrush");
+        count.VerticalAlignment = VerticalAlignment.Center;
+        DockPanel.SetDock(count, Dock.Right);
+        header.Children.Add(count);
+        header.Children.Add(Text(block.Title.Length == 0 ? "Timeline" : block.Title,
+            17, true, "NIRACyanBrush"));
+        root.Children.Add(header);
+
+        for (int i = 0; i < block.Items.Count; i++)
+        {
+            string item = block.Items[i];
+            // Compatibility for earlier archived responses whose JSON objects
+            // were flattened into "1980s; title: ...; text: ...".
+            var legacy = Regex.Match(item,
+                @"^\s*(?:(?:date|year|period):\s*)?(?<when>[^;\r\n]+);\s*title:\s*(?<title>[^;\r\n]+);\s*text:\s*(?<body>[\s\S]+)$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (legacy.Success)
+                item = legacy.Groups["when"].Value.Trim() + " — " +
+                    legacy.Groups["title"].Value.Trim() + "\n" + legacy.Groups["body"].Value.Trim();
+            // Only display a real authored date/stage. No placeholder DATE.
+            var split = Regex.Match(item,
+                @"^\s*(?<when>[^—–:\r\n]{1,55})\s*[—–:]\s*(?<task>[\s\S]+)$");
+            string when = split.Success ? split.Groups["when"].Value.Trim() : $"MILESTONE {i + 1:00}";
+            string task = split.Success ? split.Groups["task"].Value.Trim() : item;
+            int lineBreak = task.IndexOf('\n');
+            string milestoneTitle = lineBreak < 0 ? task.Trim() : task[..lineBreak].Trim();
+            string milestoneDetail = lineBreak < 0 ? string.Empty : task[(lineBreak + 1)..].Trim();
+            var line = new Grid { Margin = new Thickness(0, 0, 0, i == block.Items.Count - 1 ? 0 : 14) };
+            line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(34) });
+            line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            var rail = new Grid();
+            if (i < block.Items.Count - 1)
+            {
+                var connector = new Border { Width = 2, HorizontalAlignment = HorizontalAlignment.Center,
+                    Margin = new Thickness(0, 25, 0, -16), Opacity = .40 };
+                Theme(connector, Border.BackgroundProperty, "NIRACyanBrush");
+                rail.Children.Add(connector);
+            }
+            var halo = new Border { Width = 23, Height = 23, CornerRadius = new CornerRadius(12),
+                VerticalAlignment = VerticalAlignment.Top, HorizontalAlignment = HorizontalAlignment.Center,
+                BorderThickness = new Thickness(1.5), Margin = new Thickness(0, 11, 0, 0) };
+            Theme(halo, Border.BorderBrushProperty, "NIRACyanBrush");
+            Theme(halo, Border.BackgroundProperty, "NIRAGlassStrongTintBrush");
+            // Number only unlabeled sequential steps. If the model supplies an
+            // actual date/stage, show a neutral dot instead of inventing a rank.
+            if (split.Success)
+            {
+                var dot = new Ellipse { Width = 7, Height = 7,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center };
+                Theme(dot, Shape.FillProperty, "NIRACyanBrush");
+                halo.Child = dot;
+            }
+            else
+            {
+                var number = Text((i + 1).ToString("00", CultureInfo.InvariantCulture),
+                    10, true, "NIRACyanBrush");
+                number.TextAlignment = TextAlignment.Center;
+                number.VerticalAlignment = VerticalAlignment.Center;
+                halo.Child = number;
+            }
+            rail.Children.Add(halo);
+            line.Children.Add(rail);
+
+            var card = new Border { CornerRadius = new CornerRadius(11), BorderThickness = new Thickness(1),
+                Padding = new Thickness(18, 15, 18, 16) };
+            Theme(card, Border.BackgroundProperty, "NIRAGlassStrongTintBrush");
+            Theme(card, Border.BorderBrushProperty, "NIRAGlassBorderBrush");
+            var body = new StackPanel();
+            var stage = Text(when.ToUpperInvariant(), 11.5, true, "NIRACyanBrush");
+            stage.Margin = new Thickness(0, 0, 0, 7);
+            body.Children.Add(stage);
+            body.Children.Add(Text(milestoneTitle, 14.4, milestoneDetail.Length > 0));
+            if (milestoneDetail.Length > 0)
+            {
+                var detail = Text(milestoneDetail, 13.4);
+                detail.Margin = new Thickness(0, 7, 0, 0);
+                body.Children.Add(detail);
+            }
+            card.Child = body;
+            Grid.SetColumn(card, 1);
+            line.Children.Add(card);
+            root.Children.Add(line);
+        }
+        return root;
+    }
+
+    // Borderless button template: the stock Windows CheckBox and Button chrome
+    // does not follow NIRA's Eclipse/Halo palette. Buttons are keyboard-accessible;
+    // each toggle remains local to this view, NOT a persisted goal or commitment.
+    private static ControlTemplate ChecklistRowTemplate()
+    {
+        var template = new ControlTemplate(typeof(Button));
+        var border = new FrameworkElementFactory(typeof(Border));
+        border.SetValue(Border.CornerRadiusProperty, new CornerRadius(9));
+        border.SetValue(Border.BorderThicknessProperty, new Thickness(1));
+        border.SetBinding(Border.BackgroundProperty, new Binding("Background")
+            { RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent) });
+        border.SetBinding(Border.BorderBrushProperty, new Binding("BorderBrush")
+            { RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent) });
+        var content = new FrameworkElementFactory(typeof(ContentPresenter));
+        content.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
+        content.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Stretch);
+        content.SetBinding(ContentPresenter.ContentProperty, new Binding("Content")
+            { RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent) });
+        border.AppendChild(content);
+        template.VisualTree = border;
+        return template;
+    }
+
+    private static UIElement Checklist(NIRARichBlock block,
+        NIRARichInteractionState? state, Action<NIRARichInteractionState>? changed)
+    {
+        var root = new StackPanel();
+        var header = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 0, 0, 11) };
+        var checkedItems = new HashSet<int>((state?.CheckedIndices ?? Array.Empty<int>())
+            .Where(i => i >= 0 && i < block.Items.Count));
+        var tally = Text($"{checkedItems.Count} / {block.Items.Count} MANUALLY CHECKED", 11, true,
+            checkedItems.Count == block.Items.Count ? "NIRACyanBrush" : "NIRASecondaryBrush");
+        tally.VerticalAlignment = VerticalAlignment.Center;
+        DockPanel.SetDock(tally, Dock.Right);
+        header.Children.Add(tally);
+        header.Children.Add(Text(block.Title.Length == 0 ? "Checklist" : block.Title,
+            17, true, "NIRACyanBrush"));
+        root.Children.Add(header);
+        int checkedCount = checkedItems.Count;
+        var rowTemplate = ChecklistRowTemplate();
+        for (int i = 0; i < block.Items.Count; i++)
+        {
+            int itemIndex = i;
+            string item = block.Items[i];
+            // Older persisted checklists serialized {text, checked} as a label
+            // dump. Display the task only; historic model flags do not certify
+            // completion or change the user's saved manual check state.
+            var legacyTask = Regex.Match(item,
+                @"^\s*(?:text|task):\s*(?<body>[\s\S]*?)(?:;\s*(?:checked|done):\s*(?:true|false))?\s*$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (legacyTask.Success) item = legacyTask.Groups["body"].Value.Trim();
+            bool completed = checkedItems.Contains(i);
+            // Grid + Auto layout: long labels may grow to two or more lines.
+            // A fixed button height/centered content clipped the previous rows.
+            var row = new Grid { Margin = new Thickness(15, 12, 15, 12),
+                HorizontalAlignment = HorizontalAlignment.Stretch, ClipToBounds = false };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(34) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            var glyph = new Border { Width = 21, Height = 21, CornerRadius = new CornerRadius(6),
+                BorderThickness = new Thickness(1.4), Margin = new Thickness(0, 2, 0, 0),
+                VerticalAlignment = VerticalAlignment.Top };
+            Theme(glyph, Border.BorderBrushProperty, "NIRACyanBrush");
+            Theme(glyph, Border.BackgroundProperty, "NIRAGlassStrongTintBrush");
+            var tick = Text("✓", 15, true, "NIRACyanBrush");
+            tick.TextAlignment = TextAlignment.Center;
+            tick.Visibility = completed ? Visibility.Visible : Visibility.Collapsed;
+            glyph.Child = tick;
+            Grid.SetColumn(glyph, 0);
+            row.Children.Add(glyph);
+            var label = Text(item, 13.5);
+            label.HorizontalAlignment = HorizontalAlignment.Stretch;
+            label.VerticalAlignment = VerticalAlignment.Top;
+            label.TextTrimming = TextTrimming.None;
+            Grid.SetColumn(label, 1);
+            label.TextDecorations = completed ? TextDecorations.Strikethrough : null;
+            label.Opacity = completed ? .67 : 1;
+            row.Children.Add(label);
+            var button = new Button { Content = row, Template = rowTemplate,
+                Margin = new Thickness(0, 0, 0, 9), Padding = new Thickness(0),
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Cursor = System.Windows.Input.Cursors.Hand, MinHeight = 52,
+                VerticalContentAlignment = VerticalAlignment.Stretch,
+                ToolTip = "Manual checkbox; does not execute or verify NIRA work" };
+            Theme(button, Control.BackgroundProperty, "NIRAGlassStrongTintBrush");
+            Theme(button, Control.BorderBrushProperty, "NIRAGlassBorderBrush");
+            button.Click += (_, _) =>
+            {
+                completed = !completed;
+                if (completed) checkedItems.Add(itemIndex);
+                else checkedItems.Remove(itemIndex);
+                checkedCount = checkedItems.Count;
+                changed?.Invoke(new NIRARichInteractionState
+                    { CheckedIndices = checkedItems.OrderBy(x => x).ToArray() });
+                tick.Visibility = completed ? Visibility.Visible : Visibility.Collapsed;
+                label.TextDecorations = completed ? TextDecorations.Strikethrough : null;
+                label.Opacity = completed ? .67 : 1;
+                tally.Text = $"{checkedCount} / {block.Items.Count} MANUALLY CHECKED";
+                tally.SetResourceReference(TextBlock.ForegroundProperty,
+                    checkedCount == block.Items.Count ? "NIRACyanBrush" : "NIRASecondaryBrush");
+            };
+            root.Children.Add(button);
+        }
+        var note = Text(changed == null
+            ? "Manual checklist · actual work status is tracked separately"
+            : "Manual checks saved with this chat · not a verified task status", 11.5,
+            false, "NIRASecondaryBrush");
+        note.Margin = new Thickness(0, 5, 0, 0);
+        root.Children.Add(note);
+        return root;
+    }
+
+    private static UIElement Progress(NIRARichBlock block)
+    {
+        double value = block.ProgressValue ?? 0;
+        double maximum = block.ProgressMaximum ?? 1;
+        double percent = value / maximum * 100;
+        double remaining = maximum - value;
+        string unit = block.Unit.Length > 0 ? " " + block.Unit : "";
+
+        var root = new StackPanel();
+        var header = new DockPanel { LastChildFill = true };
+        var pct = Text($"{percent:0.#}%", 25, true, "NIRACyanBrush");
+        pct.VerticalAlignment = VerticalAlignment.Center;
+        DockPanel.SetDock(pct, Dock.Right);
+        header.Children.Add(pct);
+        var title = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        title.Children.Add(Text(block.Title, 17, true, "NIRACyanBrush"));
+        var detail = Text($"{value:0.##} of {maximum:0.##}{unit} complete", 12.5,
+            false, "NIRASecondaryBrush");
+        detail.Margin = new Thickness(0, 5, 0, 0);
+        title.Children.Add(detail);
+        header.Children.Add(title);
+        root.Children.Add(header);
+
+        var track = new Border { CornerRadius = new CornerRadius(6), Height = 12,
+            Margin = new Thickness(0, 15, 0, 13),
+            HorizontalAlignment = HorizontalAlignment.Stretch, ClipToBounds = true };
+        Theme(track, Border.BackgroundProperty, "NIRAGlassBorderBrush");
+        var fill = new Border { CornerRadius = new CornerRadius(6), Height = 12,
+            HorizontalAlignment = HorizontalAlignment.Left };
+        Theme(fill, Border.BackgroundProperty, "NIRACyanBrush");
+        track.Child = fill;
+        track.SizeChanged += (_, _) => fill.Width = Math.Max(0, track.ActualWidth * percent / 100);
+        root.Children.Add(track);
+
+        var foot = new DockPanel { LastChildFill = true };
+        var remainingText = Text($"{remaining:0.##}{unit} remaining", 12.5, true);
+        DockPanel.SetDock(remainingText, Dock.Right);
+        foot.Children.Add(remainingText);
+        var start = Text("START", 10.5, true, "NIRASecondaryBrush");
+        start.VerticalAlignment = VerticalAlignment.Center;
+        foot.Children.Add(start);
+        root.Children.Add(foot);
+        // Captions may add distinct context, but an automatically derived
+        // 'five chapters remaining' must not be printed twice.
+        if (block.Text.Length > 0 &&
+            !block.Text.Contains("remaining", StringComparison.OrdinalIgnoreCase) &&
+            !block.Text.Contains("left", StringComparison.OrdinalIgnoreCase))
+        {
+            var caption = Text(block.Text, 12.5, false, "NIRASecondaryBrush");
+            caption.Margin = new Thickness(0, 10, 0, 0);
+            root.Children.Add(caption);
+        }
+        return root;
+    }
+
+    // Native WPF table: constrain the grid to the scroll viewport BEFORE star
+    // columns measure. An unconstrained Grid inside a horizontal ScrollViewer
+    // otherwise sizes to long cell text, defeating TextWrapping and clipping
+    // the right-hand columns. Only exceptionally narrow/wide tables scroll.
+    private static UIElement Table(NIRARichBlock block)
+    {
+        var root = new StackPanel();
+        var toolbar = new DockPanel { LastChildFill = true };
+        var copy = ActionButton("Copy TSV", () =>
+        {
+            static string EscapeCell(string value) =>
+                NIRATableCellLayout.ScreenCellText(value)
+                    .Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ');
+            var lines = new List<string> { string.Join("\t", block.Columns.Select(EscapeCell)) };
+            lines.AddRange(block.Rows.Select(row => string.Join("\t", row.Select(EscapeCell))));
+            Clipboard.SetText(string.Join(Environment.NewLine, lines));
+        });
+        DockPanel.SetDock(copy, Dock.Right);
+        toolbar.Children.Add(copy);
+        if (block.Title.Length > 0) toolbar.Children.Add(Text(block.Title, 15, true));
+        root.Children.Add(toolbar);
+
+        var grid = new Grid
+        {
+            SnapsToDevicePixels = true,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            MinWidth = 0,
+            Width = NIRATableCellLayout.MinimumGridWidth(block.Columns.Count)
+        };
+        var weights = NIRATableCellLayout.ColumnWeights(block.Columns, block.Rows);
+        for (int column = 0; column < block.Columns.Count; column++)
+            grid.ColumnDefinitions.Add(new ColumnDefinition
+            {
+                Width = new GridLength(weights[column], GridUnitType.Star),
+                MinWidth = 0
+            });
+        for (int i = 0; i <= block.Rows.Count; i++)
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        for (int column = 0; column < block.Columns.Count; column++)
+            Cell(block.Columns[column], 0, column, true);
+        for (int row = 0; row < block.Rows.Count; row++)
+            for (int column = 0; column < block.Columns.Count; column++)
+                Cell(block.Rows[row][column], row + 1, column, false);
+
+        void Cell(string value, int row, int column, bool header)
+        {
+            var band = new Border
+            {
+                Padding = new Thickness(10, 11, 10, 11),
+                Background = header ? Tint(Palette[0], 32) :
+                    row % 2 == 0 ? Tint(Palette[0], 10) : Tint(Palette[0], 5),
+                BorderBrush = Tint(Palette[0], 23),
+                BorderThickness = new Thickness(0, 0, column == 0 ? 1 : 0, 1),
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            var valueText = Text(NIRATableCellLayout.ScreenCellText(value),
+                header ? 12.7 : 12.6, header || column == 0,
+                header ? "NIRACyanBrush" : "NIRATextBrush");
+            valueText.TextWrapping = TextWrapping.Wrap;
+            valueText.TextTrimming = TextTrimming.None;
+            band.Child = valueText;
+            Grid.SetRow(band, row);
+            Grid.SetColumn(band, column);
+            grid.Children.Add(band);
+        }
+
+        var scroller = new ScrollViewer
+        {
+            Content = grid,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            MaxHeight = 400,
+            MinWidth = 0,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Margin = new Thickness(0, 9, 0, 0)
+        };
+        void FitGridToViewport()
+        {
+            double available = scroller.ViewportWidth;
+            if (!double.IsFinite(available) || available < 1)
+                available = scroller.ActualWidth -
+                    (scroller.ComputedVerticalScrollBarVisibility == Visibility.Visible
+                        ? SystemParameters.VerticalScrollBarWidth : 0);
+            if (!double.IsFinite(available) || available < 1) return;
+            double desired = Math.Max(NIRATableCellLayout.MinimumGridWidth(block.Columns.Count),
+                Math.Floor(available - 1));
+            if (Math.Abs(grid.Width - desired) > 0.5) grid.Width = desired;
+        }
+        scroller.Loaded += (_, _) => FitGridToViewport();
+        scroller.SizeChanged += (_, _) => FitGridToViewport();
+        scroller.ScrollChanged += (_, e) =>
+        {
+            if (Math.Abs(e.ViewportWidthChange) > 0.5) FitGridToViewport();
+        };
+        root.Children.Add(ChainVerticalWheel(scroller));
+        return root;
+    }
+
+    private static UIElement Chart(NIRARichBlock block)
+    {
+        var root = new StackPanel();
+        if (block.Title.Length > 0) root.Children.Add(Text(block.Title, 15, true));
+        var canvas = new Canvas
+        {
+            Height = 215,
+            MinWidth = 225,
+            Margin = new Thickness(0, 10, 0, 0),
+            ClipToBounds = true,
+            SnapsToDevicePixels = true
+        };
+        root.Children.Add(canvas);
+        double min = Math.Min(0, block.Values.Min());
+        double max = Math.Max(0, block.Values.Max());
+        if (Math.Abs(max - min) < 1e-12) { min -= 1; max += 1; }
+
+        void Paint()
+        {
+            canvas.Children.Clear();
+            double width = Math.Max(225, canvas.ActualWidth), height = canvas.Height;
+            double left = 42, right = width - 20, top = 22, bottom = height - 36;
+            for (int tick = 0; tick <= 2; tick++)
+            {
+                double number = min + (max - min) * tick / 2;
+                double y = bottom - (bottom - top) * tick / 2;
+                var line = new Line { X1 = left, X2 = right, Y1 = y, Y2 = y,
+                    StrokeThickness = 1, Opacity = tick == 0 ? 0.38 : 0.15 };
+                Theme(line, Shape.StrokeProperty, "NIRASecondaryBrush");
+                canvas.Children.Add(line);
+                var axis = Text(number.ToString("0.##", CultureInfo.InvariantCulture), 10,
+                    false, "NIRASecondaryBrush");
+                Canvas.SetLeft(axis, 1); Canvas.SetTop(axis, y - 10);
+                canvas.Children.Add(axis);
+            }
+            var trace = new Polyline { StrokeThickness = 2.5, StrokeLineJoin = PenLineJoin.Round };
+            Theme(trace, Shape.StrokeProperty, "NIRACyanBrush");
+            canvas.Children.Add(trace);
+            int step = Math.Max(1, (int)Math.Ceiling(block.Values.Count / 8.0));
+            for (int i = 0; i < block.Values.Count; i++)
+            {
+                double x = left + (right - left) * i / (block.Values.Count - 1);
+                double y = bottom - (block.Values[i] - min) / (max - min) * (bottom - top);
+                trace.Points.Add(new Point(x, y));
+                var dot = new Ellipse { Width = 6, Height = 6,
+                    ToolTip = block.Labels[i] + ": " + block.Values[i].ToString("G", CultureInfo.InvariantCulture) +
+                              (block.Unit.Length == 0 ? "" : " " + block.Unit) };
+                Theme(dot, Shape.FillProperty, "NIRACyanBrush");
+                Canvas.SetLeft(dot, x - 3); Canvas.SetTop(dot, y - 3);
+                canvas.Children.Add(dot);
+                if (i % step != 0 && i != block.Values.Count - 1) continue;
+                var value = Text(block.Values[i].ToString("0.##", CultureInfo.InvariantCulture), 10,
+                    true, "NIRACyanBrush");
+                Canvas.SetLeft(value, Math.Clamp(x - 18, 0, width - 42));
+                Canvas.SetTop(value, Math.Max(0, y - 23));
+                canvas.Children.Add(value);
+                var label = Text(block.Labels[i], 10, false, "NIRASecondaryBrush");
+                label.Width = 60;
+                label.TextAlignment = TextAlignment.Center;
+                Canvas.SetLeft(label, Math.Clamp(x - 30, 0, width - 60));
+                Canvas.SetTop(label, bottom + 13);
+                canvas.Children.Add(label);
+            }
+        }
+        canvas.Loaded += (_, _) => Paint();
+        canvas.SizeChanged += (_, _) => Paint();
+        if (block.Unit.Length > 0)
+        {
+            var unit = Text("Unit: " + block.Unit, 10, false, "NIRASecondaryBrush");
+            unit.Margin = new Thickness(0, 2, 0, 0);
+            root.Children.Add(unit);
+        }
+        return root;
+    }
+}

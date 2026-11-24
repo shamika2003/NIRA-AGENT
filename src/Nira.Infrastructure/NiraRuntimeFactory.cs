@@ -43,8 +43,28 @@ public sealed class NiraRuntime : IDisposable
         var modelCredentials = new NiraModelCredentialStore(appRoot, endpoint);
         var client = new OpenAiCompatibleModel(http, endpoint, model, modelCredentials.Resolve);
         var sessions = new EdgePublicBrowserSessions();
-        var tools = NiraStandardTools.Create(workspace, state, http, sessions);
-        var engine = new NiraEngine(client, tools, state, new WorkspaceAuthority(workspace));
+        // Vision is opt-in and separate from the agent's reasoning model.
+        // Only reuse the primary credential when the exact API base matches.
+        string? visionEndpoint = Environment.GetEnvironmentVariable("NIRA_VISION_ENDPOINT");
+        string? visionName = Environment.GetEnvironmentVariable("NIRA_VISION_MODEL");
+        VisionProvider? vision = null;
+        if (!string.IsNullOrWhiteSpace(visionEndpoint) || !string.IsNullOrWhiteSpace(visionName))
+        {
+            if (string.IsNullOrWhiteSpace(visionEndpoint) || string.IsNullOrWhiteSpace(visionName))
+                throw new ArgumentException("Set both NIRA_VISION_ENDPOINT and NIRA_VISION_MODEL, or neither.");
+            if (!Uri.TryCreate(visionEndpoint, UriKind.Absolute, out Uri? visionBase))
+                throw new ArgumentException("NIRA_VISION_ENDPOINT must be an absolute API base URL.");
+            vision = new VisionProvider(visionBase, visionName, () =>
+                Environment.GetEnvironmentVariable("NIRA_VISION_API_KEY") ??
+                (string.Equals(visionBase.AbsoluteUri, endpoint.AbsoluteUri, StringComparison.Ordinal) ? modelCredentials.Resolve() : null));
+        }
+        var tools = NiraStandardTools.Create(workspace, state, http, sessions, vision: vision,
+            imageGenerationResolver: () => ImageGenerationProvider.Load(appRoot));
+        // Default to bounded routing in both CLI and desktop; retain a diagnostic opt-out.
+        bool routing = Environment.GetEnvironmentVariable("NIRA_FULL_TOOL_CATALOG") != "1";
+        bool adaptive = Environment.GetEnvironmentVariable("NIRA_LEGACY_PREFLIGHT") != "1";
+        var engine = new NiraEngine(client, tools, state, new WorkspaceAuthority(workspace),
+            enableCapabilityRouting: routing, enableAdaptivePlanning: adaptive);
         return new NiraRuntime(engine, state, http, workspace, database, modelCredentials, sessions);
     }
 

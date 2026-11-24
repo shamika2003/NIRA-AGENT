@@ -15,15 +15,66 @@ public enum OperationStatus
 
 public enum ToolRisk { ReadLocal, ReadExternal, WriteWorkspace, WriteOutsideWorkspace, Dangerous }
 
+// One confirmation only arms abandonment. The second press within a bounded
+// interval actually abandons. This is UI safety logic, independent of any task.
+public sealed class TaskAbandonConfirmation
+{
+    private DateTimeOffset? _armedUtc;
+    public bool IsArmed => _armedUtc is not null;
+    public bool ConfirmOrArm(DateTimeOffset now)
+    {
+        if (_armedUtc is { } armed && now >= armed &&
+            now - armed <= TimeSpan.FromSeconds(15))
+        {
+            _armedUtc = null;
+            return true;
+        }
+        _armedUtc = now;
+        return false;
+    }
+    public void Reset() => _armedUtc = null;
+
+    public static void MarkAbandoned(ConversationState task)
+    {
+        ArgumentNullException.ThrowIfNull(task);
+        if (task.Status is ConversationStatus.Completed or ConversationStatus.Failed)
+            return;
+        // If an operation could already have changed the outside world, never
+        // erase that uncertainty just because the user abandoned future steps.
+        if (task.Status == ConversationStatus.NeedsReconciliation ||
+            task.Operations.Any(op => op.Status is OperationStatus.Dispatched or OperationStatus.Unknown) ||
+            task.RetryBlockCode == "DESKTOP_TEXT_NOT_VERIFIED")
+        {
+            task.Status = ConversationStatus.NeedsReconciliation;
+            task.RetryBlockCode = "USER_ABANDONED_WITH_UNCERTAIN_ACTION";
+        }
+        else
+        {
+            task.Status = ConversationStatus.Failed;
+            task.RetryBlockCode = "USER_ABANDONED";
+        }
+    }
+}
+
 public sealed record ModelToolCall(string Id, string Name, string ArgumentsJson);
 
 public sealed record ChatEntry(
     string Role,
     string? Content = null,
     string? ToolCallId = null,
-    IReadOnlyList<ModelToolCall>? ToolCalls = null);
+    IReadOnlyList<ModelToolCall>? ToolCalls = null,
+    IReadOnlyList<string>? AttachmentPaths = null,
+    string? UserDisplayText = null);
 
 public sealed record ModelReply(string? Content, IReadOnlyList<ModelToolCall> ToolCalls);
+
+/// <summary>Optional model capability for a bounded, non-executing workflow decision pass.</summary>
+/// <remarks>The planner can only propose a plan; it cannot authorize or execute tools.</remarks>
+public interface IWorkflowPlanningModel
+{
+    Task<ModelReply> ProposeWorkflowAsync(IReadOnlyList<ChatEntry> messages,
+        ToolDescriptor decisionTool, CancellationToken ct);
+}
 
 public sealed class AgentOperation
 {
@@ -42,7 +93,11 @@ public sealed class PlanStep
     public string Description { get; set; } = "";
     public string SuccessCriterion { get; set; } = "";
     public string Status { get; set; } = "pending";
+    // Old checkpoints are general; new typed steps can require durable proof.
+    public string Kind { get; set; } = "general";
     public string? EvidenceId { get; set; }
+    // Optional registered-tool binding; old saved plans without it stay compatible.
+    public string? ToolName { get; set; }
 }
 
 public sealed class ConversationState
@@ -51,9 +106,19 @@ public sealed class ConversationState
     public long Revision { get; set; }
     public ConversationStatus Status { get; set; } = ConversationStatus.New;
     public string Objective { get; set; } = "";
+    // A desktop chat groups independent task runs without merging their authority or receipts.
+    public Guid? ChatThreadId { get; set; }
+    public Guid? PreviousTaskId { get; set; }
+    public string? ChatThreadTitle { get; set; }
+    public string? PreviousChatContext { get; set; }
     public List<ChatEntry> Messages { get; set; } = [];
     public List<AgentOperation> Operations { get; set; } = [];
     public List<PlanStep> Plan { get; set; } = [];
+    // Persisted so a resumed task does not spend another model round re-planning.
+    public bool AutoPlanningAttempted { get; set; }
+    // Visible and durable preflight outcome; never an authorization or execution receipt.
+    public string AutomaticPlanningOutcome { get; set; } = "not_attempted";
+    public string? RetryBlockCode { get; set; }
     public string? PendingQuestion { get; set; }
     public string? LastAnswer { get; set; }
     public DateTimeOffset UpdatedUtc { get; set; } = DateTimeOffset.UtcNow;
@@ -102,6 +167,15 @@ public interface IChatModel
         IReadOnlyList<ToolDescriptor> tools, CancellationToken ct);
 }
 
+/// <summary>Optional provisional visible-text stream; the final ModelReply remains authoritative.</summary>
+public interface IStreamingProgress : IProgress<AgentProgress> { }
+
+public interface IStreamingChatModel
+{
+    Task<ModelReply> CompleteStreamingAsync(IReadOnlyList<ChatEntry> messages,
+        IReadOnlyList<ToolDescriptor> tools, Action<string?> preview, CancellationToken ct);
+}
+
 public interface IConversationStore
 {
     Task<ConversationState?> LoadAsync(Guid id, CancellationToken ct);
@@ -114,6 +188,12 @@ public interface IAgentTool
     ToolDescriptor Descriptor { get; }
     string GetTarget(JsonElement arguments);
     Task<ToolReceipt> ExecuteAsync(JsonElement arguments, CancellationToken ct);
+}
+
+// Optional local readiness check; never grants permission or dispatches an action.
+public interface IToolReadiness
+{
+    string? UnavailableReason();
 }
 
 public sealed record ToolDescriptor(

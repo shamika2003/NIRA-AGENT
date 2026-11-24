@@ -82,6 +82,8 @@ def excluded(name: str, *, directory: bool) -> bool:
     lower = name.lower()
     if directory:
         return lower in {v.lower() for v in IGNORED_DIRS} or lower.startswith(".nira-")
+    if lower.endswith("_wpftmp.csproj"):
+        return True
     if lower in IGNORED_FILES or lower in SENSITIVE_CONFIG_NAMES:
         return True
     if lower.startswith(".env") or lower.endswith((".local.json", ".user", ".suo")):

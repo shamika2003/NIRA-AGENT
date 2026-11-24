@@ -5,6 +5,10 @@
     <UseWPF>true</UseWPF>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <AssemblyName>NIRA</AssemblyName>
+    <ApplicationIcon>Assets/Nira-Icon.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="../Nira.Infrastructure/Nira.Infrastructure.csproj" /></ItemGroup>
+  <ItemGroup>
+    <None Update="Assets/**/*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

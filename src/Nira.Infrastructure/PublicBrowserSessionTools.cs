@@ -20,6 +20,41 @@ public sealed record BrowserSessionControlPageObservation(string SessionId, stri
 public sealed record BrowserSessionLinkPageObservation(string SessionId, string PageUrl,
     int PageNumber, int TotalLinkCount, IReadOnlyList<BrowserLink> Links);
 
+// A bounded, separately approved segment of public rendered page text. This is
+// body.innerText (never input.value, outerHTML, cookies or page scripts).
+public sealed record BrowserSessionVisibleTextPageObservation(
+    string SessionId, string PageUrl, string PageTitle, int PageNumber,
+    int TotalVisibleCharacters, string Text, bool HasMore, bool ReadLimitReached);
+
+public static class BrowserVisibleTextPagination
+{
+    public const int PageSize = 4000;
+    public const int MaxPageIndex = 15;
+    public const int MaximumReadableCharacters = PageSize * (MaxPageIndex + 1);
+
+    public static int OffsetForPage(int pageNumber)
+    {
+        if (pageNumber is < 0 or > MaxPageIndex)
+            throw new ArgumentOutOfRangeException(nameof(pageNumber),
+                "Visible-text page must be 0–15.");
+        return checked(pageNumber * PageSize);
+    }
+
+    public static BrowserSessionVisibleTextPageObservation Slice(
+        string sessionId, string pageUrl, string pageTitle, string visibleText, int pageNumber)
+    {
+        int offset = OffsetForPage(pageNumber);
+        int length = offset >= visibleText.Length
+            ? 0 : Math.Min(PageSize, visibleText.Length - offset);
+        string chunk = length == 0 ? "" : visibleText.Substring(offset, length);
+        bool remaining = offset + length < visibleText.Length;
+        bool bounded = remaining && pageNumber == MaxPageIndex;
+        return new BrowserSessionVisibleTextPageObservation(sessionId, pageUrl,
+            pageTitle.Length <= 300 ? pageTitle : pageTitle[..300], pageNumber,
+            visibleText.Length, chunk, remaining && !bounded, bounded);
+    }
+}
+
 public static class BrowserLinkPagination
 {
     public const int PageSize = 24;
@@ -121,6 +156,8 @@ public interface IPublicBrowserSessions
         int pageNumber, CancellationToken ct);
     Task<BrowserSessionLinkPageObservation> InspectLinksAsync(string sessionId,
         int pageNumber, CancellationToken ct);
+    Task<BrowserSessionVisibleTextPageObservation> InspectVisibleTextAsync(
+        string sessionId, int pageNumber, CancellationToken ct);
     Task<BrowserSessionLinkObservation> FollowAsync(string sessionId, Uri expectedSource,
         int linkIndex, Uri expectedDestination, CancellationToken ct);
     Task<BrowserSessionLinkObservation> FollowByNameAsync(string sessionId, Uri expectedSource,
@@ -299,6 +336,52 @@ public sealed class BrowserSessionInspectLinksTool(IPublicBrowserSessions sessio
         catch (Exception ex) when (ex is PlaywrightException or IOException or
             TimeoutException or InvalidOperationException)
         { return ToolReceipt.Fail("BROWSER_LINK_PAGE_FAILED", ex.Message); }
+    }
+}
+
+/// <summary>
+/// Read exactly one bounded segment of rendered public text in an existing session.
+/// No JavaScript evaluation, arbitrary selectors, form values, or navigation.
+/// Every page read is independently approved by the host.
+/// </summary>
+public sealed class BrowserSessionInspectVisibleTextTool(IPublicBrowserSessions sessions) : IAgentTool
+{
+    public ToolDescriptor Descriptor { get; } = new(
+        "browser.session_inspect_text",
+        "Read one numbered page of up to 4,000 characters of visible rendered text " +
+        "from an already approved public Edge session. pageNumber 0–15 (maximum 64,000 " +
+        "characters total); includes exact page URL, title, total length and whether more " +
+        "pages exist. Do not read input values, passwords, page source, or DOM markup. " +
+        "Does not click, navigate, or submit; host approval is required for every page.",
+        ToolRisk.ReadExternal, JsonToolSchema.Schema("""
+        {"type":"object","properties":{
+          "sessionId":{"type":"string","minLength":32,"maxLength":32},
+          "pageNumber":{"type":"integer"}},
+         "required":["sessionId","pageNumber"],"additionalProperties":false}
+        """));
+
+    public string GetTarget(JsonElement args)
+    {
+        string id = BrowserSessionArguments.Id(args);
+        int page = args.GetProperty("pageNumber").GetInt32();
+        _ = BrowserVisibleTextPagination.OffsetForPage(page);
+        return "public browser session " + id + ", visible text page " + page;
+    }
+
+    public async Task<ToolReceipt> ExecuteAsync(JsonElement args, CancellationToken ct)
+    {
+        string id = BrowserSessionArguments.Id(args);
+        int page = args.GetProperty("pageNumber").GetInt32();
+        _ = BrowserVisibleTextPagination.OffsetForPage(page);
+        try
+        {
+            BrowserSessionVisibleTextPageObservation result =
+                await sessions.InspectVisibleTextAsync(id, page, ct);
+            return ToolReceipt.Ok("Inspected bounded visible browser text page", result);
+        }
+        catch (Exception ex) when (ex is PlaywrightException or IOException or
+            TimeoutException or InvalidOperationException)
+        { return ToolReceipt.Fail("BROWSER_VISIBLE_TEXT_PAGE_FAILED", ex.Message); }
     }
 }
 
@@ -1047,6 +1130,32 @@ public sealed class EdgePublicBrowserSessions : IPublicBrowserSessions, IDisposa
                 pageNumber, total, links);
         }
         finally { s.Mutex.Release(); }
+    }
+
+    public async Task<BrowserSessionVisibleTextPageObservation> InspectVisibleTextAsync(
+        string sessionId, int pageNumber, CancellationToken ct)
+    {
+        _ = BrowserVisibleTextPagination.OffsetForPage(pageNumber);
+        ActiveSession session = Find(sessionId);
+        await session.Mutex.WaitAsync(ct);
+        try
+        {
+            if (!string.Equals(session.Page.Url, session.Gate.PermittedUrl, StringComparison.Ordinal) ||
+                session.Context.Pages.Count != 1)
+                throw new InvalidOperationException("Page changed without an approved navigation.");
+            // Same rendered-text API as the original 10,000-character snapshot;
+            // read-only and does not expose <input> or <textarea> field values.
+            string text = await session.Page.Locator("body").InnerTextAsync(
+                new() { Timeout = 6000 }).WaitAsync(ct);
+            string title = await session.Page.TitleAsync().WaitAsync(ct);
+            if (!string.Equals(session.Page.Url, session.Gate.PermittedUrl, StringComparison.Ordinal) ||
+                session.Context.Pages.Count != 1)
+                throw new InvalidOperationException("Page changed during visible-text inspection.");
+            session.LastActivity = DateTimeOffset.UtcNow;
+            return BrowserVisibleTextPagination.Slice(sessionId, session.Page.Url,
+                title, text, pageNumber);
+        }
+        finally { session.Mutex.Release(); }
     }
 
     public async Task<BrowserSessionLinkObservation> FollowAsync(string sessionId, Uri expectedSource,

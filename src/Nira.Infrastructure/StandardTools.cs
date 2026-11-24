@@ -8,21 +8,35 @@ namespace Nira.Infrastructure;
 public static class NiraStandardTools
 {
     public static ToolRegistry Create(string root, SqliteConversationStore store, HttpClient http,
-        IPublicBrowserSessions? browserSessions = null)
+        IPublicBrowserSessions? browserSessions = null, IDesktopAutomationBackend? desktopBackend = null,
+        VisionProvider? vision = null, ImageGenerationProvider? imageGeneration = null,
+        Func<ImageGenerationProvider?>? imageGenerationResolver = null)
     {
         Directory.CreateDirectory(root);
         var resolver = new WorkspacePathResolver(root);
         browserSessions ??= new EdgePublicBrowserSessions();
+        desktopBackend ??= new WindowsDesktopAutomationBackend();
         return new ToolRegistry([
             new WorkspaceInfoTool(resolver), new FileListTool(resolver),
             new FileReadTool(resolver), new FileWriteTool(resolver),
             new FileFindTool(resolver), new FileHashTool(resolver),
+            new ProductivityInspectTool(resolver), new ProductivityReadTool(resolver),
+            new ProductivityCreateWorkbookTool(resolver), new ProductivityCreateDocumentTool(resolver),
+            new ProductivityReviseWorkbookTool(resolver), new ProductivityReviseDocumentTool(resolver),
+            new PdfExportTextTool(resolver), new PdfSearchTool(resolver),
+            new OcrReadTool(resolver),
+            ..(vision is null ? Array.Empty<IAgentTool>() : new IAgentTool[] { new VisionAnalyzeTool(resolver, http, vision) }),
             new DirectoryCreateTool(resolver), new FileEditTextTool(resolver),
-            new ProcessRunTool(resolver), new PublicBrowserInspectionTool(),
+            new ProcessRunTool(resolver),
+            new DesktopWindowsTool(desktopBackend), new DesktopInspectTool(desktopBackend),
+            new DesktopActivateTool(desktopBackend), new DesktopInvokeTool(desktopBackend),
+            new DesktopSetTextTool(desktopBackend), new DesktopTypeTextTool(desktopBackend),
+            new PublicBrowserInspectionTool(),
             new PublicBrowserLinkTool(),
             new BrowserSessionOpenTool(browserSessions), new BrowserSessionInspectTool(browserSessions),
             new BrowserSessionInspectControlsTool(browserSessions),
             new BrowserSessionInspectLinksTool(browserSessions),
+            new BrowserSessionInspectVisibleTextTool(browserSessions),
             new BrowserSessionFollowTool(browserSessions), new BrowserSessionSemanticLinkTool(browserSessions),
             new BrowserSessionCloseTool(browserSessions),
             new BrowserSessionFillTextTool(browserSessions),
@@ -31,7 +45,11 @@ public static class NiraStandardTools
             new BrowserSessionSelectOptionTool(browserSessions),
             new BrowserSessionSetCheckedTool(browserSessions),
             new MemorySearchTool(store), new MemoryRememberTool(store),
-            new TavilySearchTool(http)
+            new TavilySearchTool(http), new ImageDiscoveryTool(http), new ImagePreviewTool(resolver),
+            ..(imageGenerationResolver is not null
+                ? new IAgentTool[] { new ImageGenerationTool(resolver, http, imageGenerationResolver) }
+                : imageGeneration is null ? Array.Empty<IAgentTool>()
+                : new IAgentTool[] { new ImageGenerationTool(resolver, http, imageGeneration) })
         ]);
     }
 }

@@ -20,6 +20,32 @@ var cases = new (string Name, Func<Task> Test)[] {
     ("workspace-blocked-location-explains-recovery", WorkspaceBlockedLocation),
     ("workspace-rejects-relative-override", WorkspaceRelativeOverride),
     ("ordinary-conversation-completes-without-finish-tool", OrdinaryConversation),
+    ("m5b-factual-grounding-and-desktop-style", M5bGroundingAndStyle),
+    ("m5b-unobserved-urls-flagged", M5bUnobservedUrls),
+    ("m5b-structured-finish-source-notice", M5bStructuredSourceNotice),
+    ("m5b-observed-urls-not-flagged", M5bObservedUrls),
+    ("m5b1-example-with-real-citation", M5bExampleWithCitation),
+    ("m5b1-non-envelope-url-still-flagged", M5bNonEnvelopeUrl),
+    ("m5c-identity-and-research-policy", M5cIdentityResearchPolicy),
+    ("m6e-generated-artwork-approved-once-and-persistent", M6eGenerationSuccess),
+    ("m6e-generation-denied-no-provider-call", M6eGenerationDenied),
+    ("m6e-malformed-generation-not-saved", M6eGenerationInvalid),
+    ("m6e-image-credentials-separated-and-protected", M6eGenerationCredentials),
+    ("m6e2-generation-local-readiness-before-approval", M6e2Readiness),
+    ("m6e2-selected-generation-recovers-false-refusal", M6e2RoutingRecovery),
+    ("m6e2-selected-generation-repeated-refusal-pauses", M6e2RoutingPause),
+    ("m6d-gallery-bound-persistent-receipts", M6dGalleryPersistence),
+    ("m6d-gallery-upload-original-preserved-and-persistent", M6dGalleryUpload),
+    ("m6a-fix-image-preview-binding", M6aFixPreviewBinding),
+    ("m6a-fix-image-preview-unobserved-blocked", M6aFixUnobservedPreview),
+    ("m6a-fix-image-preview-approval", M6aFixPreviewApproval),
+    ("m6-rich3-bare-image-arguments-recover-to-native", M6Rich3BareImageRecovery),
+    ("m6-rich3-bare-image-arguments-never-complete", M6Rich3BareImagePause),
+    ("m6-rich3-ordinary-url-json-preserved", M6Rich3OrdinaryJson),
+    ("m6a-commons-image-metadata", M6aCommonsDiscovery),
+    ("m6a-tavily-image-metadata", M6aTavilyDiscovery),
+    ("m6a-invalid-and-bounded-provider-data", M6aMalformedAndBounded),
+    ("m6a-image-registry-and-network-approval", M6aApprovalAndRegistry),
     ("empty-model-reply-retries-without-polluting-history", EmptyReplyRecovery),
     ("empty-tool-mode-falls-back-to-tool-free-chat", ToolFreeRecovery),
     ("empty-model-replies-pause-without-fabricating", PersistentEmptyReply),
@@ -27,6 +53,33 @@ var cases = new (string Name, Func<Task> Test)[] {
     ("read-tool-followed-by-plain-answer-completes", ReadThenPlainAnswer),
     ("openai-compatible-plain-text-content", WirePlainText),
     ("openai-compatible-text-parts-content", WireContentParts),
+    ("provider-tool-only-history-null-content", HttpToolOnlyAssistantNull),
+    ("provider-original-tool-call-id-preserved", HttpProviderCallIdPreserved),
+    ("provider-duplicate-tool-ids-refused", HttpProviderDuplicateCallIds),
+    ("provider-400-context-classified-without-leak", Http400ContextSafe),
+    ("m3b2-context-smaller-inference", ContextRecoveryShrinksContext),
+    ("m3b2-context-preserves-user-and-system", ContextRecoveryKeepsUserAndPlan),
+    ("m3b2-context-tool-call-pairing", ContextRecoveryPairsToolMessages),
+    ("m3b2-context-preserves-receipt-ids", ContextRecoveryKeepsEvidenceMetadata),
+    ("m3b2-context-inert-tool-data", ContextRecoveryNoDataInstructions),
+    ("m3b2-context-original-history-immutable", ContextRecoveryNoMutation),
+    ("m3b2-context-relevant-tools", ContextRecoveryToolSubset),
+    ("m3b2-context-small-request-untouched", ContextRecoveryRefusesSmallHistory),
+    ("m3b2-provider-400-recovers-once", ContextRecoveryHttp400ThenSuccess),
+    ("m3b2-provider-400-repeat-fail-stop", ContextRecoveryHttp400TwiceStops),
+    ("m3b2-provider-sticky-smaller-context", ContextRecoveryStickyPreference),
+    ("m3b2-provider-tool-transcript-no-retry", ContextRecoveryOther400NeverRetries),
+    ("m3b3-empty-provider-retries-smaller", EmptyContextRetry),
+    ("m3b3-empty-provider-retry-bounded", EmptyContextBounded),
+    ("m3b3-empty-provider-sticky", EmptyContextSticky),
+    ("m3b3-tool-free-context-reduces", ToolFreeContextReduction),
+    ("m3b3-tool-free-empty-recovers", ToolFreeEmptyContextRetry),
+    ("m3b3-latest-user-instruction-retained", ContextKeepsLargeLatestUser),
+    ("m3b3-small-empty-request-untouched", SmallEmptyContextNoRetry),
+    ("m3b3-empty-pause-shows-saved-action", EmptyPauseShowsAction),
+
+    ("provider-400-tool-transcript-classified", Http400ToolTranscriptSafe),
+    ("provider-400-unrecognized-body-redacted", Http400UnrecognizedSafe),
     ("model-credential-dpapi-roundtrip-no-plaintext", CredentialEncrypted),
     ("model-credential-scoped-to-provider", CredentialEndpointIsolation),
     ("model-credential-corrupt-record-can-be-replaced", CredentialCorruptedRecord),
@@ -255,6 +308,256 @@ var cases = new (string Name, Func<Task> Test)[] {
     ("browser-canonical-approved-receipt", CanonicalApprovedReceipt),
     ("browser-canonical-denial-prevents-navigation", CanonicalDenied),
     ("browser-canonical-network-still-locked", CanonicalAfterInteraction),
+    ("browser-visible-text-schema-strict", VisibleTextSchema),
+    ("browser-visible-text-page-bounds", VisibleTextBounds),
+    ("browser-visible-text-4000-chars", VisibleTextFixedSlice),
+    ("browser-visible-text-after-10000", VisibleTextBeyondSnapshot),
+    ("browser-visible-text-empty-final", VisibleTextEmptyFinal),
+    ("browser-visible-text-hard-limit", VisibleTextHardLimit),
+    ("browser-visible-text-approval-target", VisibleTextApprovalTarget),
+    ("browser-visible-text-receipt-readonly", VisibleTextReceipt),
+    ("browser-visible-text-no-input-values", VisibleTextNoInputValues),
+    ("browser-visible-text-denied-no-read", VisibleTextDenied),
+    ("browser-visible-text-after-interaction-readonly", VisibleTextAfterInteraction),
+    ("browser-visible-text-closed-session-refused", VisibleTextClosed),
+    ("model-text-tool-json-blocks-false-completion", TextToolJsonBlocksFalseCompletion),
+    ("model-text-tool-json-recovers-host-approved", TextToolJsonRecoversApproved),
+    ("model-text-tool-fenced-recovers", TextToolFencedRecovers),
+    ("model-text-tool-name-envelope-recovers", TextToolNameEnvelopeRecovers),
+    ("model-text-tool-nested-envelope-recovers", TextToolNestedEnvelopeRecovers),
+    ("model-text-tool-calls-envelope-recovers", TextToolCallsEnvelopeRecovers),
+    ("model-text-tool-repeated-pauses", TextToolRepeatedPauses),
+    ("model-text-tool-then-fake-done-pauses", TextToolFakeDonePauses),
+    ("model-text-tool-structured-finish-refused", TextToolStructuredFinishRefused),
+    ("model-text-tool-recovery-is-transient", TextToolGuidanceTransient),
+    ("model-non-tool-json-remains-answer", TextToolOrdinaryJsonAnswer),
+    ("model-explanatory-example-remains-answer", TextToolExampleAnswer),
+    ("workflow-plan-typed-kinds", WorkflowPlanTyped),
+    ("workflow-plan-no-silent-replacement", WorkflowPlanNoReplace),
+    ("workflow-plan-status-inspection", WorkflowPlanStatus),
+    ("workflow-plan-status-strict-schema", WorkflowPlanStatusSchema),
+    ("workflow-action-proven-by-mutation", WorkflowActionValid),
+    ("workflow-action-rejects-read-only-proof", WorkflowActionReadRefused),
+    ("workflow-action-requires-proof", WorkflowActionNoProof),
+    ("workflow-action-rejects-unknown-id", WorkflowActionUnknownProof),
+    ("workflow-action-rejects-failed-operation", WorkflowActionFailedProof),
+    ("workflow-action-rejects-false-receipt", WorkflowActionFalseReceipt),
+    ("workflow-observation-accepts-read", WorkflowObservationRead),
+    ("workflow-observation-accepts-mutation", WorkflowObservationChanged),
+    ("workflow-observation-requires-proof", WorkflowObservationNoProof),
+    ("workflow-analysis-allows-no-proof", WorkflowAnalysisNoProof),
+    ("workflow-legacy-checkpoint-compatible", WorkflowLegacyNoProof),
+    ("workflow-proof-cannot-complete-two-steps", WorkflowDuplicateProof),
+    ("workflow-noncompleted-cannot-claim-proof", WorkflowPendingProof),
+    ("workflow-completed-step-cannot-revert", WorkflowLockedRevert),
+    ("workflow-completed-step-cannot-replace-proof", WorkflowLockedProof),
+    ("workflow-repeat-same-proof-idempotent", WorkflowIdempotent),
+    ("workflow-plain-final-checks-proof", WorkflowPlainForged),
+    ("workflow-structured-finish-checks-proof", WorkflowStructuredForged),
+    ("workflow-end-to-end-file-write-read-verify", WorkflowEndToEnd),
+    ("workflow-status-without-plan", WorkflowEmptyStatus),
+    ("auto-plan-natural-file-workflow", AutoPlanFileWorkflow),
+    ("auto-plan-direct-conversation", AutoPlanDirectConversation),
+    ("auto-plan-direct-single-action", AutoPlanSingleAction),
+    ("auto-plan-textual-json-not-executed", AutoPlanTextIgnored),
+    ("auto-plan-wrong-tool-not-dispatched", AutoPlanWrongTool),
+    ("auto-plan-malformed-size-rejected", AutoPlanWrongSize),
+    ("auto-plan-invalid-kind-rejected", AutoPlanInvalidKind),
+    ("auto-plan-no-repeat-after-question", AutoPlanNoRepeat),
+    ("auto-plan-resume-durable-context", AutoPlanResume),
+    ("auto-plan-existing-plan-preserved", AutoPlanExistingPlan),
+    ("auto-plan-transport-exposes-only-decision", AutoPlanWireIsolation),
+    ("auto-plan-direct-no-approval", AutoPlanNoApproval),
+    ("m1c-planner-text-json-saves-plan", M1cPlannerJsonPlan),
+    ("m1c-planner-fenced-json-accepted", M1cPlannerFencedJson),
+    ("m1c-planner-json-direct", M1cPlannerJsonDirect),
+    ("m1c-planner-malformed-decision-reported", M1cPlannerMalformed),
+    ("m1c-planner-executable-text-rejected", M1cPlannerExecutableText),
+    ("m1c-planner-unknown-tool-binding-refused", M1cPlannerUnknownBinding),
+    ("m1c-planner-readonly-action-binding-refused", M1cPlannerReadOnlyBinding),
+    ("m1c-planner-analysis-tool-binding-refused", M1cPlannerAnalysisBinding),
+    ("m1c-planner-native-binding-saved", M1cNativePlanBinding),
+    ("m1c-evidence-must-match-expected-tool", M1cEvidenceWrongTool),
+    ("m1c-evidence-matching-tool-accepted", M1cEvidenceMatchingTool),
+    ("m1c-automatic-premature-finish-recovers", M1cAutoFinishRecovery),
+    ("m1c-automatic-premature-finish-bounded", M1cAutoFinishBounded),
+    ("m1c-recovery-preserves-successful-mutation", M1cRecoveryNoDuplicateWrite),
+    ("m1c-plan-status-includes-diagnostics", M1cPlanStatusDiagnostic),
+    ("m1c-plan-tool-rejects-invalid-binding", M1cManualPlanBadBinding),
+    ("m1c-direct-then-manual-plan-not-auto-recovered", M1cManualPlanNoAutoRecovery),
+    ("m1c-legacy-saved-auto-plan-resumable", M1cLegacyAutoPlanRecovery),
+    ("planning-retry-recovers-text-json-plan", PlanningRetryPlan),
+    ("planning-retry-recovers-direct-decision", PlanningRetryDirect),
+    ("planning-retry-rejects-executable-tool-call", PlanningRetryRejectsTool),
+    ("planning-retry-rejects-forged-tool-binding", PlanningRetryRejectsBinding),
+    ("planning-retry-invalid-still-allows-execution", PlanningRetryInvalidGraceful),
+    ("planning-retry-persists-and-does-not-repeat", PlanningRetryNoRepeat),
+    ("planning-retry-native-accepted-does-not-run", PlanningRetryNoFallbackOnValid),
+    ("planning-retry-http-tool-free-decision-then-execution", PlanningRetryWireRoundTrip),
+    ("desktop-tools-registered-general-purpose", DesktopToolsRegistered),
+    ("desktop-window-list-schema-strict", DesktopSchemaStrict),
+    ("desktop-list-denial-prevents-inspection", DesktopListDenied),
+    ("desktop-list-approved-returns-window-identity", DesktopListApproved),
+    ("desktop-inspect-denial-prevents-inspection", DesktopInspectDenied),
+    ("desktop-inspect-approved-bounded-metadata", DesktopInspectApproved),
+    ("desktop-activate-denied-does-not-dispatch", DesktopActivateDenied),
+    ("desktop-activate-approved-changed-state-receipt", DesktopActivateApproved),
+    ("desktop-invoke-denied-does-not-dispatch", DesktopInvokeDenied),
+    ("desktop-invoke-approved-but-outcome-unverified", DesktopInvokeApproved),
+    ("desktop-set-text-denied-no-effect", DesktopSetTextDenied),
+    ("desktop-set-text-approved-verified", DesktopSetTextApproved),
+    ("desktop-window-stale-rejected", DesktopStaleWindow),
+    ("desktop-control-stale-rejected", DesktopStaleControl),
+    ("desktop-end-to-end-list-activate-inspect-invoke", DesktopEndToEnd),
+    ("desktop-rich-editor-advertises-separate-input", DesktopRichEditorMetadata),
+    ("desktop-rich-editor-typing-requires-approval", DesktopTypeTextDenied),
+    ("desktop-rich-editor-typing-receipt-verified", DesktopTypeTextApproved),
+    ("desktop-rich-editor-input-refuses-overwrite", DesktopTypeTextRequiresEmpty),
+    ("desktop-rich-editor-input-rejects-control-characters", DesktopTypeTextControlsRefused),
+    ("desktop-unsupported-set-text-pauses-without-loop", DesktopUnsupportedSetTextPauses),
+    ("desktop-blocked-retry-does-not-spend-model-rounds", DesktopBlockedRetrySafe),
+    ("desktop-set-text-permission-question-routes-to-host", DesktopSetPermissionRoutesHost),
+    ("desktop-typed-text-comparison-rejects-same-length-corruption", DesktopExactTextComparison),
+    ("desktop-typed-text-unverified-must-pause", DesktopUnverifiedTypingPauses),
+    ("desktop-typed-text-unverified-cannot-silent-retry", DesktopUnverifiedTypingRetryBlocked),
+    ("desktop-set-text-unverified-must-pause", DesktopUnverifiedSetTextPauses),
+    ("desktop-win32-input-marshalling-contract", DesktopWin32InputLayout),
+    ("desktop-foreground-already-focused-no-activation", DesktopForegroundAlreadyFocused),
+    ("desktop-foreground-request-activation-once", DesktopForegroundRequestsOnce),
+    ("desktop-foreground-observation-denied", DesktopForegroundDenial),
+    ("desktop-foreground-bounds-check-count", DesktopForegroundInvalidChecks),
+    ("desktop-type-approval-no-manual-switch", DesktopTypeToolAutonomousDescriptor),
+    ("task-abandon-requires-two-presses", TaskAbandonTwoPresses),
+    ("task-abandon-expiry-and-reset", TaskAbandonExpiryAndReset),
+    ("task-abandon-does-not-clear-dispatched-action", TaskAbandonUncertainEffects),
+    ("task-abandon-marks-safe-task-failed", TaskAbandonSafeTask),
+    ("m3a-productivity-tools-registered", ProductivityToolsAreRegistered),
+    ("m3a-office-schema-strict", ProductivitySchemaRejectsUnknownArguments),
+    ("m3a-xlsx-create-inspect-read", ProductivityCreateReadWorkbook),
+    ("m3a-xlsx-paged-real-rows", ProductivityWorkbookPaginates),
+    ("m3a-xlsx-literal-formula-safe", ProductivityWorkbookPreservesLiteralFormula),
+    ("m3a-xlsx-no-overwrite", ProductivityWorkbookNeverOverwrites),
+    ("m3a-xlsx-invalid-cell-is-safe", ProductivityWorkbookRejectsNestedObjects),
+    ("m3a-docx-create-inspect-read", ProductivityCreateReadDocument),
+    ("m3a-docx-real-table", ProductivityWordCreatesTables),
+    ("m3a-docx-no-overwrite", ProductivityDocumentNeverOverwrites),
+    ("m3a-missing-parent-safe", ProductivityRejectsMissingParent),
+    ("m3a-unsupported-input-safe", ProductivityReadBoundsAndUnsupportedFiles),
+    ("m3a-outside-workspace-requires-approval", ProductivityOutsideWorkspaceNeedsApproval),
+    ("m3a-read-zero-based-model-bounds-normalized", ProductivityReadNormalizesZero),
+    ("m3a-read-oversized-row-column-limits", ProductivityReadClampsLimits),
+    ("m3a-read-negative-counts-are-safe", ProductivityReadClampsNegative),
+    ("m3a-read-receipt-reports-effective-bounds", ProductivityReadReportsBounds),
+    ("m3a-read-excel-ignores-irrelevant-bounds", ProductivityExcelIgnoresUnrelatedBounds),
+    ("m3a-read-word-ignores-irrelevant-bounds", ProductivityWordIgnoresUnrelatedBounds),
+    ("m3a-read-word-zero-based-index-normalized", ProductivityWordZeroIndex),
+    ("m3a-read-omitted-fields-default-safely", ProductivityReadOmittedDefaults),
+    ("m3a-read-oversized-requests-page-at-80", ProductivityReadPagesAfterClamp),
+    ("m3a-read-invalid-types-rejected-before-access", ProductivityReadSchemaStillStrict),
+    ("m3a-read-workbook-then-create-word", ProductivityReadThenCreateWord),
+    ("m3a-read-does-not-change-workbook-bytes", ProductivityReadNoFileMutation),
+    ("m3b-revision-tools-registered", M3bRevisionToolsRegistered),
+    ("m3b-revision-schemas-strict", M3bRevisionToolSchemasStrict),
+    ("m3b-workbook-version-retains-original", M3bWorkbookRevisionPreservesSource),
+    ("m3b-workbook-leading-zero-identifiers", M3bWorkbookLiteralIdPreserved),
+    ("m3b-workbook-stale-sha-denied", M3bWorkbookStaleHashDenied),
+    ("m3b-workbook-duplicate-cell-refused", M3bWorkbookDuplicateEditDenied),
+    ("m3b-workbook-destination-no-overwrite", M3bWorkbookDestinationNeverOverwritten),
+    ("m3b-workbook-unknown-sheet-refused", M3bWorkbookUnknownSheetDenied),
+    ("m3b-workbook-external-formula-refused", M3bWorkbookUnsafeFormulaDenied),
+    ("m3b-word-replace-paragraph-versioned", M3bWordReplaceParagraphPreservesSource),
+    ("m3b-word-convert-paragraph-to-table", M3bWordConvertsParagraphToRealTable),
+    ("m3b-word-append-heading-paragraph-table", M3bWordAppendHeadingAndTable),
+    ("m3b-word-stale-paragraph-refused", M3bWordStaleParagraphDenied),
+    ("m3b-word-version-no-overwrite", M3bWordNoOverwrite),
+    ("m3b-revision-workspace-scope-protected", M3bRevisionOutsideWorkspaceDenied),
+    ("m3b-revision-tool-host-receipt", M3bRevisionReceiptsReachAgent),
+    ("m3b1-reject-formula-disguised-as-text", M3b1RejectFormulaValue),
+    ("m3b1-reject-formula-with-leading-whitespace", M3b1RejectWhitespaceFormulaValue),
+    ("m3b1-allow-explicit-literal-formula-text", M3b1AllowExplicitLiteralFormulaText),
+    ("m3b1-repair-imported-fake-formula-with-actual-formula", M3b1RepairFakeFormula),
+    ("m3b1-reject-literal-flag-with-number", M3b1RejectLiteralFlagWithNumber),
+    ("m3b1-reject-literal-flag-with-formula", M3b1RejectLiteralFlagWithFormula),
+    ("m3b1-reject-expression-text", M3b1RejectExpressionText),
+    ("m3b1-read-exposes-formula-type-without-mutation", M3b1ReadFormulaType),
+    ("m3b4-resume-6-of-7-real-workbook-report", M3b4ResumeWorkbookReport),
+    ("m3b4-live-host-report-no-extra-model-round", M3b4LiveReport),
+    ("m3b4-focused-review-links-unused-receipt", M3b4FocusedLink),
+    ("m3b4-focused-review-refuses-new-mutation", M3b4FocusedNoMutation),
+    ("m3b4-missing-earlier-proof-stays-blocked", M3b4BadProof),
+    ("m3b4-uncertain-effect-stays-blocked", M3b4Uncertain),
+    ("m3b4-terminal-analysis-explicit-finish", M3b4TerminalAnalysis),
+    ("m3b4-provider-error-reports-remaining-step", M3b4ProviderFailure),
+    ("m3b4-report-plus-calculation-not-auto-closed", M3b4SubstantiveReport),
+    ("m3b4-already-marked-report-still-delivered", M3b4MarkedReport),
+    ("m3c-pdf-export-all-pages", M3cExport),
+    ("m3c-pdf-export-range", M3cRange),
+    ("m3c-pdf-export-no-overwrite", M3cNoOverwrite),
+    ("m3c-pdf-invalid-range-no-output", M3cInvalidRange),
+    ("m3c-pdf-search-paged", M3cSearch),
+    ("m3c-pdf-scope-protected", M3cScope),
+    ("m3c-pdf-tools-registered", M3cRegistered),
+    ("m3c-pdf-agent-real-receipt", M3cAgent),
+    ("m3d-ocr-registered-readonly", M3dRegistered),
+    ("m3d-ocr-page-and-language", M3dPage),
+    ("m3d-ocr-source-unchanged", M3dUnchanged),
+    ("m3d-ocr-blank-not-verified-blank", M3dBlank),
+    ("m3d-ocr-unsupported-and-invalid-page", M3dInvalid),
+    ("m3d-ocr-language-unavailable", M3dUnavailable),
+    ("m3d-ocr-outside-denial", M3dDenied),
+    ("m3d-ocr-bounded-result", M3dBounded),
+    ("m3d1-real-png-recognition", M3d1RealPng),
+    ("m3d1-real-scanned-pdf-recognition", M3d1RealPdf),
+    ("m3d1-worker-diagnostic-propagated", M3d1Diagnostic),
+    ("m3e-opt-in-registry", M3eRegistry),
+    ("m3e-endpoint-validation", M3eEndpoint),
+    ("m3e-image-wire-and-source-hash", M3eWire),
+    ("m3e-deny-image-transfer", M3eDenial),
+    ("m3e-invalid-image-no-transfer", M3eInvalid),
+    ("m3e-empty-response-rejected", M3eEmpty),
+    ("m3e-http-error-redacted", M3eHttpError),
+    ("m3e-agent-durable-observation", M3eAgent),
+    ("m3e1-short-wide-catalog", M3e1ShortCatalogReduction),
+    ("m3e1-short-http400-recovery", M3e1ShortHttpRecovery),
+    ("m3e1-multistep-saved-review", M3e1MultiStepReview),
+    ("m3e1-review-no-replay-and-partial", M3e1ReviewNoReplay),
+    ("m3e1-missing-proof-remains-incomplete", M3e1MissingProofStaysIncomplete),
+    ("m3e2-resume-complete-readonly-plan", M3e2ResumeComplete),
+    ("m3e2-live-last-update-delivers", M3e2LiveLastUpdate),
+    ("m3e2-complete-plan-missing-proof-blocked", M3e2MissingProof),
+    ("m3e2-complete-plan-uncertain-blocked", M3e2Uncertain),
+    ("m3e2-complete-plan-denial-blocked", M3e2Denied),
+    ("m3e2-incomplete-plan-not-finalized", M3e2Incomplete),
+    ("m3e2-complete-plan-new-instruction-not-swallowed", M3e2NewInstruction),
+    ("m3f-bounded-live-catalog", M3fBoundedCatalog),
+    ("m3f-model-selects-and-executes", M3fSelectExecute),
+    ("m3f-hidden-tool-refused", M3fHiddenRefused),
+    ("m3f-selection-not-approval", M3fApproval),
+    ("m3f-invalid-selection-refused", M3fInvalid),
+    ("m3f-mixed-selection-no-dispatch", M3fMixed),
+    ("m3f-selection-loop-bounded", M3fLoop),
+    ("m3f-compaction-retains-active-schemas", M3fCompaction),
+    ("m4a-adaptive-no-preflight", M4aAdaptiveDirect),
+    ("m4a-adaptive-batch-workflow", M4aAdaptiveBatch),
+    ("m4a-adaptive-explicit-plan-proof", M4aAdaptivePlanProof),
+    ("m4a-adaptive-plan-size", M4aAdaptivePlanSize),
+    ("m4a-adaptive-legacy-plan-preserved", M4aAdaptiveLegacy),
+    ("m4a-adaptive-context-partial", M4aAdaptivePartial),
+    ("m4b3-stream-visible-only", M4b3Visible),
+    ("m4b3-stream-fragmented-tool", M4b3Tool),
+    ("m4b3-stream-incomplete-rejected", M4b3Incomplete),
+    ("m4b3-stream-json-fallback", M4b3JsonFallback),
+    ("m4b4-thread-continuity", M4b4ThreadContinuity),
+    ("m4b4-thread-isolation", M4b4ThreadIsolation),
+    ("m4b4-thread-incomplete-rejected", M4b4IncompleteRejected),
+    ("m4c-attachment-persisted", M4cAttachmentPersisted),
+    ("m4c-attachment-scope-unchanged", M4cAttachmentScope),
+    ("m4c-attachment-reference-bounds", M4cAttachmentBounds),
+    ("m4c-artifact-receipts-only", M4cReceiptOnly),
+    ("m4c-artifact-changed-file-rejected", M4cChangedFile),
+    ("m4d-chat-preferences-preserve-journal", M4dChatPreferences),
+    ("m4d-memory-management", M4dMemoryManagement),
+    ("m4d-invalid-chat-preferences", M4dInvalidPreferences),
 };
 int failed = 0;
 foreach (var (name, test) in cases)
@@ -264,6 +567,749 @@ foreach (var (name, test) in cases)
 }
 Console.WriteLine($"NIRA KERNEL TESTS: {cases.Length - failed}/{cases.Length} passed");
 return failed == 0 ? 0 : 1;
+
+// M3E.1: reproduce the live 11-message / 48-tool rejection and preserve
+// actual observations through a controls-only multi-step checkpoint review.
+static IReadOnlyList<ToolDescriptor> M3e1WideCatalog()
+{
+    var names = new List<string> { "nira_plan_update", "nira_plan_status", "nira_finish",
+        "nira_ask_user", "workspace.info", "filesystem.find", "vision.analyze", "productivity.read" };
+    for (int i = 0; i < 40; i++) names.Add("unrelated.tool" + i);
+    return names.Select(name => new ToolDescriptor(name, new string('d', 600), ToolRisk.ReadLocal,
+        JsonToolSchema.Schema("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"))).ToArray();
+}
+
+static IReadOnlyList<ChatEntry> M3e1ShortHistory()
+{
+    var history = new List<ChatEntry> {
+        new("system", "Host safety rules"),
+        new("system", "Current plan: tool: productivity.read;"),
+        new("user", "Describe the image.")
+    };
+    foreach (string name in new[] { "workspace.info", "filesystem.find", "vision.analyze", "nira_plan_update" })
+    {
+        string id = "short-" + history.Count;
+        history.Add(new ChatEntry("assistant", ToolCalls: [new ModelToolCall(id, name, "{}") ]));
+        history.Add(new ChatEntry("tool", JsonSerializer.Serialize(new { receiptId = "receipt-" + id,
+            Success = true, ChangedState = false, Data = new { analysis = "SAVED_VISUAL_OBSERVATION" } }), id));
+    }
+    return history;
+}
+
+static Task M3e1ShortCatalogReduction()
+{
+    var history = M3e1ShortHistory();
+    var tools = M3e1WideCatalog();
+    Assert(history.Count == 11 && tools.Count == 48 &&
+        ModelContextRecovery.TryReduce(history, tools, out var compact, out var selected) &&
+        selected.Count <= 15 && selected.Any(t => t.Name == "vision.analyze") &&
+        selected.Any(t => t.Name == "productivity.read") && selected.Any(t => t.Name == "nira_plan_update") &&
+        compact.Any(m => m.Role == "tool" && m.Content?.Contains("SAVED_VISUAL_OBSERVATION", StringComparison.Ordinal) == true) &&
+        compact.Count(m => m.Role == "tool") == 4,
+        "The exact live request shape must reduce schemas while preserving complete short observations and planned tools.");
+    return Task.CompletedTask;
+}
+
+static async Task M3e1ShortHttpRecovery()
+{
+    using var handler = new ContextRecoverySequenceHandler();
+    using var http = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(http, new Uri("https://example.invalid/v1/"), "mock", () => null);
+    var reply = await model.CompleteAsync(M3e1ShortHistory(), M3e1WideCatalog(), default);
+    Assert(reply.Content == "Recovered normal answer" && handler.RequestBodies.Count == 2 &&
+        handler.RequestBodies[1].Length < handler.RequestBodies[0].Length,
+        "A context rejection with only 11 messages must retry once with fewer schemas.");
+    using var packet = JsonDocument.Parse(handler.RequestBodies[1]);
+    Assert(packet.RootElement.GetProperty("tools").GetArrayLength() <= 15, "Recovery tool budget must be bounded.");
+    await model.CompleteAsync(M3e1ShortHistory(), M3e1WideCatalog(), default);
+    Assert(handler.RequestBodies.Count == 3 && handler.RequestBodies[1] == handler.RequestBodies[2],
+        "A known tight provider must retain compact inference even for short histories.");
+}
+
+static ConversationState M3e1SavedVision()
+{
+    const string objective = "Find the image and describe its colors.";
+    var found = M3b4Operation("saved-find", "filesystem.find", ToolReceipt.Ok("Found file", new { path = "image.png" }));
+    var vision = M3b4Operation("saved-vision", "vision.analyze", ToolReceipt.Ok("Provider returned image analysis",
+        new { path = "image.png", analysis = "SAVED_VISUAL_OBSERVATION", independentlyVerified = false }));
+    return new ConversationState {
+        Objective = objective, Messages = [new ChatEntry("user", objective)], Status = ConversationStatus.Running,
+        AutoPlanningAttempted = true, AutomaticPlanningOutcome = "planned_fallback_json",
+        Operations = [found, vision],
+        Plan = [M3b4Completed("Find image", "observation", found),
+            new PlanStep { Description = "Obtain visual analysis", Kind = "observation", ToolName = "vision.analyze", SuccessCriterion = "Provider result" },
+            new PlanStep { Description = "Describe observed colors", Kind = "analysis", SuccessCriterion = "Answer based on image analysis" }]
+    };
+}
+
+static async Task M3e1MultiStepReview()
+{
+    using var setup = new TestContext();
+    var state = M3e1SavedVision();
+    await setup.Store.SaveAsync(state, default);
+    int calls = 0;
+    var model = new FakeModel(messages => {
+        if (++calls == 1) throw new AgentException("Model provider HTTP 400 (category=possible_context_limit; messages=11; tools=48; requestBytes=41173).");
+        Assert(messages.Count == 3 && messages[^1].Content?.Contains("SAVED_VISUAL_OBSERVATION", StringComparison.Ordinal) == true,
+            "Compact review retains actual vision data and receipt identity.");
+        return calls == 2
+            ? new ModelReply(null, [Call("link-vision", "nira_plan_update", new { index = 1, status = "completed", evidenceId = "saved-vision" })])
+            : new ModelReply(null, [Call("finish-vision", "nira_finish", new { outcome = "answer", answer = "SAVED_VISUAL_OBSERVATION", evidence_ids = Array.Empty<string>() })]);
+    });
+    var approval = new FakeApprovals(false);
+    var result = await setup.Engine(model).RunAsync(state.Id, null, approval);
+    var saved = (await setup.Store.LoadAsync(state.Id, default))!;
+    Assert(result.Status == ConversationStatus.Completed && calls == 3 && approval.Calls == 0 &&
+        saved.Operations.Count == 2 && saved.Plan.All(p => p.Status == "completed") &&
+        result.Message.Contains("SAVED_VISUAL_OBSERVATION", StringComparison.Ordinal),
+        "Multi-step recovery must finish from saved evidence without a new operation.");
+}
+
+static async Task M3e1ReviewNoReplay()
+{
+    using var setup = new TestContext();
+    var state = M3e1SavedVision();
+    await setup.Store.SaveAsync(state, default);
+    int calls = 0;
+    var model = new FakeModel(_ => {
+        if (++calls == 1) throw new AgentException("Model provider HTTP 400 (category=possible_context_limit; messages=11; tools=48; requestBytes=41173).");
+        if (calls == 2) return new ModelReply(null, [Call("repeat-upload", "vision.analyze", new { path = "image.png", question = "repeat" })]);
+        throw new AgentException("Synthetic persistent provider failure");
+    });
+    var approval = new FakeApprovals(true);
+    var result = await setup.Engine(model).RunAsync(state.Id, null, approval);
+    var saved = (await setup.Store.LoadAsync(state.Id, default))!;
+    Assert(result.Status == ConversationStatus.Paused && approval.Calls == 0 && saved.Operations.Count == 2 &&
+        saved.Plan.Count(p => p.Status == "completed") == 1 &&
+        saved.Messages.Any(m => m.Content?.Contains("FOCUSED_REVIEW_TOOL_UNAVAILABLE", StringComparison.Ordinal) == true) &&
+        result.Message.Contains("SAVED_VISUAL_OBSERVATION", StringComparison.Ordinal),
+        "Persistent rejection must surface saved read evidence without authorizing a repeat or inventing completion.");
+}
+
+static async Task M3e1MissingProofStaysIncomplete()
+{
+    using var setup = new TestContext();
+    var state = M3e1SavedVision();
+    state.Operations.RemoveAt(1);
+    await setup.Store.SaveAsync(state, default);
+    int calls = 0;
+    var model = new FakeModel(_ => {
+        if (++calls == 1) throw new AgentException("Model provider HTTP 400 (category=possible_context_limit; messages=11; tools=48; requestBytes=41173).");
+        if (calls == 2) return new ModelReply(null, [Call("fake-proof", "nira_plan_update", new { index = 1, status = "completed", evidenceId = "saved-vision" })]);
+        return new ModelReply("Cannot verify the image without a receipt.", []);
+    });
+    var result = await setup.Engine(model).RunAsync(state.Id, null, new FakeApprovals(false));
+    var saved = (await setup.Store.LoadAsync(state.Id, default))!;
+    Assert(result.Status == ConversationStatus.Paused && saved.Plan[1].Status == "pending" && saved.Operations.Count == 1,
+        "A real missing observation is never auto-completed by context recovery.");
+}
+
+static ConversationState M3e2CompletedVision()
+{
+    var state = M3e1SavedVision();
+    state.Plan[1].Status = "completed";
+    state.Plan[1].EvidenceId = "saved-vision";
+    state.Plan[2].Status = "completed";
+    state.Status = ConversationStatus.Paused;
+    state.RetryBlockCode = "NO_PROGRESS_FOCUSED";
+    state.Operations[1].ResultJson = JsonSerializer.Serialize(ToolReceipt.Ok("Observed image",
+        new { path = "image.png", analysis = "SAVED_VISUAL_OBSERVATION\nThree red circles, two blue squares, one green triangle.", independentlyVerified = false }));
+    return state;
+}
+
+static async Task M3e2ResumeComplete()
+{
+    using var setup = new TestContext();
+    var state = M3e2CompletedVision();
+    await setup.Store.SaveAsync(state, default);
+    var approval = new FakeApprovals(false);
+    var engine = setup.Engine(new FakeModel(_ => throw new InvalidOperationException("No provider call needed")));
+    var result = await engine.RunAsync(state.Id, null, approval);
+    var saved = (await setup.Store.LoadAsync(state.Id, default))!;
+    Assert(result.Status == ConversationStatus.Completed && saved.RetryBlockCode is null &&
+        saved.Plan.All(step => step.Status == "completed") && approval.Calls == 0 && saved.Operations.Count == 2 &&
+        result.Message.Contains("SAVED_VISUAL_OBSERVATION\nThree red circles", StringComparison.Ordinal) &&
+        result.Message.Contains("not independently verified", StringComparison.Ordinal) &&
+        saved.LastAnswer == result.Message, "All-verified stalled read-only plan must deliver readable saved data without inference.");
+    var again = await engine.RunAsync(state.Id, null, approval);
+    Assert(again.Status == ConversationStatus.Completed && again.Message == result.Message && approval.Calls == 0,
+        "Completed checkpoint retry is idempotent.");
+}
+
+static async Task M3e2LiveLastUpdate()
+{
+    using var setup = new TestContext();
+    var state = M3e1SavedVision();
+    await setup.Store.SaveAsync(state, default);
+    int calls = 0;
+    var model = new FakeModel(_ => {
+        if (++calls == 1) throw new AgentException("Model provider HTTP 400 (category=possible_context_limit; messages=11; tools=48; requestBytes=41173).");
+        if (calls == 2) return new ModelReply(null, [Call("link-vision", "nira_plan_update", new { index = 1, status = "completed", evidenceId = "saved-vision" })]);
+        if (calls == 3) return new ModelReply(null, [Call("mark-analysis", "nira_plan_update", new { index = 2, status = "completed" })]);
+        throw new InvalidOperationException("No extra inference after 3/3");
+    });
+    var approval = new FakeApprovals(false);
+    var result = await setup.Engine(model).RunAsync(state.Id, null, approval);
+    var saved = (await setup.Store.LoadAsync(state.Id, default))!;
+    Assert(result.Status == ConversationStatus.Completed && calls == 3 && approval.Calls == 0 &&
+        saved.Operations.Count == 2 && saved.Plan.All(step => step.Status == "completed") &&
+        result.Message.Contains("SAVED_VISUAL_OBSERVATION", StringComparison.Ordinal),
+        "Reproduce 1/3 to 3/3 in recovery, then deliver without another provider call or operation.");
+}
+
+static async Task M3e2MissingProof()
+{
+    using var setup = new TestContext();
+    var state = M3e2CompletedVision();
+    state.Plan[1].EvidenceId = "missing-vision";
+    await setup.Store.SaveAsync(state, default);
+    var result = await setup.Engine(new FakeModel(_ => throw new InvalidOperationException("Blocked checkpoint")))
+        .RunAsync(state.Id, null, new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.Paused, "3/3 labels alone cannot substitute for valid proof.");
+}
+
+static async Task M3e2Uncertain()
+{
+    using var setup = new TestContext();
+    var state = M3e2CompletedVision();
+    state.Operations.Add(new AgentOperation { ToolName = "filesystem.write_text", Status = OperationStatus.Dispatched });
+    await setup.Store.SaveAsync(state, default);
+    var result = await setup.Engine(new FakeModel(_ => throw new InvalidOperationException("No uncertain replay")))
+        .RunAsync(state.Id, null, new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.NeedsReconciliation, "Uncertain dispatched effects must still require reconciliation.");
+}
+
+static async Task M3e2Denied()
+{
+    using var setup = new TestContext();
+    var state = M3e2CompletedVision();
+    state.Operations.Add(new AgentOperation { ToolName = "vision.analyze", Status = OperationStatus.Rejected, ErrorCode = "NOT_AUTHORIZED" });
+    await setup.Store.SaveAsync(state, default);
+    var result = await setup.Engine(new FakeModel(_ => throw new InvalidOperationException("Denied checkpoint")))
+        .RunAsync(state.Id, null, new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.Paused, "A later denial cannot be overridden by earlier completed labels.");
+}
+
+static async Task M3e2Incomplete()
+{
+    using var setup = new TestContext();
+    var state = M3e2CompletedVision();
+    state.Plan[2].Status = "pending";
+    await setup.Store.SaveAsync(state, default);
+    var result = await setup.Engine(new FakeModel(_ => throw new InvalidOperationException("Blocked checkpoint")))
+        .RunAsync(state.Id, null, new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.Paused, "A genuinely pending analysis must not be auto-completed.");
+}
+
+static async Task M3e2NewInstruction()
+{
+    using var setup = new TestContext();
+    var state = M3e2CompletedVision();
+    await setup.Store.SaveAsync(state, default);
+    int calls = 0;
+    var result = await setup.Engine(new FakeModel(messages => {
+        calls++;
+        Assert(messages.Any(m => m.Role == "user" && m.Content == "Explain more about the arrangement."),
+            "New instruction reaches reasoning model.");
+        return new ModelReply("The arrangement has three rows.", []);
+    })).RunAsync(state.Id, "Explain more about the arrangement.", new FakeApprovals(false));
+    Assert(calls == 1 && result.Status == ConversationStatus.Completed &&
+        result.Message.Contains("The arrangement has three rows.", StringComparison.Ordinal),
+        "New instructions are not swallowed by terminal recovery.");
+}
+
+
+static async Task M3fBoundedCatalog()
+{
+    using var setup = new TestContext();
+    var model = new FakeModel(_ => new ModelReply("Hello", []));
+    var result = await setup.Engine(model, routing: true).RunAsync(Guid.NewGuid(), "Hello", new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.Completed && model.ToolSnapshots.Count == 1 &&
+        model.ToolSnapshots[0].Count <= 14 && model.ToolSnapshots[0].Any(t => t.Name == "nira_select_tools") &&
+        model.PromptSnapshots[0].Any(m => m.Content?.Contains("productivity.ocr_read", StringComparison.Ordinal) == true) &&
+        model.PromptSnapshots[0].Any(m => m.Content?.Contains("browser.", StringComparison.Ordinal) == true),
+        "Small active catalog with complete discoverable capability directory.");
+}
+
+static async Task M3fSelectExecute()
+{
+    using var setup = new TestContext();
+    await File.WriteAllTextAsync(Path.Combine(setup.Workspace, "route.txt"), "route evidence");
+    Guid id = Guid.NewGuid();
+    var model = new FakeModel(new ModelReply[] {
+        new(null, [Call("select-hash", "nira_select_tools", new { names = new[] { "filesystem.sha256" } })]),
+        new(null, [Call("hash-file", "filesystem.sha256", new { path = "route.txt" })]),
+        new(null, [Call("select-read", "nira_select_tools", new { names = new[] { "filesystem.read_text" } })]),
+        new(null, [Call("read-file", "filesystem.read_text", new { path = "route.txt" })]),
+        new("File hash and text obtained.", [])
+    });
+    var approval = new FakeApprovals(false);
+    var result = await setup.Engine(model, routing: true).RunAsync(id, "Read and hash route.txt", approval);
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Completed && saved.Operations.Count == 2 && approval.Calls == 0 &&
+        saved.Operations.All(op => op.Status == OperationStatus.Succeeded) &&
+        !model.ToolSnapshots[0].Any(t => t.Name == "filesystem.sha256") &&
+        model.ToolSnapshots[1].Any(t => t.Name == "filesystem.sha256") &&
+        model.ToolSnapshots.All(ts => ts.Count <= 14), "Selected capabilities load exact schemas and create only real execution receipts.");
+}
+
+static async Task M3fHiddenRefused()
+{
+    using var setup = new TestContext();
+    Guid id = Guid.NewGuid();
+    var model = new FakeModel(new ModelReply[] {
+        new(null, [Call("hidden", "filesystem.write_text", new { path = "hidden.txt", content = "bad" })]),
+        new(null, [Call("select", "nira_select_tools", new { names = new[] { "filesystem.write_text" } })]),
+        new(null, [Call("write", "filesystem.write_text", new { path = "visible.txt", content = "good" })]),
+        new("Created visible.txt", [])
+    });
+    var result = await setup.Engine(model, routing: true).RunAsync(id, "Create visible.txt", new FakeApprovals(false));
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Completed && saved.Operations.Count == 1 &&
+        !File.Exists(Path.Combine(setup.Workspace, "hidden.txt")) && File.Exists(Path.Combine(setup.Workspace, "visible.txt")) &&
+        saved.Messages.Any(m => m.Content?.Contains("CAPABILITY_NOT_ACTIVE", StringComparison.Ordinal) == true),
+        "A hidden call is rejected before operation creation; only later active invocation can execute.");
+}
+
+static async Task M3fApproval()
+{
+    using var setup = new TestContext();
+    Guid id = Guid.NewGuid();
+    string outside = Path.Combine(setup.Root, "outside.txt");
+    var model = new FakeModel(new ModelReply[] {
+        new(null, [Call("select", "nira_select_tools", new { names = new[] { "filesystem.write_text" } })]),
+        new(null, [Call("write", "filesystem.write_text", new { path = outside, content = "denied" })])
+    });
+    var approval = new FakeApprovals(false);
+    var result = await setup.Engine(model, routing: true).RunAsync(id, "Create file outside workspace", approval);
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Paused && approval.Calls == 1 && !File.Exists(outside) &&
+        saved.Operations.Count == 1 && saved.Operations[0].Status == OperationStatus.Rejected,
+        "Loading a schema cannot authorize an outside write.");
+}
+
+static async Task M3fInvalid()
+{
+    using var setup = new TestContext();
+    Guid id = Guid.NewGuid();
+    var model = new FakeModel(new ModelReply[] {
+        new(null, [Call("invalid", "nira_select_tools", new { names = new[] { "unknown.tool" } })]),
+        new(null, [Call("duplicate", "nira_select_tools", new { names = new[] { "filesystem.write_text", "filesystem.write_text" } })]),
+        new(null, [Call("large", "nira_select_tools", new { names = Enumerable.Repeat("filesystem.write_text", 9).ToArray() })]),
+        new("No operations executed.", [])
+    });
+    await setup.Engine(model, routing: true).RunAsync(id, "Check selection", new FakeApprovals(false));
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(saved.Operations.Count == 0 && model.ToolSnapshots.All(ts => !ts.Any(t => t.Name == "filesystem.write_text")) &&
+        saved.Messages.Any(m => m.Content?.Contains("CAPABILITY_UNKNOWN", StringComparison.Ordinal) == true) &&
+        saved.Messages.Any(m => m.Content?.Contains("CAPABILITY_COUNT", StringComparison.Ordinal) == true),
+        "Unknown, duplicate and oversized selection never load extra capabilities.");
+}
+
+static async Task M3fMixed()
+{
+    using var setup = new TestContext();
+    Guid id = Guid.NewGuid();
+    var model = new FakeModel(new ModelReply[] {
+        new(null, [Call("select", "nira_select_tools", new { names = new[] { "filesystem.write_text" } }),
+            Call("write", "filesystem.write_text", new { path = "mixed.txt", content = "bad" })]),
+        new("No file created.", [])
+    });
+    await setup.Engine(model, routing: true).RunAsync(id, "Do not mix selection and execution", new FakeApprovals(false));
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(saved.Operations.Count == 0 && !File.Exists(Path.Combine(setup.Workspace, "mixed.txt")) &&
+        saved.Messages.Any(m => m.Content?.Contains("MIXED_CAPABILITY_SELECTION", StringComparison.Ordinal) == true),
+        "Mixed selection/execution response must dispatch nothing.");
+}
+
+static async Task M3fLoop()
+{
+    using var setup = new TestContext();
+    Guid id = Guid.NewGuid();
+    int calls = 0;
+    var model = new FakeModel(_ => new ModelReply(null, [Call("select-" + (++calls), "nira_select_tools",
+        new { names = new[] { "filesystem.sha256" } })]));
+    var result = await setup.Engine(model, routing: true).RunAsync(id, "Hash a file", new FakeApprovals(false));
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Paused && calls == 6 && saved.Operations.Count == 0,
+        "Repeated schema selection never earns progress credit or loops indefinitely.");
+}
+
+static Task M3fCompaction()
+{
+    var tools = M3e1WideCatalog().Take(8).Append(new ToolDescriptor("nira_select_tools", "Select capabilities", ToolRisk.ReadLocal,
+        JsonToolSchema.Schema("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"))).ToArray();
+    var messages = new List<ChatEntry> { new("system", "Routing directory"), new("user", "Read a document") };
+    for (int i = 0; i < 20; i++) messages.Add(new ChatEntry("assistant", new string('x', 2000)));
+    Assert(ModelContextRecovery.TryReduce(messages, tools, out _, out var compact) &&
+        compact.Select(t => t.Name).SequenceEqual(tools.Select(t => t.Name)),
+        "Context reduction must retain all active routed schemas and selector.");
+    return Task.CompletedTask;
+}
+
+
+static async Task M4aAdaptiveDirect()
+{
+    using var setup = new TestContext();
+    var execution = new FakeModel(_ => new ModelReply("Hello", []));
+    var model = new PlanningTestModel(new ModelReply("invalid", []), execution);
+    Guid id = Guid.NewGuid();
+    var result = await setup.Engine(model, routing: true, adaptive: true)
+        .RunAsync(id, "Hello", new FakeApprovals(false));
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Completed && model.PlanCalls == 0 && model.FallbackCalls == 0 &&
+        execution.ToolSnapshots.Count == 1 && saved.AutomaticPlanningOutcome == "direct_adaptive" &&
+        saved.AutoPlanningAttempted && saved.Plan.Count == 0 && saved.Operations.Count == 0,
+        "Adaptive mode must eliminate a separate planning round for a fresh objective.");
+}
+
+static async Task M4aAdaptiveBatch()
+{
+    using var setup = new TestContext();
+    await File.WriteAllTextAsync(Path.Combine(setup.Workspace, "alpha.txt"), "Alpha");
+    await File.WriteAllTextAsync(Path.Combine(setup.Workspace, "beta.txt"), "Beta");
+    Guid id = Guid.NewGuid();
+    var execution = new FakeModel(new ModelReply[] {
+        new(null, [Call("read-a", "filesystem.read_text", new { path = "alpha.txt" }),
+            Call("read-b", "filesystem.read_text", new { path = "beta.txt" })]),
+        new(null, [Call("select-write", "nira_select_tools", new { names = new[] { "filesystem.write_text" } })]),
+        new(null, [Call("write", "filesystem.write_text", new { path = "merged.txt", content = "Alpha Beta" })]),
+        new(null, [Call("verify", "filesystem.read_text", new { path = "merged.txt" })]),
+        new("Merged and verified the two files.", [])
+    });
+    var model = new PlanningTestModel(AutoPlanChoice("plan", ("Alternative one", "unused", "observation"),
+        ("Alternative two", "unused", "observation")), execution);
+    var approval = new FakeApprovals(false);
+    var result = await setup.Engine(model, routing: true, adaptive: true).RunAsync(id,
+        "Combine alpha.txt and beta.txt into a new file and read it back", approval);
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Completed && model.PlanCalls == 0 && model.FallbackCalls == 0 &&
+        execution.ToolSnapshots.Count == 5 && saved.Plan.Count == 0 && saved.Operations.Count == 4 &&
+        saved.Operations.All(op => op.Status == OperationStatus.Succeeded) && approval.Calls == 0 &&
+        File.ReadAllText(Path.Combine(setup.Workspace, "merged.txt")) == "Alpha Beta" &&
+        File.ReadAllText(Path.Combine(setup.Workspace, "alpha.txt")) == "Alpha" &&
+        File.ReadAllText(Path.Combine(setup.Workspace, "beta.txt")) == "Beta",
+        "Independent reads can be batched, with verified creation and separate read-back; no speculative plan.");
+}
+
+static async Task M4aAdaptivePlanProof()
+{
+    using var setup = new TestContext();
+    Guid id = Guid.NewGuid();
+    var execution = new FakeModel(new ModelReply[] {
+        new(null, [Call("plan", "nira_plan", new { steps = new[] {
+            new { description = "Create note", successCriterion = "File creation receipt", kind = "action", toolName = "filesystem.write_text" },
+            new { description = "Read note back", successCriterion = "Read verifies saved text", kind = "observation", toolName = "filesystem.read_text" }
+        } })]),
+        new("Done without the requested work.", []), new("Still done.", []), new("Still done.", [])
+    });
+    var model = new PlanningTestModel(new ModelReply("invalid", []), execution);
+    var result = await setup.Engine(model, adaptive: true).RunAsync(id, "Create a note and read it back", new FakeApprovals(false));
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Paused && model.PlanCalls == 0 &&
+        saved.AutomaticPlanningOutcome == "planned_adaptive" && saved.Plan.Count == 2 &&
+        saved.Plan.All(p => p.Status == "pending") && saved.Operations.Count == 0,
+        "An explicit adaptive plan still requires verified execution evidence.");
+}
+
+static async Task M4aAdaptivePlanSize()
+{
+    using var setup = new TestContext();
+    Guid id = Guid.NewGuid();
+    var steps = Enumerable.Range(0, 12).Select(i => new {
+        description = "Hypothetical step " + i, successCriterion = "Read result", kind = "observation", toolName = "filesystem.read_text"
+    }).ToArray();
+    var model = new FakeModel(new ModelReply[] { new(null, [Call("plan", "nira_plan", new { steps })]),
+        new("No work was executed.", []) });
+    await setup.Engine(model, adaptive: true).RunAsync(id, "Review hypothetical workflow", new FakeApprovals(false));
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(saved.Plan.Count == 0 && saved.Operations.Count == 0 &&
+        saved.Messages.Any(m => m.Content?.Contains("PLAN_SIZE", StringComparison.Ordinal) == true),
+        "Adaptive mode rejects oversized speculative plans rather than committing to them.");
+}
+
+static async Task M4aAdaptiveLegacy()
+{
+    using var setup = new TestContext();
+    var state = M3e1SavedVision();
+    state.Status = ConversationStatus.Paused;
+    await setup.Store.SaveAsync(state, default);
+    var model = new PlanningTestModel(new ModelReply("invalid", []), new FakeModel(_ => new ModelReply("Not verified.", [])));
+    var result = await setup.Engine(model, adaptive: true).RunAsync(state.Id, null, new FakeApprovals(false));
+    var saved = (await setup.Store.LoadAsync(state.Id, default))!;
+    Assert(result.Status == ConversationStatus.Paused && model.PlanCalls == 0 &&
+        saved.Plan.Count == 3 && saved.Plan[1].Status != "completed" && saved.Operations.Count == 2 &&
+        saved.AutomaticPlanningOutcome == state.AutomaticPlanningOutcome,
+        "Upgrade must not clear or bypass the existing plan or replay operations.");
+}
+
+static async Task M4aAdaptivePartial()
+{
+    using var setup = new TestContext();
+    await File.WriteAllTextAsync(Path.Combine(setup.Workspace, "partial.txt"), "RECORDED_PARTIAL_VALUE");
+    Guid id = Guid.NewGuid();
+    int rounds = 0;
+    var execution = new FakeModel(_ => {
+        if (++rounds == 1) return new ModelReply(null, [Call("read", "filesystem.read_text", new { path = "partial.txt" })]);
+        throw new AgentException("Model provider HTTP 400 (category=possible_context_limit; messages=11; tools=14; requestBytes=41173).");
+    });
+    var result = await setup.Engine(execution, routing: true, adaptive: true).RunAsync(id,
+        "Read the file and explain its contents", new FakeApprovals(false));
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Paused && rounds == 2 && saved.Operations.Count == 1 &&
+        result.Message.Contains("RECORDED_PARTIAL_VALUE", StringComparison.Ordinal),
+        "Persistent context rejection delivers partial observed data, not invented completion.");
+}
+
+static async Task M4b4ThreadContinuity()
+{
+    using var setup = new TestContext();
+    Guid first = Guid.NewGuid();
+    var engine = setup.Engine(new FakeModel(_ => new ModelReply("The project is called Quartz.", [])), adaptive: true);
+    await engine.RunAsync(first, "Name the project", new FakeApprovals(false));
+    Guid second = await setup.Store.CreateFollowupAsync(first, default);
+    var child = (await setup.Store.LoadAsync(second, default))!;
+    Assert(child.PreviousTaskId == first && child.ChatThreadId == first && child.Messages.Count == 0 &&
+        child.Operations.Count == 0 && child.Plan.Count == 0, "New turn must be isolated from old execution state.");
+    var followup = setup.Engine(new FakeModel(messages => {
+        Assert(messages.Any(m => m.Role == "system" && m.Content?.Contains("Quartz", StringComparison.Ordinal) == true) &&
+            messages.Count(m => m.Role == "user") == 1, "Prior answer is available only as historical context.");
+        return new ModelReply("Quartz", []);
+    }), adaptive: true);
+    var result = await followup.RunAsync(second, "What did we name it?", new FakeApprovals(false));
+    var chain = await setup.Store.LoadThreadAsync(second, default);
+    var history = await setup.Store.ListRecentAsync(default);
+    Assert(result.Status == ConversationStatus.Completed && chain.Count == 2 && chain[0].Id == first &&
+        chain[1].Id == second && history.Count == 1 && history[0].ThreadTitle == "Name the project",
+        "Followups reopen together under the original title.");
+}
+
+static async Task M4b4ThreadIsolation()
+{
+    using var setup = new TestContext();
+    var prior = new ConversationState { Status = ConversationStatus.Completed, Objective = "Old task",
+        LastAnswer = "Old result", Messages = [new ChatEntry("user", "Old task"),
+        new ChatEntry("tool", "PRIVATE_TOOL_DATA", "call")],
+        Operations = [new AgentOperation { Status = OperationStatus.Succeeded, ToolName = "filesystem.write_text" }],
+        Plan = [new PlanStep { Status = "completed" }] };
+    await setup.Store.SaveAsync(prior, default);
+    Guid id = await setup.Store.CreateFollowupAsync(prior.Id, default);
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(saved.PreviousChatContext?.Contains("Old result", StringComparison.Ordinal) == true &&
+        saved.PreviousChatContext?.Contains("PRIVATE_TOOL_DATA", StringComparison.Ordinal) == false &&
+        saved.Operations.Count == 0 && saved.Plan.Count == 0 && saved.RetryBlockCode is null &&
+        !saved.AutoPlanningAttempted, "Historical tool data and receipts cannot become current authorization or proof.");
+}
+
+static async Task M4b4IncompleteRejected()
+{
+    using var setup = new TestContext();
+    var state = new ConversationState { Status = ConversationStatus.Paused, Objective = "Unfinished" };
+    await setup.Store.SaveAsync(state, default);
+    bool rejected = false;
+    try { await setup.Store.CreateFollowupAsync(state.Id, default); }
+    catch (AgentException) { rejected = true; }
+    Assert(rejected && (await setup.Store.ListRecentAsync(default)).Count == 1,
+        "An unfinished task cannot be bypassed with a followup link.");
+}
+
+
+static async Task M4dChatPreferences()
+{
+    using var setup = new TestContext();
+    Guid id = Guid.NewGuid();
+    await setup.Engine(new FakeModel(_ => new ModelReply("Original answer", [])), adaptive: true)
+        .RunAsync(id, "Original title", new FakeApprovals(false));
+    var original = (await setup.Store.LoadAsync(id, default))!;
+    Guid child = await setup.Store.CreateFollowupAsync(id, default);
+    await setup.Engine(new FakeModel(_ => new ModelReply("Follow-up answer", [])), adaptive: true)
+        .RunAsync(child, "Follow-up", new FakeApprovals(false));
+    await setup.Store.SetChatPreferencesAsync(id, "Renamed thread", true, default);
+    Assert((await setup.Store.ListRecentAsync(default)).Count == 0, "Archived chat hidden");
+    var archived = (await new SqliteConversationStore(setup.Database).ListRecentAsync(default, true)).Single();
+    Assert(archived.ThreadId == id && archived.Id == child && archived.Archived && archived.ThreadTitle == "Renamed thread", "Metadata persisted per thread");
+    await setup.Store.SetChatPreferencesAsync(id, null, false, default);
+    Assert((await setup.Store.ListRecentAsync(default)).Single().ThreadTitle == "Renamed thread", "Restore preserves title");
+    var chain = await setup.Store.LoadThreadAsync(child, default);
+    Assert(chain.Count == 2 && chain[0].Revision == original.Revision && chain[0].LastAnswer == original.LastAnswer && chain[0].Objective == original.Objective,
+        "Presentation metadata never rewrites execution journals or original objective");
+}
+
+static async Task M4dMemoryManagement()
+{
+    using var setup = new TestContext();
+    string keep = await setup.Store.StoreMemoryAsync("Keep this note", "explicit-settings-user", default);
+    string remove = await setup.Store.StoreMemoryAsync("Remove this note", "explicit-settings-user", default);
+    var notes = await new SqliteConversationStore(setup.Database).ListMemoryNotesAsync(default);
+    Assert(notes.Count == 2 && notes.Any(n => n.Id == keep && n.Content == "Keep this note"), "Saved notes round-trip");
+    Assert(await setup.Store.RemoveMemoryNoteAsync(remove, default), "Selected note removed");
+    Assert(!await setup.Store.RemoveMemoryNoteAsync(remove, default) && !await setup.Store.RemoveMemoryNoteAsync("invalid", default), "Missing and malformed IDs rejected");
+    Assert((await setup.Store.ListMemoryNotesAsync(default)).Single().Id == keep && (await setup.Store.SearchMemoryAsync("Remove this note", 10, default)).Count == 0, "Deletion is scoped to selected note and reflected in search");
+}
+
+static async Task M4dInvalidPreferences()
+{
+    using var setup = new TestContext();
+    bool rejected = false;
+    try { await setup.Store.SetChatPreferencesAsync(Guid.NewGuid(), "Unknown", false, default); }
+    catch (AgentException) { rejected = true; }
+    Assert(rejected, "Unknown chat cannot acquire metadata");
+    rejected = false;
+    try { await setup.Store.SetChatPreferencesAsync(Guid.NewGuid(), "bad\ntitle", false, default); }
+    catch (ArgumentException) { rejected = true; }
+    Assert(rejected && (await setup.Store.ListRecentAsync(default, true)).Count == 0, "Invalid title rejected without creating history");
+}
+
+static async Task M4cAttachmentPersisted()
+{
+    using var setup = new TestContext();
+    string path = Path.Combine(setup.Workspace, "selected.txt");
+    await File.WriteAllTextAsync(path, "local bytes not embedded");
+    Guid id = Guid.NewGuid();
+    var model = new FakeModel(messages => {
+        ChatEntry user = messages.Last(m => m.Role == "user");
+        Assert(user.Content?.Contains("selected.txt", StringComparison.Ordinal) == true &&
+            user.Content?.Contains("local bytes not embedded", StringComparison.Ordinal) == false,
+            "Model receives references, not file bytes.");
+        return new ModelReply("Attachment noted.", []);
+    });
+    var result = await setup.Engine(model, adaptive: true).RunAsync(id, "Review this", new FakeApprovals(false),
+        attachmentPaths: new[] { path });
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    var entry = saved.Messages.Single(m => m.Role == "user");
+    Assert(result.Status == ConversationStatus.Completed && entry.UserDisplayText == "Review this" &&
+        entry.AttachmentPaths?.SequenceEqual(new[] { path }) == true && saved.Operations.Count == 0,
+        "Attachment metadata survives encrypted storage without creating an operation or approval.");
+    Guid child = await setup.Store.CreateFollowupAsync(id, default);
+    var thread = await setup.Store.LoadThreadAsync(child, default);
+    Assert(thread[0].Messages.Single(m => m.Role == "user").AttachmentPaths?.Single() == path,
+        "Reopened chat retains attachment metadata.");
+}
+
+static async Task M4cAttachmentScope()
+{
+    using var setup = new TestContext();
+    string outside = Path.Combine(setup.Root, "external.txt");
+    await File.WriteAllTextAsync(outside, "private");
+    Guid id = Guid.NewGuid();
+    var model = new FakeModel(_ => new ModelReply(null, [Call("read-outside", "filesystem.read_text", new { path = outside })]));
+    var approval = new FakeApprovals(false);
+    var result = await setup.Engine(model, adaptive: true).RunAsync(id, "Read attachment", approval,
+        attachmentPaths: new[] { outside });
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Paused && approval.Calls == 1 &&
+        state.Operations.Single().Status == OperationStatus.Rejected && state.Operations.Single().ResultJson is null,
+        "Selection cannot authorize external reads.");
+}
+
+static Task M4cAttachmentBounds()
+{
+    string path = Path.GetFullPath("selected.txt");
+    ChatEntry entry = ChatAttachmentMessage.Create(null, new[] { path, path });
+    Assert(entry.AttachmentPaths?.Count == 1 && entry.UserDisplayText == "" &&
+        entry.Content?.Contains("Examine the attached files", StringComparison.Ordinal) == true,
+        "Attachment-only messages work and duplicate paths are removed.");
+    foreach (string[] rejected in new[] { new[] { "relative.txt" }, Enumerable.Repeat(path, 9).ToArray() })
+    {
+        bool blocked = false;
+        try { _ = ChatAttachmentMessage.Create("test", rejected); }
+        catch (ArgumentException) { blocked = true; }
+        Assert(blocked, "Invalid attachment paths or oversized selections are rejected.");
+    }
+    return Task.CompletedTask;
+}
+
+static Task M4cReceiptOnly()
+{
+    string path = Path.GetFullPath("verified.xlsx");
+    string hash = new string('a', 64);
+    var state = new ConversationState { LastAnswer = "I created a fake document." };
+    state.Operations.Add(new AgentOperation { Status = OperationStatus.Succeeded, ToolName = "productivity.create_workbook",
+        ResultJson = JsonSerializer.Serialize(ToolReceipt.Ok("Saved", new { path, sha256 = hash, contentVerified = true }, true)) });
+    state.Operations.Add(new AgentOperation { Status = OperationStatus.Failed, ToolName = "productivity.create_document",
+        ResultJson = JsonSerializer.Serialize(ToolReceipt.Ok("Fake", new { path = Path.GetFullPath("failed.docx"), sha256 = hash, contentVerified = true }, true)) });
+    state.Operations.Add(new AgentOperation { Status = OperationStatus.Succeeded, ToolName = "filesystem.read_text",
+        ResultJson = JsonSerializer.Serialize(ToolReceipt.Ok("Read", new { path = Path.GetFullPath("read.txt"), sha256 = hash }, false)) });
+    state.Operations.Add(new AgentOperation { Status = OperationStatus.Succeeded, ToolName = "productivity.create_document",
+        ResultJson = JsonSerializer.Serialize(ToolReceipt.Ok("Unverified", new { path = Path.GetFullPath("unverified.docx"), sha256 = hash, contentVerified = false }, true)) });
+    state.Operations.Add(new AgentOperation { Status = OperationStatus.Succeeded, ToolName = "filesystem.write_text",
+        ResultJson = JsonSerializer.Serialize(ToolReceipt.Ok("Executable", new { path = Path.GetFullPath("script.cmd"), sha256 = hash }, true)) });
+    state.Operations.Add(new AgentOperation { Status = OperationStatus.Succeeded, ToolName = "productivity.pdf_export_text",
+        ResultJson = JsonSerializer.Serialize(ToolReceipt.Ok("Export", new { outputPath = Path.GetFullPath("export.txt"), outputSha256 = hash, contentVerified = true }, true)) });
+    var files = RecordedFileArtifacts.From(state);
+    Assert(files.Count == 2 && files[0].Path == path && files[1].Path.EndsWith("export.txt", StringComparison.Ordinal),
+        "Only supported verified changed-state file receipts produce cards.");
+    return Task.CompletedTask;
+}
+
+static async Task M4cChangedFile()
+{
+    using var setup = new TestContext();
+    string path = Path.Combine(setup.Workspace, "report.txt");
+    await File.WriteAllTextAsync(path, "original");
+    string hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(await File.ReadAllBytesAsync(path)));
+    var artifact = new RecordedFileArtifact(path, hash, "filesystem.write_text");
+    Assert(await RecordedFileArtifacts.MatchesAsync(artifact, setup.Workspace), "Recorded bytes match.");
+    await File.WriteAllTextAsync(path, "changed");
+    Assert(!await RecordedFileArtifacts.MatchesAsync(artifact, setup.Workspace), "Changed files do not open as verified artifacts.");
+    File.Delete(path);
+    Assert(!await RecordedFileArtifacts.MatchesAsync(artifact, setup.Workspace), "Missing file is rejected.");
+}
+
+static string M4b3Sse(params string[] events) => string.Concat(events.Select(e => "data: " + e + "\n\n"));
+
+static async Task M4b3Visible()
+{
+    using var handler = new M4b3StreamHandler(M4b3Sse(
+        """{"choices":[{"delta":{"reasoning_content":"PRIVATE","content":"Hello "},"finish_reason":null}]}""",
+        """{"choices":[{"delta":{"content":"world"},"finish_reason":null}]}""",
+        """{"choices":[{"delta":{},"finish_reason":"stop"}]}""", "[DONE]"));
+    using var http = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(http, new Uri("https://example.invalid/v1/"), "mock", () => null);
+    var preview = new List<string?>();
+    var reply = await model.CompleteStreamingAsync([new ChatEntry("user", "Hello")], [], preview.Add, default);
+    Assert(reply.Content == "Hello world" && reply.ToolCalls.Count == 0 &&
+        preview.SequenceEqual(new string?[] { null, "Hello ", "world" }) && handler.Calls == 1 &&
+        handler.StreamRequested, "Streaming must preserve visible deltas only, with one request.");
+}
+
+static async Task M4b3Tool()
+{
+    using var handler = new M4b3StreamHandler(M4b3Sse(
+        """{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-a","function":{"name":"filesystem.","arguments":"{\"path\":"}}]},"finish_reason":null}]}""",
+        """{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"read_text","arguments":"\"test.txt\"}"}}]},"finish_reason":null}]}""",
+        """{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}""", "[DONE]"));
+    using var http = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(http, new Uri("https://example.invalid/v1/"), "mock", () => null);
+    var preview = new List<string?>();
+    var reply = await model.CompleteStreamingAsync([new ChatEntry("user", "Read a file")], [], preview.Add, default);
+    Assert(reply.ToolCalls.Count == 1 && reply.ToolCalls[0].Id == "call-a" && reply.ToolCalls[0].Name == "filesystem.read_text" &&
+        reply.ToolCalls[0].ArgumentsJson == "{\"path\":\"test.txt\"}" && preview.All(x => x is null),
+        "Fragmented native tool call must assemble without exposing arguments as chat text.");
+}
+
+static async Task M4b3Incomplete()
+{
+    using var handler = new M4b3StreamHandler(M4b3Sse(
+        """{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-a","function":{"name":"filesystem.read_text","arguments":"{}"}}]},"finish_reason":null}]}"""));
+    using var http = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(http, new Uri("https://example.invalid/v1/"), "mock", () => null);
+    bool rejected = false;
+    try { await model.CompleteStreamingAsync([new ChatEntry("user", "Read")], [], _ => { }, default); }
+    catch (AgentException) { rejected = true; }
+    Assert(rejected && handler.Calls == 1, "Truncated stream cannot return a dispatchable tool call.");
+}
+
+static async Task M4b3JsonFallback()
+{
+    using var handler = new FakeApiHandler("""{"choices":[{"message":{"content":"Ordinary response"}}]}""");
+    using var http = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(http, new Uri("https://example.invalid/v1/"), "mock", () => null);
+    var preview = new List<string?>();
+    var reply = await model.CompleteStreamingAsync([new ChatEntry("user", "Hello")], [], preview.Add, default);
+    Assert(reply.Content == "Ordinary response" && preview.SequenceEqual(new string?[] { null }) && handler.Calls == 1,
+        "JSON response fallback must not fake deltas or make another request.");
+}
 
 static Task SchemaRejectsUnexpectedProperties()
 {
@@ -528,6 +1574,433 @@ static Task WorkspaceRelativeOverride()
     return Task.CompletedTask;
 }
 
+static async Task M6eGenerationSuccess()
+{
+    using var setup = new TestContext();
+    const string encoded = "iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAIAAADTED8xAAACv0lEQVR4nO3TQQEAEADAQJSSSUTtxPDYXYJ9Nve5A6rW7wD4yQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSDMAaQYgzQCkGYA0A5BmANIMQJoBSHvAvANZ+OncoAAAAABJRU5ErkJggg==";
+    string body = JsonSerializer.Serialize(new { success = true, result = new { image = encoded } });
+    using var handler = new FakeApiHandler(body);
+    using var http = new HttpClient(handler);
+    // Create the runtime catalog before credentials exist, then save them without a restart.
+    var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http,
+        imageGenerationResolver: () => ImageGenerationProvider.Load(setup.Root));
+    Assert(registry.Descriptors.Any(t => t.Name == "image.generate"), "Generation must remain registered before setup.");
+    ImageGenerationProvider.Save(setup.Root, new string('a', 32), new string('T', 32));
+    var args = new { prompt = "Blue geometric landscape", width = 256, height = 256 };
+    var model = new FakeModel([new ModelReply(null, [Call("gen1", "image.generate", args)]),
+        new ModelReply(null, [Call("gen2", "image.generate", args)]), new ModelReply("Here is your artwork.", [])]);
+    var approvals = new FakeApprovals(true);
+    var engine = new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace));
+    Guid id = Guid.NewGuid();
+    var result = await engine.RunAsync(id, "Create a blue landscape", approvals);
+    Assert(result.Status == ConversationStatus.Completed && handler.Calls == 1 && approvals.Calls == 1,
+        "Generation must dispatch exactly once and require consent.");
+    Assert(handler.AuthorizationHeader == "Bearer " + new string('T', 32) && handler.RequestBody is { } request && request.Contains("Blue geometric landscape", StringComparison.Ordinal), "Provider multipart/auth request incorrect.");
+    var state = await setup.Store.LoadAsync(id, default) ?? throw new InvalidOperationException("Task missing.");
+    var entries = await new SqliteConversationStore(setup.Database).ListGalleryAsync(default);
+    Assert(entries.Count == 1 && entries[0].IsGenerated && entries[0].Source == "" && File.Exists(entries[0].Path) &&
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(entries[0].Path))) == entries[0].Sha256,
+        "Generated artwork must persist with a verified hash and no fabricated web source.");
+    Assert(state.Operations.Count(o => o.ToolName == "image.generate") == 1 && !JsonSerializer.Serialize(state).Contains(new string('T', 32), StringComparison.Ordinal),
+        "Duplicate attempts and credentials must not enter the journal.");
+}
+
+static async Task M6eGenerationDenied()
+{
+    using var setup = new TestContext();
+    using var handler = new FakeApiHandler("{}");
+    using var http = new HttpClient(handler);
+    var provider = new ImageGenerationProvider(new string('a', 32), new string('T', 32));
+    var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http, imageGeneration: provider);
+    var model = new FakeModel([new ModelReply(null, [Call("gen1", "image.generate", new { prompt = "Blue sky", width = 256, height = 256 })])]);
+    var engine = new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace));
+    var approvals = new FakeApprovals(false);
+    var result = await engine.RunAsync(Guid.NewGuid(), "Create artwork", approvals);
+    Assert(result.Status == ConversationStatus.Paused && approvals.Calls == 1 && handler.Calls == 0 &&
+        !Directory.Exists(Path.Combine(setup.Workspace, ImageGenerationTool.CacheFolder)), "Denied generation must have no network or image effects.");
+    Assert(!registry.Validate("image.generate", "{\"prompt\":\"Blue sky\",\"width\":256,\"height\":256,\"endpoint\":\"https://example.com\"}", out _, out _), "Model cannot choose provider URL.");
+}
+
+static async Task M6eGenerationInvalid()
+{
+    using var setup = new TestContext();
+    using var handler = new FakeApiHandler("{\"success\":true,\"result\":{\"image\":\"PGh0bWw+PC9odG1sPg==\"}}");
+    using var http = new HttpClient(handler);
+    var tool = new ImageGenerationTool(new WorkspacePathResolver(setup.Workspace), http,
+        new ImageGenerationProvider(new string('a', 32), new string('T', 32)));
+    var receipt = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new { prompt = "Blue sky", width = 256, height = 256 }), default);
+    Assert(!receipt.Success && !receipt.ChangedState && !Directory.Exists(Path.Combine(setup.Workspace, ImageGenerationTool.CacheFolder)), "Invalid image must not be saved.");
+}
+
+static Task M6eGenerationCredentials()
+{
+    using var setup = new TestContext();
+    const string token = "TestTokenOnlyNotARealCredential12345";
+    ImageGenerationProvider.Save(setup.Root, new string('a', 32), token);
+    Assert(ImageGenerationProvider.Load(setup.Root) is not null, "Stored generation credentials did not reopen.");
+    var files = Directory.GetFiles(Path.Combine(setup.Root, "Credentials"));
+    Assert(files.Length == 1 && !System.Text.Encoding.UTF8.GetString(File.ReadAllBytes(files[0])).Contains(token, StringComparison.Ordinal) &&
+        new NiraModelCredentialStore(setup.Root, new Uri("https://ollama.com/v1/")).ReadStored() is null, "Image credential must be encrypted and separately scoped.");
+    ImageGenerationProvider.Clear(setup.Root);
+    Assert(ImageGenerationProvider.Load(setup.Root) is null, "Image credential clear failed.");
+    return Task.CompletedTask;
+}
+
+static async Task M6e2Readiness()
+{
+    using var setup = new TestContext();
+    using var handler = new FakeApiHandler("{}");
+    using var http = new HttpClient(handler);
+    var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http,
+        imageGenerationResolver: () => ImageGenerationProvider.Load(setup.Root));
+    Assert(registry.TryGet("image.generate", out var tool) && tool is IToolReadiness,
+        "Stable generation schema must exist before credentials are configured.");
+    var readiness = (IToolReadiness)tool!;
+    Assert(readiness.UnavailableReason() is not null, "Unconfigured generation must be detected locally.");
+    ImageGenerationProvider.Save(setup.Root, new string('a', 32), new string('T', 32));
+    Assert(readiness.UnavailableReason() is null, "Saving must activate the existing registry immediately.");
+    ImageGenerationProvider.Clear(setup.Root);
+    Assert(readiness.UnavailableReason() is not null, "Clearing must disable provider access immediately.");
+    var args = new { prompt = "Blue sky", width = 256, height = 256 };
+    var model = new FakeModel([new ModelReply(null, [Call("gen1", "image.generate", args)]),
+        new ModelReply(null, [Call("gen2", "image.generate", args)])]);
+    var approvals = new FakeApprovals(true);
+    var engine = new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace),
+        enableCapabilityRouting: true);
+    Guid id = Guid.NewGuid();
+    var missing = await engine.RunAsync(id, "Create artwork", approvals);
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(missing.Status == ConversationStatus.Paused && missing.Message.Contains("credentials", StringComparison.OrdinalIgnoreCase) &&
+        saved.Operations.Count == 0 && approvals.Calls == 0 && handler.Calls == 0 &&
+        model.ToolSnapshots[0].Any(t => t.Name == "image.generate"),
+        "Missing credentials must not dispatch, consume quota or ask network permission.");
+    ImageGenerationProvider.Save(setup.Root, new string('a', 32), new string('T', 32));
+    var retry = await engine.RunAsync(id, null, approvals);
+    Assert(retry.Status == ConversationStatus.Paused && approvals.Calls == 1 && handler.Calls == 1,
+        "The same saved task must be able to reach the provider after setup; malformed fake response must pause.");
+}
+
+static async Task M6e2RoutingRecovery() => await M6e2RoutingCase(true);
+static async Task M6e2RoutingPause() => await M6e2RoutingCase(false);
+
+static async Task M6e2RoutingCase(bool recover)
+{
+    using var setup = new TestContext();
+    using var handler = new FakeApiHandler("{}");
+    using var http = new HttpClient(handler);
+    ImageGenerationProvider.Save(setup.Root, new string('a', 32), new string('T', 32));
+    var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http,
+        imageGenerationResolver: () => ImageGenerationProvider.Load(setup.Root));
+    const string refusal = "The image generation capability is unavailable in this environment.";
+    var model = new FakeModel([new ModelReply(null, [Call("select1", "nira_select_tools", new { names = new[] { "image.generate" } })]),
+        new ModelReply(refusal, []), recover
+            ? new ModelReply(null, [Call("generate1", "image.generate", new { prompt = "Futuristic city", width = 256, height = 256 })])
+            : new ModelReply(refusal, [])]);
+    var approvals = new FakeApprovals(false);
+    Guid id = Guid.NewGuid();
+    var result = await new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace),
+        enableCapabilityRouting: true).RunAsync(id, "Create an image of a city", approvals);
+    Assert(result.Status == ConversationStatus.Paused && model.ToolSnapshots.Count == 3 &&
+        model.ToolSnapshots.All(ts => ts.Any(t => t.Name == "image.generate")) &&
+        model.PromptSnapshots[2].Any(m => m.Role == "system" && m.Content!.Contains("selected the registered image generation capability", StringComparison.Ordinal)),
+        "Selected generation must receive one bounded corrective round rather than false completion.");
+    Assert(approvals.Calls == (recover ? 1 : 0) && handler.Calls == 0,
+        "Recovery must never bypass approval or dispatch after a refusal.");
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(saved.Operations.Count == (recover ? 1 : 0) && saved.LastAnswer != refusal,
+        "A refusal after selection must not be stored as a completed artwork task.");
+}
+
+static async Task M6dGalleryPersistence()
+{
+    using var setup = new TestContext();
+    const string url = "https://upload.wikimedia.org/example.jpg";
+    string path = Path.Combine(setup.Workspace, ImagePreviewTool.CacheFolder, "preview.png");
+    string hash = new string('A', 64);
+    var state = new ConversationState { Objective = "Find photos", Status = ConversationStatus.Completed };
+    state.Operations.Add(new AgentOperation { ToolName = "image.search", Status = OperationStatus.Succeeded,
+        ResultJson = JsonSerializer.Serialize(ToolReceipt.Ok("Found", new { candidates = new[] { new {
+            MediaUrl = url, Title = "File:Example.jpg", Author = "Example author", License = "CC BY 4.0", SourceUrl = "https://commons.wikimedia.org/wiki/File:Example.jpg" } } })) });
+    state.Operations.Add(new AgentOperation { ToolName = "image.retrieve", Status = OperationStatus.Succeeded,
+        ResultJson = JsonSerializer.Serialize(ToolReceipt.Ok("Retrieved", new { previews = new[] {
+            new { url, path, sha256 = hash }, new { url = url + "?unobserved", path, sha256 = hash } } })) });
+    Assert(ImageGalleryEntry.FromTask(state).Count == 1, "Unobserved media must not enter the gallery.");
+    await setup.Store.SaveAsync(state, default);
+    var reopened = new SqliteConversationStore(setup.Database);
+    var entries = await reopened.ListGalleryAsync(default);
+    Assert(entries.Count == 1 && entries[0].Title == "Example.jpg" && entries[0].Sha256 == hash &&
+        entries[0].Author == "Example author" && entries[0].Path == path && !File.Exists(path),
+        "Gallery index persists in the protected journal and does not create or retrieve files.");
+    state.Operations[1].Status = OperationStatus.Failed;
+    Assert(ImageGalleryEntry.FromTask(state).Count == 0, "Failed retrieval must not enter the gallery.");
+}
+
+static Task M6dGalleryUpload()
+{
+    using var setup = new TestContext();
+    string home = Path.Combine(setup.Root, "local-gallery");
+    string original = Path.Combine(setup.Root, "original.png");
+    byte[] bytes = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a1ZkAAAAASUVORK5CYII=");
+    File.WriteAllBytes(original, bytes);
+    var library = new NIRAGalleryLibraryService(home);
+    var item = library.Import(original, NIRAGalleryCategory.Uploaded) ?? throw new InvalidOperationException("Import failed");
+    Assert(File.ReadAllBytes(original).SequenceEqual(bytes) && File.ReadAllBytes(library.ResolvePath(item)).SequenceEqual(bytes),
+        "Gallery must keep a separate verified copy, not move or alter the user file.");
+    var reopened = new NIRAGalleryLibraryService(home);
+    Assert(reopened.Items.Count == 1 && reopened.Items[0].Id == item.Id && reopened.Import(original, NIRAGalleryCategory.Uploaded)?.Id == item.Id,
+        "Imported images must survive reopening and avoid duplicate copies.");
+    File.WriteAllText(original, "not an image");
+    Assert(reopened.Import(original, NIRAGalleryCategory.Uploaded) is null && File.ReadAllBytes(reopened.ResolvePath(item)).SequenceEqual(bytes),
+        "A modified invalid original must not overwrite the gallery copy.");
+    return Task.CompletedTask;
+}
+
+static Task M6aFixPreviewBinding()
+{
+    var state = new ConversationState();
+    const string url = "https://upload.wikimedia.org/example.jpg";
+    var args = JsonSerializer.SerializeToElement(new { urls = new[] { url } });
+    Assert(!ImageEvidenceBinding.Allows(state, args), "Unobserved URL must fail.");
+    state.Operations.Add(new AgentOperation { ToolName = "image.search", Status = OperationStatus.Succeeded,
+        ResultJson = JsonSerializer.Serialize(ToolReceipt.Ok("Found", new { candidates = new[] { new { MediaUrl = url } } })) });
+    Assert(ImageEvidenceBinding.Allows(state, args), "Exact successful candidate must be bound.");
+    Assert(!ImageEvidenceBinding.Allows(state, JsonSerializer.SerializeToElement(new { urls = new[] { url + "?changed=1" } })), "Modified URL must fail.");
+    state.Operations[0].Status = OperationStatus.Failed;
+    Assert(!ImageEvidenceBinding.Allows(state, args), "Failed discovery must not authorize retrieval.");
+    return Task.CompletedTask;
+}
+
+static async Task M6aFixUnobservedPreview()
+{
+    using var setup = new TestContext();
+    var model = new FakeModel([new ModelReply(null, [Call("preview1", "image.retrieve", new { urls = new[] { "https://upload.wikimedia.org/example.jpg" } })]), new ModelReply("No image was retrieved.", [])]);
+    var approvals = new FakeApprovals(false);
+    Guid id = Guid.NewGuid();
+    await setup.Engine(model).RunAsync(id, "Show an image", approvals);
+    var state = await setup.Store.LoadAsync(id, default);
+    Assert(approvals.Calls == 0 && state is not null && !state.Operations.Any(op => op.ToolName == "image.retrieve"), "Unknown media must be rejected before approval or dispatch.");
+}
+
+static async Task M6aFixPreviewApproval()
+{
+    using var setup = new TestContext();
+    const string url = "https://upload.wikimedia.org/example.jpg";
+    using var handler = new FakeApiHandler("""
+        {"query":{"pages":[{"title":"File:Example.jpg","imageinfo":[{"mime":"image/jpeg","url":"https://upload.wikimedia.org/example.jpg","descriptionurl":"https://commons.wikimedia.org/wiki/File:Example.jpg"}]}]}}
+        """);
+    using var http = new HttpClient(handler);
+    var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http);
+    var model = new FakeModel([new ModelReply(null, [Call("search1", "image.search", new { query = "example", provider = "commons" })]),
+        new ModelReply(null, [Call("preview1", "image.retrieve", new { urls = new[] { url } })])]);
+    var approvals = new ScriptedApprovals([true, false]);
+    var result = await new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace)).RunAsync(Guid.NewGuid(), "Find and show example images", approvals);
+    Assert(result.Status == ConversationStatus.Paused && approvals.Calls == 2 && handler.Calls == 1 && !Directory.Exists(Path.Combine(setup.Workspace, ImagePreviewTool.CacheFolder)), "Denied preview must not download or create a cache.");
+}
+
+static async Task M6Rich3BareImageRecovery() => await M6Rich3ImageProtocol(recover: true);
+static async Task M6Rich3BareImagePause() => await M6Rich3ImageProtocol(recover: false);
+
+static async Task M6Rich3ImageProtocol(bool recover)
+{
+    using var setup = new TestContext();
+    const string url = "https://upload.wikimedia.org/example.jpg";
+    string raw = JsonSerializer.Serialize(new { urls = new[] { url } });
+    using var handler = new FakeApiHandler("""
+        {"query":{"pages":[{"title":"File:Example.jpg","imageinfo":[{"mime":"image/jpeg","url":"https://upload.wikimedia.org/example.jpg","descriptionurl":"https://commons.wikimedia.org/wiki/File:Example.jpg"}]}]}}
+        """);
+    using var http = new HttpClient(handler);
+    var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http);
+    var script = new List<ModelReply> {
+        new(null, [Call("select1", "nira_select_tools", new { names = new[] { "image.search", "image.retrieve" } })]),
+        new(null, [Call("search1", "image.search", new { query = "example", provider = "commons" })]),
+        new(raw, [])
+    };
+    if (recover) script.Add(new ModelReply(null, [Call("preview1", "image.retrieve", new { urls = new[] { url } })]));
+    else { script.Add(new ModelReply(raw, [])); script.Add(new ModelReply("Done", [])); }
+    var model = new FakeModel(script);
+    var approvals = new ScriptedApprovals(recover ? new[] { true, false } : new[] { true });
+    Guid id = Guid.NewGuid();
+    var result = await new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace),
+        enableCapabilityRouting: true).RunAsync(id, "Find and show example images", approvals);
+    var state = await setup.Store.LoadAsync(id, default);
+    Assert(result.Status == ConversationStatus.Paused && state is not null &&
+        state.Messages.All(m => m.Role != "assistant" || m.Content != raw) && state.LastAnswer != raw &&
+        handler.Calls == 1 && approvals.Calls == (recover ? 2 : 1) &&
+        !Directory.Exists(Path.Combine(setup.Workspace, ImagePreviewTool.CacheFolder)),
+        "Bare image arguments must never be a completed answer or bypass approval.");
+    Assert(model.PromptSnapshots[3].Any(m => m.Role == "system" && m.Content!.Contains("image.retrieve", StringComparison.Ordinal)),
+        "Recovery should request the actual image retrieval capability.");
+}
+
+static async Task M6Rich3OrdinaryJson()
+{
+    using var setup = new TestContext();
+    const string raw = "{\"urls\":[\"https://example.com\"]}";
+    var model = new FakeModel([new ModelReply(raw, [])]);
+    var result = await setup.Engine(model).RunAsync(Guid.NewGuid(), "Give a sample URL JSON object", new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.Completed && result.Message.StartsWith(raw, StringComparison.Ordinal),
+        "Ordinary JSON without current image discovery must remain a valid answer.");
+}
+
+static async Task M6aCommonsDiscovery()
+{
+    using var handler = new FakeApiHandler("""
+        {"batchcomplete":true,"query":{"pages":[
+          {"title":"File:Example.jpg","imageinfo":[{"mime":"image/jpeg","url":"https://upload.wikimedia.org/example.jpg",
+           "descriptionurl":"https://commons.wikimedia.org/wiki/File:Example.jpg","thumburl":"https://upload.wikimedia.org/thumb.jpg",
+           "extmetadata":{"Artist":{"value":"<b>Example photographer</b>"},"LicenseShortName":{"value":"CC BY-SA 4.0"},
+           "LicenseUrl":{"value":"https://creativecommons.org/licenses/by-sa/4.0/"}}}]},
+          {"title":"File:Unsafe.svg","imageinfo":[{"mime":"image/svg+xml","url":"https://upload.wikimedia.org/unsafe.svg","descriptionurl":"https://commons.wikimedia.org/wiki/File:Unsafe.svg"}]}
+        ]}}
+        """);
+    using var http = new HttpClient(handler);
+    var tool = new ImageDiscoveryTool(http, () => null);
+    var result = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new { query="example", provider="commons" }), default);
+    Assert(result.Success && !result.ChangedState && handler.Calls == 1 && handler.AuthorizationHeader is null,
+        "Commons metadata must require no API credential, fetch no media, and perform no mutation.");
+    Assert(result.Data.GetProperty("count").GetInt32() == 1 && !result.Data.GetProperty("pixelsVerified").GetBoolean() &&
+        !result.Data.GetProperty("downloaded").GetBoolean(), "Only raster metadata is accepted; pixels cannot be verified.");
+    var candidate = result.Data.GetProperty("candidates")[0];
+    Assert(candidate.GetProperty("SourceUrl").GetString() == "https://commons.wikimedia.org/wiki/File:Example.jpg" &&
+        candidate.GetProperty("License").GetString() == "CC BY-SA 4.0" &&
+        candidate.GetProperty("Author").GetString()!.Trim() == "Example photographer", "Commons attribution metadata lost.");
+}
+
+static async Task M6aTavilyDiscovery()
+{
+    using var handler = new FakeApiHandler("""
+        {"images":[{"url":"https://example.com/image.jpg","description":"Example"},"https://example.com/image.jpg",
+          "http://example.com/unsafe.jpg","https://127.0.0.1/private.jpg","https://user:secret@example.com/unsafe.jpg"],
+         "results":[{"url":"https://example.com/article","images":[{"url":"https://example.com/image.jpg","description":"Example caption"}]}]}
+        """);
+    using var http = new HttpClient(handler);
+    var args = JsonSerializer.SerializeToElement(new { query="example", provider="tavily" });
+    var result = await new ImageDiscoveryTool(http, () => "test-key").ExecuteAsync(args, default);
+    Assert(result.Success && result.Data.GetProperty("count").GetInt32() == 1 && handler.Calls == 1,
+        "Tavily must deduplicate and reject malformed or obviously private media references.");
+    Assert(handler.AuthorizationHeader == "Bearer test-key" && !result.Data.GetRawText().Contains("test-key", StringComparison.Ordinal),
+        "Provider key must not enter receipts.");
+    using var body = JsonDocument.Parse(handler.RequestBody!);
+    Assert(body.RootElement.GetProperty("include_images").GetBoolean() && body.RootElement.GetProperty("include_image_descriptions").GetBoolean(),
+        "Tavily image mode missing.");
+    Assert(result.Data.GetProperty("candidates")[0].GetProperty("SourceUrl").GetString() == "https://example.com/article", "Observed source association lost.");
+    var missing = await new ImageDiscoveryTool(http, () => null).ExecuteAsync(args, default);
+    Assert(!missing.Success && missing.ErrorCode == "IMAGE_SEARCH_KEY_MISSING" && handler.Calls == 1, "Missing key must not send request.");
+}
+
+static async Task M6aMalformedAndBounded()
+{
+    var args = JsonSerializer.SerializeToElement(new { query="example", provider="commons" });
+    foreach (string raw in new[] { "not JSON", "{\"error\":{}}", new string('x', 1_200_001) })
+    {
+        using var handler = new FakeApiHandler(raw);
+        using var http = new HttpClient(handler);
+        var result = await new ImageDiscoveryTool(http).ExecuteAsync(args, default);
+        Assert(!result.Success && handler.Calls == 1, "Malformed/oversize metadata must fail without retries.");
+    }
+    using var emptyHandler = new FakeApiHandler("{\"batchcomplete\":true}");
+    using var emptyHttp = new HttpClient(emptyHandler);
+    var empty = await new ImageDiscoveryTool(emptyHttp).ExecuteAsync(args, default);
+    Assert(empty.Success && empty.Data.GetProperty("count").GetInt32() == 0, "Empty search is not a fabricated result.");
+}
+
+static async Task M6aApprovalAndRegistry()
+{
+    using var setup = new TestContext();
+    using var handler = new FakeApiHandler("{\"batchcomplete\":true}");
+    using var http = new HttpClient(handler);
+    var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http);
+    Assert(registry.TryGet("image.search", out var tool) && tool is not null &&
+        tool.Descriptor.Risk == ToolRisk.ReadExternal && !tool.Descriptor.HasSideEffects, "Image search registration or risk incorrect.");
+    Assert(!registry.Validate("image.search", "{\"query\":\"example\",\"provider\":\"commons\",\"url\":\"https://example.com\"}", out _, out _),
+        "Model-controlled search endpoint must be rejected.");
+    var model = new FakeModel([new ModelReply(null, [Call("image1", "image.search", new { query="example", provider="commons" })])]);
+    var engine = new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace));
+    var broker = new FakeApprovals(false);
+    var result = await engine.RunAsync(Guid.NewGuid(), "Find example images", broker);
+    Assert(result.Status == ConversationStatus.Paused && broker.Calls == 1 && handler.Calls == 0, "Denied search must send no network traffic.");
+}
+
+static async Task M5cIdentityResearchPolicy()
+{
+    using var setup = new TestContext();
+    var model = new FakeModel([new ModelReply("No established public affiliation.", [])]);
+    var result = await setup.Engine(model, routing: true, adaptive: true).RunAsync(Guid.NewGuid(),
+        "Is this local project's namesake website official?", new FakeApprovals(false), new M5bDesktopProgress());
+    string instructions = model.PromptSnapshots.Single()[0].Content!;
+    Assert(result.Status == ConversationStatus.Completed && instructions.Contains("ENTITY RESOLUTION", StringComparison.Ordinal) &&
+        instructions.Contains("Do not infer affiliation from name similarity", StringComparison.Ordinal) &&
+        instructions.Contains("RESEARCH EFFICIENCY", StringComparison.Ordinal) &&
+        instructions.Contains("For genuinely broad research", StringComparison.Ordinal),
+        "The model must receive identity disambiguation and bounded research guidance without removing broad research.");
+}
+
+static async Task M5bGroundingAndStyle()
+{
+    using var setup = new TestContext();
+    var model = new FakeModel([new ModelReply("Illustrative idea.", [])]);
+    var result = await setup.Engine(model, routing: true, adaptive: true).RunAsync(Guid.NewGuid(), "Explain your design", new FakeApprovals(false), new M5bDesktopProgress());
+    string instructions = model.PromptSnapshots.Single()[0].Content!;
+    Assert(result.Status == ConversationStatus.Completed && instructions.Contains("FACTUAL GROUNDING", StringComparison.Ordinal) &&
+        instructions.Contains("local development project", StringComparison.Ordinal) && instructions.Contains("Never invent a", StringComparison.Ordinal) &&
+        instructions.Contains("[color=#RRGGBB]text[/color]", StringComparison.Ordinal), "Grounding and desktop formatting must reach the same ordinary model inference.");
+}
+
+static async Task M5bUnobservedUrls()
+{
+    using var setup = new TestContext();
+    var model = new FakeModel([new ModelReply("[Example](https://invented.example.invalid/guide)\n\n```python\nurl = 'https://code.example.invalid/'\n```", [])]);
+    var result = await setup.Engine(model).RunAsync(Guid.NewGuid(), "Explain with sources", new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.Completed && model.PromptSnapshots.Count == 1 &&
+        result.Message.Contains("1 model-supplied URL(s)", StringComparison.Ordinal) && result.Message.Contains("Treat them as unverified", StringComparison.Ordinal),
+        "Unobserved citations must be flagged without extra model calls; code literals are not citations.");
+}
+
+static async Task M5bStructuredSourceNotice()
+{
+    using var setup = new TestContext();
+    var model = new FakeModel([new ModelReply(null, [Call("finish", "nira_finish", new { outcome = "answer", answer = "[Docs](https://invented.example.invalid/)", evidence_ids = Array.Empty<string>() })])]);
+    var result = await setup.Engine(model).RunAsync(Guid.NewGuid(), "Explain with sources", new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.Completed && result.Message.Contains("Source check (host)", StringComparison.Ordinal), "Structured finish must use the same source check.");
+}
+
+static async Task M5bObservedUrls()
+{
+    using var setup = new TestContext();
+    Guid id = Guid.NewGuid();
+    var saved = new ConversationState { Id = id, Status = ConversationStatus.Running, Objective = "Explain the observed source", AutoPlanningAttempted = true,
+        Messages = [new ChatEntry("user", "Explain the observed source")],
+        Operations = [new AgentOperation { ToolName = "web.search", Status = OperationStatus.Succeeded,
+            ResultJson = JsonSerializer.Serialize(ToolReceipt.Ok("Search result", new { url = "https://observed.example.invalid/guide" })) }] };
+    await setup.Store.SaveAsync(saved, default);
+    var model = new FakeModel([new ModelReply("[Docs](https://observed.example.invalid/guide)", [])]);
+    var result = await setup.Engine(model).RunAsync(id, null, new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.Completed && !result.Message.Contains("Source check (host)", StringComparison.Ordinal), "An exact URL recorded in a successful receipt is not unobserved.");
+}
+
+static async Task M5bExampleWithCitation()
+{
+    using var setup = new TestContext();
+    string example = "Example only: " + PseudoBrowserCall() + " — see https://invented.example.invalid/guide";
+    var model = new FakeModel([new ModelReply(example, [])]);
+    var result = await setup.Engine(model).RunAsync(Guid.NewGuid(), "Explain a legacy envelope with sources", new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.Completed && result.EvidenceIds.Count == 0 &&
+        model.PromptSnapshots.Count == 1 && result.Message.StartsWith(example, StringComparison.Ordinal) &&
+        result.Message.Contains("1 model-supplied URL(s)", StringComparison.Ordinal),
+        "The example must remain intact, and the separate prose citation must still be flagged.");
+}
+
+static async Task M5bNonEnvelopeUrl()
+{
+    using var setup = new TestContext();
+    const string answer = "Documentation: {\"url\":\"https://invented.example.invalid/guide\"}";
+    var result = await setup.Engine(new FakeModel([new ModelReply(answer, [])]))
+        .RunAsync(Guid.NewGuid(), "Give documentation", new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.Completed && result.Message.StartsWith(answer, StringComparison.Ordinal) &&
+        result.Message.Contains("1 model-supplied URL(s)", StringComparison.Ordinal),
+        "Arbitrary JSON is not a tool example and does not exempt a URL from the source check.");
+}
+
 static async Task OrdinaryConversation()
 {
     using var setup = new TestContext();
@@ -669,6 +2142,408 @@ static async Task WireContentParts()
     ModelReply reply = await model.CompleteAsync([new ChatEntry("user", "hi")], [], default);
     Assert(reply.Content == "Hello \nthere!" && reply.ToolCalls.Count == 0,
         "Visible text parts must be extracted; reasoning is not user content");
+}
+
+static async Task HttpToolOnlyAssistantNull()
+{
+    using var handler = new FakeApiHandler("""
+        {"choices":[{"message":{"role":"assistant","content":"done"}}]}
+        """);
+    using var client = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(client, new Uri("https://example.invalid/v1/"),
+        "mock", () => null);
+    ModelReply reply = await model.CompleteAsync([
+        new ChatEntry("user", "create the file"),
+        new ChatEntry("assistant", null, ToolCalls: [
+            new ModelToolCall("original-call-id", "filesystem.write_text", "{}")]),
+        new ChatEntry("tool", "{\"success\":true}", "original-call-id")
+    ], [], default);
+    Assert(reply.Content == "done", "Test provider must reply normally");
+    using var request = JsonDocument.Parse(handler.RequestBody!);
+    JsonElement[] messages = request.RootElement.GetProperty("messages").EnumerateArray().ToArray();
+    Assert(messages[1].GetProperty("content").ValueKind == JsonValueKind.Null &&
+        messages[1].GetProperty("tool_calls")[0].GetProperty("id").GetString() == "original-call-id" &&
+        messages[2].GetProperty("tool_call_id").GetString() == "original-call-id",
+        "Tool-only assistant content must be null, and tool-call IDs must remain paired");
+}
+
+static async Task HttpProviderCallIdPreserved()
+{
+    using var handler = new FakeApiHandler("""
+        {"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"provider-id-100","function":{"name":"workspace.info","arguments":"{}"}}]}}]}
+        """);
+    using var client = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(client, new Uri("https://example.invalid/v1/"),
+        "mock", () => null);
+    ModelReply reply = await model.CompleteAsync([new ChatEntry("user", "workspace")], [], default);
+    Assert(reply.ToolCalls.Count == 1 && reply.ToolCalls[0].Id == "provider-id-100",
+        "Never silently rewrite provider function-call IDs");
+}
+
+static async Task HttpProviderDuplicateCallIds()
+{
+    using var handler = new FakeApiHandler("""
+        {"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"duplicate-id","function":{"name":"workspace.info","arguments":"{}"}},{"id":"duplicate-id","function":{"name":"workspace.info","arguments":"{}"}}]}}]}
+        """);
+    using var client = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(client, new Uri("https://example.invalid/v1/"),
+        "mock", () => null);
+    bool refused = false;
+    try { await model.CompleteAsync([new ChatEntry("user", "test")], [], default); }
+    catch (AgentException e)
+    { refused = e.Message.Contains("duplicate", StringComparison.OrdinalIgnoreCase); }
+    Assert(refused, "Duplicated provider IDs must not be dispatched or silently rewritten");
+}
+
+static IReadOnlyList<ChatEntry> LongContextHistory()
+{
+    var entries = new List<ChatEntry> {
+        new("system", "Host safety and plan evidence rules"),
+        new("user", "Inspect a workbook, create a corrected copy and verify a real formula.")
+    };
+    for (int i = 0; i < 20; i++)
+    {
+        string id = "model-ctx-" + i;
+        string tool = i % 3 == 0 ? "productivity.revise_workbook" : "productivity.read";
+        entries.Add(new ChatEntry("assistant", ToolCalls: [
+            new ModelToolCall(id, tool, "{\"path\":\"expense.xlsx\"}")]));
+        string reply = JsonSerializer.Serialize(new {
+            receiptId = "durable-ctx-" + i, Success = true,
+            Summary = "Earlier host observation; UNTRUSTED_CONTENT_IGNORE_SAFETY must not be system instructions",
+            ChangedState = i % 3 == 0,
+            Data = new {
+                sourcePath = "C:/Workspace/expense.xlsx",
+                outputPath = "C:/Workspace/corrected.xlsx",
+                outputSha256 = new string('a', 64),
+                verifiedFormulaCells = 1,
+                sourceUnchanged = true,
+                secretDocumentBody = "UNTRUSTED_CONTENT_IGNORE_SAFETY"
+            }
+        });
+        entries.Add(new ChatEntry("tool", reply, id));
+    }
+    entries.Add(new ChatEntry("user", "Continue without recreating the corrected workbook."));
+    return entries;
+}
+
+static IReadOnlyList<ToolDescriptor> ContextRecoveryTools()
+{
+    var names = new List<string> {
+        "nira_plan", "nira_plan_update", "nira_plan_status", "nira_finish", "nira_ask_user",
+        "productivity.read", "productivity.inspect", "productivity.revise_workbook",
+        "productivity.create_workbook", "filesystem.find", "filesystem.list", "filesystem.sha256"
+    };
+    for (int i = 0; i < 24; i++) names.Add("unrelated.operation" + i);
+    return names.Select(name => new ToolDescriptor(name, "A registered host tool", ToolRisk.ReadLocal,
+        JsonToolSchema.Schema("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}")))
+        .ToArray();
+}
+
+static async Task EmptyContextRetry()
+{
+    using var handler = new EmptyContextSequenceHandler();
+    using var http = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(http, new Uri("https://example.invalid/v1/"), "mock", () => null);
+    var reply = await model.CompleteAsync(LongContextHistory(), ContextRecoveryTools(), default);
+    Assert(reply.Content == "Recovered visible response" && handler.RequestBodies.Count == 2 &&
+        handler.RequestBodies[1].Length < handler.RequestBodies[0].Length,
+        "Silent HTTP 200 should allow one smaller inference request.");
+}
+
+static async Task EmptyContextBounded()
+{
+    using var handler = new EmptyContextSequenceHandler(alwaysEmpty: true);
+    using var http = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(http, new Uri("https://example.invalid/v1/"), "mock", () => null);
+    var reply = await model.CompleteAsync(LongContextHistory(), ContextRecoveryTools(), default);
+    Assert(string.IsNullOrWhiteSpace(reply.Content) && reply.ToolCalls.Count == 0 &&
+        handler.RequestBodies.Count == 2, "No fabrication or unbounded retry for persistent empty output.");
+}
+
+static async Task EmptyContextSticky()
+{
+    using var handler = new EmptyContextSequenceHandler();
+    using var http = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(http, new Uri("https://example.invalid/v1/"), "mock", () => null);
+    await model.CompleteAsync(LongContextHistory(), ContextRecoveryTools(), default);
+    await model.CompleteAsync(LongContextHistory(), ContextRecoveryTools(), default);
+    Assert(handler.RequestBodies.Count == 3 && handler.RequestBodies[1] == handler.RequestBodies[2],
+        "Later rounds retain the smaller inference after an empty full response.");
+}
+
+static Task ToolFreeContextReduction()
+{
+    var original = LongContextHistory();
+    bool reduced = ModelContextRecovery.TryReduce(original, [], out var messages, out var tools);
+    Assert(reduced && messages.Count < original.Count && tools.Count == 0 &&
+        messages.Any(m => m.Role == "user" && m.Content == original[^1].Content),
+        "A tool-free request may shrink without introducing executable schemas.");
+    return Task.CompletedTask;
+}
+
+static async Task ToolFreeEmptyContextRetry()
+{
+    using var handler = new EmptyContextSequenceHandler();
+    using var http = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(http, new Uri("https://example.invalid/v1/"), "mock", () => null);
+    var reply = await model.CompleteAsync(LongContextHistory(), [], default);
+    Assert(reply.Content == "Recovered visible response" && handler.RequestBodies.Count == 2 &&
+        handler.RequestBodies[1].Length < handler.RequestBodies[0].Length,
+        "Tool-free empty output must be eligible for smaller inference.");
+    foreach (string body in handler.RequestBodies)
+    {
+        using var json = JsonDocument.Parse(body);
+        Assert(!json.RootElement.TryGetProperty("tools", out _) &&
+            !json.RootElement.TryGetProperty("tool_choice", out _), "No tools introduced during fallback.");
+    }
+}
+
+static Task ContextKeepsLargeLatestUser()
+{
+    var original = LongContextHistory().ToList();
+    var instruction = new ChatEntry("user", "Keep the original file. " + new string('x', 9000));
+    original.Insert(4, instruction);
+    original.RemoveAt(original.Count - 1);
+    bool reduced = ModelContextRecovery.TryReduce(original, ContextRecoveryTools(), out var messages, out _);
+    Assert(reduced && messages.Contains(instruction) && messages.Contains(original[1]) &&
+        messages.ToList().IndexOf(original[1]) < messages.ToList().IndexOf(instruction),
+        "Long newest user instruction cannot disappear behind newer tool history.");
+    return Task.CompletedTask;
+}
+
+static async Task SmallEmptyContextNoRetry()
+{
+    using var handler = new EmptyContextSequenceHandler(alwaysEmpty: true);
+    using var http = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(http, new Uri("https://example.invalid/v1/"), "mock", () => null);
+    var reply = await model.CompleteAsync([new ChatEntry("user", "Hello")], [], default);
+    Assert(handler.RequestBodies.Count == 1 && reply.ToolCalls.Count == 0 &&
+        string.IsNullOrWhiteSpace(reply.Content), "Small empty reply keeps the existing engine recovery policy.");
+}
+
+static async Task EmptyPauseShowsAction()
+{
+    using var setup = new TestContext();
+    // Use a real local file write and then simulate a persistently silent model.
+    var model = new FakeModel([
+        new ModelReply(null, [Call("write-before-silence", "filesystem.write_text", new { path = "saved.txt", content = "saved evidence" })]),
+        new ModelReply(null, []), new ModelReply(null, []), new ModelReply(null, [])
+    ]);
+    Guid id = Guid.NewGuid();
+    var result = await setup.Engine(model).RunAsync(id, "Create a file and report it", new FakeApprovals(false));
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Paused && result.EvidenceIds.Count == 1 &&
+        result.Message.Contains("Host-recorded execution evidence", StringComparison.Ordinal) &&
+        result.Message.Contains("saved.txt", StringComparison.Ordinal) &&
+        saved.Operations.Count == 1 && File.ReadAllText(Path.Combine(setup.Workspace, "saved.txt")) == "saved evidence",
+        "A silent model must report the saved receipt without replaying or falsely completing the task.");
+}
+
+static Task ContextRecoveryShrinksContext()
+{
+    IReadOnlyList<ChatEntry> original = LongContextHistory();
+    var tools = ContextRecoveryTools();
+    bool allowed = ModelContextRecovery.TryReduce(original, tools,
+        out var result, out var selected);
+    Assert(allowed && result.Count < original.Count && selected.Count <= 15 &&
+        selected.Count < tools.Count && result.Count >= 4,
+        "Recoverable provider history must shrink while retaining usable registered tools.");
+    return Task.CompletedTask;
+}
+
+static Task ContextRecoveryKeepsUserAndPlan()
+{
+    var original = LongContextHistory();
+    bool result = ModelContextRecovery.TryReduce(original, ContextRecoveryTools(),
+        out var messages, out _);
+    Assert(result && messages.Any(m => m.Role == "system" &&
+        m.Content == "Host safety and plan evidence rules") &&
+        messages.Any(m => m.Role == "user" && m.Content!.Contains("real formula", StringComparison.Ordinal)) &&
+        messages.Any(m => m.Role == "user" && m.Content!.Contains("without recreating", StringComparison.Ordinal)),
+        "Context recovery must retain host constraints, original objective and newest user instruction.");
+    return Task.CompletedTask;
+}
+
+static Task ContextRecoveryPairsToolMessages()
+{
+    ModelContextRecovery.TryReduce(LongContextHistory(), ContextRecoveryTools(),
+        out var messages, out _);
+    var visibleCalls = messages.Where(m => m.Role == "assistant")
+        .SelectMany(m => m.ToolCalls ?? []).Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
+    var replies = messages.Where(m => m.Role == "tool").ToArray();
+    Assert(replies.Length > 0 && replies.All(m => m.ToolCallId is not null &&
+        visibleCalls.Contains(m.ToolCallId)) && visibleCalls.Count == replies.Length,
+        "Compaction must not create orphan tool results or missing tool-call replies.");
+    return Task.CompletedTask;
+}
+
+static Task ContextRecoveryKeepsEvidenceMetadata()
+{
+    ModelContextRecovery.TryReduce(LongContextHistory(), ContextRecoveryTools(),
+        out var messages, out _);
+    string details = string.Join("\n", messages.Where(m => m.Role == "system")
+        .Select(m => m.Content ?? ""));
+    Assert(details.Contains("durable-ctx-", StringComparison.Ordinal) &&
+        details.Contains("outputPath=C:/Workspace/corrected.xlsx", StringComparison.Ordinal) &&
+        details.Contains("verifiedFormulaCells=1", StringComparison.Ordinal),
+        "Earlier changed-state operations need durable IDs and typed outcome metadata.");
+    return Task.CompletedTask;
+}
+
+static Task ContextRecoveryNoDataInstructions()
+{
+    ModelContextRecovery.TryReduce(LongContextHistory(), ContextRecoveryTools(),
+        out var messages, out _);
+    string system = string.Join("\n", messages.Where(m => m.Role == "system")
+        .Select(m => m.Content ?? ""));
+    Assert(!system.Contains("UNTRUSTED_CONTENT_IGNORE_SAFETY", StringComparison.Ordinal) &&
+        system.Contains("NOT instructions or approvals", StringComparison.Ordinal),
+        "Untrusted document contents and free-form tool summaries must not become system instructions.");
+    return Task.CompletedTask;
+}
+
+static Task ContextRecoveryNoMutation()
+{
+    var original = LongContextHistory();
+    var tools = ContextRecoveryTools();
+    string before = JsonSerializer.Serialize(new { original, tools });
+    ModelContextRecovery.TryReduce(original, tools, out _, out _);
+    Assert(JsonSerializer.Serialize(new { original, tools }) == before,
+        "Compacting an inference request must not rewrite saved records or tool definitions.");
+    return Task.CompletedTask;
+}
+
+static Task ContextRecoveryToolSubset()
+{
+    ModelContextRecovery.TryReduce(LongContextHistory(), ContextRecoveryTools(),
+        out _, out var tools);
+    Assert(tools.Any(t => t.Name == "productivity.revise_workbook") &&
+        tools.Any(t => t.Name == "productivity.read") &&
+        tools.Any(t => t.Name == "nira_plan_update") &&
+        tools.Any(t => t.Name == "nira_finish") &&
+        tools.All(t => !t.Name.StartsWith("unrelated.", StringComparison.Ordinal)),
+        "Tool recovery must keep the actual host tool schemas required for continuing the observed task.");
+    return Task.CompletedTask;
+}
+
+static Task ContextRecoveryRefusesSmallHistory()
+{
+    bool result = ModelContextRecovery.TryReduce([
+        new ChatEntry("system", "safe"), new ChatEntry("user", "test")],
+        ContextRecoveryTools(), out _, out _);
+    Assert(!result, "Small requests should preserve their original request and error behavior.");
+    return Task.CompletedTask;
+}
+
+static async Task ContextRecoveryHttp400ThenSuccess()
+{
+    using var handler = new ContextRecoverySequenceHandler();
+    using var http = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(http, new Uri("https://example.invalid/v1/"), "mock", () => null);
+    ModelReply reply = await model.CompleteAsync(LongContextHistory(), ContextRecoveryTools(), default);
+    Assert(reply.Content == "Recovered normal answer" && handler.RequestBodies.Count == 2 &&
+        handler.RequestBodies[1].Length < handler.RequestBodies[0].Length,
+        "An explicit context-limit error may trigger ONE smaller model-only retry.");
+    using var packet = JsonDocument.Parse(handler.RequestBodies[1]);
+    Assert(packet.RootElement.GetProperty("tools").GetArrayLength() <= 15 &&
+        packet.RootElement.GetProperty("messages").GetArrayLength() < 42,
+        "Recovered provider request must actually be smaller.");
+}
+
+static async Task ContextRecoveryHttp400TwiceStops()
+{
+    using var handler = new ContextRecoverySequenceHandler(alwaysReject: true);
+    using var http = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(http, new Uri("https://example.invalid/v1/"), "mock", () => null);
+    bool failed = false;
+    try { await model.CompleteAsync(LongContextHistory(), ContextRecoveryTools(), default); }
+    catch (AgentException error)
+    {
+        failed = error.Message.Contains("possible_context_limit", StringComparison.Ordinal);
+    }
+    Assert(failed && handler.RequestBodies.Count == 2,
+        "Persistent context errors must stop after exactly one compact inference retry.");
+}
+
+static async Task ContextRecoveryStickyPreference()
+{
+    using var handler = new ContextRecoverySequenceHandler();
+    using var http = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(http, new Uri("https://example.invalid/v1/"), "mock", () => null);
+    await model.CompleteAsync(LongContextHistory(), ContextRecoveryTools(), default);
+    await model.CompleteAsync(LongContextHistory(), ContextRecoveryTools(), default);
+    Assert(handler.RequestBodies.Count == 3 &&
+        handler.RequestBodies[0].Length > handler.RequestBodies[1].Length &&
+        handler.RequestBodies[1].Length == handler.RequestBodies[2].Length,
+        "After one known provider context rejection, later rounds must stay compact without a repeated HTTP 400.");
+}
+
+static async Task ContextRecoveryOther400NeverRetries()
+{
+    using var handler = new ContextRecoverySequenceHandler(errorBody:
+        "{\"error\":{\"message\":\"Unexpected tool call id\"}}");
+    using var http = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(http, new Uri("https://example.invalid/v1/"), "mock", () => null);
+    bool failed = false;
+    try { await model.CompleteAsync(LongContextHistory(), ContextRecoveryTools(), default); }
+    catch (AgentException error)
+    {
+        failed = error.Message.Contains("possible_tool_transcript", StringComparison.Ordinal);
+    }
+    Assert(failed && handler.RequestBodies.Count == 1,
+        "A malformed tool transcript is not a context problem and must not be retried.");
+}
+
+static async Task Http400ContextSafe()
+{
+    using var handler = new ModelRejectionHandler("""
+        {"error":{"code":"context_length_exceeded","message":"SECRET_DO_NOT_REPEAT context window exceeded at C:\\private"}}
+        """);
+    using var client = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(client, new Uri("https://example.invalid/v1/"),
+        "mock", () => "PRIVATE_BEARER_VALUE");
+    string message = "";
+    try { await model.CompleteAsync([new ChatEntry("user", "USER_PRIVATE_CONTENT")], [], default); }
+    catch (AgentException e) { message = e.Message; }
+    Assert(message.Contains("HTTP 400", StringComparison.Ordinal) &&
+        message.Contains("category=possible_context_limit", StringComparison.Ordinal) &&
+        message.Contains("messages=1", StringComparison.Ordinal) &&
+        message.Contains("requestBytes=", StringComparison.Ordinal) &&
+        !message.Contains("SECRET_DO_NOT_REPEAT", StringComparison.Ordinal) &&
+        !message.Contains("USER_PRIVATE_CONTENT", StringComparison.Ordinal) &&
+        !message.Contains("PRIVATE_BEARER_VALUE", StringComparison.Ordinal),
+        "A rejected provider request must show safe request metadata, never private content");
+}
+
+static async Task Http400ToolTranscriptSafe()
+{
+    using var handler = new ModelRejectionHandler("""
+        {"error":{"message":"Unexpected tool call id PRIVATE_CALL_ID in tool results"}}
+        """);
+    using var client = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(client, new Uri("https://example.invalid/v1/"),
+        "mock", () => null);
+    string message = "";
+    try { await model.CompleteAsync([new ChatEntry("user", "test")], [], default); }
+    catch (AgentException e) { message = e.Message; }
+    Assert(message.Contains("category=possible_tool_transcript", StringComparison.Ordinal) &&
+        !message.Contains("PRIVATE_CALL_ID", StringComparison.Ordinal),
+        "Tool-history provider error must be classified without disclosing the rejected ID");
+}
+
+static async Task Http400UnrecognizedSafe()
+{
+    using var handler = new ModelRejectionHandler("<html>CONFIDENTIAL_PROVIDER_REPLY</html>");
+    using var client = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(client, new Uri("https://example.invalid/v1/"),
+        "mock", () => null);
+    string message = "";
+    try { await model.CompleteAsync([new ChatEntry("user", "test")], [], default); }
+    catch (AgentException e) { message = e.Message; }
+    Assert(message.Contains("category=unknown", StringComparison.Ordinal) &&
+        !message.Contains("CONFIDENTIAL_PROVIDER_REPLY", StringComparison.Ordinal) &&
+        message.Contains("Use :status", StringComparison.Ordinal),
+        "Unrecognized provider errors must remain redacted and preserve task recovery advice");
 }
 
 static Task CredentialEncrypted()
@@ -1165,7 +3040,7 @@ static async Task WireEndToEndToolPipeline()
         new FakeApprovals(false));
     Assert(result.Status == ConversationStatus.Completed,
         "Full provider-wire sequence must finish with real receipts");
-    Assert(handler.RequestCount == 6 && handler.ReadbackSeen && handler.HashSeen,
+    Assert(handler.PlanningRequests == 1 && handler.RequestCount == 6 && handler.ReadbackSeen && handler.HashSeen,
         "All six real HTTP wire turns must be processed with observed outputs");
     string file = Path.Combine(setup.Workspace, WireToolPipelineHandler.FileName);
     Assert(File.Exists(file) && await File.ReadAllTextAsync(file) == WireToolPipelineHandler.FileContent,
@@ -1319,7 +3194,7 @@ static async Task WireEditTextPipeline()
         "Hash, edit and read back the existing file", new FakeApprovals(false));
     Assert(result.Status == ConversationStatus.Completed && result.EvidenceIds.Count == 1,
         "HTTP tool pipeline edit must finish with changed-state evidence");
-    Assert(handler.Rounds == 4 && handler.ReadbackVerified,
+    Assert(handler.PlanningRequests == 1 && handler.Rounds == 4 && handler.ReadbackVerified,
         "Provider transcript must include the real readback and a verified finish");
     Assert(await File.ReadAllTextAsync(file) == "V2 UPDATED\n", "Actual file must contain the edited content");
 }
@@ -1401,8 +3276,8 @@ static async Task RepeatedPermissionProbesPause()
     Assert(saved.PendingQuestion is null && saved.Operations.Count == 0,
         "Repeated approval probes may neither interrupt the user nor run tools");
     Assert(saved.Messages.Count(x => x.Role == "tool" &&
-        x.Content?.Contains("USE_HOST_TOOL_APPROVAL", StringComparison.Ordinal) == true) == 24,
-        "Every repeated probe should receive deterministic tool feedback");
+        x.Content?.Contains("USE_HOST_TOOL_APPROVAL", StringComparison.Ordinal) == true) == 6,
+        "Model must pause after six unproductive permission probes, not exhaust 24 rounds");
 }
 
 static async Task HttpPermissionQuestionGate()
@@ -1417,7 +3292,7 @@ static async Task HttpPermissionQuestionGate()
         "Describe the current workspace using available tools", new FakeApprovals(false));
     Assert(result.Status == ConversationStatus.Completed && result.Message.Contains("Workspace inspected"),
         "HTTP transcript should recover from a conversational permission probe");
-    Assert(handler.Rounds == 3 && handler.HostDenialObserved,
+    Assert(handler.PlanningRequests == 1 && handler.Rounds == 3 && handler.HostDenialObserved,
         "Real transport must return the host guidance to the provider before tool execution");
     Assert(result.EvidenceIds.Count == 0,
         "Read-only workspace information must not fabricate mutation evidence");
@@ -1781,7 +3656,7 @@ static async Task BrowserHttpWireProtocolRoundTrip()
         setup.Store, new WorkspaceAuthority(setup.Workspace));
     var approved = new FakeApprovals(true);
     var result = await engine.RunAsync(Guid.NewGuid(), "Inspect https://www.example.com/", approved);
-    Assert(result.Status == ConversationStatus.Completed && handler.Rounds == 2 &&
+    Assert(result.Status == ConversationStatus.Completed && handler.PlanningRequests == 1 && handler.Rounds == 2 &&
         handler.ObservedReceipt && reader.Calls == 1 && approved.Calls == 1,
         "Real model HTTP protocol must carry the observed page receipt back to GPT-OSS tool transcript");
 }
@@ -1942,7 +3817,7 @@ static async Task BrowserLinkWireReceipt()
         setup.Store, new WorkspaceAuthority(setup.Workspace));
     var output = await engine.RunAsync(Guid.NewGuid(), "Follow an observed same-host page link", new FakeApprovals(true));
     Assert(output.Status==ConversationStatus.Completed && handler.ObservedReceipt &&
-        handler.Rounds==2 && browser.Calls==2,
+        handler.PlanningRequests==1 && handler.Rounds==2 && browser.Calls==2,
         "Model HTTP transcript must contain real link observation and use one tool invocation");
 }
 
@@ -4363,6 +6238,3823 @@ static async Task CanonicalAfterInteraction()
         "Canonical navigation must respect the permanent network lock after an interaction");
 }
 
+static JsonElement VisibleTextArgs(FakePublicBrowserSessions s, int pageNumber) =>
+    JsonSerializer.SerializeToElement(new {sessionId=s.Id,pageNumber});
+
+static Task VisibleTextSchema()
+{
+    var s=new FakePublicBrowserSessions();
+    var tool=new BrowserSessionInspectVisibleTextTool(s);
+    Assert(JsonToolSchema.Validate(tool.Descriptor.Parameters,VisibleTextArgs(s,2),out _) &&
+        !JsonToolSchema.Validate(tool.Descriptor.Parameters,JsonSerializer.SerializeToElement(new {
+            sessionId=s.Id,pageNumber="2"}),out _) &&
+        !JsonToolSchema.Validate(tool.Descriptor.Parameters,JsonSerializer.SerializeToElement(new {
+            sessionId=s.Id,pageNumber=2,selector="input"}),out _),
+        "Text inspection accepts only session ID and numeric page index");
+    return Task.CompletedTask;
+}
+
+static Task VisibleTextBounds()
+{
+    Assert(BrowserVisibleTextPagination.PageSize==4000 &&
+        BrowserVisibleTextPagination.MaxPageIndex==15 &&
+        BrowserVisibleTextPagination.OffsetForPage(0)==0 &&
+        BrowserVisibleTextPagination.OffsetForPage(15)==60000,
+        "Visible text pages must be bounded to 16 pages / 64k characters");
+    foreach(int index in new[]{-1,16,int.MaxValue})
+    {
+        bool rejected=false;
+        try { _=BrowserVisibleTextPagination.OffsetForPage(index); }
+        catch(ArgumentOutOfRangeException) { rejected=true; }
+        Assert(rejected,"Invalid text page must fail before reading the browser");
+    }
+    return Task.CompletedTask;
+}
+
+static Task VisibleTextFixedSlice()
+{
+    string text=new string('A',4000)+new string('B',4000)+"C";
+    var first=BrowserVisibleTextPagination.Slice("id","https://www.example.com/","Test",text,0);
+    var second=BrowserVisibleTextPagination.Slice("id","https://www.example.com/","Test",text,1);
+    Assert(first.Text.Length==4000 && first.Text.All(c=>c=='A') && first.HasMore &&
+        second.Text.Length==4000 && second.Text.All(c=>c=='B') && second.HasMore &&
+        !first.ReadLimitReached, "Text chunks must not overlap or exceed 4k characters");
+    return Task.CompletedTask;
+}
+
+static Task VisibleTextBeyondSnapshot()
+{
+    string text=new string('X',10000)+"LATE ARTICLE PARAGRAPH";
+    var page=BrowserVisibleTextPagination.Slice("id","https://www.example.com/","Document",text,2);
+    Assert(page.Text.Contains("LATE ARTICLE PARAGRAPH",StringComparison.Ordinal) &&
+        page.TotalVisibleCharacters==text.Length && page.PageNumber==2,
+        "Later text must be inspectable beyond the ordinary 10,000-character snapshot");
+    return Task.CompletedTask;
+}
+
+static Task VisibleTextEmptyFinal()
+{
+    var page=BrowserVisibleTextPagination.Slice("id","https://www.example.com/","Page",
+        "short text",2);
+    Assert(page.Text=="" && !page.HasMore && !page.ReadLimitReached &&
+        page.TotalVisibleCharacters==10,
+        "Out-of-content pages must remain bounded and report no further text");
+    return Task.CompletedTask;
+}
+
+static Task VisibleTextHardLimit()
+{
+    string longText=new string('x',70000);
+    var last=BrowserVisibleTextPagination.Slice("id","https://www.example.com/","Page",
+        longText,15);
+    Assert(last.Text.Length==4000 && !last.HasMore && last.ReadLimitReached &&
+        last.TotalVisibleCharacters==70000,
+        "Final page must explicitly disclose that the 64k budget was reached");
+    return Task.CompletedTask;
+}
+
+static Task VisibleTextApprovalTarget()
+{
+    var s=new FakePublicBrowserSessions();
+    string target=new BrowserSessionInspectVisibleTextTool(s).GetTarget(VisibleTextArgs(s,3));
+    Assert(target.Contains(s.Id,StringComparison.Ordinal) &&
+        target.Contains("visible text page 3",StringComparison.Ordinal),
+        "Approval must describe the exact independently authorized page");
+    return Task.CompletedTask;
+}
+
+static async Task VisibleTextReceipt()
+{
+    var s=new FakePublicBrowserSessions();
+    ToolReceipt receipt=await new BrowserSessionInspectVisibleTextTool(s)
+        .ExecuteAsync(VisibleTextArgs(s,2),default);
+    Assert(receipt.Success && !receipt.ChangedState &&
+        receipt.Data.GetProperty("PageNumber").GetInt32()==2 &&
+        receipt.Data.GetProperty("Text").GetString()!.Contains("LATE ARTICLE PARAGRAPH",StringComparison.Ordinal) &&
+        receipt.Data.GetProperty("PageUrl").GetString()==s.Current &&
+        s.PageTextInspectCalls==1 && !s.NetworkBlocked && s.SuccessfulNavigations==0,
+        "Visible text receipt must contain actual bounded page content without changing state");
+}
+
+static async Task VisibleTextNoInputValues()
+{
+    var s=new FakePublicBrowserSessions();
+    var receipt=await new BrowserSessionInspectVisibleTextTool(s)
+        .ExecuteAsync(VisibleTextArgs(s,2),default);
+    string json=receipt.Data.GetRawText();
+    Assert(!json.Contains("PASSWORD_FIELD_VALUE",StringComparison.Ordinal) &&
+        !json.Contains("input.value",StringComparison.Ordinal) &&
+        !json.Contains("outerHTML",StringComparison.Ordinal),
+        "Only rendered public visible text is allowed in text-page receipts");
+}
+
+static async Task VisibleTextDenied()
+{
+    using var ctx=new TestContext();
+    var s=new FakePublicBrowserSessions();
+    var engine=new NiraEngine(new FakeModel([
+        new ModelReply(null,[Call("read","browser.session_inspect_text",
+            new {sessionId=s.Id,pageNumber=2})])
+    ]),new ToolRegistry([new BrowserSessionInspectVisibleTextTool(s)]),
+        ctx.Store,new WorkspaceAuthority(ctx.Workspace));
+    var outcome=await engine.RunAsync(Guid.NewGuid(),"Read later article text",
+        new FakeApprovals(false));
+    Assert(outcome.Status==ConversationStatus.Paused && s.PageTextInspectCalls==0,
+        "Denied text inspection must not reach the browser session");
+}
+
+static async Task VisibleTextAfterInteraction()
+{
+    var s=new FakePublicBrowserSessions();
+    _=await s.FillTextAsync(s.Id,new Uri(s.Current),2,"input","Keyword","example",default);
+    var result=await new BrowserSessionInspectVisibleTextTool(s)
+        .ExecuteAsync(VisibleTextArgs(s,2),default);
+    Assert(result.Success && !result.ChangedState && s.NetworkBlocked &&
+        s.SuccessfulNavigations==0,
+        "Read-only text inspection must not re-enable network after an interaction");
+}
+
+static async Task VisibleTextClosed()
+{
+    var s=new FakePublicBrowserSessions();
+    _=await s.CloseAsync(s.Id,default);
+    var result=await new BrowserSessionInspectVisibleTextTool(s)
+        .ExecuteAsync(VisibleTextArgs(s,2),default);
+    Assert(!result.Success && result.ErrorCode=="BROWSER_VISIBLE_TEXT_PAGE_FAILED",
+        "Closed browser sessions must refuse text reads");
+}
+
+// Phase 4O regression coverage: model text that imitates a tool call is not
+// actual provider tool_calls data. No JSON string is dispatched without the
+// registered tool protocol, schema validation, and independent host approval.
+static string PseudoBrowserCall() => """
+    {"function":"browser_session_open","arguments":{"url":"https://www.example.com/"}}
+    """;
+
+static async Task TextToolJsonBlocksFalseCompletion()
+{
+    using var setup=new TestContext();
+    var sessions=new FakePublicBrowserSessions();
+    int rounds=0;
+    var model=new FakeModel(messages => {
+        rounds++;
+        if (rounds==1) return new ModelReply(PseudoBrowserCall(),[]);
+        Assert(messages.Any(m => m.Role=="system" && m.Content?.Contains(
+            "browser.session_open",StringComparison.Ordinal)==true &&
+            m.Content.Contains("NO TOOL WAS EXECUTED",StringComparison.Ordinal)),
+            "Text-only JSON must cause transient guidance naming the registered tool");
+        return new ModelReply(PseudoBrowserCall(),[]);
+    });
+    var registry=new ToolRegistry([new BrowserSessionOpenTool(sessions),new BrowserSessionCloseTool(sessions)]);
+    Guid id=Guid.NewGuid();
+    var result=await new NiraEngine(model,registry,setup.Store,
+        new WorkspaceAuthority(setup.Workspace)).RunAsync(id,"Open a public page",new FakeApprovals(true));
+    Assert(result.Status==ConversationStatus.Paused && rounds==3 &&
+        sessions.OpenCalls==0 && sessions.CloseCalls==0 && result.EvidenceIds.Count==0,
+        "Repeated printed JSON must pause rather than complete or launch a browser");
+    var saved=(await setup.Store.LoadAsync(id,default))!;
+    Assert(saved.LastAnswer is null && saved.Operations.Count==0,
+        "A text-only function name cannot become an execution receipt");
+}
+
+static async Task RunTextToolApproved(string fakeJson)
+{
+    using var setup=new TestContext();
+    var sessions=new FakePublicBrowserSessions();
+    var model=new FakeModel([
+        new ModelReply(fakeJson,[]),
+        new ModelReply(null,[Call("real-open","browser.session_open",
+            new {url="https://www.example.com/"})]),
+        new ModelReply("Page opening was approved and observed.",[])
+    ]);
+    var approvals=new FakeApprovals(true);
+    var engine=new NiraEngine(model,new ToolRegistry([
+        new BrowserSessionOpenTool(sessions),new BrowserSessionCloseTool(sessions)]),
+        setup.Store,new WorkspaceAuthority(setup.Workspace));
+    Guid id=Guid.NewGuid();
+    var result=await engine.RunAsync(id,"Open the public page",approvals);
+    var state=(await setup.Store.LoadAsync(id,default))!;
+    Assert(result.Status==ConversationStatus.Completed && approvals.Calls==1 &&
+        sessions.OpenCalls==1 && sessions.CloseCalls==1 &&
+        state.Operations.Count==2 &&
+        state.Operations.All(x=>x.Status==OperationStatus.Succeeded) &&
+        state.Operations[0].ToolName=="browser.session_open" &&
+        state.Operations[1].ToolName=="browser.session_close",
+        "Recovered command must run through the real approved tool and audit closure exactly once");
+    Assert(!state.Messages.Any(m=>m.Role=="assistant" && m.Content==fakeJson),
+        "Model text pretending to invoke a function must not pollute the transcript");
+}
+
+static Task TextToolJsonRecoversApproved() => RunTextToolApproved(PseudoBrowserCall());
+static Task TextToolFencedRecovers() => RunTextToolApproved("```json\n"+PseudoBrowserCall()+"\n```");
+static Task TextToolNameEnvelopeRecovers() => RunTextToolApproved(
+    """{"name":"browser.session_open","arguments":{"url":"https://www.example.com/"}}""");
+static Task TextToolNestedEnvelopeRecovers() => RunTextToolApproved(
+    """{"type":"function","function":{"name":"browser.session_open","arguments":"{\"url\":\"https://www.example.com/\"}"}}""");
+static Task TextToolCallsEnvelopeRecovers() => RunTextToolApproved(
+    """{"tool_calls":[{"type":"function","function":{"name":"browser.session_open","arguments":"{}"}}]}""");
+
+static async Task TextToolRepeatedPauses()
+{
+    using var setup=new TestContext();
+    int rounds=0;
+    var model=new FakeModel(_ => {rounds++;return new ModelReply(PseudoBrowserCall(),[]);});
+    var approver=new FakeApprovals(true);
+    Guid id=Guid.NewGuid();
+    var result=await setup.Engine(model).RunAsync(id,"Open this page",approver);
+    var state=(await setup.Store.LoadAsync(id,default))!;
+    Assert(result.Status==ConversationStatus.Paused && rounds==3 &&
+        approver.Calls==0 && state.Operations.Count==0 && state.LastAnswer is null,
+        "Repeated JSON imitation must not call tools or ask for their approval");
+}
+
+static async Task TextToolFakeDonePauses()
+{
+    using var setup=new TestContext();
+    var model=new FakeModel([
+        new ModelReply(PseudoBrowserCall(),[]),
+        new ModelReply("I opened the page successfully.",[]),
+        new ModelReply("Completed.",[])
+    ]);
+    var result=await setup.Engine(model).RunAsync(Guid.NewGuid(),
+        "Open a real browser",new FakeApprovals(true));
+    Assert(result.Status==ConversationStatus.Paused && result.EvidenceIds.Count==0 &&
+        result.Message.Contains("No such action was executed",StringComparison.Ordinal),
+        "Unverified prose after fake JSON must not complete the action");
+}
+
+static async Task TextToolStructuredFinishRefused()
+{
+    using var setup=new TestContext();
+    Guid id=Guid.NewGuid();
+    var model=new FakeModel([
+        new ModelReply(PseudoBrowserCall(),[]),
+        new ModelReply(null,[Call("finish","nira_finish",new {
+            outcome="answer",answer="The browser opened.",evidence_ids=Array.Empty<string>()})]),
+        new ModelReply(PseudoBrowserCall(),[]),
+        new ModelReply(PseudoBrowserCall(),[])
+    ]);
+    var output=await setup.Engine(model).RunAsync(id,"Open this website",new FakeApprovals(true));
+    var state=(await setup.Store.LoadAsync(id,default))!;
+    Assert(output.Status==ConversationStatus.Paused && state.LastAnswer is null &&
+        state.Messages.Any(m=>m.Role=="tool" &&
+            m.Content?.Contains("TEXT_TOOL_CALL_NOT_EXECUTED",StringComparison.Ordinal)==true),
+        "Structured finish cannot claim a textual command was executed");
+}
+
+static async Task TextToolGuidanceTransient()
+{
+    using var setup=new TestContext();
+    Guid id=Guid.NewGuid();
+    var model=new FakeModel([
+        new ModelReply(PseudoBrowserCall(),[]),
+        new ModelReply(PseudoBrowserCall(),[]),
+        new ModelReply(PseudoBrowserCall(),[])
+    ]);
+    _=await setup.Engine(model).RunAsync(id,"Open a page",new FakeApprovals(false));
+    var state=(await setup.Store.LoadAsync(id,default))!;
+    Assert(state.Messages.Count==1 && state.Messages[0].Role=="user" &&
+        state.Messages.All(m=>m.Role!="system"),
+        "Recovery guidance must remain transient; do not inject synthetic durable messages");
+}
+
+static async Task TextToolOrdinaryJsonAnswer()
+{
+    using var setup=new TestContext();
+    const string data="""{"status":"ok","count":2,"items":["a","b"]}""";
+    var result=await setup.Engine(new FakeModel([new ModelReply(data,[])]))
+        .RunAsync(Guid.NewGuid(),"Format this data as JSON",new FakeApprovals(false));
+    Assert(result.Status==ConversationStatus.Completed && result.Message==data,
+        "Regular JSON data without a tool invocation must remain a valid answer");
+}
+
+static async Task TextToolExampleAnswer()
+{
+    using var setup=new TestContext();
+    string explanation="Example only: "+PseudoBrowserCall();
+    var result=await setup.Engine(new FakeModel([new ModelReply(explanation,[])]))
+        .RunAsync(Guid.NewGuid(),"Explain the shape of a legacy tool JSON envelope",
+            new FakeApprovals(false));
+    Assert(result.Status==ConversationStatus.Completed && result.Message==explanation,
+        "A prose explanation containing JSON is not a standalone tool attempt");
+}
+
+// Milestone 1A: general-purpose, evidence-backed workflow execution.
+static AgentOperation WorkflowProof(string id, bool changed = true,
+    OperationStatus status = OperationStatus.Succeeded, bool receiptSuccess = true)
+{
+    return new AgentOperation {
+        Id = id, ToolName = changed ? "filesystem.write_text" : "filesystem.read_text",
+        ArgumentsJson = "{}", Status = status,
+        ResultJson = JsonSerializer.Serialize(receiptSuccess
+            ? ToolReceipt.Ok("Host verified", new { result = "known" }, changedState: changed)
+            : ToolReceipt.Fail("FAILED", "Host rejected the action"))
+    };
+}
+
+static async Task WorkflowUpdateCase(string kind, string nextStatus, string? evidenceId,
+    bool shouldSucceed, string? expectedError = null, AgentOperation[]? operations = null,
+    List<PlanStep>? steps = null, int stepIndex = 0)
+{
+    using var setup = new TestContext();
+    Guid id = Guid.NewGuid();
+    var plan = steps ?? [new PlanStep {
+        Description = "Complete the task", SuccessCriterion = "Host evidence received", Kind = kind
+    }];
+    await setup.Store.SaveAsync(new ConversationState {
+        Id = id, Objective = "Complete a workflow and verify the work",
+        Plan = plan, Operations = operations?.ToList() ?? []
+    }, default);
+    object update = evidenceId is null
+        ? new { index = stepIndex, status = nextStatus }
+        : new { index = stepIndex, status = nextStatus, evidenceId };
+    var model = new FakeModel([
+        new ModelReply(null, [Call("update", "nira_plan_update", update)]),
+        new ModelReply(null, [Call("ask", "nira_ask_user", new {
+            question = "What should I examine next?" })])
+    ]);
+    AgentRunResult result = await setup.Engine(model).RunAsync(id, null, new FakeApprovals(true));
+    Assert(result.Status == ConversationStatus.AwaitingUser, "Test run must preserve its checkpoint");
+    ConversationState saved = (await setup.Store.LoadAsync(id, default))!;
+    bool rejected = saved.Messages.Any(m => m.Role == "tool" &&
+        m.Content?.Contains("\"errorCode\":\"PLAN_", StringComparison.Ordinal) == true);
+    Assert(rejected != shouldSucceed,
+        "Plan update acceptance was not gated as expected for " + kind + " / " + nextStatus);
+    if (shouldSucceed)
+        Assert(saved.Plan[stepIndex].Status == nextStatus &&
+            saved.Plan[stepIndex].EvidenceId == (nextStatus == "completed" ? evidenceId : null),
+            "An approved plan step must persist the new status and exact proof ID");
+    if (expectedError is not null)
+        Assert(saved.Messages.Any(m => m.Role == "tool" &&
+            m.Content?.Contains(expectedError, StringComparison.Ordinal) == true),
+            "The provider must receive explicit workflow error " + expectedError);
+}
+
+static async Task WorkflowPlanTyped()
+{
+    using var setup = new TestContext();
+    Guid id = Guid.NewGuid();
+    var model = new FakeModel([
+        new ModelReply(null, [Call("plan", "nira_plan", new { steps = new[] {
+            new { description = "Create output", successCriterion = "Created", kind = "action" },
+            new { description = "Read output", successCriterion = "Readback", kind = "observation" },
+            new { description = "Summarize", successCriterion = "Answer", kind = "analysis" }
+        } })]),
+        new ModelReply(null, [Call("ask", "nira_ask_user", new { question = "What output filename should I use?" })])
+    ]);
+    await setup.Engine(model).RunAsync(id, "Create then verify", new FakeApprovals(true));
+    ConversationState saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(saved.Plan.Select(x => x.Kind).SequenceEqual(["action", "observation", "analysis"]),
+        "Typed plans must be recorded durably without site-specific intent rules");
+    Assert(saved.Messages.Any(x => x.Role == "tool" && x.Content?.Contains("successCriterion", StringComparison.OrdinalIgnoreCase) == true),
+        "The model should receive step definitions, not just a count");
+}
+
+static async Task WorkflowPlanNoReplace()
+{
+    using var setup = new TestContext();
+    Guid id = Guid.NewGuid();
+    await setup.Store.SaveAsync(new ConversationState {
+        Id=id, Objective="Create two artifacts",
+        Plan=[new PlanStep {Description="Original step",SuccessCriterion="Verified",Kind="action"},
+              new PlanStep {Description="Second step",SuccessCriterion="Verified",Kind="observation"}]
+    }, default);
+    var model=new FakeModel([
+        new ModelReply(null,[Call("replace","nira_plan",new {steps=new[] {
+            new {description="Skip work",successCriterion="Say done",kind="analysis"},
+            new {description="Finish",successCriterion="Done",kind="analysis"}
+        }})]),
+        new ModelReply(null,[Call("ask","nira_ask_user",new {question="Which artifact comes first?"})])
+    ]);
+    await setup.Engine(model).RunAsync(id,null,new FakeApprovals(true));
+    var state=(await setup.Store.LoadAsync(id,default))!;
+    Assert(state.Plan.Count==2 && state.Plan[0].Description=="Original step", "Existing plan must not be overwritten");
+    Assert(state.Messages.Any(x => x.Content?.Contains("PLAN_ALREADY_EXISTS",StringComparison.Ordinal)==true),
+        "Attempted bypass needs explicit failure observation");
+}
+
+static async Task WorkflowPlanStatus()
+{
+    using var setup=new TestContext();
+    Guid id=Guid.NewGuid();
+    await setup.Store.SaveAsync(new ConversationState {Id=id,Objective="Generate report",
+        Plan=[new PlanStep {Description="Inspect source",SuccessCriterion="Observed", Kind="observation"},
+              new PlanStep {Description="Create report",SuccessCriterion="Saved",Kind="action"}]},default);
+    var model=new FakeModel([
+        new ModelReply(null,[Call("status","nira_plan_status",new {})]),
+        new ModelReply(null,[Call("ask","nira_ask_user",new {question="Which report should be generated?"})])
+    ]);
+    await setup.Engine(model).RunAsync(id,null,new FakeApprovals(true));
+    var state=(await setup.Store.LoadAsync(id,default))!;
+    Assert(state.Messages.Any(x => x.Role=="tool" && x.Content?.Contains("Generate report",StringComparison.Ordinal)==true &&
+        x.Content?.Contains("Inspect source",StringComparison.Ordinal)==true),
+        "Status should return the actual stored objective and steps");
+}
+
+static async Task WorkflowPlanStatusSchema()
+{
+    using var setup=new TestContext();
+    var model=new FakeModel([
+        new ModelReply(null,[Call("bad","nira_plan_status",new {invented="x"})]),
+        new ModelReply(null,[Call("ask","nira_ask_user",new {question="Which report should I inspect?"})])
+    ]);
+    Guid id=Guid.NewGuid();
+    await setup.Engine(model).RunAsync(id,"Inspect report",new FakeApprovals(true));
+    var state=(await setup.Store.LoadAsync(id,default))!;
+    Assert(state.Messages.Any(x=>x.Content?.Contains("ARGUMENT_SCHEMA",StringComparison.Ordinal)==true),
+        "Status inspection must reject extra fields");
+}
+
+static Task WorkflowActionValid() => WorkflowUpdateCase("action","completed","proof",true,
+    operations:[WorkflowProof("proof")]);
+static Task WorkflowActionReadRefused() => WorkflowUpdateCase("action","completed","read",false,
+    "PLAN_EVIDENCE",[WorkflowProof("read",changed:false)]);
+static Task WorkflowActionNoProof() => WorkflowUpdateCase("action","completed",null,false,"PLAN_EVIDENCE");
+static Task WorkflowActionUnknownProof() => WorkflowUpdateCase("action","completed","invented",false,"PLAN_EVIDENCE");
+static Task WorkflowActionFailedProof() => WorkflowUpdateCase("action","completed","failed",false,
+    "PLAN_EVIDENCE",[WorkflowProof("failed",status:OperationStatus.Failed)]);
+static Task WorkflowActionFalseReceipt() => WorkflowUpdateCase("action","completed","fake",false,
+    "PLAN_EVIDENCE",[WorkflowProof("fake",receiptSuccess:false)]);
+static Task WorkflowObservationRead() => WorkflowUpdateCase("observation","completed","read",true,
+    operations:[WorkflowProof("read",changed:false)]);
+static Task WorkflowObservationChanged() => WorkflowUpdateCase("observation","completed","write",true,
+    operations:[WorkflowProof("write")]);
+static Task WorkflowObservationNoProof() => WorkflowUpdateCase("observation","completed",null,false,"PLAN_EVIDENCE");
+static Task WorkflowAnalysisNoProof() => WorkflowUpdateCase("analysis","completed",null,true);
+static Task WorkflowLegacyNoProof() => WorkflowUpdateCase("general","completed",null,true);
+static Task WorkflowDuplicateProof() => WorkflowUpdateCase("observation","completed","one",false,
+    "PLAN_EVIDENCE",[WorkflowProof("one")],
+    [new PlanStep {Description="First",SuccessCriterion="Verified",Kind="action",
+        Status="completed",EvidenceId="one"},
+     new PlanStep {Description="Second",SuccessCriterion="Verified",Kind="observation"}],1);
+static Task WorkflowPendingProof() => WorkflowUpdateCase("action","pending","proof",false,
+    "PLAN_EVIDENCE_STATUS",[WorkflowProof("proof")]);
+static Task WorkflowLockedRevert() => WorkflowUpdateCase("action","blocked",null,false,
+    "PLAN_COMPLETION_LOCKED",[WorkflowProof("one")],
+    [new PlanStep {Description="First",SuccessCriterion="Verified",Kind="action",
+        Status="completed",EvidenceId="one"}]);
+static Task WorkflowLockedProof() => WorkflowUpdateCase("action","completed","two",false,
+    "PLAN_COMPLETION_LOCKED",[WorkflowProof("one"),WorkflowProof("two")],
+    [new PlanStep {Description="First",SuccessCriterion="Verified",Kind="action",
+        Status="completed",EvidenceId="one"}]);
+static Task WorkflowIdempotent() => WorkflowUpdateCase("action","completed","one",true,
+    operations:[WorkflowProof("one")],
+    steps:[new PlanStep {Description="First",SuccessCriterion="Verified",Kind="action",
+        Status="completed",EvidenceId="one"}]);
+
+static async Task WorkflowPlainForged()
+{
+    using var setup=new TestContext();
+    Guid id=Guid.NewGuid();
+    await setup.Store.SaveAsync(new ConversationState{Id=id,Objective="Perform step",
+        Plan=[new PlanStep{Description="Create file",SuccessCriterion="Exists",Kind="action",
+            Status="completed",EvidenceId="invented"}]},default);
+    AgentRunResult result=await setup.Engine(new FakeModel([
+        new ModelReply("Done, the file was created.",[])])).RunAsync(id,null,new FakeApprovals(true));
+    Assert(result.Status==ConversationStatus.Paused,"Forged saved plan proof cannot complete a plain reply");
+}
+
+static async Task WorkflowStructuredForged()
+{
+    using var setup=new TestContext();
+    Guid id=Guid.NewGuid();
+    await setup.Store.SaveAsync(new ConversationState{Id=id,Objective="Perform step",
+        Plan=[new PlanStep{Description="Create file",SuccessCriterion="Exists",Kind="action",
+            Status="completed",EvidenceId="invented"}]},default);
+    var model=new FakeModel([
+        new ModelReply(null,[Call("finish","nira_finish",new {
+            outcome="answer",answer="Done",evidence_ids=Array.Empty<string>()})]),
+        new ModelReply(null,[Call("ask","nira_ask_user",new {question="What else should be checked?"})])
+    ]);
+    await setup.Engine(model).RunAsync(id,null,new FakeApprovals(true));
+    var state=(await setup.Store.LoadAsync(id,default))!;
+    Assert(state.Status==ConversationStatus.AwaitingUser &&
+        state.Messages.Any(x=>x.Content?.Contains("PLAN_UNFINISHED",StringComparison.Ordinal)==true),
+        "Forged evidence must also block structured nira_finish");
+}
+
+static async Task WorkflowEndToEnd()
+{
+    using var setup=new TestContext();
+    Guid id=Guid.NewGuid();
+    int round=0;
+    var model=new FakeModel(messages =>
+    {
+        int now=round++;
+        if(now==0) return new ModelReply(null,[Call("plan","nira_plan",new{steps=new[] {
+            new {description="Create fact file",successCriterion="Write returned hash",kind="action"},
+            new {description="Verify file",successCriterion="Read back exact bytes",kind="observation"},
+            new {description="Report",successCriterion="Answer names exact verified content",kind="analysis"}
+        }})]);
+        if(now==1) return new ModelReply(null,[Call("write","filesystem.write_text",
+            new {path="workflow-m1a.txt",content="M1A_VERIFIED"})]);
+        if(now==2 || now==4)
+        {
+            var last=messages.Last(x=>x.Role=="tool" && x.Content?.Contains("receiptId",StringComparison.Ordinal)==true);
+            using var parsed=JsonDocument.Parse(last.Content!);
+            string proof=parsed.RootElement.GetProperty("receiptId").GetString()!;
+            return new ModelReply(null,[Call(now==2?"update-write":"update-read","nira_plan_update",
+                new {index=now==2?0:1,status="completed",evidenceId=proof})]);
+        }
+        if(now==3) return new ModelReply(null,[Call("read","filesystem.read_text",
+            new {path="workflow-m1a.txt"})]);
+        if(now==5) return new ModelReply(null,[Call("update-report","nira_plan_update",
+            new {index=2,status="completed"})]);
+        if(now==6) return new ModelReply(null,[Call("status","nira_plan_status",new {})]);
+        return new ModelReply("Created and read back M1A_VERIFIED from workflow-m1a.txt.",[]);
+    });
+    AgentRunResult result=await setup.Engine(model).RunAsync(id,
+        "Create a text file, read it back, and confirm its exact content",new FakeApprovals(true));
+    Assert(result.Status==ConversationStatus.Completed,"Complete real work should be allowed");
+    Assert(await File.ReadAllTextAsync(Path.Combine(setup.Workspace,"workflow-m1a.txt"))=="M1A_VERIFIED",
+        "The actual file must be verified independently");
+    var state=(await setup.Store.LoadAsync(id,default))!;
+    Assert(state.Plan.Count==3 && state.Plan.All(x=>x.Status=="completed"),
+        "All distinct planned steps must finish");
+    Assert(state.Plan[0].EvidenceId!=state.Plan[1].EvidenceId &&
+        state.Plan[0].EvidenceId is not null && state.Plan[1].EvidenceId is not null,
+        "Write and read require distinct actual receipts");
+    Assert(state.Messages.Any(x=>x.Role=="tool" && x.Content?.Contains("\"completed\":3",StringComparison.Ordinal)==true),
+        "Durable status should expose completed steps");
+}
+
+static async Task WorkflowEmptyStatus()
+{
+    using var setup=new TestContext();
+    Guid id=Guid.NewGuid();
+    var model=new FakeModel([
+        new ModelReply(null,[Call("status","nira_plan_status",new {})]),
+        new ModelReply("No plan has been recorded yet.",[])
+    ]);
+    AgentRunResult result=await setup.Engine(model).RunAsync(id,"What is the current task plan?",new FakeApprovals(true));
+    Assert(result.Status==ConversationStatus.Completed,"Empty plans must not prevent ordinary responses");
+    var state=(await setup.Store.LoadAsync(id,default))!;
+    Assert(state.Messages.Any(x=>x.Role=="tool" && x.Content?.Contains("\"total\":0",StringComparison.Ordinal)==true),
+        "Empty status must be represented explicitly");
+}
+
+static ModelReply AutoPlanChoice(string mode, params (string Description, string Criterion, string Kind)[] entries)
+{
+    var steps = entries.Select(x => new {
+        description = x.Description, successCriterion = x.Criterion, kind = x.Kind
+    }).ToArray();
+    return new ModelReply(null, [Call("route", "nira_decide_workflow", new { mode, steps })]);
+}
+
+static async Task AutoPlanFileWorkflow()
+{
+    using var setup = new TestContext();
+    Guid id = Guid.NewGuid();
+    int executionRound = 0;
+    bool observedPlanBeforeWork = false;
+    var model = new PlanningTestModel(AutoPlanChoice("plan",
+        ("Create requested note", "File write receipt exists", "action"),
+        ("Read note back", "Read receipt confirms exact text", "observation"),
+        ("Confirm result", "Answer accurately reports verification", "analysis")),
+        new FakeModel(messages => {
+            if (executionRound++ == 0)
+            {
+                observedPlanBeforeWork = messages.Any(x => x.Role == "system" &&
+                    x.Content?.Contains("A durable plan was already created", StringComparison.Ordinal) == true);
+                return new ModelReply(null, [Call("write", "filesystem.write_text", new {
+                    path="ordinary-request-m1b.txt", content="COMPLETED_M1B" })]);
+            }
+            if (executionRound == 2 || executionRound == 4)
+            {
+                ChatEntry result = messages.Last(x => x.Role=="tool" &&
+                    x.Content?.Contains("receiptId",StringComparison.Ordinal)==true);
+                using var doc = JsonDocument.Parse(result.Content!);
+                string proof = doc.RootElement.GetProperty("receiptId").GetString()!;
+                int index = executionRound == 2 ? 0 : 1;
+                return new ModelReply(null,[Call("update"+index,"nira_plan_update", new {
+                    index,status="completed",evidenceId=proof })]);
+            }
+            if (executionRound == 3) return new ModelReply(null,[Call("read","filesystem.read_text",new{
+                path="ordinary-request-m1b.txt"})]);
+            if (executionRound == 5) return new ModelReply(null,[Call("analysis","nira_plan_update",new{
+                index=2,status="completed"})]);
+            return new ModelReply("Created and verified ordinary-request-m1b.txt containing COMPLETED_M1B.",[]);
+        }));
+    AgentRunResult result = await setup.Engine(model).RunAsync(id,
+        "Create a note called ordinary-request-m1b.txt containing COMPLETED_M1B, then check its contents.",
+        new FakeApprovals(true));
+    Assert(result.Status == ConversationStatus.Completed,"Ordinary multi-step task should complete");
+    Assert(model.PlanCalls==1 && observedPlanBeforeWork,"Host must save and supply automatic plan first");
+    Assert(await File.ReadAllTextAsync(Path.Combine(setup.Workspace,"ordinary-request-m1b.txt")) == "COMPLETED_M1B",
+        "Only registered tool must create the file");
+    var saved = (await setup.Store.LoadAsync(id,default))!;
+    Assert(saved.Plan.Count==3 && saved.Plan.All(x=>x.Status=="completed"),
+        "All automatically generated steps must be completed with the existing evidence rules");
+    Assert(saved.Plan[0].EvidenceId is not null && saved.Plan[1].EvidenceId is not null &&
+        saved.Plan[0].EvidenceId != saved.Plan[1].EvidenceId,
+        "Write and read steps need separate host receipts");
+}
+
+static async Task AutoPlanDirectConversation()
+{
+    using var setup = new TestContext();
+    var model = new PlanningTestModel(AutoPlanChoice("direct"),
+        new FakeModel([new ModelReply("Hello!",[])]));
+    var result=await setup.Engine(model).RunAsync(Guid.NewGuid(),"Hi NIRA",new FakeApprovals(false));
+    Assert(result.Status==ConversationStatus.Completed && result.Message=="Hello!", "Simple chat must work directly");
+    Assert(model.PlanCalls==1 && model.DecisionTool?.Name=="nira_decide_workflow",
+        "Planning should invoke only the declarative decision tool");
+}
+
+static async Task AutoPlanSingleAction()
+{
+    using var setup=new TestContext();
+    var model=new PlanningTestModel(AutoPlanChoice("direct"),new FakeModel([
+        new ModelReply(null,[Call("write","filesystem.write_text",new{
+            path="single-action-m1b.txt",content="ONE"})]),
+        new ModelReply("Created single-action-m1b.txt",[])
+    ]));
+    AgentRunResult result=await setup.Engine(model).RunAsync(Guid.NewGuid(),
+        "Make a note called single-action-m1b.txt containing ONE",new FakeApprovals(false));
+    Assert(result.Status==ConversationStatus.Completed, "Standalone action need not force an unnecessary plan");
+    Assert(await File.ReadAllTextAsync(Path.Combine(setup.Workspace,"single-action-m1b.txt"))=="ONE",
+        "Existing write validation must continue to work");
+}
+
+static async Task AutoPlanTextIgnored()
+{
+    using var setup=new TestContext();
+    var model=new PlanningTestModel(new ModelReply("{\"function\":\"filesystem.write_text\",\"arguments\":{\"path\":\"fake.txt\"}}",[]),
+        new FakeModel([new ModelReply("I cannot plan this without structured tool support.",[])]));
+    Guid id=Guid.NewGuid();
+    var result=await setup.Engine(model).RunAsync(id,"Tell me if any note was made",new FakeApprovals(false));
+    Assert(result.Status==ConversationStatus.Completed,"Text from planning pass is not an execution event");
+    Assert(!File.Exists(Path.Combine(setup.Workspace,"fake.txt")),"Planner text must never execute");
+    Assert((await setup.Store.LoadAsync(id,default))!.AutoPlanningAttempted,"Planning attempt must be durable");
+}
+
+static async Task AutoPlanWrongTool()
+{
+    using var setup=new TestContext();
+    var model=new PlanningTestModel(new ModelReply(null,[Call("bad","filesystem.write_text",new{
+        path="illegal-from-planner.txt",content="X"})]),
+        new FakeModel([new ModelReply("No operation was performed.",[])]));
+    var result=await setup.Engine(model).RunAsync(Guid.NewGuid(),"Describe progress",new FakeApprovals(false));
+    Assert(result.Status==ConversationStatus.Completed,"Unexpected preflight tool proposal must be ignored");
+    Assert(!File.Exists(Path.Combine(setup.Workspace,"illegal-from-planner.txt")),
+        "Planning pass must never dispatch an executable tool");
+}
+
+static async Task AutoPlanWrongSize()
+{
+    using var setup=new TestContext();
+    var model=new PlanningTestModel(AutoPlanChoice("plan",("Only one","Cannot be a plan","action")),
+        new FakeModel([new ModelReply("I will do the one step directly.",[])]));
+    Guid id=Guid.NewGuid();
+    await setup.Engine(model).RunAsync(id,"One step request",new FakeApprovals(false));
+    Assert((await setup.Store.LoadAsync(id,default))!.Plan.Count==0,"Too-short plans must not be saved");
+}
+
+static async Task AutoPlanInvalidKind()
+{
+    using var setup=new TestContext();
+    var model=new PlanningTestModel(AutoPlanChoice("plan",
+        ("First action","Have evidence","superuser"),
+        ("Second step","Have evidence","analysis")),
+        new FakeModel([new ModelReply("No steps executed.",[])]));
+    Guid id=Guid.NewGuid();
+    await setup.Engine(model).RunAsync(id,"An unsupported planner decision",new FakeApprovals(false));
+    Assert((await setup.Store.LoadAsync(id,default))!.Plan.Count==0,"Unsafe step kinds must be rejected");
+}
+
+static async Task AutoPlanNoRepeat()
+{
+    using var setup=new TestContext();
+    var model=new PlanningTestModel(AutoPlanChoice("direct"),new FakeModel([
+        new ModelReply(null,[Call("ask","nira_ask_user",new{question="Which name should I use?"})]),
+        new ModelReply("Thanks, I will use that name.",[])
+    ]));
+    Guid id=Guid.NewGuid();
+    var engine=setup.Engine(model);
+    AgentRunResult first=await engine.RunAsync(id,"Choose a project name",new FakeApprovals(false));
+    AgentRunResult second=await engine.RunAsync(id,"Use NIRA",new FakeApprovals(false));
+    Assert(first.Status==ConversationStatus.AwaitingUser && second.Status==ConversationStatus.Completed,
+        "Questions must preserve the task and answer as normal");
+    Assert(model.PlanCalls==1,"Re-answering a question must not call the planner a second time");
+}
+
+static async Task AutoPlanResume()
+{
+    using var setup=new TestContext();
+    var model=new PlanningTestModel(AutoPlanChoice("plan",
+        ("Draft a file","Write receipt exists","action"),
+        ("Verify file","Read matches","observation")), new FakeModel([
+        new ModelReply(null,[Call("ask","nira_ask_user",new{question="What should the file contain?"})]),
+        new ModelReply(null,[Call("status","nira_plan_status",new {})]),
+        new ModelReply(null,[Call("ask2","nira_ask_user",new{question="Which filename should I use?"})])
+    ]));
+    Guid id=Guid.NewGuid();
+    var engine=setup.Engine(model);
+    var first=await engine.RunAsync(id,"Prepare a file and check it",new FakeApprovals(false));
+    Assert(first.Status==ConversationStatus.AwaitingUser,"First question should checkpoint");
+    var second=await engine.RunAsync(id,"Use the words TEST",new FakeApprovals(false));
+    var state=(await setup.Store.LoadAsync(id,default))!;
+    Assert(second.Status==ConversationStatus.AwaitingUser && model.PlanCalls==1,
+        "Follow-up must not recreate a durable plan");
+    Assert(state.Plan.Count==2 && state.AutoPlanningAttempted,
+        "The auto plan and its planning marker must survive multiple turns");
+    Assert(state.Messages.Any(x => x.Role=="tool" &&
+        x.Content?.Contains("\"total\":2",StringComparison.Ordinal)==true),
+        "Saved plan must remain inspectable using nira_plan_status");
+}
+
+static async Task AutoPlanExistingPlan()
+{
+    using var setup=new TestContext();
+    Guid id=Guid.NewGuid();
+    await setup.Store.SaveAsync(new ConversationState { Id=id,Objective="Continue old task",
+        Plan=[new PlanStep {Description="Existing step",SuccessCriterion="Original evidence",Kind="analysis"}]}, default);
+    var model=new PlanningTestModel(AutoPlanChoice("plan",
+        ("Replace original","Not allowed","action"),("Overwrite", "Not allowed","analysis")),
+        new FakeModel([new ModelReply(null,[Call("ask","nira_ask_user",new {question="What should be next?"})])]));
+    var result=await setup.Engine(model).RunAsync(id,null,new FakeApprovals(false));
+    Assert(result.Status==ConversationStatus.AwaitingUser && model.PlanCalls==0,
+        "Saved work must bypass planner and preserve its plan");
+    Assert((await setup.Store.LoadAsync(id,default))!.Plan[0].Description=="Existing step",
+        "Never replace an old plan automatically");
+}
+
+static async Task AutoPlanWireIsolation()
+{
+    string body=JsonSerializer.Serialize(new {choices = new[]{ new {message = new {
+        role="assistant", content=(string?)null,tool_calls=new[]{new{
+            id="plan-1",type="function",function=new{name="nira_decide_workflow",
+                arguments=JsonSerializer.Serialize(new {mode="direct",steps=Array.Empty<object>()})}
+        }}}}}});
+    var handler=new FakeApiHandler(body);
+    using var http=new HttpClient(handler);
+    var model=new OpenAiCompatibleModel(http,new Uri("https://model.example/v1/"),"test-model",()=>null);
+    var decisionTool=new ToolDescriptor("nira_decide_workflow","Planning choice only",ToolRisk.ReadLocal,
+        JsonToolSchema.Schema("""{"type":"object","properties":{},"additionalProperties":false}"""));
+    ModelReply proposal=await model.ProposeWorkflowAsync([new ChatEntry("user","Say hi")],decisionTool,default);
+    Assert(proposal.ToolCalls.Count==1 && proposal.ToolCalls[0].Name=="nira_decide_workflow",
+        "Transport must preserve the native planner call");
+    using var wire=JsonDocument.Parse(handler.RequestBody!);
+    JsonElement tools=wire.RootElement.GetProperty("tools");
+    Assert(tools.GetArrayLength()==1 && tools[0].GetProperty("function").GetProperty("name").GetString()=="nira_decide_workflow",
+        "Planning request must not advertise any executable tools");
+}
+
+static async Task AutoPlanNoApproval()
+{
+    using var setup=new TestContext();
+    var approval=new FakeApprovals(false);
+    var model=new PlanningTestModel(AutoPlanChoice("direct"),new FakeModel([
+        new ModelReply("This is a direct answer.",[])
+    ]));
+    await setup.Engine(model).RunAsync(Guid.NewGuid(),"Explain something simple",approval);
+    Assert(approval.Calls==0,"Planning decision needs no tool authorization and has no effects");
+}
+
+// Milestone 1C: general-purpose planning and autonomous continuation.
+// The planning JSON fallback is purely declarative; execution still requires
+// real registered tools and their normal independent host approvals.
+static ModelReply M1cDecisionJson(string mode, object[] steps, bool fenced=false)
+{
+    string value=JsonSerializer.Serialize(new { mode,steps });
+    return new ModelReply(fenced ? "```json\n"+value+"\n```" : value,[]);
+}
+
+static object M1cStep(string kind, string description, string toolName="") =>
+    string.IsNullOrEmpty(toolName)
+        ? new { kind, description, successCriterion="Host-confirmed completion" }
+        : (object)new { kind, description, successCriterion="Host-confirmed completion", toolName };
+
+static async Task M1cPlannerJsonPlan()
+{
+    using var setup=new TestContext();
+    Guid id=Guid.NewGuid();
+    var model=new PlanningTestModel(M1cDecisionJson("plan",[
+        M1cStep("analysis","Evaluate available evidence"),
+        M1cStep("analysis","Report verified outcome")]),new FakeModel([
+        new ModelReply(null,[Call("a","nira_plan_update",new { index=0,status="completed" })]),
+        new ModelReply(null,[Call("b","nira_plan_update",new { index=1,status="completed" })]),
+        new ModelReply("Done with the verified analysis.",[])
+    ]));
+    var result=await setup.Engine(model).RunAsync(id,"Review and report the verified evidence",new FakeApprovals(false));
+    var state=(await setup.Store.LoadAsync(id,default))!;
+    Assert(result.Status==ConversationStatus.Completed && state.Plan.Count==2 &&
+        state.Plan.All(step=>step.Status=="completed") &&
+        state.AutomaticPlanningOutcome=="planned_json" && model.PlanCalls==1,
+        "Strictly validated declarative JSON must create a persisted plan without execution authority");
+}
+
+static async Task M1cPlannerFencedJson()
+{
+    using var setup=new TestContext();
+    Guid id=Guid.NewGuid();
+    var model=new PlanningTestModel(M1cDecisionJson("plan",[
+        M1cStep("analysis","Assess supporting facts"),
+        M1cStep("analysis","Communicate reliable results")],true),new FakeModel([
+        new ModelReply(null,[Call("first","nira_plan_update",new {index=0,status="completed"})]),
+        new ModelReply(null,[Call("second","nira_plan_update",new {index=1,status="completed"})]),
+        new ModelReply("Analysis reported.",[])
+    ]));
+    var result=await setup.Engine(model).RunAsync(id,"Summarize and confirm",new FakeApprovals(false));
+    Assert(result.Status==ConversationStatus.Completed &&
+        (await setup.Store.LoadAsync(id,default))!.AutomaticPlanningOutcome=="planned_json",
+        "A standalone fenced JSON decision is acceptable only in the non-executing planner");
+}
+
+static async Task M1cPlannerJsonDirect()
+{
+    using var setup=new TestContext();
+    Guid id=Guid.NewGuid();
+    var model=new PlanningTestModel(M1cDecisionJson("direct",[]),new FakeModel([
+        new ModelReply("A direct answer.",[])
+    ]));
+    var result=await setup.Engine(model).RunAsync(id,"Explain a concept",new FakeApprovals(false));
+    var state=(await setup.Store.LoadAsync(id,default))!;
+    Assert(result.Status==ConversationStatus.Completed && state.Plan.Count==0 &&
+        state.AutomaticPlanningOutcome=="direct_json","Text JSON direct decision must be auditable");
+}
+
+static async Task M1cPlannerMalformed()
+{
+    using var setup=new TestContext();
+    Guid id=Guid.NewGuid();
+    var model=new PlanningTestModel(new ModelReply("{\"mode\":\"plan\",\"steps\":[],\"unsafe\":1}",[]),
+        new FakeModel([new ModelReply("Nothing was executed.",[])]));
+    var result=await setup.Engine(model).RunAsync(id,"Explain status",new FakeApprovals(false));
+    var state=(await setup.Store.LoadAsync(id,default))!;
+    Assert(result.Status==ConversationStatus.Completed && state.Plan.Count==0 &&
+        state.AutomaticPlanningOutcome=="invalid" && state.AutoPlanningAttempted,
+        "Invalid or extended planner payload must be rejected and reported, not silently trusted");
+}
+
+static async Task M1cPlannerExecutableText()
+{
+    using var setup=new TestContext();
+    Guid id=Guid.NewGuid();
+    var model=new PlanningTestModel(new ModelReply(
+        "{\"function\":\"filesystem.write_text\",\"arguments\":{\"path\":\"forged.txt\",\"content\":\"X\"}}",[]),
+        new FakeModel([new ModelReply("No action happened.",[])]));
+    var result=await setup.Engine(model).RunAsync(id,"Can you execute this?",new FakeApprovals(false));
+    Assert(result.Status==ConversationStatus.Completed &&
+        !File.Exists(Path.Combine(setup.Workspace,"forged.txt")) &&
+        (await setup.Store.LoadAsync(id,default))!.AutomaticPlanningOutcome=="invalid",
+        "Plain JSON tool-call imitation must never be executed during planning");
+}
+
+static async Task M1cPlannerUnknownBinding()
+{
+    await M1cRejectedPlanBinding("action","unregistered.unsafe.tool");
+}
+static async Task M1cPlannerReadOnlyBinding()
+{
+    await M1cRejectedPlanBinding("action","filesystem.read_text");
+}
+static async Task M1cPlannerAnalysisBinding()
+{
+    await M1cRejectedPlanBinding("analysis","filesystem.read_text");
+}
+static async Task M1cRejectedPlanBinding(string kind,string toolName)
+{
+    using var setup=new TestContext();
+    Guid id=Guid.NewGuid();
+    var model=new PlanningTestModel(M1cDecisionJson("plan",[
+        M1cStep(kind,"Unsupported tool assignment",toolName),
+        M1cStep("analysis","Report valid evidence")]),new FakeModel([
+        new ModelReply("Cannot form a valid plan.",[])
+    ]));
+    var result=await setup.Engine(model).RunAsync(id,"Plan an example task",new FakeApprovals(false));
+    var state=(await setup.Store.LoadAsync(id,default))!;
+    Assert(result.Status==ConversationStatus.Completed && state.Plan.Count==0 &&
+        state.AutomaticPlanningOutcome=="invalid" && state.Operations.Count==0,
+        "The host must reject unregistered or unsafe planning tool bindings");
+}
+
+static async Task M1cNativePlanBinding()
+{
+    using var setup=new TestContext();
+    Guid id=Guid.NewGuid();
+    var decision=new ModelReply(null,[Call("plan","nira_decide_workflow",new {
+        mode="plan", steps = new object[] {
+            M1cStep("action","Write the requested file","filesystem.write_text"),
+            M1cStep("observation","Read the file back","filesystem.read_text")
+        }
+    })]);
+    var model=new PlanningTestModel(decision,new FakeModel([
+        new ModelReply(null,[Call("ask","nira_ask_user",new {question="What contents should I use?"})])
+    ]));
+    var result=await setup.Engine(model).RunAsync(id,"Write and verify a file",new FakeApprovals(false));
+    var state=(await setup.Store.LoadAsync(id,default))!;
+    Assert(result.Status==ConversationStatus.AwaitingUser && state.Plan.Count==2 &&
+        state.AutomaticPlanningOutcome=="planned_tool" &&
+        state.Plan[0].ToolName=="filesystem.write_text" &&
+        state.Plan[1].ToolName=="filesystem.read_text",
+        "Native workflow decisions must preserve exact registered tool bindings");
+}
+
+static async Task M1cEvidenceWrongTool() => await M1cEvidenceMatch(false);
+static async Task M1cEvidenceMatchingTool() => await M1cEvidenceMatch(true);
+static async Task M1cEvidenceMatch(bool matches)
+{
+    using var setup=new TestContext();
+    Guid id=Guid.NewGuid();
+    var state=new ConversationState { Id=id, Objective="Check tool-bound evidence", AutoPlanningAttempted=true,
+        AutomaticPlanningOutcome="planned_tool", Plan=[new PlanStep {
+            Description="Create a file", SuccessCriterion="Host receipt", Kind="action", ToolName="filesystem.write_text" }] };
+    state.Operations.Add(new AgentOperation { Id="proof-m1c", ToolName=matches?"filesystem.write_text":"process.run",
+        Status=OperationStatus.Succeeded,
+        ResultJson=JsonSerializer.Serialize(ToolReceipt.Ok("Observed state change",changedState:true)) });
+    await setup.Store.SaveAsync(state,default);
+    ModelReply[] replies=matches ? [
+        new ModelReply(null,[Call("update","nira_plan_update",new {index=0,status="completed", evidenceId="proof-m1c"})]),
+        new ModelReply("Valid matching tool evidence.",[])
+    ] : [
+        new ModelReply(null,[Call("update","nira_plan_update",new {index=0,status="completed", evidenceId="proof-m1c"})]),
+        new ModelReply(null,[Call("ask","nira_ask_user",new {question="Which reference should I use for the verification?"})])
+    ];
+    var model=new FakeModel(replies);
+    var result=await setup.Engine(model).RunAsync(id,null,new FakeApprovals(false));
+    var saved=(await setup.Store.LoadAsync(id,default))!;
+    if (matches)
+        Assert(result.Status==ConversationStatus.Completed && saved.Plan[0].EvidenceId=="proof-m1c",
+            "A successful matching tool receipt must satisfy the planned action");
+    else
+        Assert(result.Status==ConversationStatus.AwaitingUser && saved.Plan[0].Status=="pending" &&
+            saved.Plan[0].EvidenceId is null,
+            "Changed-state receipts from the wrong registered tool must not satisfy the plan");
+}
+
+static async Task M1cAutoFinishRecovery()
+{
+    using var setup=new TestContext();
+    Guid id=Guid.NewGuid();
+    int turns=0;
+    var model=new PlanningTestModel(M1cDecisionJson("plan",[
+        M1cStep("analysis","Evaluate the outcome"),
+        M1cStep("analysis","Verify the final statement")]),new FakeModel(messages=>{
+        turns++;
+        if (turns==1) return new ModelReply("I am finished.",[]);
+        if (turns==2)
+        {
+            Assert(messages.Any(x=>x.Role=="system" && x.Content?.Contains("automatically saved plan still contains unfinished steps",StringComparison.Ordinal)==true),
+                "Host should provide transient continuation guidance after an early final answer");
+            return new ModelReply(null,[Call("a","nira_plan_update",new{index=0,status="completed"})]);
+        }
+        if (turns==3) return new ModelReply(null,[Call("b","nira_plan_update",new{index=1,status="completed"})]);
+        return new ModelReply("The analysis plan is now fully verified.",[]);
+    }));
+    var result=await setup.Engine(model).RunAsync(id,"Assess two independent conclusions",new FakeApprovals(false));
+    Assert(result.Status==ConversationStatus.Completed && turns==4 &&
+        (await setup.Store.LoadAsync(id,default))!.Plan.All(x=>x.Status=="completed"),
+        "Early model final must prompt autonomous continuation, not require an extra user retry");
+}
+
+static async Task M1cAutoFinishBounded()
+{
+    using var setup=new TestContext();
+    Guid id=Guid.NewGuid();
+    int turns=0;
+    var model=new PlanningTestModel(M1cDecisionJson("plan",[
+        M1cStep("action","Create requested state","filesystem.write_text"),
+        M1cStep("observation","Verify requested state","filesystem.read_text")]),
+        new FakeModel(_=>{turns++;return new ModelReply("Done without using a tool.",[]);}));
+    var result=await setup.Engine(model).RunAsync(id,"Create and verify a new file",new FakeApprovals(false));
+    var state=(await setup.Store.LoadAsync(id,default))!;
+    Assert(result.Status==ConversationStatus.Paused && turns==3 &&
+        state.Operations.Count==0 && state.Plan.All(x=>x.Status=="pending"),
+        "Unfinished automatic plan must pause after bounded guidance; no fabricated completion");
+}
+
+static async Task M1cRecoveryNoDuplicateWrite()
+{
+    using var setup=new TestContext();
+    Guid id=Guid.NewGuid();
+    int turns=0;
+    var model=new PlanningTestModel(M1cDecisionJson("plan",[
+        M1cStep("action","Write the file once","filesystem.write_text"),
+        M1cStep("observation","Read the file back","filesystem.read_text")]),
+        new FakeModel(messages=>{
+            turns++;
+            if (turns==1) return new ModelReply(null,[Call("write","filesystem.write_text",new{
+                path="m1c-recovery.txt",content="SAFE"})]);
+            if (turns==2) return new ModelReply("All done already.",[]);
+            if (turns==3)
+            {
+                Assert(messages.Any(x=>x.Role=="system" && x.Content?.Contains("NEVER repeat",StringComparison.Ordinal)==true),
+                    "Recovery must warn against repeating successful mutations");
+                string proof=M1cLastProof(messages);
+                return new ModelReply(null,[Call("u1","nira_plan_update",new{index=0,status="completed",evidenceId=proof})]);
+            }
+            if (turns==4) return new ModelReply(null,[Call("read","filesystem.read_text",new{
+                path="m1c-recovery.txt"})]);
+            if (turns==5)
+            {
+                string proof=M1cLastProof(messages);
+                return new ModelReply(null,[Call("u2","nira_plan_update",new{index=1,status="completed",evidenceId=proof})]);
+            }
+            return new ModelReply("Verified file contents.",[]);
+        }));
+    var result=await setup.Engine(model).RunAsync(id,"Create and verify m1c-recovery.txt",new FakeApprovals(false));
+    var state=(await setup.Store.LoadAsync(id,default))!;
+    Assert(result.Status==ConversationStatus.Completed &&
+        state.Operations.Count(x=>x.ToolName=="filesystem.write_text" && x.Status==OperationStatus.Succeeded)==1 &&
+        state.Operations.Count(x=>x.ToolName=="filesystem.read_text" && x.Status==OperationStatus.Succeeded)==1 &&
+        state.Plan.All(x=>x.Status=="completed") &&
+        await File.ReadAllTextAsync(Path.Combine(setup.Workspace,"m1c-recovery.txt"))=="SAFE",
+        "Autonomous continuation must use existing mutation proof, read back once, and complete");
+}
+
+static string M1cLastProof(IReadOnlyList<ChatEntry> messages)
+{
+    string content=messages.Last(x=>x.Role=="tool" &&
+        x.Content?.Contains("receiptId",StringComparison.Ordinal)==true).Content!;
+    using var parsed=JsonDocument.Parse(content);
+    return parsed.RootElement.GetProperty("receiptId").GetString()!;
+}
+
+static async Task M1cPlanStatusDiagnostic()
+{
+    using var setup=new TestContext();
+    Guid id=Guid.NewGuid();
+    var model=new PlanningTestModel(M1cDecisionJson("direct",[]),new FakeModel([
+        new ModelReply(null,[Call("status","nira_plan_status",new {})]),
+        new ModelReply("Status recorded.",[])
+    ]));
+    var result=await setup.Engine(model).RunAsync(id,"Inspect the workflow status",new FakeApprovals(false));
+    var state=(await setup.Store.LoadAsync(id,default))!;
+    Assert(result.Status==ConversationStatus.Completed &&
+        state.Messages.Any(x=>x.Role=="tool" && x.Content?.Contains("\"planningOutcome\":\"direct_json\"",StringComparison.Ordinal)==true),
+        "Plan-status tool must expose the truthful, persisted automatic planning result");
+}
+
+static async Task M1cManualPlanBadBinding()
+{
+    using var setup=new TestContext();
+    Guid id=Guid.NewGuid();
+    var model=new FakeModel([
+        new ModelReply(null,[Call("plan","nira_plan",new {steps=new object[] {
+            M1cStep("action","Run a fake tool","unknown.unsafe.tool"),
+            M1cStep("analysis","Report a result")}})]),
+        new ModelReply("No plan recorded.",[])
+    ]);
+    var result=await setup.Engine(model).RunAsync(id,"Make an example plan",new FakeApprovals(false));
+    var state=(await setup.Store.LoadAsync(id,default))!;
+    Assert(result.Status==ConversationStatus.Completed && state.Plan.Count==0 &&
+        state.Messages.Any(x=>x.Role=="tool" && x.Content?.Contains("PLAN_TOOL_BINDING",StringComparison.Ordinal)==true),
+        "Manual plans must also reject unregistered tool bindings");
+}
+
+static async Task M1cManualPlanNoAutoRecovery()
+{
+    using var setup=new TestContext();
+    Guid id=Guid.NewGuid();
+    int turns=0;
+    var model=new PlanningTestModel(M1cDecisionJson("direct",[]),new FakeModel(messages=>{
+        turns++;
+        if (turns==1) return new ModelReply(null,[Call("plan","nira_plan",new {steps=new object[]{
+            M1cStep("analysis","Describe first finding"),
+            M1cStep("analysis","Describe second finding")}})]);
+        return new ModelReply("I'm finished too early.",[]);
+    }));
+    var result=await setup.Engine(model).RunAsync(id,"Make a two-part report",new FakeApprovals(false));
+    var state=(await setup.Store.LoadAsync(id,default))!;
+    Assert(result.Status==ConversationStatus.Paused && turns==2 && state.Plan.Count==2 &&
+        state.AutomaticPlanningOutcome=="direct_json",
+        "A later model-created manual plan cannot be misclassified as a saved automatic plan");
+}
+
+static async Task M1cLegacyAutoPlanRecovery()
+{
+    using var setup=new TestContext();
+    Guid id=Guid.NewGuid();
+    var state=new ConversationState { Id=id, Objective="Finish legacy automatic plan", AutoPlanningAttempted=true,
+        Plan=[new PlanStep { Description="Review first result", SuccessCriterion="Checked", Kind="analysis" },
+              new PlanStep { Description="Review second result", SuccessCriterion="Checked", Kind="analysis" }] };
+    await setup.Store.SaveAsync(state,default);
+    int turns=0;
+    var model=new FakeModel(messages=>{
+        turns++;
+        if (turns==1)
+        {
+            Assert(messages.Any(x=>x.Role=="system" &&
+                x.Content?.Contains("A durable plan was already created automatically",StringComparison.Ordinal)==true),
+                "Previously saved M1B plans should retain their model context after upgrading");
+            return new ModelReply("Not done yet.",[]);
+        }
+        if (turns==2) return new ModelReply(null,[Call("first","nira_plan_update",new{index=0,status="completed"})]);
+        if (turns==3) return new ModelReply(null,[Call("second","nira_plan_update",new{index=1,status="completed"})]);
+        return new ModelReply("Legacy automatic plan completed.",[]);
+    });
+    var result=await setup.Engine(model).RunAsync(id,null,new FakeApprovals(false));
+    Assert(result.Status==ConversationStatus.Completed && turns==4 &&
+        (await setup.Store.LoadAsync(id,default))!.Plan.All(x=>x.Status=="completed"),
+        "M1B saved automatic plans without outcome field must remain compatible");
+}
+
+// Tool-free planning fallback tests: the executor cannot be invoked by the
+// fallback response, and the preflight never inherits the live tool transcript.
+static async Task PlanningRetryPlan()
+{
+    using var setup = new TestContext();
+    Guid id = Guid.NewGuid();
+    var fallback = M1cDecisionJson("plan", [
+        M1cStep("analysis", "Analyze verified observations"),
+        M1cStep("analysis", "Report supported conclusion")]);
+    var model = new PlanningTestModel(new ModelReply("Not valid JSON", []),
+        new FakeModel([
+            new ModelReply(null, [Call("p0", "nira_plan_update", new { index=0, status="completed" })]),
+            new ModelReply(null, [Call("p1", "nira_plan_update", new { index=1, status="completed" })]),
+            new ModelReply("Confirmed by the evidence.", [])
+        ]), fallback);
+    AgentRunResult result = await setup.Engine(model).RunAsync(id,
+        "Analyze this task and report the outcome", new FakeApprovals(false));
+    ConversationState state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Completed &&
+        state.AutomaticPlanningOutcome == "planned_fallback_json" &&
+        state.Plan.Count == 2 && state.Plan.All(step => step.Status == "completed"),
+        "Invalid initial planning response should recover with a validated, non-executing JSON plan");
+    Assert(model.PlanCalls == 1 && model.FallbackCalls == 1 && model.FallbackToolCount == 0,
+        "Fallback planning must expose zero executable tools and run only once");
+}
+
+static async Task PlanningRetryDirect()
+{
+    using var setup = new TestContext();
+    Guid id = Guid.NewGuid();
+    var model = new PlanningTestModel(new ModelReply("unstructured response", []),
+        new FakeModel([new ModelReply("Direct answer.", [])]),
+        M1cDecisionJson("direct", []));
+    AgentRunResult result = await setup.Engine(model).RunAsync(id,
+        "Explain a concept", new FakeApprovals(false));
+    ConversationState state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Completed && result.Message == "Direct answer." &&
+        state.Plan.Count == 0 && state.AutomaticPlanningOutcome == "direct_fallback_json" &&
+        model.FallbackCalls == 1 && model.FallbackToolCount == 0,
+        "Tool-free planning retry must allow valid direct task decisions");
+}
+
+static async Task PlanningRetryRejectsTool()
+{
+    using var setup = new TestContext();
+    Guid id = Guid.NewGuid();
+    var model = new PlanningTestModel(new ModelReply("not a decision", []),
+        new FakeModel([new ModelReply("No tool executed.", [])]),
+        new ModelReply(null, [Call("forged", "filesystem.write_text", new {
+            path="planning-should-never-write.txt", content="FORGED" })]));
+    AgentRunResult result = await setup.Engine(model).RunAsync(id,
+        "Discuss a possible file", new FakeApprovals(false));
+    ConversationState state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Completed && state.AutomaticPlanningOutcome == "invalid" &&
+        state.Plan.Count == 0 && state.Operations.Count == 0 &&
+        !File.Exists(Path.Combine(setup.Workspace, "planning-should-never-write.txt")),
+        "A tool call received during fallback cannot become an executable operation");
+}
+
+static async Task PlanningRetryRejectsBinding()
+{
+    using var setup = new TestContext();
+    Guid id = Guid.NewGuid();
+    var fallback = M1cDecisionJson("plan", [
+        M1cStep("action", "Create a file", "filesystem.not_registered"),
+        M1cStep("analysis", "Report the outcome")]);
+    var model = new PlanningTestModel(new ModelReply("not JSON", []),
+        new FakeModel([new ModelReply("Did not execute anything.", [])]), fallback);
+    AgentRunResult result = await setup.Engine(model).RunAsync(id,
+        "Discuss creating a file", new FakeApprovals(false));
+    ConversationState state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Completed && state.Plan.Count == 0 &&
+        state.AutomaticPlanningOutcome == "invalid" && state.Operations.Count == 0,
+        "A fallback plan binding an unknown executable must not be accepted");
+}
+
+static async Task PlanningRetryInvalidGraceful()
+{
+    using var setup = new TestContext();
+    Guid id = Guid.NewGuid();
+    var model = new PlanningTestModel(new ModelReply("invalid", []),
+        new FakeModel([
+            new ModelReply(null, [Call("w", "filesystem.write_text", new {
+                path="planning-fallback-normal.txt", content="NORMAL" })]),
+            new ModelReply("File written under normal host controls.", [])
+        ]));
+    AgentRunResult result = await setup.Engine(model).RunAsync(id,
+        "Write planning-fallback-normal.txt with NORMAL", new FakeApprovals(false));
+    ConversationState state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Completed && state.AutomaticPlanningOutcome == "invalid" &&
+        model.FallbackCalls == 1 && state.Operations.Any(op => op.ToolName == "filesystem.write_text" &&
+            op.Status == OperationStatus.Succeeded) &&
+        await File.ReadAllTextAsync(Path.Combine(setup.Workspace, "planning-fallback-normal.txt")) == "NORMAL",
+        "Unusable planner output must not block the independently authorized normal executor");
+}
+
+static async Task PlanningRetryNoRepeat()
+{
+    using var setup = new TestContext();
+    Guid id = Guid.NewGuid();
+    var model = new PlanningTestModel(new ModelReply("no decision", []),
+        new FakeModel([
+            new ModelReply(null, [Call("question", "nira_ask_user", new { question="What should I call it?" })]),
+            new ModelReply("I will call it NIRA.", [])
+        ]), M1cDecisionJson("direct", []));
+    var engine = setup.Engine(model);
+    AgentRunResult first = await engine.RunAsync(id, "Choose a name", new FakeApprovals(false));
+    AgentRunResult second = await engine.RunAsync(id, "NIRA", new FakeApprovals(false));
+    Assert(first.Status == ConversationStatus.AwaitingUser &&
+        second.Status == ConversationStatus.Completed && model.PlanCalls == 1 &&
+        model.FallbackCalls == 1,
+        "A preflight fallback must never repeat after resuming a saved task");
+}
+
+static async Task PlanningRetryNoFallbackOnValid()
+{
+    using var setup = new TestContext();
+    var model = new PlanningTestModel(AutoPlanChoice("direct"),
+        new FakeModel([new ModelReply("Hello.", [])]));
+    AgentRunResult result = await setup.Engine(model).RunAsync(Guid.NewGuid(),
+        "Hi", new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.Completed && model.PlanCalls == 1 &&
+        model.FallbackCalls == 0,
+        "Do not waste a second provider call after a valid planning decision");
+}
+
+static async Task PlanningRetryWireRoundTrip()
+{
+    using var setup = new TestContext();
+    using var handler = new PlanningRetryWireHandler();
+    using var http = new HttpClient(handler);
+    var provider = new OpenAiCompatibleModel(http, new Uri("https://example.invalid/v1/"),
+        "mock", () => "mock-private-key");
+    Guid id = Guid.NewGuid();
+    AgentRunResult result = await setup.Engine(provider).RunAsync(id,
+        "Review two observations and summarize your findings", new FakeApprovals(false));
+    ConversationState state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Completed &&
+        state.AutomaticPlanningOutcome == "planned_fallback_json" &&
+        state.Plan.Count == 2 && state.Plan.All(step => step.Status == "completed") &&
+        handler.RequestCount == 5,
+        "Real HTTP provider transcript must save the fallback plan and complete its evidence-free analysis steps");
+    Assert(state.Operations.Count == 0,
+        "Planning fallback must not dispatch an external effect or approval");
+}
+
+
+static ModelReply ModelCall(string name, string arguments) =>
+    new(null, [new ModelToolCall(Guid.NewGuid().ToString("N"), name, arguments)]);
+
+// Milestone 2: the same NIRA host, permission broker and journal drive desktop
+// actions as file/browser actions. A fake adapter never touches the test machine.
+static Task DesktopToolsRegistered()
+{
+    using var setup = new TestContext();
+    using var http = new HttpClient();
+    var backend = new FakeDesktopBackend();
+    ToolRegistry registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http,
+        desktopBackend: backend);
+    foreach (string name in new[] { "desktop.windows_list", "desktop.window_inspect",
+        "desktop.window_activate", "desktop.control_invoke", "desktop.control_set_text",
+        "desktop.control_type_text" })
+        Assert(registry.TryGet(name, out var tool) && tool is not null,
+            "Missing registered desktop tool: " + name);
+    return Task.CompletedTask;
+}
+
+static Task DesktopSchemaStrict()
+{
+    var backend = new FakeDesktopBackend();
+    foreach (IAgentTool tool in new IAgentTool[] {new DesktopWindowsTool(backend),
+        new DesktopInspectTool(backend), new DesktopActivateTool(backend),
+        new DesktopInvokeTool(backend), new DesktopSetTextTool(backend),
+        new DesktopTypeTextTool(backend)})
+    {
+        JsonElement args = JsonSerializer.SerializeToElement(new { unexpected="payload" });
+        Assert(!JsonToolSchema.Validate(tool.Descriptor.Parameters, args, out _),
+            "Desktop tools must reject unsupported argument properties");
+    }
+    var textTool = new DesktopSetTextTool(backend);
+    Assert(textTool.Descriptor.Risk == ToolRisk.Dangerous && textTool.Descriptor.HasSideEffects,
+        "Desktop text modification must always require authorization");
+    return Task.CompletedTask;
+}
+
+static async Task<(AgentRunResult Result, ConversationState State, FakeDesktopBackend Backend,
+    FakeApprovals Approvals)> DesktopSingleAction(string name, string arguments, bool approved)
+{
+    using var setup = new TestContext();
+    var backend = new FakeDesktopBackend();
+    var model = new FakeModel(new[] { ModelCall(name, arguments), new ModelReply("Done.", []) });
+    var approvals = new FakeApprovals(approved);
+    Guid id = Guid.NewGuid();
+    AgentRunResult result = await setup.Engine(model, backend).RunAsync(id, "Use the desktop tool", approvals);
+    ConversationState state = (await setup.Store.LoadAsync(id, default))!;
+    return (result, state, backend, approvals);
+}
+
+static async Task DesktopListDenied()
+{
+    var r = await DesktopSingleAction("desktop.windows_list", "{}", false);
+    Assert(r.Result.Status == ConversationStatus.Paused && r.Backend.ListCalls == 0 &&
+        r.Approvals.Calls == 1, "Desktop inventory cannot bypass host approval");
+}
+static async Task DesktopListApproved()
+{
+    var r = await DesktopSingleAction("desktop.windows_list", "{}", true);
+    Assert(r.Result.Status == ConversationStatus.Completed && r.Backend.ListCalls == 1 &&
+        r.State.Operations.Single().Status == OperationStatus.Succeeded &&
+        r.State.Operations.Single().ResultJson!.Contains("win-demo-0001", StringComparison.Ordinal),
+        "Approved desktop listing must give observed stable window identity");
+}
+static async Task DesktopInspectDenied()
+{
+    var r = await DesktopSingleAction("desktop.window_inspect",
+        "{\"windowId\":\"win-demo-0001\"}", false);
+    Assert(r.Result.Status == ConversationStatus.Paused && r.Backend.InspectCalls == 0 &&
+        r.Approvals.Calls == 1, "Desktop inspection must be independently approved");
+}
+static async Task DesktopInspectApproved()
+{
+    var r = await DesktopSingleAction("desktop.window_inspect",
+        "{\"windowId\":\"win-demo-0001\"}", true);
+    Assert(r.Result.Status == ConversationStatus.Completed && r.Backend.InspectCalls == 1 &&
+        r.State.Operations.Single().ResultJson!.Contains("ctrl-button-01", StringComparison.Ordinal) &&
+        !r.State.Operations.Single().ResultJson!.Contains("secret-existing-input", StringComparison.Ordinal),
+        "Desktop inspect must provide control metadata without field values");
+}
+static async Task DesktopActivateDenied()
+{
+    var r = await DesktopSingleAction("desktop.window_activate",
+        "{\"windowId\":\"win-demo-0001\"}", false);
+    Assert(r.Result.Status == ConversationStatus.Paused && r.Backend.ActivateCalls == 0 &&
+        r.Approvals.Calls == 1, "Host rejection must prevent window activation");
+}
+static async Task DesktopActivateApproved()
+{
+    var r = await DesktopSingleAction("desktop.window_activate",
+        "{\"windowId\":\"win-demo-0001\"}", true);
+    Assert(r.Result.Status == ConversationStatus.Completed && r.Backend.ActivateCalls == 1 &&
+        r.State.Operations.Single().ResultJson!.Contains("ChangedState\":true", StringComparison.Ordinal),
+        "Verified activation must record a changed-state host receipt");
+}
+static async Task DesktopInvokeDenied()
+{
+    var r = await DesktopSingleAction("desktop.control_invoke",
+        "{\"windowId\":\"win-demo-0001\",\"controlId\":\"ctrl-button-01\"}", false);
+    Assert(r.Result.Status == ConversationStatus.Paused && r.Backend.InvokeCalls == 0,
+        "Approval denial must prevent UIA invocation");
+}
+static async Task DesktopInvokeApproved()
+{
+    var r = await DesktopSingleAction("desktop.control_invoke",
+        "{\"windowId\":\"win-demo-0001\",\"controlId\":\"ctrl-button-01\"}", true);
+    Assert(r.Result.Status == ConversationStatus.Completed && r.Backend.InvokeCalls == 1 &&
+        r.State.Operations.Single().ResultJson!.Contains("Verified\":false", StringComparison.Ordinal),
+        "A button dispatch receipt must not claim that the app outcome was verified");
+}
+static async Task DesktopSetTextDenied()
+{
+    var r = await DesktopSingleAction("desktop.control_set_text",
+        "{\"windowId\":\"win-demo-0001\",\"controlId\":\"ctrl-edit-001\",\"text\":\"Hello\"}", false);
+    Assert(r.Result.Status == ConversationStatus.Paused && r.Backend.SetTextCalls == 0,
+        "Text must never be entered without approval");
+}
+static async Task DesktopSetTextApproved()
+{
+    var r = await DesktopSingleAction("desktop.control_set_text",
+        "{\"windowId\":\"win-demo-0001\",\"controlId\":\"ctrl-edit-001\",\"text\":\"Hello\"}", true);
+    Assert(r.Result.Status == ConversationStatus.Completed && r.Backend.SetTextCalls == 1 &&
+        r.Backend.LastText == "Hello" &&
+        r.State.Operations.Single().ResultJson!.Contains("Verified\":true", StringComparison.Ordinal),
+        "Authorized non-password text set must be verified");
+}
+static async Task DesktopStaleWindow()
+{
+    var r = await DesktopSingleAction("desktop.window_activate",
+        "{\"windowId\":\"win-stale-999\"}", true);
+    Assert(r.Result.Status == ConversationStatus.Completed &&
+        r.State.Operations.Single().Status == OperationStatus.Failed &&
+        r.State.Operations.Single().ResultJson!.Contains("WINDOW_STALE", StringComparison.Ordinal),
+        "Stale identities must not be silently retargeted");
+}
+static async Task DesktopStaleControl()
+{
+    var r = await DesktopSingleAction("desktop.control_invoke",
+        "{\"windowId\":\"win-demo-0001\",\"controlId\":\"ctrl-stale-99\"}", true);
+    Assert(r.Result.Status == ConversationStatus.Completed && r.Backend.InvokeCalls == 0 &&
+        r.State.Operations.Single().Status == OperationStatus.Failed,
+        "Control IDs must be revalidated against the selected window");
+}
+static async Task DesktopEndToEnd()
+{
+    using var setup = new TestContext();
+    var backend = new FakeDesktopBackend();
+    var model = new FakeModel(new[] {
+        ModelCall("desktop.windows_list", "{}"),
+        ModelCall("desktop.window_activate", "{\"windowId\":\"win-demo-0001\"}"),
+        ModelCall("desktop.window_inspect", "{\"windowId\":\"win-demo-0001\"}"),
+        ModelCall("desktop.control_invoke",
+            "{\"windowId\":\"win-demo-0001\",\"controlId\":\"ctrl-button-01\"}"),
+        new ModelReply("The button was dispatched; resulting app state is not verified.", [])
+    });
+    var approvals = new FakeApprovals(true);
+    Guid id = Guid.NewGuid();
+    AgentRunResult result = await setup.Engine(model, backend).RunAsync(id,
+        "Inspect my open apps, activate a window, and invoke one button", approvals);
+    ConversationState state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Completed && approvals.Calls == 4 &&
+        backend.ListCalls == 1 && backend.ActivateCalls == 1 &&
+        backend.InspectCalls == 1 && backend.InvokeCalls == 1 &&
+        state.Operations.Count == 4 && state.Operations.All(op => op.Status == OperationStatus.Succeeded) &&
+        result.EvidenceIds.Count == 2,
+        "A general-purpose desktop task must route through four separate approved/audited tools");
+}
+
+static Task DesktopRichEditorMetadata()
+{
+    var backend = new FakeDesktopBackend();
+    DesktopControl rich = backend.Inspect("win-demo-0001").Controls.Single(c => c.ControlId == "ctrl-doc-01");
+    Assert(!rich.CanSetText && rich.CanTypeText,
+        "A multiline rich editor must be distinguishable from a writable ValuePattern field");
+    return Task.CompletedTask;
+}
+static async Task DesktopTypeTextDenied()
+{
+    var outcome = await DesktopSingleAction("desktop.control_type_text",
+        "{\"windowId\":\"win-demo-0001\",\"controlId\":\"ctrl-doc-01\",\"text\":\"Hello\",\"requireEmpty\":true}",
+        false);
+    Assert(outcome.Result.Status == ConversationStatus.Paused && outcome.Backend.TypeTextCalls == 0 &&
+        outcome.Approvals.Calls == 1, "Separate denial must block all keyboard input");
+}
+static async Task DesktopTypeTextApproved()
+{
+    var outcome = await DesktopSingleAction("desktop.control_type_text",
+        "{\"windowId\":\"win-demo-0001\",\"controlId\":\"ctrl-doc-01\",\"text\":\"Hello\",\"requireEmpty\":true}",
+        true);
+    Assert(outcome.Result.Status == ConversationStatus.Completed && outcome.Backend.TypeTextCalls == 1 &&
+        outcome.Backend.LastText == "Hello" && outcome.Approvals.Calls == 1 &&
+        outcome.State.Operations.Single().ResultJson!.Contains("\"Verified\":true", StringComparison.Ordinal),
+        "Approved rich text must record only an actual successful receipt");
+}
+static async Task DesktopTypeTextRequiresEmpty()
+{
+    var backend = new FakeDesktopBackend();
+    var tool = new DesktopTypeTextTool(backend);
+    ToolReceipt receipt = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new {
+        windowId="win-demo-0001", controlId="ctrl-doc-01", text="Hello", requireEmpty=false
+    }), default);
+    Assert(!receipt.Success && receipt.ErrorCode == "EMPTY_REQUIRED" && backend.TypeTextCalls == 0,
+        "Explicit empty-editor invariant must not be bypassed");
+}
+static async Task DesktopTypeTextControlsRefused()
+{
+    var backend = new FakeDesktopBackend();
+    var tool = new DesktopTypeTextTool(backend);
+    ToolReceipt receipt = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new {
+        windowId="win-demo-0001", controlId="ctrl-doc-01", text="Hello\nWorld", requireEmpty=true
+    }), default);
+    Assert(!receipt.Success && receipt.ErrorCode == "TEXT_CHARACTERS_UNSUPPORTED" && backend.TypeTextCalls == 0,
+        "Control characters or implicit shortcuts must never be injected");
+}
+static async Task DesktopUnsupportedSetTextPauses()
+{
+    using var setup = new TestContext();
+    var backend = new FakeDesktopBackend();
+    var model = new FakeModel(new[] {
+        ModelCall("desktop.control_set_text",
+            "{\"windowId\":\"win-demo-0001\",\"controlId\":\"ctrl-doc-01\",\"text\":\"Hello\"}"),
+        new ModelReply("Try typing later", [])
+    });
+    Guid id = Guid.NewGuid();
+    var result = await setup.Engine(model, backend).RunAsync(id, "Try set text in rich editor", new FakeApprovals(true));
+    ConversationState saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Paused && saved.RetryBlockCode == "CONTROL_REQUIRES_KEYBOARD" &&
+        saved.Operations.Count == 1 && saved.Operations.Single().Status == OperationStatus.Failed &&
+        backend.SetTextCalls == 0,
+        "A known unsupported UIA action must pause immediately instead of consuming further model rounds");
+}
+static async Task DesktopBlockedRetrySafe()
+{
+    using var setup = new TestContext();
+    var backend = new FakeDesktopBackend();
+    var model = new FakeModel(new[] {
+        ModelCall("desktop.control_set_text",
+            "{\"windowId\":\"win-demo-0001\",\"controlId\":\"ctrl-doc-01\",\"text\":\"Hello\"}")
+    });
+    var engine = setup.Engine(model, backend);
+    Guid id = Guid.NewGuid();
+    var first = await engine.RunAsync(id, "Set text in a rich editor", new FakeApprovals(true));
+    var second = await engine.RunAsync(id, null, new FakeApprovals(true));
+    var third = await engine.RunAsync(id, "resume", new FakeApprovals(true));
+    Assert(first.Status == ConversationStatus.Paused && second.Status == ConversationStatus.Paused &&
+        third.Status == ConversationStatus.Paused && backend.SetTextCalls == 0,
+        "Retrying blocked, unchanged input must not invoke the provider or dispatch another tool");
+}
+static async Task DesktopSetPermissionRoutesHost()
+{
+    using var setup = new TestContext();
+    var backend = new FakeDesktopBackend();
+    var model = new FakeModel(new[] {
+        ModelCall("nira_ask_user", "{\"question\":\"May I set the text in this editor?\"}"),
+        ModelCall("desktop.control_type_text",
+            "{\"windowId\":\"win-demo-0001\",\"controlId\":\"ctrl-doc-01\",\"text\":\"Hello\",\"requireEmpty\":true}"),
+        new ModelReply("Approved operation verified.", [])
+    });
+    Guid id = Guid.NewGuid();
+    var r = await setup.Engine(model, backend).RunAsync(id,
+        "User permits foreground keyboard input in the blank editor", new FakeApprovals(true));
+    Assert(r.Status == ConversationStatus.Completed && backend.TypeTextCalls == 1,
+        "May I set text must be treated as a tool-approval probe, not a user clarification");
+}
+
+static Task DesktopExactTextComparison()
+{
+    string expected = "NIRA desktop control test successful.";
+    string wrong = "NIRA " + new string('.', expected.Length - 5);
+    Assert(wrong.Length == expected.Length &&
+        !DesktopTextVerification.Exact(wrong, expected) &&
+        DesktopTextVerification.Exact(expected + "\r\n", expected) &&
+        !DesktopTextVerification.Exact(expected + "?", expected),
+        "Character count and SendInput success do not prove the actual text.");
+    return Task.CompletedTask;
+}
+static async Task DesktopUnverifiedTypingPauses()
+{
+    using var setup = new TestContext();
+    var backend = new FakeDesktopBackend { UnverifiedTypeText = true };
+    var model = new FakeModel(new[] {
+        ModelCall("desktop.control_type_text",
+            "{\"windowId\":\"win-demo-0001\",\"controlId\":\"ctrl-doc-01\",\"text\":\"Hello\",\"requireEmpty\":true}"),
+        new ModelReply("I successfully typed it.", [])
+    });
+    Guid id = Guid.NewGuid();
+    AgentRunResult result = await setup.Engine(model, backend).RunAsync(id,
+        "Type Hello in an empty editor with approval", new FakeApprovals(true));
+    ConversationState state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Paused &&
+        state.RetryBlockCode == "DESKTOP_TEXT_NOT_VERIFIED" &&
+        backend.TypeTextCalls == 1 && state.Operations.Count == 1 &&
+        state.Operations[0].Status == OperationStatus.Succeeded &&
+        state.Operations[0].ResultJson!.Contains("\"Verified\":false", StringComparison.Ordinal) &&
+        state.Operations[0].ResultJson!.Contains("\"ChangedState\":true", StringComparison.Ordinal) &&
+        result.Message.Contains("could NOT verify", StringComparison.Ordinal),
+        "Dispatched, unverified typing must preserve evidence but never mark the task complete.");
+}
+static async Task DesktopUnverifiedTypingRetryBlocked()
+{
+    using var setup = new TestContext();
+    var backend = new FakeDesktopBackend { UnverifiedTypeText = true };
+    var model = new FakeModel(new[] {
+        ModelCall("desktop.control_type_text",
+            "{\"windowId\":\"win-demo-0001\",\"controlId\":\"ctrl-doc-01\",\"text\":\"Hello\",\"requireEmpty\":true}")
+    });
+    var engine = setup.Engine(model, backend);
+    Guid id = Guid.NewGuid();
+    AgentRunResult first = await engine.RunAsync(id, "Type Hello", new FakeApprovals(true));
+    AgentRunResult second = await engine.RunAsync(id, null, new FakeApprovals(true));
+    AgentRunResult third = await engine.RunAsync(id, "resume", new FakeApprovals(true));
+    Assert(first.Status == ConversationStatus.Paused &&
+        second.Status == ConversationStatus.Paused &&
+        third.Status == ConversationStatus.Paused && backend.TypeTextCalls == 1,
+        "A dispatched unverified write must not be retried by an unchanged resume.");
+}
+static async Task DesktopUnverifiedSetTextPauses()
+{
+    using var setup = new TestContext();
+    var backend = new FakeDesktopBackend { UnverifiedSetText = true };
+    var model = new FakeModel(new[] {
+        ModelCall("desktop.control_set_text",
+            "{\"windowId\":\"win-demo-0001\",\"controlId\":\"ctrl-edit-001\",\"text\":\"Hello\"}"),
+        new ModelReply("It is set.", [])
+    });
+    Guid id = Guid.NewGuid();
+    AgentRunResult result = await setup.Engine(model, backend).RunAsync(id,
+        "Set edit field to Hello", new FakeApprovals(true));
+    ConversationState state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Paused &&
+        state.RetryBlockCode == "DESKTOP_TEXT_NOT_VERIFIED" &&
+        backend.SetTextCalls == 1 && state.Operations.Count == 1 &&
+        state.Operations[0].Status == OperationStatus.Succeeded,
+        "Unverified ValuePattern writes must not become completed tasks.");
+}
+static Task DesktopWin32InputLayout()
+{
+    Type? input = typeof(WindowsDesktopAutomationBackend).GetNestedType("NativeInput",
+        System.Reflection.BindingFlags.NonPublic);
+    Assert(input is not null, "Win32 input payload layout must remain inspectable.");
+    if (input is null) return Task.CompletedTask;
+    int expected = IntPtr.Size == 8 ? 40 : 28;
+    int padding = IntPtr.Size == 8 ? 8 : 4;
+    Assert(System.Runtime.InteropServices.Marshal.SizeOf(input) == expected &&
+        System.Runtime.InteropServices.Marshal.OffsetOf(input, "Data").ToInt32() == padding,
+        "INPUT P/Invoke layout must agree with native architecture.");
+    return Task.CompletedTask;
+}
+
+static Task DesktopForegroundAlreadyFocused()
+{
+    int activates = 0, waits = 0;
+    bool result = DesktopForegroundAcquisition.TryAcquire(
+        () => true, () => { activates++; return true; }, () => waits++);
+    Assert(result && activates == 0 && waits == 0,
+        "Already foreground must not cause a second activation or an artificial delay");
+    return Task.CompletedTask;
+}
+static Task DesktopForegroundRequestsOnce()
+{
+    bool foreground = false;
+    int activates = 0;
+    bool result = DesktopForegroundAcquisition.TryAcquire(
+        () => foreground,
+        () => { activates++; foreground = true; return true; }, () => { });
+    Assert(result && activates == 1,
+        "NIRA should activate the observed target once and recheck foreground");
+    return Task.CompletedTask;
+}
+static Task DesktopForegroundDenial()
+{
+    int attempts = 0, waits = 0;
+    bool result = DesktopForegroundAcquisition.TryAcquire(
+        () => false, () => { attempts++; return false; }, () => waits++, checks: 3);
+    Assert(!result && attempts == 1 && waits == 3,
+        "Denied activation must stay denied after a bounded observation interval");
+    return Task.CompletedTask;
+}
+static Task DesktopForegroundInvalidChecks()
+{
+    bool rejected = false;
+    try { DesktopForegroundAcquisition.TryAcquire(() => false, () => false,
+        () => { }, checks: 0); }
+    catch (ArgumentOutOfRangeException) { rejected = true; }
+    Assert(rejected, "Activation observation checks must be bounded");
+    return Task.CompletedTask;
+}
+static Task DesktopTypeToolAutonomousDescriptor()
+{
+    var tool = new DesktopTypeTextTool(new FakeDesktopBackend());
+    Assert(tool.Descriptor.Description.Contains("NIRA itself activates", StringComparison.Ordinal) &&
+        !tool.Descriptor.Description.Contains("switch manually", StringComparison.Ordinal) &&
+        tool.Descriptor.Risk == ToolRisk.Dangerous,
+        "Approved typing must own activation without downgrading host risk");
+    return Task.CompletedTask;
+}
+static Task TaskAbandonTwoPresses()
+{
+    var gate = new TaskAbandonConfirmation();
+    DateTimeOffset t = new(2026, 11, 24, 0, 0, 0, TimeSpan.Zero);
+    Assert(!gate.ConfirmOrArm(t) && gate.IsArmed &&
+        gate.ConfirmOrArm(t.AddSeconds(2)) && !gate.IsArmed,
+        "One accidental click must never abandon an agent task");
+    return Task.CompletedTask;
+}
+static Task TaskAbandonExpiryAndReset()
+{
+    var gate = new TaskAbandonConfirmation();
+    DateTimeOffset t = new(2026, 11, 24, 0, 0, 0, TimeSpan.Zero);
+    Assert(!gate.ConfirmOrArm(t) && !gate.ConfirmOrArm(t.AddSeconds(20)) &&
+        gate.IsArmed, "Expired confirmation must not silently abandon");
+    gate.Reset();
+    Assert(!gate.IsArmed && !gate.ConfirmOrArm(t.AddSeconds(21)),
+        "Reset requires a new first click");
+    return Task.CompletedTask;
+}
+static Task TaskAbandonUncertainEffects()
+{
+    var task = new ConversationState { Status = ConversationStatus.Paused,
+        RetryBlockCode = "DESKTOP_TEXT_NOT_VERIFIED" };
+    task.Operations.Add(new AgentOperation { Status = OperationStatus.Succeeded });
+    TaskAbandonConfirmation.MarkAbandoned(task);
+    Assert(task.Status == ConversationStatus.NeedsReconciliation &&
+        task.RetryBlockCode == "USER_ABANDONED_WITH_UNCERTAIN_ACTION" &&
+        task.Operations.Count == 1,
+        "Abandon cannot erase evidence of a possibly altered desktop document");
+    var dispatched = new ConversationState { Status = ConversationStatus.Running };
+    dispatched.Operations.Add(new AgentOperation { Status = OperationStatus.Dispatched });
+    TaskAbandonConfirmation.MarkAbandoned(dispatched);
+    Assert(dispatched.Status == ConversationStatus.NeedsReconciliation,
+        "Abandon must preserve unknown in-flight tool effects");
+    return Task.CompletedTask;
+}
+static Task TaskAbandonSafeTask()
+{
+    var task = new ConversationState { Status = ConversationStatus.AwaitingUser };
+    TaskAbandonConfirmation.MarkAbandoned(task);
+    Assert(task.Status == ConversationStatus.Failed && task.RetryBlockCode == "USER_ABANDONED",
+        "Abandon should terminate an idle safe task without deleting its history");
+    return Task.CompletedTask;
+}
+
+static Task ProductivityToolsAreRegistered()
+{
+    using var setup = new TestContext();
+    using var http = new HttpClient();
+    ToolRegistry tools = NiraStandardTools.Create(setup.Workspace, setup.Store, http,
+        desktopBackend: new FakeDesktopBackend());
+    foreach (string name in new[] { "productivity.inspect", "productivity.read",
+        "productivity.create_document", "productivity.create_workbook" })
+        Assert(tools.TryGet(name, out _) , "Missing general productivity capability " + name);
+    Assert(tools.TryGet("productivity.create_document", out IAgentTool? writer) &&
+        writer!.Descriptor.HasSideEffects && writer.Descriptor.Risk == ToolRisk.WriteWorkspace,
+        "Office document writes must be scoped and authorized by the existing host policy.");
+    return Task.CompletedTask;
+}
+
+static Task ProductivitySchemaRejectsUnknownArguments()
+{
+    var schema = new ProductivityCreateWorkbookTool(new WorkspacePathResolver(Path.GetTempPath())).Descriptor.Parameters;
+    Assert(!JsonToolSchema.Validate(schema, JsonSerializer.SerializeToElement(new {
+        path = "out.xlsx", sheets = Array.Empty<object>(), overwrite = true }), out _),
+        "Unknown mutation switches must be rejected before any disk operation.");
+    return Task.CompletedTask;
+}
+
+static Task ProductivityCreateReadWorkbook()
+{
+    using var setup = new TestContext();
+    string path = Path.Combine(setup.Workspace, "report.xlsx");
+    ToolReceipt created = ProductivityDocuments.CreateWorkbook(path,
+        JsonSerializer.SerializeToElement(new[] { new {
+            name = "Data", rows = new object?[][] {
+                new object?[] { "Name", "Amount", "Active" },
+                new object?[] { "Alpha", 42.25, true },
+                new object?[] { "Beta", -17, false }
+            } }
+        }));
+    Assert(created.Success && created.ChangedState && File.Exists(path),
+        "Creating a workbook must publish a genuine new file with a changed-state receipt.");
+    Assert(created.Data.GetProperty("contentVerified").GetBoolean(),
+        "Created Excel must be independently reopened.");
+    ToolReceipt inspected = ProductivityDocuments.Inspect(path);
+    Assert(inspected.Success && inspected.Data.GetProperty("totalSheets").GetInt32() == 1,
+        "Workbook inspection must report real sheets.");
+    ToolReceipt read = ProductivityDocuments.Read(path, "Data", 1, 1, 10, 4, 1, 10);
+    Assert(read.Success && read.Data.GetProperty("rows").GetArrayLength() == 3,
+        "Excel reader must enumerate the actual saved rows.");
+    JsonElement cells = read.Data.GetProperty("rows")[1].GetProperty("cells");
+    Assert(cells[0].GetProperty("value").GetString() == "Alpha" &&
+        cells[1].GetProperty("value").GetString() == "42.25" &&
+        string.Equals(cells[2].GetProperty("value").GetString(), "TRUE", StringComparison.OrdinalIgnoreCase),
+        "Excel must preserve string, number and boolean values.");
+    return Task.CompletedTask;
+}
+
+static Task ProductivityWorkbookPaginates()
+{
+    using var setup = new TestContext();
+    string path = Path.Combine(setup.Workspace, "paged.xlsx");
+    var rows = Enumerable.Range(1, 7).Select(x => new object[] { x, "row-" + x }).ToArray();
+    Assert(ProductivityDocuments.CreateWorkbook(path, JsonSerializer.SerializeToElement(new[] {
+        new { name = "Values", rows } })).Success, "Creation must succeed");
+    ToolReceipt page1 = ProductivityDocuments.Read(path, "Values", 1, 1, 3, 2, 1, 10);
+    ToolReceipt page2 = ProductivityDocuments.Read(path, "Values", 1, 4, 3, 2, 1, 10);
+    Assert(page1.Success && page2.Success &&
+        page1.Data.GetProperty("hasMore").GetBoolean() &&
+        page1.Data.GetProperty("rows")[0].GetProperty("row").GetInt32() == 1 &&
+        page2.Data.GetProperty("rows")[0].GetProperty("row").GetInt32() == 4,
+        "Real Excel pagination must yield distinct row ranges.");
+    return Task.CompletedTask;
+}
+
+static Task ProductivityWorkbookPreservesLiteralFormula()
+{
+    using var setup = new TestContext();
+    string path = Path.Combine(setup.Workspace, "literal.xlsx");
+    Assert(ProductivityDocuments.CreateWorkbook(path, JsonSerializer.SerializeToElement(new[] {
+        new { name = "Text", rows = new[] { new [] { "=1+1", "@user" } } }
+    })).Success, "Workbook must be created");
+    ToolReceipt read = ProductivityDocuments.Read(path, "Text", 1, 1, 2, 2, 1, 10);
+    Assert(read.Success && !read.Data.GetProperty("rows")[0].GetProperty("cells")[0]
+        .GetProperty("formula").GetBoolean(), "Literal strings must not become formulas.");
+    return Task.CompletedTask;
+}
+
+static Task ProductivityWorkbookNeverOverwrites()
+{
+    using var setup = new TestContext();
+    string path = Path.Combine(setup.Workspace, "existing.xlsx");
+    File.WriteAllText(path, "ORIGINAL");
+    ToolReceipt receipt = ProductivityDocuments.CreateWorkbook(path,
+        JsonSerializer.SerializeToElement(new [] { new { name = "Data", rows = new [] { new [] { "x" } } } }));
+    Assert(!receipt.Success && receipt.ErrorCode == "ALREADY_EXISTS" &&
+        File.ReadAllText(path) == "ORIGINAL", "Workbook creation must never replace existing bytes.");
+    return Task.CompletedTask;
+}
+
+static Task ProductivityWorkbookRejectsNestedObjects()
+{
+    using var setup = new TestContext();
+    string path = Path.Combine(setup.Workspace, "unsupported.xlsx");
+    var invalid = JsonSerializer.SerializeToElement(new[] { new {
+        name = "Data", rows = new object[][] { new object[] { new { formula = "=NOW()" } } } } });
+    ToolReceipt created = ProductivityDocuments.CreateWorkbook(path, invalid);
+    Assert(!created.Success && created.ErrorCode == "CELL_TYPE" && !File.Exists(path),
+        "Unsupported cell types must not result in a partial deliverable.");
+    return Task.CompletedTask;
+}
+
+static Task ProductivityCreateReadDocument()
+{
+    using var setup = new TestContext();
+    string path = Path.Combine(setup.Workspace, "memo.docx");
+    JsonElement blocks = JsonSerializer.SerializeToElement(new object[] {
+        new {kind="heading", text="Overview", level=2},
+        new {kind="paragraph", text="The report is grounded in source data."}
+    });
+    ToolReceipt created = ProductivityDocuments.CreateDocument(path, "Report", blocks);
+    Assert(created.Success && created.ChangedState && created.Data.GetProperty("contentVerified").GetBoolean(),
+        "Word creation must publish and independently reopen its deliverable.");
+    ToolReceipt inspected = ProductivityDocuments.Inspect(path);
+    ToolReceipt read = ProductivityDocuments.Read(path, null, 1, 1, 1, 1, 1, 20);
+    string contents = JsonSerializer.Serialize(read.Data);
+    Assert(inspected.Success && read.Success && contents.Contains("Overview", StringComparison.Ordinal) &&
+        contents.Contains("source data", StringComparison.Ordinal),
+        "Word reader must recover real generated paragraphs.");
+    return Task.CompletedTask;
+}
+
+static Task ProductivityWordCreatesTables()
+{
+    using var setup = new TestContext();
+    string path = Path.Combine(setup.Workspace, "table.docx");
+    var blocks = JsonSerializer.SerializeToElement(new object[] {
+        new { kind="table", rows=new[] { new[] { "Account", "Balance" }, new[] { "A1", "750" } } }
+    });
+    Assert(ProductivityDocuments.CreateDocument(path, "Balances", blocks).Success, "Word table creation must succeed.");
+    ToolReceipt inspected = ProductivityDocuments.Inspect(path);
+    Assert(inspected.Success && inspected.Data.GetProperty("tables").GetInt32() == 1,
+        "Word table must be a real OpenXML table, not tab-separated prose.");
+    return Task.CompletedTask;
+}
+
+static Task ProductivityDocumentNeverOverwrites()
+{
+    using var setup = new TestContext();
+    string path = Path.Combine(setup.Workspace, "existing.docx");
+    File.WriteAllText(path, "ORIGINAL");
+    ToolReceipt result = ProductivityDocuments.CreateDocument(path, "Hello",
+        JsonSerializer.SerializeToElement(Array.Empty<object>()));
+    Assert(!result.Success && result.ErrorCode == "ALREADY_EXISTS" &&
+        File.ReadAllText(path) == "ORIGINAL", "Word creation must preserve existing content.");
+    return Task.CompletedTask;
+}
+
+static Task ProductivityRejectsMissingParent()
+{
+    using var setup = new TestContext();
+    string path = Path.Combine(setup.Workspace, "not-exists", "a.docx");
+    ToolReceipt result = ProductivityDocuments.CreateDocument(path, "Hello",
+        JsonSerializer.SerializeToElement(Array.Empty<object>()));
+    Assert(!result.Success && result.ErrorCode == "PARENT_NOT_FOUND" && !File.Exists(path),
+        "Missing parent is a safe failure with no stray output.");
+    return Task.CompletedTask;
+}
+
+static Task ProductivityReadBoundsAndUnsupportedFiles()
+{
+    using var setup = new TestContext();
+    string path = Path.Combine(setup.Workspace, "notes.txt");
+    File.WriteAllText(path, "hello");
+    Assert(ProductivityDocuments.Inspect(path).ErrorCode == "FORMAT_UNSUPPORTED", "Wrong format must be rejected.");
+    Assert(ProductivityDocuments.Read(path, null, 1, 1, 10, 4, 1, 10).ErrorCode == "FORMAT_UNSUPPORTED",
+        "Unsupported input must not be treated as a PDF/Office file.");
+    return Task.CompletedTask;
+}
+
+static string ProductivityTestWorkbook(TestContext setup, int count = 3)
+{
+    string path = Path.Combine(setup.Workspace, "safe-read-" + Guid.NewGuid().ToString("N") + ".xlsx");
+    object[][] rows = Enumerable.Range(1, count)
+        .Select(i => new object[] { "Category " + i, i * 12.5, "Ref" + i }).ToArray();
+    ToolReceipt created = ProductivityDocuments.CreateWorkbook(path,
+        JsonSerializer.SerializeToElement(new[] { new { name = "Expenses", rows } }));
+    Assert(created.Success && File.Exists(path), "Test prerequisite: actual Excel workbook creation must succeed.");
+    return path;
+}
+static async Task ProductivityReadNormalizesZero()
+{
+    using var setup = new TestContext();
+    string path = ProductivityTestWorkbook(setup);
+    var reader = new ProductivityReadTool(new WorkspacePathResolver(setup.Workspace));
+    var args = JsonSerializer.SerializeToElement(new { path, sheet = "Expenses",
+        page = 0, startRow = 0, maxRows = 0, maxColumns = 0,
+        startParagraph = 0, maxParagraphs = 0 });
+    Assert(JsonToolSchema.Validate(reader.Descriptor.Parameters, args, out _),
+        "Out-of-range optional integer read arguments should be validated by the read-only adapter.");
+    ToolReceipt receipt = await reader.ExecuteAsync(args, default);
+    Assert(receipt.Success && receipt.Data.GetProperty("startRow").GetInt32() == 1 &&
+        receipt.Data.GetProperty("maxRows").GetInt32() == 1 &&
+        receipt.Data.GetProperty("maxColumns").GetInt32() == 1 &&
+        receipt.Data.GetProperty("rows").GetArrayLength() == 1,
+        "Model-supplied zero-based/zero-sized bounds must become a single safe read.");
+}
+static async Task ProductivityReadClampsLimits()
+{
+    using var setup = new TestContext();
+    string path = ProductivityTestWorkbook(setup, 90);
+    var reader = new ProductivityReadTool(new WorkspacePathResolver(setup.Workspace));
+    var args = JsonSerializer.SerializeToElement(new { path, startRow = 1,
+        maxRows = 5000, maxColumns = 9000 });
+    ToolReceipt receipt = await reader.ExecuteAsync(args, default);
+    Assert(receipt.Success && receipt.Data.GetProperty("maxRows").GetInt32() == 80 &&
+        receipt.Data.GetProperty("maxColumns").GetInt32() == 40 &&
+        receipt.Data.GetProperty("rows").GetArrayLength() == 80 &&
+        receipt.Data.GetProperty("hasMore").GetBoolean(),
+        "Large safe reads must clamp to host limits and preserve pagination.");
+}
+static async Task ProductivityReadClampsNegative()
+{
+    using var setup = new TestContext();
+    string path = ProductivityTestWorkbook(setup, 3);
+    var reader = new ProductivityReadTool(new WorkspacePathResolver(setup.Workspace));
+    var args = JsonSerializer.SerializeToElement(new { path, startRow = -90,
+        maxRows = -5, maxColumns = -7, page = -3,
+        startParagraph = -1, maxParagraphs = -200 });
+    ToolReceipt receipt = await reader.ExecuteAsync(args, default);
+    Assert(receipt.Success && receipt.Data.GetProperty("startRow").GetInt32() == 1 &&
+        receipt.Data.GetProperty("rows").GetArrayLength() == 1,
+        "Negative read-only pagination values must not cause an invalid-bounds loop.");
+}
+static Task ProductivityReadReportsBounds()
+{
+    using var setup = new TestContext();
+    string path = ProductivityTestWorkbook(setup);
+    ToolReceipt read = ProductivityDocuments.Read(path, null, 1, 2, 2, 3, 1, 20);
+    Assert(read.Success && read.Data.GetProperty("startRow").GetInt32() == 2 &&
+        read.Data.GetProperty("maxRows").GetInt32() == 2 &&
+        read.Data.GetProperty("maxColumns").GetInt32() == 3 &&
+        read.Data.GetProperty("rows")[0].GetProperty("row").GetInt32() == 2,
+        "Read receipts must show the effective limits used for the actual result.");
+    return Task.CompletedTask;
+}
+static Task ProductivityExcelIgnoresUnrelatedBounds()
+{
+    using var setup = new TestContext();
+    string path = ProductivityTestWorkbook(setup);
+    ToolReceipt read = ProductivityDocuments.Read(path, null,
+        page: -99, startRow: 1, maxRows: 10, maxColumns: 4,
+        startParagraph: -14, maxParagraphs: -3);
+    Assert(read.Success && read.Data.GetProperty("rows").GetArrayLength() == 3,
+        "Excel must ignore PDF/Word fields rather than rejecting useful reads.");
+    return Task.CompletedTask;
+}
+static Task ProductivityWordIgnoresUnrelatedBounds()
+{
+    using var setup = new TestContext();
+    string path = Path.Combine(setup.Workspace, "word-source.docx");
+    var blocks = JsonSerializer.SerializeToElement(new[] {
+        new { kind = "paragraph", text = "The workbook is ready." }
+    });
+    Assert(ProductivityDocuments.CreateDocument(path, "Work Summary", blocks).Success,
+        "Test prerequisite: Word document creation failed.");
+    ToolReceipt read = ProductivityDocuments.Read(path, null,
+        page: -20, startRow: -5, maxRows: -99, maxColumns: 0,
+        startParagraph: 1, maxParagraphs: 10);
+    Assert(read.Success && read.Data.GetProperty("paragraphs").GetArrayLength() >= 2,
+        "Word must not reject unrelated spreadsheet/PDF bounds.");
+    return Task.CompletedTask;
+}
+static async Task ProductivityWordZeroIndex()
+{
+    using var setup = new TestContext();
+    string path = Path.Combine(setup.Workspace, "word-zero.docx");
+    Assert(ProductivityDocuments.CreateDocument(path, "Summary",
+        JsonSerializer.SerializeToElement(new[] { new { kind="paragraph", text="Line" } })).Success,
+        "Word creation prerequisite failed.");
+    var reader = new ProductivityReadTool(new WorkspacePathResolver(setup.Workspace));
+    ToolReceipt receipt = await reader.ExecuteAsync(JsonSerializer.SerializeToElement(new {
+        path, startParagraph = 0, maxParagraphs = 10000, page = 0,
+        startRow = 0, maxRows = 0, maxColumns = 0
+    }), default);
+    Assert(receipt.Success && receipt.Data.GetProperty("startParagraph").GetInt32() == 1 &&
+        receipt.Data.GetProperty("maxParagraphs").GetInt32() == 80 &&
+        receipt.Data.GetProperty("paragraphs").GetArrayLength() >= 2,
+        "Word must accept a zero-based/oversized read-only model request.");
+}
+static async Task ProductivityReadOmittedDefaults()
+{
+    using var setup = new TestContext();
+    string path = ProductivityTestWorkbook(setup);
+    var reader = new ProductivityReadTool(new WorkspacePathResolver(setup.Workspace));
+    ToolReceipt receipt = await reader.ExecuteAsync(JsonSerializer.SerializeToElement(new { path }), default);
+    Assert(receipt.Success && receipt.Data.GetProperty("startRow").GetInt32() == 1 &&
+        receipt.Data.GetProperty("maxRows").GetInt32() == 30 &&
+        receipt.Data.GetProperty("maxColumns").GetInt32() == 24 &&
+        receipt.Data.GetProperty("rows").GetArrayLength() == 3,
+        "A bare path must be sufficient to read an ordinary workbook.");
+}
+static async Task ProductivityReadPagesAfterClamp()
+{
+    using var setup = new TestContext();
+    string path = ProductivityTestWorkbook(setup, 82);
+    var reader = new ProductivityReadTool(new WorkspacePathResolver(setup.Workspace));
+    ToolReceipt first = await reader.ExecuteAsync(JsonSerializer.SerializeToElement(new {
+        path, startRow = 0, maxRows = 999
+    }), default);
+    ToolReceipt second = await reader.ExecuteAsync(JsonSerializer.SerializeToElement(new {
+        path, startRow = 81, maxRows = 999
+    }), default);
+    Assert(first.Success && second.Success && first.Data.GetProperty("hasMore").GetBoolean() &&
+        first.Data.GetProperty("rows").GetArrayLength() == 80 &&
+        second.Data.GetProperty("rows").GetArrayLength() == 2 &&
+        second.Data.GetProperty("rows")[0].GetProperty("row").GetInt32() == 81 &&
+        !second.Data.GetProperty("hasMore").GetBoolean(),
+        "Bounded pagination must be non-overlapping and must stop at the actual end.");
+}
+static Task ProductivityReadSchemaStillStrict()
+{
+    var reader = new ProductivityReadTool(new WorkspacePathResolver(Path.GetTempPath()));
+    Assert(!JsonToolSchema.Validate(reader.Descriptor.Parameters,
+        JsonSerializer.SerializeToElement(new { path = "a.xlsx", maxRows = "many" }), out _),
+        "Non-integer pagination arguments must remain invalid.");
+    Assert(!JsonToolSchema.Validate(reader.Descriptor.Parameters,
+        JsonSerializer.SerializeToElement(new { path = "a.xlsx", overwrite = true }), out _),
+        "Read tool must reject unexpected arguments such as overwrite.");
+    return Task.CompletedTask;
+}
+static async Task ProductivityReadThenCreateWord()
+{
+    using var setup = new TestContext();
+    string excel = ProductivityTestWorkbook(setup, 4);
+    var reader = new ProductivityReadTool(new WorkspacePathResolver(setup.Workspace));
+    ToolReceipt read = await reader.ExecuteAsync(JsonSerializer.SerializeToElement(new {
+        path = excel, maxRows = 10000, maxColumns = 10000, page = 0,
+        startRow = 0, startParagraph = 0, maxParagraphs = 0
+    }), default);
+    Assert(read.Success && read.Data.GetProperty("rows").GetArrayLength() == 4,
+        "The model must receive the saved workbook data even after bad optional bounds.");
+    string word = Path.Combine(setup.Workspace, "completed-summary.docx");
+    string row = read.Data.GetProperty("rows")[0].GetProperty("cells")[0]
+        .GetProperty("value").GetString()!;
+    ToolReceipt created = ProductivityDocuments.CreateDocument(word, "Expense Summary",
+        JsonSerializer.SerializeToElement(new[] { new { kind="paragraph", text="First: " + row } }));
+    Assert(created.Success && created.ChangedState && File.Exists(word) &&
+        created.Data.GetProperty("contentVerified").GetBoolean(),
+        "After an automatically recovered Excel read, Word creation must still work.");
+    ToolReceipt doc = ProductivityDocuments.Read(word, null, 1, 1, 2, 2, 1, 10);
+    Assert(doc.Success && doc.Data.ToString().Contains("First: Category 1", StringComparison.Ordinal),
+        "Word must contain content derived from the real workbook read-back.");
+}
+static async Task ProductivityReadNoFileMutation()
+{
+    using var setup = new TestContext();
+    string path = ProductivityTestWorkbook(setup);
+    string before = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path)));
+    var reader = new ProductivityReadTool(new WorkspacePathResolver(setup.Workspace));
+    ToolReceipt receipt = await reader.ExecuteAsync(JsonSerializer.SerializeToElement(new {
+        path, page = 0, startRow = 0, maxRows = 10000,
+        maxColumns = 10000, startParagraph = 0, maxParagraphs = 0
+    }), default);
+    string after = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path)));
+    Assert(receipt.Success && !receipt.ChangedState && before == after,
+        "Host normalization of a read must never modify or overwrite the source file.");
+}
+
+static Task ProductivityOutsideWorkspaceNeedsApproval()
+{
+    using var setup = new TestContext();
+    var policy = new WorkspaceAuthority(setup.Workspace);
+    var tool = new ProductivityCreateWorkbookTool(new WorkspacePathResolver(setup.Workspace));
+    string target = Path.Combine(setup.Root, "outside.xlsx");
+    Assert(!policy.IsPreapproved(tool.Descriptor, target),
+        "Deliverables outside authorized workspace need separate host approval.");
+    return Task.CompletedTask;
+}
+
+
+static Task M3b1RejectFormulaValue()
+{
+    using var setup = new TestContext();
+    string source = M3bOriginalWorkbook(setup), hash = M3bHash(source);
+    string output = Path.Combine(setup.Workspace, "fake-formula.xlsx");
+    ToolReceipt result = ProductivityRevisions.ReviseWorkbook(source, output, hash,
+        JsonSerializer.SerializeToElement(new[] { new { sheet = "Expenses", cell = "B4", value = "=SUM(B2:B3)" } }));
+    Assert(!result.Success && result.ErrorCode == "FORMULA_AS_TEXT" &&
+        !File.Exists(output) && M3bHash(source) == hash &&
+        result.Summary.Contains("'formula'", StringComparison.Ordinal),
+        "Text pretending to be a formula must be rejected; no false verification receipt or output.");
+    return Task.CompletedTask;
+}
+
+static Task M3b1RejectWhitespaceFormulaValue()
+{
+    using var setup = new TestContext();
+    string source = M3bOriginalWorkbook(setup);
+    string output = Path.Combine(setup.Workspace, "fake-spaced.xlsx");
+    ToolReceipt receipt = ProductivityRevisions.ReviseWorkbook(source, output, M3bHash(source),
+        JsonSerializer.SerializeToElement(new[] { new { sheet = "Expenses", cell = "B4", value = "  =SUM(B2:B3)" } }));
+    Assert(!receipt.Success && receipt.ErrorCode == "FORMULA_AS_TEXT" && !File.Exists(output),
+        "A leading space cannot bypass formula-like text validation.");
+    return Task.CompletedTask;
+}
+
+static Task M3b1AllowExplicitLiteralFormulaText()
+{
+    using var setup = new TestContext();
+    string source = M3bOriginalWorkbook(setup), hash = M3bHash(source);
+    string output = Path.Combine(setup.Workspace, "intentional-literal.xlsx");
+    ToolReceipt receipt = ProductivityRevisions.ReviseWorkbook(source, output, hash,
+        JsonSerializer.SerializeToElement(new[] { new {
+            sheet = "Expenses", cell = "C2", value = "=SAMPLE(1)", literalFormulaText = true
+        } }));
+    using var book = new ClosedXML.Excel.XLWorkbook(output);
+    Assert(receipt.Success && !book.Worksheet("Expenses").Cell("C2").HasFormula &&
+        book.Worksheet("Expenses").Cell("C2").GetString() == "=SAMPLE(1)" &&
+        receipt.Data.GetProperty("verifiedFormulaCells").GetInt32() == 0 &&
+        M3bHash(source) == hash,
+        "A deliberately literal formula-looking string stays text with explicit opt-in.");
+    return Task.CompletedTask;
+}
+
+static Task M3b1RepairFakeFormula()
+{
+    using var setup = new TestContext();
+    string source = M3bOriginalWorkbook(setup), hash = M3bHash(source);
+    // Simulate the user's actual uploaded bug: the source has the formula text,
+    // not an executable cell formula. Revise it without overwriting the source.
+    string bad = Path.Combine(setup.Workspace, "bad-formula.xlsx");
+    ToolReceipt badWrite = ProductivityRevisions.ReviseWorkbook(source, bad, hash,
+        JsonSerializer.SerializeToElement(new[] { new {
+            sheet = "Expenses", cell = "B4", value = "=SUM(B2:B3)", literalFormulaText = true
+        } }));
+    Assert(badWrite.Success, "Explicit test fixture must contain a literal fake formula.");
+    string badHash = M3bHash(bad), corrected = Path.Combine(setup.Workspace, "real-formula.xlsx");
+    ToolReceipt fixedWrite = ProductivityRevisions.ReviseWorkbook(bad, corrected, badHash,
+        JsonSerializer.SerializeToElement(new[] { new { sheet = "Expenses", cell = "B4", formula = "SUM(B2:B3)" } }));
+    using var fake = new ClosedXML.Excel.XLWorkbook(bad);
+    using var real = new ClosedXML.Excel.XLWorkbook(corrected);
+    Assert(fixedWrite.Success && !fake.Worksheet("Expenses").Cell("B4").HasFormula &&
+        real.Worksheet("Expenses").Cell("B4").HasFormula &&
+        real.Worksheet("Expenses").Cell("B4").FormulaA1 == "SUM(B2:B3)" &&
+        fixedWrite.Data.GetProperty("verifiedFormulaCells").GetInt32() == 1 &&
+        fixedWrite.Data.GetProperty("formulaTypeVerified").GetBoolean() &&
+        M3bHash(bad) == badHash && M3bHash(source) == hash,
+        "A fake text formula must become a real formula, independently reopened, while both originals stay intact.");
+    return Task.CompletedTask;
+}
+
+static Task M3b1RejectLiteralFlagWithNumber()
+{
+    using var setup = new TestContext();
+    string source = M3bOriginalWorkbook(setup), output = Path.Combine(setup.Workspace, "flag-number.xlsx");
+    ToolReceipt result = ProductivityRevisions.ReviseWorkbook(source, output, M3bHash(source),
+        JsonSerializer.SerializeToElement(new[] { new { sheet = "Expenses", cell = "B4", value = 1200,
+            literalFormulaText = true } }));
+    Assert(!result.Success && result.ErrorCode == "CELL_LITERAL_MODE" && !File.Exists(output),
+        "Literal override must not apply to numeric cell values.");
+    return Task.CompletedTask;
+}
+
+static Task M3b1RejectLiteralFlagWithFormula()
+{
+    using var setup = new TestContext();
+    string source = M3bOriginalWorkbook(setup), output = Path.Combine(setup.Workspace, "flag-formula.xlsx");
+    ToolReceipt result = ProductivityRevisions.ReviseWorkbook(source, output, M3bHash(source),
+        JsonSerializer.SerializeToElement(new[] { new { sheet = "Expenses", cell = "B4",
+            formula = "SUM(B2:B3)", literalFormulaText = true } }));
+    Assert(!result.Success && result.ErrorCode == "CELL_LITERAL_MODE" && !File.Exists(output),
+        "Literal override must not combine with the executable formula property.");
+    return Task.CompletedTask;
+}
+
+static Task M3b1RejectExpressionText()
+{
+    using var setup = new TestContext();
+    string source = M3bOriginalWorkbook(setup), output = Path.Combine(setup.Workspace, "expression.xlsx");
+    ToolReceipt result = ProductivityRevisions.ReviseWorkbook(source, output, M3bHash(source),
+        JsonSerializer.SerializeToElement(new[] { new { sheet = "Expenses", cell = "B4", value = "=1+1" } }));
+    Assert(!result.Success && result.ErrorCode == "FORMULA_AS_TEXT" && !File.Exists(output),
+        "The formula-intent guard cannot be restricted to specific SUM functions.");
+    return Task.CompletedTask;
+}
+
+
+// M3B.4: execution completion and bounded checkpoint review. Real workbook
+// receipts are used in the exact six-of-seven restart regression.
+static AgentOperation M3b4Operation(string id, string name, ToolReceipt receipt) => new()
+{
+    Id = id, ToolName = name, Status = receipt.Success ? OperationStatus.Succeeded : OperationStatus.Failed,
+    ResultJson = JsonSerializer.Serialize(receipt), CompletedUtc = DateTimeOffset.UtcNow
+};
+
+static PlanStep M3b4Completed(string description, string kind, AgentOperation op) => new()
+{
+    Description = description, SuccessCriterion = "Host receipt confirms the result", Kind = kind,
+    Status = "completed", ToolName = op.ToolName, EvidenceId = op.Id
+};
+
+static ConversationState M3b4Checkpoint(string lastDescription, string lastKind = "analysis",
+    string? lastTool = null)
+{
+    const string objective = "Create a file, verify its contents, and give the result.";
+    var changed = WorkflowProof("saved-write");
+    var observed = WorkflowProof("saved-read", changed: false);
+    return new ConversationState {
+        Id = Guid.NewGuid(), Objective = objective,
+        Messages = [new ChatEntry("user", objective)],
+        Status = ConversationStatus.Paused, RetryBlockCode = "NO_PROGRESS",
+        AutoPlanningAttempted = true, AutomaticPlanningOutcome = "planned_fallback_json",
+        Operations = [changed, observed],
+        Plan = [M3b4Completed("Create requested file", "action", changed),
+            M3b4Completed("Read saved file", "observation", observed),
+            new PlanStep { Description = lastDescription, SuccessCriterion = "Deliver the requested result and verification evidence",
+                Kind = lastKind, ToolName = lastTool }]
+    };
+}
+
+static async Task M3b4ResumeWorkbookReport()
+{
+    using var setup = new TestContext();
+    string source = M3bOriginalWorkbook(setup), originalHash = M3bHash(source);
+    string output = Path.Combine(setup.Workspace, "corrected-real.xlsx");
+    var a = M3b4Operation("inspect-source", "productivity.inspect", ProductivityDocuments.Inspect(source));
+    var b = M3b4Operation("read-source", "productivity.read", ProductivityDocuments.Read(source, "Expenses", 1, 1, 5, 3, 1, 5));
+    var c = M3b4Operation("source-hash", "filesystem.sha256", ToolReceipt.Ok("File hash", new { path = source, sha256 = originalHash }));
+    var d = M3b4Operation("corrected-write", "productivity.revise_workbook", ProductivityRevisions.ReviseWorkbook(source,
+        output, originalHash, JsonSerializer.SerializeToElement(new [] { new { sheet = "Expenses", cell = "B4", formula = "SUM(B2:B3)" } })));
+    var e = M3b4Operation("inspect-corrected", "productivity.inspect", ProductivityDocuments.Inspect(output));
+    var f = M3b4Operation("read-corrected", "productivity.read", ProductivityDocuments.Read(output, "Expenses", 1, 1, 5, 3, 1, 5));
+    var state = M3b4Checkpoint("Report the corrected workbook path and verification evidence");
+    state.Operations = [a,b,c,d,e,f];
+    state.Plan = [M3b4Completed("Inspect source", "observation", a), M3b4Completed("Read source", "observation", b),
+        M3b4Completed("Hash original", "observation", c), M3b4Completed("Save corrected version", "action", d),
+        M3b4Completed("Inspect corrected version", "observation", e), M3b4Completed("Read corrected formula", "observation", f), state.Plan[^1]];
+    string outputHash = M3bHash(output);
+    await setup.Store.SaveAsync(state, default);
+    var model = new FakeModel(_ => throw new InvalidOperationException("No inference needed to deliver saved receipts"));
+    var outcome = await setup.Engine(model).RunAsync(state.Id, null, new FakeApprovals(false));
+    var saved = (await setup.Store.LoadAsync(state.Id, default))!;
+    Assert(outcome.Status == ConversationStatus.Completed && saved.Plan.Count == 7 &&
+        saved.Plan.All(step => step.Status == "completed") && saved.Operations.Count == 6 &&
+        saved.RetryBlockCode is null && saved.LastAnswer == outcome.Message &&
+        outcome.Message.Contains(output, StringComparison.Ordinal) && outcome.Message.Contains(outputHash, StringComparison.Ordinal) &&
+        outcome.Message.Contains("SUM(B2:B3)", StringComparison.Ordinal) &&
+        outcome.Message.Contains("\"formula\":true", StringComparison.Ordinal) &&
+        M3bHash(source) == originalHash && M3bHash(output) == outputHash,
+        "A paused 6/7 checkpoint must report the real saved formula and hash without any model call or repeated file effect.");
+}
+
+static async Task M3b4LiveReport()
+{
+    using var setup = new TestContext();
+    Guid id = Guid.NewGuid();
+    int calls = 0;
+    var model = new PlanningTestModel(AutoPlanChoice("plan",
+        ("Save note", "Saved receipt", "action"), ("Read note", "Read-back evidence", "observation"),
+        ("Report saved path and verification evidence", "Answer includes path and receipt", "analysis")),
+        new FakeModel(messages => {
+            calls++;
+            return calls switch {
+                1 => new ModelReply(null, [Call("write", "filesystem.write_text", new { path = "report.txt", content = "REPORT_READY" })]),
+                2 => new ModelReply(null, [Call("link-write", "nira_plan_update", new { index = 0, status = "completed", evidenceId = M1cLastProof(messages) })]),
+                3 => new ModelReply(null, [Call("read", "filesystem.read_text", new { path = "report.txt" })]),
+                4 => new ModelReply(null, [Call("link-read", "nira_plan_update", new { index = 1, status = "completed", evidenceId = M1cLastProof(messages) })]),
+                _ => throw new InvalidOperationException("Receipt delivery must not require a fifth inference")
+            };
+        }));
+    var result = await setup.Engine(model).RunAsync(id, "Save a note, read it back, and report its path.", new FakeApprovals(false));
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Completed && calls == 4 && saved.Plan.All(step => step.Status == "completed") &&
+        saved.Operations.Count == 2 && result.Message.Contains("REPORT_READY", StringComparison.Ordinal),
+        "Host owns report delivery as soon as action and readback have distinct verified receipts.");
+}
+
+static async Task M3b4FocusedLink()
+{
+    using var setup = new TestContext();
+    var state = M3b4Checkpoint("Inspect the saved file again", "observation", "filesystem.read_text");
+    // The outstanding observation is deliberately not the last plan index.
+    state.Plan.Insert(1, state.Plan[^1]); state.Plan.RemoveAt(state.Plan.Count - 1);
+    state.Operations.Add(WorkflowProof("unused-read", changed: false));
+    await setup.Store.SaveAsync(state, default);
+    int calls = 0;
+    var model = new FakeModel(messages => {
+        Assert(messages.Count == 3 && messages[0].Content?.Contains("checkpoint review", StringComparison.Ordinal) == true &&
+            messages[^1].Content?.Contains("unused-read", StringComparison.Ordinal) == true,
+            "Review must carry the actual unused ID in a fresh small checkpoint request.");
+        return ++calls == 1
+            ? new ModelReply(null, [Call("link", "nira_plan_update", new { index = 1, status = "completed", evidenceId = "unused-read" })])
+            : new ModelReply("The saved file has been verified.", []);
+    });
+    var result = await setup.Engine(model).RunAsync(state.Id, null, new FakeApprovals(false));
+    var saved = (await setup.Store.LoadAsync(state.Id, default))!;
+    Assert(result.Status == ConversationStatus.Completed && calls == 2 && saved.Operations.Count == 3 &&
+        saved.Plan[1].EvidenceId == "unused-read" && saved.RetryBlockCode is null,
+        "A compact review must link an existing unused observation without repeating work.");
+}
+
+static async Task M3b4FocusedNoMutation()
+{
+    using var setup = new TestContext();
+    var state = M3b4Checkpoint("Perform another independent observation", "observation", "filesystem.read_text");
+    await setup.Store.SaveAsync(state, default);
+    int calls = 0;
+    var model = new FakeModel(_ => ++calls == 1
+        ? new ModelReply(null, [Call("forbidden-write", "filesystem.write_text", new { path = "duplicate.txt", content = "DO_NOT_WRITE" })])
+        : new ModelReply(null, [Call("finish-" + calls, "nira_finish", new { outcome = "action", answer = "Done", evidence_ids = new [] { "saved-write" } })]));
+    var engine = setup.Engine(model);
+    var first = await engine.RunAsync(state.Id, null, new FakeApprovals(false));
+    var saved = (await setup.Store.LoadAsync(state.Id, default))!;
+    int priorCalls = calls;
+    var second = await engine.RunAsync(state.Id, null, new FakeApprovals(false));
+    Assert(first.Status == ConversationStatus.Paused && second.Status == ConversationStatus.Paused && calls == priorCalls &&
+        saved.RetryBlockCode == "NO_PROGRESS_FOCUSED" && saved.Plan[^1].Status == "pending" && saved.Operations.Count == 2 &&
+        !File.Exists(Path.Combine(setup.Workspace, "duplicate.txt")) &&
+        saved.Messages.Any(entry => entry.Content?.Contains("FOCUSED_REVIEW_TOOL_UNAVAILABLE", StringComparison.Ordinal) == true) &&
+        first.Message.Contains("Perform another independent observation", StringComparison.Ordinal),
+        "Recovery cannot dispatch an omitted mutation, bypass a missing read, or loop on unchanged retries.");
+}
+
+static async Task M3b4BadProof()
+{
+    using var setup = new TestContext();
+    var state = M3b4Checkpoint("Report saved path and verification evidence");
+    state.Plan[1].EvidenceId = "missing";
+    await setup.Store.SaveAsync(state, default);
+    var result = await setup.Engine(new FakeModel(_ => throw new InvalidOperationException("Invalid proof blocks review")))
+        .RunAsync(state.Id, null, new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.Paused && (await setup.Store.LoadAsync(state.Id, default))!.Plan[^1].Status == "pending",
+        "A report cannot complete if prior proof is invalid.");
+}
+
+static async Task M3b4Uncertain()
+{
+    using var setup = new TestContext();
+    var state = M3b4Checkpoint("Report saved path and verification evidence");
+    state.Operations.Add(WorkflowProof("unknown", status: OperationStatus.Dispatched));
+    await setup.Store.SaveAsync(state, default);
+    var result = await setup.Engine(new FakeModel(_ => throw new InvalidOperationException("Uncertain action blocks inference")))
+        .RunAsync(state.Id, null, new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.NeedsReconciliation && (await setup.Store.LoadAsync(state.Id, default))!.Plan[^1].Status == "pending",
+        "Never turn uncertain external state into successful final reporting.");
+}
+
+static async Task M3b4TerminalAnalysis()
+{
+    using var setup = new TestContext();
+    var state = M3b4Checkpoint("Explain the significance of the observed evidence");
+    await setup.Store.SaveAsync(state, default);
+    var model = new FakeModel([new ModelReply(null, [Call("finish-analysis", "nira_finish", new {
+        outcome = "action", answer = "The readback supports the observed write; it is not a new file operation.",
+        evidence_ids = new [] { "saved-write" } })])]);
+    var result = await setup.Engine(model).RunAsync(state.Id, null, new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.Completed && (await setup.Store.LoadAsync(state.Id, default))!.Plan[^1].Status == "completed" &&
+        result.Message.Contains("readback supports", StringComparison.Ordinal),
+        "A focused native finish with the actual answer can complete the final analysis in the same checkpoint.");
+}
+
+static async Task M3b4ProviderFailure()
+{
+    using var setup = new TestContext();
+    var state = M3b4Checkpoint("Explain the remaining discrepancy");
+    await setup.Store.SaveAsync(state, default);
+    var model = new FakeModel(_ => throw new AgentException("Synthetic provider error"));
+    var result = await setup.Engine(model).RunAsync(state.Id, null, new FakeApprovals(false));
+    var saved = (await setup.Store.LoadAsync(state.Id, default))!;
+    Assert(result.Status == ConversationStatus.Paused && saved.RetryBlockCode == "NO_PROGRESS_FOCUSED" &&
+        saved.Plan[^1].Status == "pending" && saved.Operations.Count == 2 &&
+        result.Message.Contains("Explain the remaining discrepancy", StringComparison.Ordinal) &&
+        result.Message.Contains("Host-recorded execution evidence", StringComparison.Ordinal),
+        "A provider error must show the exact remaining task and saved effects, not erase evidence.");
+}
+
+static async Task M3b4MarkedReport()
+{
+    using var setup = new TestContext();
+    var state = M3b4Checkpoint("Report saved path and verification evidence");
+    state.Plan[^1].Status = "completed";
+    await setup.Store.SaveAsync(state, default);
+    var result = await setup.Engine(new FakeModel(_ => throw new InvalidOperationException("Report delivery is host-owned")))
+        .RunAsync(state.Id, null, new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.Completed &&
+        result.Message.Contains("Recorded verification observations", StringComparison.Ordinal) &&
+        (await setup.Store.LoadAsync(state.Id, default))!.Operations.Count == 2,
+        "An already marked report must be delivered even if the provider never returned a final answer.");
+}
+
+static async Task M3b4SubstantiveReport()
+{
+    using var setup = new TestContext();
+    var state = M3b4Checkpoint("Report saved path and calculate the outstanding total");
+    await setup.Store.SaveAsync(state, default);
+    int calls = 0;
+    var model = new FakeModel(_ => { calls++; return new ModelReply(null, []); });
+    var result = await setup.Engine(model).RunAsync(state.Id, null, new FakeApprovals(false));
+    var saved = (await setup.Store.LoadAsync(state.Id, default))!;
+    Assert(result.Status == ConversationStatus.Paused && calls > 0 && saved.Plan[^1].Status == "pending" && saved.Operations.Count == 2,
+        "A reporting step with actual unfinished computation must not be host-completed from generic receipts.");
+}
+
+static Task M3b1ReadFormulaType()
+{
+    using var setup = new TestContext();
+    string source = M3bOriginalWorkbook(setup), output = Path.Combine(setup.Workspace, "typed.xlsx");
+    ToolReceipt revised = ProductivityRevisions.ReviseWorkbook(source, output, M3bHash(source),
+        JsonSerializer.SerializeToElement(new[] {
+            new { sheet = "Expenses", cell = "B4", formula = "SUM(B2:B3)" }
+        }));
+    Assert(revised.Success, "Typed read fixture must be created.");
+    string before = M3bHash(output);
+    ToolReceipt read = ProductivityDocuments.Read(output, "Expenses", 1, 1, 5, 3, 1, 5);
+    string after = M3bHash(output);
+    var rows = read.Data.GetProperty("rows").EnumerateArray().ToArray();
+    JsonElement target = rows.Single(row => row.GetProperty("row").GetInt32() == 4)
+        .GetProperty("cells").EnumerateArray().Single(c => c.GetProperty("address").GetString() == "B4");
+    Assert(read.Success && target.GetProperty("formula").GetBoolean() &&
+        target.GetProperty("cellType").GetString() == "formula" &&
+        target.GetProperty("formulaA1").GetString() == "SUM(B2:B3)" && before == after,
+        "A read must reveal actual Excel formula type, not merely a string of matching characters.");
+    return Task.CompletedTask;
+}
+
+static Task M3bRevisionToolsRegistered()
+{
+    using var setup = new TestContext();
+    using var http = new HttpClient();
+    ToolRegistry registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http,
+        desktopBackend: new FakeDesktopBackend());
+    foreach (string name in new[] { "productivity.revise_workbook", "productivity.revise_document" })
+    {
+        Assert(registry.TryGet(name, out IAgentTool? tool) && tool is not null &&
+            tool.Descriptor.HasSideEffects && tool.Descriptor.Risk == ToolRisk.WriteWorkspace,
+            "Revision tools must be registered as auditable workspace mutations.");
+    }
+    return Task.CompletedTask;
+}
+
+static Task M3bRevisionToolSchemasStrict()
+{
+    var resolver = new WorkspacePathResolver(Path.GetTempPath());
+    var writer = new ProductivityReviseWorkbookTool(resolver);
+    Assert(!JsonToolSchema.Validate(writer.Descriptor.Parameters, JsonSerializer.SerializeToElement(new {
+        sourcePath="a.xlsx", outputPath="b.xlsx", expectedSha256=new string('a',64),
+        edits=new object[0], overwrite=true }), out _),
+        "Revision tools must reject a model's overwrite flag.");
+    var doc = new ProductivityReviseDocumentTool(resolver);
+    Assert(!JsonToolSchema.Validate(doc.Descriptor.Parameters, JsonSerializer.SerializeToElement(new {
+        sourcePath="a.docx", outputPath="b.docx", expectedSha256=new string('a',64),
+        operations=new [] { new { kind="deleteEverything" } } }), out _),
+        "Document tool must reject unregistered operation kinds.");
+    return Task.CompletedTask;
+}
+
+static string M3bOriginalWorkbook(TestContext setup)
+{
+    string source=Path.Combine(setup.Workspace,"expenses-original.xlsx");
+    Assert(ProductivityDocuments.CreateWorkbook(source, JsonSerializer.SerializeToElement(new [] {
+        new { name="Expenses", rows=new object[][] {
+            new object[]{"Category","Amount"},new object[]{"Rent",1200},
+            new object[]{"Utilities",150},new object[]{"Total",1350}
+        } }
+    })).Success, "Test fixture should be a real XLSX.");
+    return source;
+}
+
+static string M3bHash(string path) => Convert.ToHexString(
+    System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path))).ToLowerInvariant();
+
+static Task M3bWorkbookRevisionPreservesSource()
+{
+    using var setup=new TestContext();
+    string src=M3bOriginalWorkbook(setup), sha=M3bHash(src);
+    string output=Path.Combine(setup.Workspace,"expenses-v2.xlsx");
+    var revisions=JsonSerializer.SerializeToElement(new object[] {
+        new {sheet="Expenses",cell="B4", formula="SUM(B2:B3)",bold=true,numberFormat="$#,##0.00"},
+        new {sheet="Expenses",cell="A5",value="Review",bold=true}
+    });
+    ToolReceipt receipt=ProductivityRevisions.ReviseWorkbook(src,output,sha,revisions);
+    Assert(receipt.Success && receipt.ChangedState && File.Exists(output) &&
+        M3bHash(src)==sha && receipt.Data.GetProperty("sourceUnchanged").GetBoolean() &&
+        receipt.Data.GetProperty("contentVerified").GetBoolean() &&
+        receipt.Data.GetProperty("originalRetainedAsBackup").GetBoolean(),
+        "A new Excel version must have independent evidence and retain the exact original bytes.");
+    using var workbook=new ClosedXML.Excel.XLWorkbook(output);
+    Assert(workbook.Worksheet("Expenses").Cell("B4").HasFormula &&
+        workbook.Worksheet("Expenses").Cell("B4").FormulaA1=="SUM(B2:B3)" &&
+        workbook.Worksheet("Expenses").Cell("A5").GetString()=="Review",
+        "The independently opened revision must contain formula and text edits.");
+    return Task.CompletedTask;
+}
+
+static Task M3bWorkbookLiteralIdPreserved()
+{
+    using var setup=new TestContext();
+    string src=M3bOriginalWorkbook(setup), output=Path.Combine(setup.Workspace,"identifiers-v2.xlsx");
+    ToolReceipt result=ProductivityRevisions.ReviseWorkbook(src,output,M3bHash(src),
+        JsonSerializer.SerializeToElement(new[]{new{sheet="Expenses",cell="C2",value="0012345678"}}));
+    using var book=new ClosedXML.Excel.XLWorkbook(output);
+    Assert(result.Success && !book.Worksheet("Expenses").Cell("C2").HasFormula &&
+        book.Worksheet("Expenses").Cell("C2").GetString()=="0012345678",
+        "Zero-prefixed identifiers must remain literal text.");
+    return Task.CompletedTask;
+}
+
+static Task M3bWorkbookStaleHashDenied()
+{
+    using var setup=new TestContext();
+    string src=M3bOriginalWorkbook(setup), output=Path.Combine(setup.Workspace,"denied.xlsx");
+    ToolReceipt result=ProductivityRevisions.ReviseWorkbook(src,output,new string('0',64),
+        JsonSerializer.SerializeToElement(new[]{new{sheet="Expenses",cell="B2",value=99}}));
+    Assert(!result.Success && result.ErrorCode=="STALE_SOURCE" && !File.Exists(output),
+        "An outdated source hash must abort without creating a revision.");
+    return Task.CompletedTask;
+}
+
+static Task M3bWorkbookDuplicateEditDenied()
+{
+    using var setup=new TestContext();
+    string src=M3bOriginalWorkbook(setup), output=Path.Combine(setup.Workspace,"duplicate.xlsx");
+    ToolReceipt result=ProductivityRevisions.ReviseWorkbook(src,output,M3bHash(src),
+        JsonSerializer.SerializeToElement(new[]{
+            new{sheet="Expenses",cell="B2",value=100},
+            new{sheet="Expenses",cell="b2",value=200}
+        }));
+    Assert(!result.Success && result.ErrorCode=="CELL_REVISION" && !File.Exists(output),
+        "The same cell cannot be silently modified twice in one revision.");
+    return Task.CompletedTask;
+}
+
+static Task M3bWorkbookDestinationNeverOverwritten()
+{
+    using var setup=new TestContext();
+    string src=M3bOriginalWorkbook(setup), output=Path.Combine(setup.Workspace,"existing.xlsx");
+    File.WriteAllText(output,"KEEP");
+    ToolReceipt result=ProductivityRevisions.ReviseWorkbook(src,output,M3bHash(src),
+        JsonSerializer.SerializeToElement(new[]{new{sheet="Expenses",cell="B2",value=1}}));
+    Assert(!result.Success && result.ErrorCode=="ALREADY_EXISTS" && File.ReadAllText(output)=="KEEP",
+        "The revision must refuse an already used version name without overwriting it.");
+    return Task.CompletedTask;
+}
+
+static Task M3bWorkbookUnknownSheetDenied()
+{
+    using var setup=new TestContext();
+    string src=M3bOriginalWorkbook(setup),output=Path.Combine(setup.Workspace,"unknown.xlsx");
+    ToolReceipt result=ProductivityRevisions.ReviseWorkbook(src,output,M3bHash(src),
+        JsonSerializer.SerializeToElement(new[]{new{sheet="Missing",cell="B2",value=1}}));
+    Assert(!result.Success && result.ErrorCode=="SHEET_NOT_FOUND" && !File.Exists(output),
+        "Unknown worksheets must be rejected without partial outputs.");
+    return Task.CompletedTask;
+}
+
+static Task M3bWorkbookUnsafeFormulaDenied()
+{
+    using var setup=new TestContext();
+    string src=M3bOriginalWorkbook(setup),output=Path.Combine(setup.Workspace,"external.xlsx");
+    ToolReceipt result=ProductivityRevisions.ReviseWorkbook(src,output,M3bHash(src),
+        JsonSerializer.SerializeToElement(new[]{new{sheet="Expenses",cell="B4",formula="WEBSERVICE(\"https://example.org\")"}}));
+    Assert(!result.Success && result.ErrorCode=="CELL_FORMULA" && !File.Exists(output),
+        "Formulas that try to access external resources must be refused.");
+    return Task.CompletedTask;
+}
+
+static string M3bOriginalDocument(TestContext setup)
+{
+    string src=Path.Combine(setup.Workspace,"summary-original.docx");
+    Assert(ProductivityDocuments.CreateDocument(src,"Monthly Report",JsonSerializer.SerializeToElement(new[]{
+        new{kind="paragraph",text="Category\tAmount\nRent\t1200\nFood\t300"},
+        new{kind="paragraph",text="Draft totals require verification."}
+    })).Success,"Test requires an actual Word document.");
+    return src;
+}
+
+static Task M3bWordReplaceParagraphPreservesSource()
+{
+    using var setup=new TestContext();
+    string src=M3bOriginalDocument(setup),output=Path.Combine(setup.Workspace,"paragraph-v2.docx"),sha=M3bHash(src);
+    ToolReceipt receipt=ProductivityRevisions.ReviseDocument(src,output,sha,
+        JsonSerializer.SerializeToElement(new[]{new{
+            kind="replaceParagraph",paragraphIndex=3,
+            expectedText="Draft totals require verification.",text="Totals were reviewed."
+        }}));
+    ToolReceipt read=ProductivityDocuments.Read(output,null,1,1,1,1,1,10);
+    Assert(receipt.Success && M3bHash(src)==sha && read.Success &&
+        JsonSerializer.Serialize(read.Data).Contains("Totals were reviewed.",StringComparison.Ordinal),
+        "Word paragraph revisions must be saved to a new file with the original unchanged.");
+    return Task.CompletedTask;
+}
+
+static Task M3bWordConvertsParagraphToRealTable()
+{
+    using var setup=new TestContext();
+    string src=M3bOriginalDocument(setup),output=Path.Combine(setup.Workspace,"table-v2.docx"),sha=M3bHash(src);
+    ToolReceipt result=ProductivityRevisions.ReviseDocument(src,output,sha,
+        JsonSerializer.SerializeToElement(new[]{new {
+            kind="replaceParagraphWithTable", paragraphIndex=2,
+            expectedText="Category\tAmount\nRent\t1200\nFood\t300",
+            rows=new[]{new[]{"Category","Amount"},new[]{"Rent","1200"},new[]{"Food","300"}}
+        }}));
+    ToolReceipt inspection=ProductivityDocuments.Inspect(output);
+    Assert(result.Success && inspection.Success && inspection.Data.GetProperty("tables").GetInt32()==1 &&
+        M3bHash(src)==sha,
+        "Text-based rows must become a real Word table while preserving the original document.");
+    return Task.CompletedTask;
+}
+
+static Task M3bWordAppendHeadingAndTable()
+{
+    using var setup=new TestContext();
+    string src=M3bOriginalDocument(setup),output=Path.Combine(setup.Workspace,"append-v2.docx");
+    var operations=JsonSerializer.SerializeToElement(new object[]{
+        new{kind="appendHeading",text="Analysis"},
+        new{kind="appendParagraph",text="Food spending was reviewed."},
+        new{kind="appendTable",rows=new[]{new[]{"Item","Amount"},new[]{"Food","300"}}}
+    });
+    ToolReceipt result=ProductivityRevisions.ReviseDocument(src,output,M3bHash(src),operations);
+    ToolReceipt inspect=ProductivityDocuments.Inspect(output);
+    Assert(result.Success && inspect.Success && inspect.Data.GetProperty("tables").GetInt32()==1 &&
+        inspect.Data.GetProperty("paragraphs").GetInt32()>=5,
+        "Appended headings, paragraphs and a structured table must be independently readable.");
+    return Task.CompletedTask;
+}
+
+static Task M3bWordStaleParagraphDenied()
+{
+    using var setup=new TestContext();
+    string src=M3bOriginalDocument(setup),output=Path.Combine(setup.Workspace,"stale.docx");
+    ToolReceipt result=ProductivityRevisions.ReviseDocument(src,output,M3bHash(src),
+        JsonSerializer.SerializeToElement(new[]{new {
+            kind="replaceParagraph",paragraphIndex=2,
+            expectedText="I am inventing source content",text="bad"
+        }}));
+    Assert(!result.Success && result.ErrorCode=="STALE_PARAGRAPH" && !File.Exists(output),
+        "Word revision must verify the exact source paragraph before changing it.");
+    return Task.CompletedTask;
+}
+
+static Task M3bWordNoOverwrite()
+{
+    using var setup=new TestContext();
+    string src=M3bOriginalDocument(setup),output=Path.Combine(setup.Workspace,"exists.docx");
+    File.WriteAllText(output,"PRESERVE");
+    ToolReceipt result=ProductivityRevisions.ReviseDocument(src,output,M3bHash(src),
+        JsonSerializer.SerializeToElement(new[]{new{kind="appendParagraph",text="Hi"}}));
+    Assert(!result.Success && result.ErrorCode=="ALREADY_EXISTS" && File.ReadAllText(output)=="PRESERVE",
+        "Existing Word documents must never be overwritten by a revision.");
+    return Task.CompletedTask;
+}
+
+static async Task M3bRevisionOutsideWorkspaceDenied()
+{
+    using var setup=new TestContext();
+    string src=M3bOriginalWorkbook(setup);
+    var tool=new ProductivityReviseWorkbookTool(new WorkspacePathResolver(setup.Workspace));
+    string output=Path.Combine(setup.Root,"outside.xlsx");
+    ToolReceipt result=await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new{
+        sourcePath=src,outputPath=output,expectedSha256=M3bHash(src),
+        edits=new[]{new{sheet="Expenses",cell="B2",value=1}}
+    }),default);
+    Assert(!result.Success && result.ErrorCode=="WORKSPACE_SCOPE" && !File.Exists(output),
+        "Revision operation must not send contents outside the authorized workspace.");
+}
+
+static async Task M3bRevisionReceiptsReachAgent()
+{
+    using var setup=new TestContext();
+    string src=M3bOriginalWorkbook(setup),sha=M3bHash(src);
+    var writer=new ProductivityReviseWorkbookTool(new WorkspacePathResolver(setup.Workspace));
+    var create=await writer.ExecuteAsync(JsonSerializer.SerializeToElement(new{
+        sourcePath=src,outputPath="revision-v2.xlsx",expectedSha256=sha,
+        edits=new[]{new{sheet="Expenses",cell="B4",formula="SUM(B2:B3)"}}
+    }),default);
+    Assert(create.Success && create.ChangedState && create.Data.GetProperty("sourceUnchanged").GetBoolean() &&
+        File.Exists(Path.Combine(setup.Workspace,"revision-v2.xlsx")),
+        "AI tool must provide an audited changed-state receipt with a safe new revision.");
+}
+
+
+static string M3cFixture(TestContext setup)
+{
+    string path = Path.Combine(setup.Workspace, "pdf-fixture.pdf");
+    File.WriteAllBytes(path, Convert.FromBase64String("JVBERi0xLjMKJZOMi54gUmVwb3J0TGFiIEdlbmVyYXRlZCBQREYgZG9jdW1lbnQgKG9wZW5zb3VyY2UpCjEgMCBvYmoKPDwKL0YxIDIgMCBSCj4+CmVuZG9iagoyIDAgb2JqCjw8Ci9CYXNlRm9udCAvSGVsdmV0aWNhIC9FbmNvZGluZyAvV2luQW5zaUVuY29kaW5nIC9OYW1lIC9GMSAvU3VidHlwZSAvVHlwZTEgL1R5cGUgL0ZvbnQKPj4KZW5kb2JqCjMgMCBvYmoKPDwKL0NvbnRlbnRzIDkgMCBSIC9NZWRpYUJveCBbIDAgMCA2MTIgNzkyIF0gL1BhcmVudCA4IDAgUiAvUmVzb3VyY2VzIDw8Ci9Gb250IDEgMCBSIC9Qcm9jU2V0IFsgL1BERiAvVGV4dCAvSW1hZ2VCIC9JbWFnZUMgL0ltYWdlSSBdCj4+IC9Sb3RhdGUgMCAvVHJhbnMgPDwKCj4+IAogIC9UeXBlIC9QYWdlCj4+CmVuZG9iago0IDAgb2JqCjw8Ci9Db250ZW50cyAxMCAwIFIgL01lZGlhQm94IFsgMCAwIDYxMiA3OTIgXSAvUGFyZW50IDggMCBSIC9SZXNvdXJjZXMgPDwKL0ZvbnQgMSAwIFIgL1Byb2NTZXQgWyAvUERGIC9UZXh0IC9JbWFnZUIgL0ltYWdlQyAvSW1hZ2VJIF0KPj4gL1JvdGF0ZSAwIC9UcmFucyA8PAoKPj4gCiAgL1R5cGUgL1BhZ2UKPj4KZW5kb2JqCjUgMCBvYmoKPDwKL0NvbnRlbnRzIDExIDAgUiAvTWVkaWFCb3ggWyAwIDAgNjEyIDc5MiBdIC9QYXJlbnQgOCAwIFIgL1Jlc291cmNlcyA8PAovRm9udCAxIDAgUiAvUHJvY1NldCBbIC9QREYgL1RleHQgL0ltYWdlQiAvSW1hZ2VDIC9JbWFnZUkgXQo+PiAvUm90YXRlIDAgL1RyYW5zIDw8Cgo+PiAKICAvVHlwZSAvUGFnZQo+PgplbmRvYmoKNiAwIG9iago8PAovUGFnZU1vZGUgL1VzZU5vbmUgL1BhZ2VzIDggMCBSIC9UeXBlIC9DYXRhbG9nCj4+CmVuZG9iago3IDAgb2JqCjw8Ci9BdXRob3IgKGFub255bW91cykgL0NyZWF0aW9uRGF0ZSAoRDoyMDAwMDEwMTAwMDAwMCswMCcwMCcpIC9DcmVhdG9yIChhbm9ueW1vdXMpIC9LZXl3b3JkcyAoKSAvTW9kRGF0ZSAoRDoyMDAwMDEwMTAwMDAwMCswMCcwMCcpIC9Qcm9kdWNlciAoUmVwb3J0TGFiIFBERiBMaWJyYXJ5IC0gXChvcGVuc291cmNlXCkpIAogIC9TdWJqZWN0ICh1bnNwZWNpZmllZCkgL1RpdGxlICh1bnRpdGxlZCkgL1RyYXBwZWQgL0ZhbHNlCj4+CmVuZG9iago4IDAgb2JqCjw8Ci9Db3VudCAzIC9LaWRzIFsgMyAwIFIgNCAwIFIgNSAwIFIgXSAvVHlwZSAvUGFnZXMKPj4KZW5kb2JqCjkgMCBvYmoKPDwKL0ZpbHRlciBbIC9BU0NJSTg1RGVjb2RlIC9GbGF0ZURlY29kZSBdIC9MZW5ndGggMTY3Cj4+CnN0cmVhbQpHYXJXMDVta0lfJ0xfW1lgQFMtTFJORiMyNCUwTkRPV3NmLFUmSTtNO0ZANS1pdTsvPC9uQl0+JG88cztQJWAubCIlVUEuLCozIjU6ZyclQClKQD5uOlooRDMtUylGQWw/XXVdZCR1UlJqK0VPWSpuR006K01MMF1TT0FrKE5vdCo0aWVlYDJLQGJUXEM0WW9mSzFuUmNRcnAvbjU5RkRYa0U3PyN+PmVuZHN0cmVhbQplbmRvYmoKMTAgMCBvYmoKPDwKL0ZpbHRlciBbIC9BU0NJSTg1RGVjb2RlIC9GbGF0ZURlY29kZSBdIC9MZW5ndGggMTQwCj4+CnN0cmVhbQpHYXBRaDBFPUYsMFVcSDNUXHBOWVReUUtrP3RjPklQLDtXI1UxXjIzaWhQRU1fP0NXNEtJU2k8IVs3YCNPQl9zS09KOVwhZS9YMWxNTHM/amlgJUUzLD8iXD1Lb2RqPiYxb0daJG05a0o7VGdnb2I4JDMzRXNtImQ5MlxeXE9FO21pITw9b2ksKT9+PmVuZHN0cmVhbQplbmRvYmoKMTEgMCBvYmoKPDwKL0ZpbHRlciBbIC9BU0NJSTg1RGVjb2RlIC9GbGF0ZURlY29kZSBdIC9MZW5ndGggNTkKPj4Kc3RyZWFtCkdhcFFoMEU9RiwwVVxIM1RccE5ZVF5RS2s/dGM+SVAsO1cjVTFeMjNpaFBFTV9QUCRPITNeLEM1UX4+ZW5kc3RyZWFtCmVuZG9iagp4cmVmCjAgMTIKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDYxIDAwMDAwIG4gCjAwMDAwMDAwOTIgMDAwMDAgbiAKMDAwMDAwMDE5OSAwMDAwMCBuIAowMDAwMDAwMzkyIDAwMDAwIG4gCjAwMDAwMDA1ODYgMDAwMDAgbiAKMDAwMDAwMDc4MCAwMDAwMCBuIAowMDAwMDAwODQ4IDAwMDAwIG4gCjAwMDAwMDExMDkgMDAwMDAgbiAKMDAwMDAwMTE4MCAwMDAwMCBuIAowMDAwMDAxNDM3IDAwMDAwIG4gCjAwMDAwMDE2NjggMDAwMDAgbiAKdHJhaWxlcgo8PAovSUQgCls8MWMxNzgxOThmYmRmYTUxYjI1OTk1ZDg5ZDQxMDIwNDM+PDFjMTc4MTk4ZmJkZmE1MWIyNTk5NWQ4OWQ0MTAyMDQzPl0KJSBSZXBvcnRMYWIgZ2VuZXJhdGVkIFBERiBkb2N1bWVudCAtLSBkaWdlc3QgKG9wZW5zb3VyY2UpCgovSW5mbyA3IDAgUgovUm9vdCA2IDAgUgovU2l6ZSAxMgo+PgpzdGFydHhyZWYKMTgxNwolJUVPRgo="));
+    return path;
+}
+
+static Task M3cExport()
+{
+    using var setup = new TestContext();
+    string source = M3cFixture(setup), hash = M3bHash(source), target = Path.Combine(setup.Workspace, "all.txt");
+    var receipt = PdfProcessing.ExportText(source, target);
+    Assert(receipt.Success && receipt.ChangedState, "Real PDF export must succeed.");
+    string text = File.ReadAllText(target);
+    Assert(text.Contains("Travel expense: 125", StringComparison.Ordinal) && text.Contains("Travel expense: 250", StringComparison.Ordinal) &&
+        text.Contains("PDF page 3", StringComparison.Ordinal) && text.Contains("No extractable text", StringComparison.Ordinal) &&
+        receipt.Data.GetProperty("noTextPages")[0].GetInt32() == 3 && receipt.Data.GetProperty("noTextPages").GetArrayLength() == 1 &&
+        receipt.Data.GetProperty("allPagesCovered").GetBoolean() && !receipt.Data.GetProperty("ocrPerformed").GetBoolean() &&
+        receipt.Data.GetProperty("contentVerified").GetBoolean() && receipt.Data.GetProperty("sourceSha256").GetString() == hash &&
+        receipt.Data.GetProperty("outputSha256").GetString() == M3bHash(target) && M3bHash(source) == hash,
+        "PDF export must retain source and verify actual saved text, page boundaries and missing text.");
+    return Task.CompletedTask;
+}
+
+static Task M3cRange()
+{
+    using var setup = new TestContext();
+    string source = M3cFixture(setup), target = Path.Combine(setup.Workspace, "range.txt");
+    var r = PdfProcessing.ExportText(source, target, 2, 2);
+    Assert(r.Success && r.Data.GetProperty("exportedPages").GetInt32() == 1 && !r.Data.GetProperty("allPagesCovered").GetBoolean() &&
+        File.ReadAllText(target).Contains("Travel expense: 250", StringComparison.Ordinal) &&
+        !File.ReadAllText(target).Contains("Travel expense: 125", StringComparison.Ordinal), "Inclusive page range must be exact.");
+    return Task.CompletedTask;
+}
+
+static Task M3cNoOverwrite()
+{
+    using var setup = new TestContext();
+    string source = M3cFixture(setup), target = Path.Combine(setup.Workspace, "existing.txt");
+    File.WriteAllText(target, "keep");
+    var r = PdfProcessing.ExportText(source, target);
+    Assert(!r.Success && r.ErrorCode == "ALREADY_EXISTS" && File.ReadAllText(target) == "keep", "No overwrite.");
+    return Task.CompletedTask;
+}
+
+static Task M3cInvalidRange()
+{
+    using var setup = new TestContext();
+    string source = M3cFixture(setup), target = Path.Combine(setup.Workspace, "bad.txt");
+    var r = PdfProcessing.ExportText(source, target, 1, 4);
+    Assert(!r.Success && r.ErrorCode == "PDF_PAGE_RANGE" && !File.Exists(target), "Invalid range must not publish.");
+    return Task.CompletedTask;
+}
+
+static Task M3cSearch()
+{
+    using var setup = new TestContext();
+    string source = M3cFixture(setup);
+    var a = PdfProcessing.Search(source, "TRAVEL EXPENSE", 1, 1);
+    var b = PdfProcessing.Search(source, "TRAVEL EXPENSE", 2, 2);
+    Assert(a.Success && b.Success && !a.ChangedState && a.Data.GetProperty("hits")[0].GetProperty("page").GetInt32() == 1 &&
+        a.Data.GetProperty("nextPage").GetInt32() == 2 && b.Data.GetProperty("hits")[0].GetProperty("page").GetInt32() == 2 &&
+        b.Data.GetProperty("noTextPages")[0].GetInt32() == 3 && !b.Data.GetProperty("hasMore").GetBoolean(), "Search continuation and no-text evidence must be accurate.");
+    return Task.CompletedTask;
+}
+
+static async Task M3cScope()
+{
+    using var setup = new TestContext();
+    string source = M3cFixture(setup), outside = Path.Combine(setup.Root, "outside.pdf");
+    File.Copy(source, outside);
+    var tool = new PdfExportTextTool(new WorkspacePathResolver(setup.Workspace));
+    var r = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new {sourcePath = outside, outputPath = "denied.txt"}), default);
+    Assert(!r.Success && r.ErrorCode == "WORKSPACE_SCOPE" && !File.Exists(Path.Combine(setup.Workspace,"denied.txt")), "In-scope output cannot authorize out-of-scope input.");
+}
+
+static Task M3cRegistered()
+{
+    using var setup = new TestContext();
+    using var http = new HttpClient();
+    var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http);
+    Assert(registry.TryGet("productivity.pdf_export_text", out var export) && export is not null && export.Descriptor.HasSideEffects &&
+        registry.TryGet("productivity.pdf_search", out var search) && search is not null && !search.Descriptor.HasSideEffects &&
+        !registry.Validate("productivity.pdf_export_text", "{\"sourcePath\":\"x.pdf\",\"outputPath\":\"x.txt\",\"extra\":true}", out _, out _), "PDF registry and schema must be correct.");
+    return Task.CompletedTask;
+}
+
+static async Task M3cAgent()
+{
+    using var setup = new TestContext();
+    _ = M3cFixture(setup);
+    Guid id = Guid.NewGuid();
+    var model = new FakeModel(new ModelReply[] {
+        new(null, [Call("pdf-export", "productivity.pdf_export_text", new { sourcePath = "pdf-fixture.pdf", outputPath = "extracted.txt" })]),
+        new("Here is the extracted text file.", [])
+    });
+    var result = await setup.Engine(model).RunAsync(id, "Extract this PDF to a text file.", new FakeApprovals(false));
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Completed && state.Operations.Count == 1 &&
+        state.Operations[0].Status == OperationStatus.Succeeded && result.Message.Contains("extracted.txt", StringComparison.Ordinal) &&
+        File.Exists(Path.Combine(setup.Workspace,"extracted.txt")), "Real registered PDF export must reach the agent receipt and final report.");
+}
+
+// These tests inject observed OCR responses to test the adapter contract. The actual
+// WinRT recognizer is exercised separately with the shipped image-only PDF in the CLI.
+static OcrPageResult M3dResult(string text = "Sample text", int total = 1) =>
+    new(true, "", text, "en-US", total, 1200, 800);
+
+static Task M3dRegistered()
+{
+    using var setup = new TestContext();
+    using var http = new HttpClient();
+    var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http);
+    Assert(registry.TryGet("productivity.ocr_read", out var tool) && tool is not null &&
+        tool.Descriptor.Risk == ToolRisk.ReadLocal && !tool.Descriptor.HasSideEffects &&
+        !registry.Validate("productivity.ocr_read", "{\"path\":\"x.png\",\"command\":\"bad\"}", out _, out _) &&
+        !registry.Validate("productivity.ocr_read", "{\"path\":\"x.png\",\"page\":\"1\"}", out _, out _),
+        "OCR must be registered as a strict read-only tool, not a command runner.");
+    return Task.CompletedTask;
+}
+
+static async Task M3dPage()
+{
+    using var setup = new TestContext();
+    string file = M3cFixture(setup);
+    var tool = new OcrReadTool(new WorkspacePathResolver(setup.Workspace), (path, page, lang, ct) => {
+        Assert(path == file && page == 2 && lang == "en-US", "Only selected source/page/language passed to recognizer.");
+        return Task.FromResult(M3dResult("Page 2 text", 3));
+    });
+    var r = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new {path = "pdf-fixture.pdf", page = 2, languageTag = "en-US"}), default);
+    Assert(r.Success && !r.ChangedState && r.Data.GetProperty("text").GetString() == "Page 2 text" &&
+        r.Data.GetProperty("page").GetInt32() == 2 && r.Data.GetProperty("nextPage").GetInt32() == 3 &&
+        r.Data.GetProperty("language").GetString() == "en-US", "Page OCR observation must be paginated and explicit.");
+}
+
+static async Task M3dUnchanged()
+{
+    using var setup = new TestContext();
+    string path = M3cFixture(setup), hash = M3bHash(path);
+    var tool = new OcrReadTool(new WorkspacePathResolver(setup.Workspace), (_, _, _, _) => Task.FromResult(M3dResult()));
+    var r = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new {path}), default);
+    Assert(r.Success && !r.ChangedState && r.Data.GetProperty("ocrPerformed").GetBoolean() &&
+        r.Data.GetProperty("sourceSha256").GetString() == hash && M3bHash(path) == hash &&
+        r.Data.GetProperty("sourceUnchanged").GetBoolean(), "OCR source hash must remain unchanged.");
+}
+
+static async Task M3dBlank()
+{
+    using var setup = new TestContext();
+    string path = M3cFixture(setup);
+    var tool = new OcrReadTool(new WorkspacePathResolver(setup.Workspace), (_, _, _, _) => Task.FromResult(M3dResult("")));
+    var r = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new {path}), default);
+    Assert(r.Success && r.Data.GetProperty("noRecognizedText").GetBoolean() &&
+        r.Data.GetProperty("note").GetString()!.Contains("does not prove a blank page", StringComparison.Ordinal), "No text is not proof of a blank page.");
+}
+
+static async Task M3dInvalid()
+{
+    using var setup = new TestContext();
+    var tool = new OcrReadTool(new WorkspacePathResolver(setup.Workspace), (_, _, _, _) => throw new InvalidOperationException("Unexpected worker dispatch"));
+    var a = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new {path = "x.exe"}), default);
+    var b = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new {path = "x.png", page = 2}), default);
+    var c = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new {path = "x.pdf", languageTag = "en;bad"}), default);
+    Assert(a.ErrorCode == "OCR_FORMAT" && b.ErrorCode == "OCR_PAGE_RANGE" && c.ErrorCode == "OCR_LANGUAGE", "Reject bad inputs before worker launch.");
+}
+
+static async Task M3dUnavailable()
+{
+    using var setup = new TestContext();
+    string path = M3cFixture(setup);
+    var tool = new OcrReadTool(new WorkspacePathResolver(setup.Workspace), (_, _, _, _) =>
+        Task.FromResult(new OcrPageResult(false, "OCR_LANGUAGE_UNAVAILABLE", "", "", 0, 0, 0)));
+    var r = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new {path}), default);
+    Assert(!r.Success && !r.ChangedState && r.ErrorCode == "OCR_LANGUAGE_UNAVAILABLE", "Missing language cannot fabricate OCR.");
+}
+
+static async Task M3dDenied()
+{
+    using var setup = new TestContext();
+    var tool = new OcrReadTool(new WorkspacePathResolver(setup.Workspace), (_, _, _, _) => throw new InvalidOperationException("Unexpected worker dispatch"));
+    string path = Path.Combine(setup.Root, "outside.pdf");
+    var model = new FakeModel(new ModelReply[] { new(null, [Call("ocr-denied", "productivity.ocr_read", new {path})]) });
+    var engine = new NiraEngine(model, new ToolRegistry([tool]), setup.Store, new WorkspaceAuthority(setup.Workspace));
+    var approvals = new FakeApprovals(false);
+    var r = await engine.RunAsync(Guid.NewGuid(), "Read this PDF with OCR.", approvals);
+    Assert(r.Status == ConversationStatus.Paused && approvals.Calls == 1, "External OCR must require approval.");
+}
+
+static async Task M3dBounded()
+{
+    using var setup = new TestContext();
+    string path = M3cFixture(setup);
+    var tool = new OcrReadTool(new WorkspacePathResolver(setup.Workspace), (_, _, _, _) => Task.FromResult(M3dResult(new string('x', 25000))));
+    var r = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new {path}), default);
+    Assert(r.Success && r.Data.GetProperty("truncated").GetBoolean() && r.Data.GetProperty("textCharacters").GetInt32() == 25000 &&
+        r.Data.GetProperty("text").GetString()!.Length == 24000, "OCR observations must be bounded and disclose truncation.");
+}
+
+// Real backend acceptance: no mocked OCR text. Both fixtures contain the same raster record.
+static Task M3d1RealPng() => M3d1RealRecognition("png", 
+        "iVBORw0KGgoAAAANSUhEUgAABLAAAAMgCAIAAAC8ggxVAAB9WklEQVR4nO3daWAN5////5PIJiEROxVrxRaidqWWxtpQKvagEWtFq0VbS2srpaUo2qol9rWW" +
+        "KEXRpnYh9p1IxL4myL7/b+T3nf98jmTO5OxxPR+3zpxcc837zJnDeZ2ZuS6brKwsDQAAAABAPLaWLgAAAAAAYBkEQgAAAAAQFIEQAAAAAARFIAQAAAAAQREI" +
+        "AQAAAEBQBEIAAAAAEBSBEAAAAAAERSAEAAAAAEERCAEAAABAUARCAAAAABAUgRAAAAAABEUgBAAAAABBEQgBAAAAQFAEQgAAAAAQFIEQAAAAAARFIAQAAAAA" +
+        "QREIAQAAAEBQBEIAAAAAEBSBEAAAAAAERSAEAAAAAEERCAEAAABAUARCAAAAABAUgRAAAAAABEUgBAAAAABBEQgBAAAAQFAEQgAAAAAQFIEQAAAAAARFIAQA" +
+        "AAAAQREIAQAAAEBQBEIAAAAAEBSBEAAAAAAERSAEAAAAAEERCAEAAABAUARCAAAAABAUgRAAAAAABEUgBAAAAABBEQgBAAAAQFAEQgAAAAAQFIEQAAAAAARF" +
+        "IAQAAAAAQREIAQAAAEBQBEIAAAAAEBSBEAAAAAAERSAEAAAAAEERCAEAAABAUARCAAAAABAUgRAAAAAABEUgBAAAAABBEQgBAAAAQFAEQgAAAAAQFIEQAAAA" +
+        "AARFIAQAAAAAQREIAQAAAEBQBEIAAAAAEBSBEAAAAAAERSAEAAAAAEERCAEAAABAUARCAAAAABAUgRAAAAAABEUgBAAAAABBEQgBAAAAQFAEQgAAAAAQFIEQ" +
+        "AAAAAARFIAQAAAAAQREIAQAAAEBQBEIAAAAAEBSBEAAAAAAERSAEAAAAAEERCAEAAABAUARCAAAAABAUgRAAAAAABEUgBAAAAABBEQgBAAAAQFAEQgAAAAAQ" +
+        "FIEQAAAAAARFIAQAAAAAQREIAQAAAEBQBEIAAAAAEBSBEAAAAAAERSAEAAAAAEERCAEAAABAUARCAAAAABAUgRAAAAAABEUgBAAAAABBEQgBAAAAQFAEQgAA" +
+        "AAAQFIEQAAAAAARFIAQAAAAAQREIAQAAAEBQBEIAAAAAEBSBEAAAAAAERSAEAAAAAEERCAEAAABAUARCAAAAABAUgRAAAAAABGVn6QIA5CdZWVnnz58PCws7" +
+        "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" +
+        "p06pafzo0aPg4GDjTqrOp8xKDpLmzZtv27bN3t7esmUAgMVxhjAf+Oijjxo1amSebdna2vr7++d1LXd3986dO5uiHutnznfHPHx8fMxwk4+Njc3KlSubN29u" +
+        "6g3JVa5cWefVerdu3dq4caN56sl33owdWKhQoT179lj23D6fMosfJD169Ni/f7+zs7NlywAAa0AgzB/0m5lKP3pcNdqzZ09HR0dTFJMvmPPdMY+AgIDg4GDT" +
+        "/X5vb2+/du1anTNZm8L48eNtbGyU28ycOTP/zidpam/GDixWrNjhw4fNnJS08Cmz1EHi4ODw/fffb9q0ycnJySIFAIC1IRDmDz4+Pj4+PubZVvXq1Rs2bJin" +
+        "VfS+8/DNYM53x2wGDhy4a9eu4sWLG73nkiVL7t69u2/fvkbvWQ0vL68PP/xQuc3ly5dDQkLMUk7+88bswKJFix44cGDEiBEWrIFPmVnK+R/vvffemTNn1ERW" +
+        "ABAHgTDfMOdpqDzdEFi1atWmTZuarph84c07SajRaDp06HD+/HlfX18j9tmlS5cLFy7onIrNpCZMmKCzzRv5hhrLG7MDHR0df/nll71791atWtWI3dra2qo/" +
+        "9cSnzDxsbGzef//9AwcOHDp0qFatWmbbLgDkCwTCfKNRo0YfffSRebbVp08f9ffZ9+/f36TF5AvmfHfMqWzZsrt27dq7d6/h90k2adLkwIEDISEhasZXNKlG" +
+        "jRrpPKMbHh7+999/m6eefOcN24Ht27e/fPnyL7/8UrlyZQO7cnV1/fzzzyMiIry8vNSvxafMdJycnFq0aPHjjz9GR0f/888/b96lHABgFATC/GT69Om2tuZ4" +
+        "y4oVK6byF2sbGxsCYTazvTvm1759+7CwsOPHjw8dOjSvXzRLly49bNiwkydPHj9+3Hq+jU2cOFFnmxkzZpihknzqDduB9vb2I0aMuHnz5u7du/v161e0aNE8" +
+        "re7q6tqjR481a9bcv39/3rx5lSpV0qMGPmV5ZWNjY2dnV7BgQXd393LlytWoUaNZs2ZdunQZPnz4jBkzNm7ceP78+bi4uIMHD3755ZceHh56bwgA3ng2Vn7r" +
+        "PwCrkpmZefbs2ZMnT545cyYyMvLOnTvPnz9PSkpKSUlxdHR0dnYuVqyYh4dH5cqV69ev37hx47p163KvDvKXjIyMs2fPnjp16uzZs1FRUdJBnpyc7OTk5Orq" +
+        "6ubmVrJkyVq1atWuXbtOnTqNGzc27tQFfMoAAOZEIAQAAAAAQb2ZV7gBAAAAAHQiEAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAA" +
+        "AAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAI" +
+        "hAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAAAACCIhACAAAA" +
+        "gKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAIys7SBVgXGxsbS5cAAAAAwLSysrIsXYK14AwhAAAAAAiKQAgAAAAAgrLh" +
+        "bCkAAAAAiIkzhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAA" +
+        "AACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpA" +
+        "CAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAA" +
+        "CIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEA" +
+        "AAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAo" +
+        "AiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAIikCIN9bFixdnz5790UcfeXl5ubu7" +
+        "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" +
+        "ob+//7p166RnTp48qTBZX6dOnYKCgiweCCWJiYl79+7du3evmsZOTk6rVq2S394JAADeGPwHbxzVq1ffs2ePh4eHHut+9tlnu3fv1pqVG3ro3bv3iRMn6tev" +
+        "n9cVu3Tpcvr06XyXBrPNnDlz8eLF8ouWDWElR6NxX5SJLFmypEmTJmpa+vj4bNiwwcbGxtQlmUKRIkX27t3boEEDSxcCAABMgkBoNC1atIiIiNi8efPAgQPr" +
+        "1atXsmRJNXNVZ2vXrl1ERMQ333wjH9NPwVtvvTV27Fi9J2F/g9WpUycsLGz16tV16tTR2djGxqZ169b79+8PCQkpU6aMGcozkWHDhl29erV37946I4eHh8fc" +
+        "uXOVZ1m0kqPRuC/KFJydnUNDQ4cNG6Zw02nBggUnTZq0Z88e+eQ0FtS/f/9t27b5+fk5OzvrbGxvbx8QEHD16lUuFgUA4A1mozw4HswsPj4+NDT0n3/+CQsL" +
+        "e/LkybNnzxISEgoVKuTq6lqhQoVq1arVrVv3/fffl49ritycP39+z549J06cuHHjxoMHDxISEmxsbAoXLuzh4VG9evXmzZt37txZPlbkGyA6Onr37t379u27" +
+        "efPm06dPY2JiChYs6O7uXq1atfr16/v6+jZr1kz9eSorORqN+6JM4ebNmytWrAgNDY2MjIyJibG3ty9ZsmStWrXatm3r7+9fokQJC9aWm5SUlGPHjv33338X" +
+        "L168evXq06dPX716VaBAAVdX1zJlynh7e7/77rvdu3cvVqyYpSsFAACmRSAEAAAAAEFxySgAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiK" +
+        "QAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAA" +
+        "AAiKQAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIh" +
+        "AAAAAAiKQAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAg" +
+        "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" +
+        "hiAQ5kw+zKZGo1m7dq3eXcXGxu7evVv+jK+vb44t9biz7tWrVzrb7NixQ3pctWrVkJCQUqVKKa9i+G2TIvjkk09sbf/fJ+j69ev//fef9Cd5PuzZs2exYsXM" +
+        "XNvrjhw50rlzZ/kEmFOnTh07dqwFSwIAAIDFEQhz9sEHH8inkr948WJ4eLh+Xa1fv15+TqZ+/fq5jTYpH8kzMTFRTedqJvGTn58cPny4mvFCtW56RI4qVqzY" +
+        "sWNHaXHx4sXZD0JDQ69fvy49bw3DyYSFhX3wwQfyE79ff/31pEmTLFgSAAAArAGBMGfu7u7dunWTP6Pft+eEhIQff/xR/oxCPJBP4vf06VM1/YeFhSk3SExM" +
+        "lMcAb29vNd0ePHhQTTOTks/hLo2HaW39y6+33L59e/a7Jh9Opm7duk2aNNG3RuM4ffp0+/bt5Zd6jho1atasWRYsCQAAAFaCQJirr776Sn4N5549ezZv3pzX" +
+        "TiZPniy/f69MmTL9+/fPrbH8Ss4LFy7o7DwtLW3Pnj3KbbTGR5Wf9szNpUuXDLxn0igKFSokPTbFPY1G6b9Dhw6VK1fOfpyamrpixYqnT59u375damDx04MX" +
+        "Llxo166dfIDZoUOHzp8/X+8ON27cmJUXVapUkdatUqWK/E/Xrl0z5KUBAADAcATCXNWtW7dPnz7yZ0aMGHHp0iX1PYSEhGh98542bZqDg0Nu7eWn70JDQ3Ve" +
+        "Nbp69er79+8rt9Ga81B+KWNupEkFLKtIkSLS4zt37mRkZFhh/zY2NsOHD5cWlyxZsnz5cmkMT1dX1759+xpWpkGuXr3apk0b+ZQYH3/8sXRpKwAAAEAgVDJv" +
+        "3jxpagGNRvP8+fM2bdpcuXJFzbp//fVXr1695DGjbdu2gwcPVlhFPrRpfHz8r7/+qtA4IiJi9OjROsuwt7evUKGCtLh06VLl4Wrmz5+/c+dOnd2aQc2aNaXH" +
+        "ycnJ+/bts87+AwMDpTFab9269d1330l/6tevn/w8ZI5WrlwpH3hz5MiR+pXxuoiICB8fH/m1x7169Vq+fLmVTIABAAAAa0AgVFKyZMmNGzfKJ6l//PhxgwYN" +
+        "Zs6cKc3r/bpXr14FBQV17txZPttb+fLlV6xYoby5Tp06yfPD5MmTc7uXLywsrEWLFmqGGNVoND4+PvIVx4wZk+Mtc2lpaVOnTv3iiy/U9GkG9erVs7e3lxYD" +
+        "AwOXL18eFRUlH6HHGvovVqyYfFZ3+XldC14vGh0d7ePj8/DhQ+mZrl27rl27Vn4wAwAAAARCHXx8fIKDg6XZBTQaTVJS0oQJEypUqDBq1Kh//vnn1q1biYmJ" +
+        "r169un79+s6dOwcOHFihQoVff/1VfiKuRIkS+/bty21wUYmLi4u/v7+0mJiY2LZt288++ywsLOzVq1epqan379/fvn177969mzZtmv1dv3fv3jpfgvyaRo1G" +
+        "M2/evKZNm65fv/7u3bupqamvXr26fPny3Llza9euPWXKlOw2fn5+uneNiRUpUqRz587S4qNHjwYPHly5cmUnJyf5KbXu3btbvP8cp/Jr3ry5l5eXfrUZbs2a" +
+        "NfKbVzUaTUhIiL29vc5pAyVt2rSxVPEAAAAwGzvdTYQ3YMCAggULBgQEyE/+PHjwYMGCBQsWLNC5ure399atW+VDayiYMWPGtm3bpMv80tLSFi5cuHDhwhwb" +
+        "9+rVa9iwYRs3blTus2HDhv7+/uvWrZOeOXnypDx5aunUqVNQUNDWrVvVFGxSM2bM2Lt3r8oZOCzYf8OGDRs0aKA1MYnFh5MBAAAAdOIMoSo9evQ4ceJEgwYN" +
+        "8rSWvb39Z599dvz4cZVpUKPRFCtW7I8//tB545lGo+nUqdPKlStVdrtkyRKVkx/4+Phs2LDBSm4zq169+p49ezw8PKy/f62ThCVKlND71CUAAABgNgRCtWrX" +
+        "rh0WFrZ27VqVU/lVq1btypUrP//8s5qJ4OVatmz577//1qlTJ7cGTk5OU6dODQkJkcYy0cnZ2Tk0NHTYsGEKt5AVLFhw0qRJe/bsURNHzaZFixYRERGbN28e" +
+        "OHBgvXr1SpYsmdf9aZ7+P/roI3mKDgwMVBhOFgAAALASNspjTiJHFy5c2LNnz/Hjx2/cuPHgwYOEhARbW9tixYrJx/CwsbFZsmSJ8rCiCjIzM7dv375jx46w" +
+        "sLAnT57Ex8e7ubnVrFmzXbt2gYGBZcuW1a/bmzdvrlixIjQ0NDIyMiYmxt7evmTJkrVq1Wrbtq2/v3+JEiX06xYbN26UJimxtbWNiIioVKmSZUsCAAAAdCIQ" +
+        "GtMPP/wwbtw4adHGxiY4ODggIMByFcFM3n///dDQ0OzHHTt23L17t2XrAQAAANTgklFj+vrrr3/44QdpMSsra9CgQfLRXPBGunDhgpQGNa8N6woAAABYLc4Q" +
+        "Gt+cOXO+/PJLabFAgQLr1q2TT1WHN4yfn9+2bduyH3t4eERFRTHdHwAAAPIFzhAa39ixY+fMmSMtZmRk9OvXzxpmcYAp7Ny5U0qDGo1mxIgRpEEAAADkF5wh" +
+        "NJV58+aNHj1aWrS3t//jjz+6dOliwZJgRCkpKXfu3NmwYcMPP/wgzWRYtGjR27dvFy5c2LK1AQAAACoRCIE8CA8Pb9iwYW5/nT9//qhRo8xZDwAAAGAILhkF" +
+        "jOO999779NNPLV0FAAAAkAcEQsAI3n333ZCQEFtbPlAAAADIT+wsXQCQX9nZ2RUrVqxevXp9+/bt06cPY8kAAAAg3+EeQgAAAAAQFFe4AQAAAICgCIQAAAAA" +
+        "ICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQA" +
+        "AAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICg" +
+        "CIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAA" +
+        "AICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQ" +
+        "AgAAAICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAA" +
+        "giIQAgAAAICgCIQAAAAAICgCIQAAAAAIys7SBcCEMjIyQkJCdu7cGR4e/ujRo5cvX6anp2f/ydvb+9y5cxatDm+45OTkXbt2HTt27OTJk/fv33/x4kVcXJyz" +
+        "s3PhwoXfeustT0/PmjVrNmvWrHHjxk5OToZs6OXLl3///ffRo0cvXrwYFRX1/PnzxMREJycnNzc3d3d3T0/PevXqNWjQoHXr1o6OjsZ6ddBbSkrKn3/+eejQ" +
+        "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" +
+        "AV5eXm5ubgUKFLCxsVEe9dGk9WRlZe3cubNfv36enp4uLi5OTk4eHh6tWrWaOXOm1jAYefLw4cNVq1b169fvnXfe8fDwcHJycnFxKVeunI+Pz1dffXXo0KHM" +
+        "zEz1vZl0DxiF/Cu7o6Nj+fLljdv/Dz/8IN9jXbp08ff3N+4mXrdixQrp0+Tq6tqlSxeNRvPxxx9LDWJjY7dv327IJmbOnCk9TkpK0vpRybJGjx4tva2zZ8/W" +
+        "e2Ae+RuncnZKrbkK8/RhUaD1C4JRcqZGo0lMTNy0aZO0WKJEic6dOxulZwAAzMGyV6xaszzdQyhp166dfK2///5b5yq3b9/u16+fjY2NwttUqFChKVOmxMfH" +
+        "59ZJni5P8vPzM2kx2eTf1319fbOf3LdvX6VKlV7vs2PHjhap5+zZs3Xr1s2tZycnpylTpuT1RqPbt28HBgbqHD+zXLlyc+fOTUhI0NmbsfaASclH2HdxcTFu" +
+        "57GxsVpjyeT15j09ZGRkyK+4Hjx4sPQnea5o166d+j61/lXZvn17VlZW165dpWfs7Oxu3ryp0IPZ7iH8+++/pa20atVKel6PewgbN24sP+zVrLJ+/Xr5y9y1" +
+        "a5eeL+N/HT58WN7tpEmTjNLtypUr5d2OHj3aKN0CAGAenCE0Mq1fsrN0naxbs2ZNtWrV1q5dq9wyPj5+ypQpzZo1u3//vhGqtFAxv/zyS/v27XOcASzHMwCm" +
+        "rufPP/9s2rSpwgwcycnJU6ZMGThwoPoTFCtWrPD09AwODs7IyFBuee/evdGjRyvfhGaKPbBy5UobGa0BP/RWpEgR6XFCQoKxzr1k2717d3JysrRYv379+vXr" +
+        "G7H/HB04cEA+oaL8xKD8bmGtZnqYMWOGre3/+6c4x+GpzC8+Pn7o0KHZj52cnH7//XdDemvevLn0+N69e5GRkTpXOXjwoPS4QIECTZs2NaQAidY7Vbp0aaN0" +
+        "q3W9aGBgoFG6BQDAPAiERqb1haNEiRIKjWfNmjVgwAD19yCdP3++adOmxv2qbbZiduzY8emnn+YWbF5PXKau58iRIz169JDHjNysWrXqt99+U9PnxIkTAwMD" +
+        "jTW/mVUdHjppXSO6YcMGI3a+b98++aLRb1DMkTyrV65cWZ5qevfu7eDgkP04MzNT6+bGvKpZs2b//v2lxc2bN1t8mtDx48dHR0dnP/7mm288PT0N6S0wMFB+" +
+        "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" +
+        "zZsnTpw4d+5cRETErVu3nj59Gh8fn5KS4uLiUrhw4WLFitWsWdPb27tFixZNmzY1fEDIly9f7t2798iRIxcvXoyKinr+/HlycrKjo2ORIkWyd3i9evUaNmzY" +
+        "qlUrldERJvXy5csdO3YcO3YsPDz88ePHsbGxKSkpbm5u7u7uVatWbdq0qY+Pz7vvvmvpMgEAEAWBEAAAAAAExSWjAAAAACAoAiEAAAAACIpACAAAAACCIhAC" +
+        "AAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAAAACC" +
+        "IhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAA" +
+        "AACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpA" +
+        "CAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAA" +
+        "CIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEA" +
+        "AAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAo" +
+        "AiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAA" +
+        "ACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiE" +
+        "AAAAACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACA" +
+        "oAiEAAAAACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIA" +
+        "AACAoAiEAAAAACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIi" +
+        "EAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAIikAIAAAA" +
+        "AIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAIikAI" +
+        "AAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAI" +
+        "ikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAA" +
+        "AAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQAAAAAICgC" +
+        "IQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQAAAAA" +
+        "ICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICgCIQA" +
+        "AAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAAAICg" +
+        "CIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQAgAA" +
+        "AICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAAgiIQ" +
+        "AgAAAICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgAAAAA" +
+        "giIQAgAAAICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiKQAgA" +
+        "AAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgKAIhAAAAAAiK" +
+        "QAgAAAAAgiIQAgAAAICgCIQAAAAAICgCIQAAAAAIikAIAAAAAIIiEAIAAACAoAiEAAAAACAoAiEAAAAACIpACAAAAACCIhACAAAAgKAIhAAAAAAgqP8PpEMB" +
+        "ucV0AFcAAAAASUVORK5CYII=");
+static Task M3d1RealPdf() => M3d1RealRecognition("pdf", 
+        "JVBERi0xLjMKJZOMi54gUmVwb3J0TGFiIEdlbmVyYXRlZCBQREYgZG9jdW1lbnQgKG9wZW5zb3VyY2UpCjEgMCBvYmoKPDwKL0YxIDIgMCBSCj4+CmVuZG9i" +
+        "agoyIDAgb2JqCjw8Ci9CYXNlRm9udCAvSGVsdmV0aWNhIC9FbmNvZGluZyAvV2luQW5zaUVuY29kaW5nIC9OYW1lIC9GMSAvU3VidHlwZSAvVHlwZTEgL1R5" +
+        "cGUgL0ZvbnQKPj4KZW5kb2JqCjMgMCBvYmoKPDwKL0JpdHNQZXJDb21wb25lbnQgOCAvQ29sb3JTcGFjZSAvRGV2aWNlUkdCIC9GaWx0ZXIgWyAvQVNDSUk4" +
+        "NURlY29kZSAvRmxhdGVEZWNvZGUgXSAvSGVpZ2h0IDgwMCAvTGVuZ3RoIDMwNzQwIC9TdWJ0eXBlIC9JbWFnZSAKICAvVHlwZSAvWE9iamVjdCAvV2lkdGgg" +
+        "MTIwMAo+PgpzdHJlYW0KR2IiLVZHQzEtOnJyO3BCLFUhOlc4YSRfMzZCcm4yI3VbIWZRUVFXayRAdUpKT2ZvKiEvKm5tSCUwXkhEJ1NRXilNP2xiZyJba1Uw" +
+        "P2tjXWM4L0ZUcStkQFlHIkhubDtdOVtPLFxdO2ZQMVk4JTlrKjRzInI1NDojRW04NyJcYFQ/Il1wV3FSbygpa156enp6enp6enp6enp6enp6enp6enp6enp6" +
+        "enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6" +
+        "enp6enp6enp6eiEuYU9bYktEdGxuREptJSRcZjA2aFAzVCVXMlFZTkxrbFppOGQjOCJLU0c1PXMsVzIjKDRTTVdgLyUyUXE7Zm5yNl9fOGxdKnBZRzJgTEtn" +
+        "czhLS3BqPEkwVG0rJi48SypEZS1RUzJeT0FCQTwiTU1fQDZYXWVhJmFbNlMlb1s2QWNNK087I09Ec1tGNGtGay1Xc2V0LjBDZWJqRHU0NmBnVT01SidlR1kn" +
+        "PzBZOCxgM01lK2cxLTEsPGNGN1onLjdQaFRrMkU1JWVbWGJFP050XiNuSVFtYjAhViIrdXIkcUxtPUhRRG5ZNXVMZCxuLCZOZixOSiw1P3JhMGctW2hBOUxD" +
+        "VGg6UyIlZGNcOVNtUW04YFZvXS40MSRYVUEhOC9sME1qPGwucCZuL1lbUEdANGFXJ29yVlpLX3BbLV1fPHI6VV9nVV9PLkRYbC9POUU0Xz9Eb046TVI6aSw9" +
+        "WGAqZVwyVSdESkJMWldGa1sqaTY3Jm50SEFdcyNKSzE1V1hCWVMtJVE1L1MpamlXaiZCa2JrNytNVD0xQV46JDxVdVMsQCtFPmlLP1JxOCRPYzo4OmxJYEBP" +
+        "OU1DQl5eaiJbYXBXRzUpOU1BLSVHdVAiSydLJ2RPSz0sSUU7UGJYVSM0Z10vJy43bjZFVyNUT2BzL0ptP0cxWiFtbThSLzwxQSxeKl0zY1xHXmdkaVtWXTdH" +
+        "cD9lRitTUU1uP3M4RF1fX2wyWU04SjJVSTBrLyhXIXNdPExsdUNbXkBDZ1UiYjEiLzJDdTJnLVtyUmxsQUlPPmdTKHA1WURYMzdFaUIvTWRfaCYlImxJRHJ1" +
+        "QS1eJjApYHI0WjtHclsvNHF0aTZiUkhdQSNta25AVG5mTD9TVTE7NUgiNF9uISU/al5RM1csU0Y2Q1xpYldtM2BnOWJSaGgxcmNFb3JlamE6JyRcNz9lNFk0" +
+        "T0g+UXNnPDA8YVRWJz49YS4pWy5FY1EybTUoLVxHZGpMYzhvJzRjK25xMVhiZE5mRXFxOU9RaUBybVxpRHIuUiFbQW4rdVs7NEFURjxLaTRsKlk5VmRPaShN" +
+        "aUJnJWk4PVRKXWQvQk8qMVJcUWBxc00pbXAkOTVvKVpdcz9eXG1ZXEhqPlBxPFRfU3VxInNyNGxkZnE9ZXVhckIkTlFpVUYoWlBxPDJsJF8ublkhLz08PHRz" +
+        "SiVnKEpDPWZXVWZEdG0sbStKX1FsVU9IOChZbS5cbnQ7c3BhKHQ6Pj0/Qk5hPU9INy1YXiZGLU5aQzIsI0xoJ1ZqZXNZL1duOk9lYTJRJD5DYkNtR3IuMGVF" +
+        "MUllaWNwWzZpWClCOVY5KSptcT9gbUhvOVEnTSU1YjplZExpOjxLK2dVQnRhJW42Q0dGKXQtMSVOUlNNNSgpIlZPVD5GckFhW2NwX1JvOU4vKGxYZUdxXyo1" +
+        "MiltUXRdKztNdG1yaU4rJ08lblpWLVgiaUdNWz1bTGBHRWs0UXBHP2clIT9NXDg5aihecWA0IUZ0TWs4V2A/KUZhNCZFbGpmITRdYXJOV2tlRTIza14/QExy" +
+        "akBJQ2YmL2RlLiMuZzIvYF1lNzxidTRgLmswPnJOI0hxTExybTQiQ1JGRG5sNE5MT2JyZ3JvQCp1WFU4JkoqaCQhNkIsIypcOjZlTiopZ3FGTmRpLidgLk9q" +
+        "WDUvUF9oc1piTm8mTkMwYjVWRD5rS11XPkVla15wZyxzJypnJHVwQS4kZ2lFZ2JfazgjUkZQR0hGOnRBM2RSWTNraCovOGMsSllMQ1koJThXMV5pKyhvWzYp" +
+        "R2hrYHNHT0psMGswOCRxbyY1P0c4cmVgcTQ+aFksbVlsTjc5TUo1dWRcTV5raD0tV09LM1Z1WmxBPEpZOkhganBtVG1yTiE8PGc6RFUqbU8/aUtVNFI+cjAx" +
+        "SzNzLSxbPDtkIStzTz4hWlExIV5xXiwlK1VnOk5IZjwtX0QsJ2c/OUs3OVxnKkgwLFI0KktyciQ0OmZAIz06YURwP15IVzFTZW5qKzBKX05fV0oiJlhdaFI1" +
+        "RDFgJCVGSXRQYnJxbDBNZWUmOiUtUWgvWU5zPnA6U1hrbmVLQl9YYmlgRVRcSUJfKUNLM1Z1Wm0+NDlwY0NIYUgxMVtzISElPi8uVCpKI1ItdW5NIi0vRlMh" +
+        "Y0BbPixrcnFeZl9oSlUxTyZVU0JtXEJURC82VXRxK2QyJFo0RDwwcm5aIl49UCouJGhYU1hubWc8PydJRjh1NzwoR0IpL0pPb10/cjRpIj9oJ1giQWVZbD40" +
+        "azUwQD89PEk4KWg6cGZDQHEmbmgydWdvX3JoN2E+MU0+IWhhZU4tLVhQNk9AMzImREpgY3VZLGg6PEljND8uVFRALzY3Vi5UTUBjTkVzNURvdGM3Y2BUOGIl" +
+        "S2pNTkNyUllEK3JUVTVQKCtpXUhGUWgpTVcyUDtQQyQuZGIxNjsxSmxCK1JYMSVuRDkhLlo5MXJIWmFjbUx1KEVvOlJkYG9QIVYlb15DXHBaIWtmJDpJbiUn" +
+        "WHIvLHJITWREUUBtZCVSYUcsISFnIVROOjA+SGBFZChvNW9RIjdUYC1lLDUjbz1PSiplIzlVJHFmXEE0QmFWYjQlRmFeMFVRWnJWMC8ibi9tSV1ZbENZLF4o" +
+        "N2hjTEdUXEdJY2BKYEp0SCg3RCtqaVdrO2hFM2JXPVFBXkU0YVFiSW1EL1ZmXlRUXi9MM1txQlNhOztOWF4mRDdwSy9zcjwyZjxWYHVqTCpqUVAvV0ZtQEs2" +
+        "czhJNihAcHViOStCT3RISFFtMzJcOF5FUlRnUy5zWFcnJy5OKEQpSFNacyhwRy0jU0ohISNIUjgrTCVhOmx0R2s8a0dGaE0uPyMyXiJPSlQ7NS9gV2x0Mjty" +
+        "YGRJTDVCKzVCNj02MmBTY10wb2lvQUlxWnMiI3IzKkJTRy9SMz8lJWYiI2o3aC5nRVxRQysmPD8tOjhcWj44J3BkKlBWRlQpQUJETzdrJVM9Z0NHLT1EV0ZM" +
+        "bEVlZiNlKHNgNiM5VDJQKkpTaWUhKyI0cEI4Q2g7XFQyOTshdGgsTGllXm1LREUxWlkxR2ErP2dwcl9NVzAlPXFiJmUwOnEmKzU0YC8zSGpMUHRyLGdFMj91" +
+        "UmxCWywkMzNtWkdwRXBzQnIzNmMtUEsiZkwoMU9QQC4xRm0yVmt1aDpcVC8hKUsxJnBYWllmW3JuNVwsRnJwIydaX3FePmBmMXAxNSQoN2FFVD4lQCVtNkxo" +
+        "WlZSMldnMyZwWCxoJlZiZSpZME9wJDRJYjRTJFE8XGVSRiprVGVWWT0wR3FpTGtzRjcuT1pdOUdITDlZRFx0X1VHL2diQycuPCZkTCUsJDNjXGwuR2BjYExs" +
+        "Z3JoQGNJLjYmW0hPW0wtRkg9TEMxWltXPVBFSl1OV2BRQnFtVDRvPiEoRSpMbm1GXkpKRydBNlM0anBrXiVcK0EjQz8lKytbOFNnMkpwbUY8aW9PX05NZz1e" +
+        "PlRQYSFsdEEoMSV1UmNZbWFEWmJZb2MjS2FKI25LWEU3Z1QrTmlEY3A4alBOUDlgLks9YTAnbnE7YDNLJEtvYS0lZ3Jjb1kjKV1PbCYtPzIuXnA8UUJUVlky" +
+        "W0QuKFAnJkc8bTAnbk5PbDA3SERUREtBN0ZRbThfO2duNUliMmFuKyRZTiIiN1lePjBbNFAndVpuREVwZjZKaFZxVkQxWVAiJlMlJzhNQVBnMF8jcDU/MDpO" +
+        "MjxfMmZhLF8+MmJSZiYoKnFWOGFsdEEoMSV1cVNmOjpMI2ZpUFErKCpdXDg6RFdPSFItPj9GdWFYIzheRitpc1JGb009N1xkJmldJzRZbW9BXWtrRnAuXnU0" +
+        "RVBtYkIwLFsia0cvZiU5JFBxcnQlWyN1JFNpcGwvaENaN1tnbWVWJzQqVSwiQltLLmpFLCpxJ0FhM3A6ITw+PSslPShlMWhoajsqQkFuNnRraGEiYkcvbjQ9" +
+        "UW0iN1JsMDdGWTk6IidbRmxeVVVCODRLW0gtZksmYHVcMU5AISRMdG1WJDprP2EvXzFLYVlLZDclLHVLVkdZL1VQR0UqUF0lVFNwaHBkc1lRUkRBL282J0JN" +
+        "amttZy1VJjFvJTBpXUsrPmpgamopKmYhXWBkaHNfXG5VVjdHamk/P2JoMDw8PS4uOFhFVlUiVDZgVSVYUGQibE4tQVRfRiEvXmg6aj9cY3BDTFpDPllINz5Q" +
+        "QShlLyFnKVh0VlU0cGYmWF1WaHBdP1okPjUzViY9R3FdYlRsS20vNT82OSU7ZjNgWU5HTmREaUU2Z1VnbEQuWWFcKTJZQFwlLC1ZTT0tajYlTklJJD49OG1h" +
+        "bVtHSCQ8aXBdPmswOi9AYTZGX09wOHJCUG50I2woPEcqOzpSW1U4Uk05OnBBT0hidERRZ2BYY1gzPUBXUCpkc2tBP0pGalZtJDQmTUFlRzdfOzJfSTduLHUl" +
+        "cXJzQ3U+QVRVSjUmbUJyVmpBbDU5IlQjXk5aSFROZSU5Z0JtMzksS2I0K09Va2MobXVPKlEiaXE9PFhZUSJTRjdEN0piTWtLX1ZbXk5UIUpIXmQpXThdM0Fk" +
+        "XTBeMUVXOG8wa1ZHRWhlSFJ1alZwIVFQVmRGJD9jbihyMicqMCdOaCFWRkdaXk4mOidtQD1TT0woJih0SVsuRmMsVVxFZDFaW1E3TW40cmdYXiZFQlVMYUgr" +
+        "S3E5N1NpNGFYOigraV4jbiMlYUFbXj5pNUhePnVmaDNUbG1TMmFCWF9OY1dRIVdyTl4uS2ZuWT8ra1I3YVdeNF8qcVxDRFosc1hAcSErb2BsO21vS1ZrNENs" +
+        "PmtdZnRfTHI0L2x0dTFnLF5LLj9HSThzYjR1VXRBMmBGaCk6QThfN3E+OicwYTJeN3FLJE5uZCFWRkdaczBvY0E6JXRIYj5lLztFcWMyVypQRk5tRmJuLTtw" +
+        "Si9cPGgvY19PVUYmKmskYWlVTWheVjdBYzJTWCtmUC9PVkJnR1xINWVaKVdtQiY5ZV0xTTtfayJtdEtVOC5MYjpnPkEtV2dwSUM1Tl9TWnQ2L0RGTiwvOXFP" +
+        "Vl01KCJTTkQlO2hbblZJP1Umbiw0KmAuP2ZXZGc8Nl85SjBjRWZLVm9PcjJfWV1gPExVSVVBZ0AvLThTPDxNSEk5ME9bTDdea11eO05fLGxsOFlxJWNiPytE" +
+        "WGdkMDgwJ2k4SDBFMihSQC0qdEIuJTVTW2pkNVpaTGJNYHJUaz51TCo0YFZqKUJYXkBkKFk0LUheQTlmUlBoXDRuRkFdL24iSSd0UEJoRk1wRlRabmxJN1FE" +
+        "RDJXYDVsPW9eXTlxKyc3W1dWNDdiZmUwQ2xmcDk9Y0UoPGBHMlUvZVxyNVklZk46V1NhLWgzV1gmY0AwWm5zIltCVHVSLVRMVVZbaCdZbV4wNDNTb2koRSNa" +
+        "UDw5MjlvJjA5IkokMy8vOlxtQGwhLl5mXUQwXHRVYFMuVi85NyhMay9SInIibGAubFhARFcwN21fLywsJGhoImxJSlU+RVtjUFlzYktTMlttPVkvcjV1NCZC" +
+        "SyQ7RGpdJ2k+RT1AUG50ZjwxXDwvdWkhVkRKcmFDLUFiMVdldV1DV1pbO0g3Mi9oQCxmSC5NPmg8TmN0M209Vy9jbSttKWBKUEQ8MmZJRVdXUkpiZEs8JV06" +
+        "LXFxZDk4UClMYnJJIjpnPHQvKzUhIy9tW2JDZFtvYygiKy5NMltCbSJZM1kjTm9TMEBDTmhFbzQ/UFxlZ1pHci4tVnI9TTxbMTZ1MWRvP24wRyE7bWtqMCFv" +
+        "PzYwTF0kLjFCW1VJUGo0aDZ1T3RYLWBONGArNjNgWGEpR0ltYlBKb0lcYyVVIXNjM0o1QVNgP3JxJVM1NllNdWslQTYzREgvNE46Qy00Nic8T2cwc1I/UnFw" +
+        "aFJvaUI8PzxrJSEpUlpKKlljMi1sIWdqTGJhQzhQQVIxWl8+LjhDT2g4P2I0MzFDbFBeLjlhdCtbTXQtNSo2KkE0YGtqSGJmYlhNRF9DQTFcJCtiLj48TVQu" +
+        "O3FlaHAucz85b1JQQENWUHErZUFxWGlSdT5cPU9daWwkWmBtRjpcViQ+OSdHTilwSV03a1QpQyk7XzhlKyIlN3AkPE5XQG86QHE7cVtZWGcjN2BSaykkIUs4" +
+        "XE4oMmdmc0FfKlpoITUkaG5GTm5nPHRcM0EpPWtEZy0naVtsKStvLFY+RENJVzJNLGQlZXJYO29aNV1fbmBgLmEtQmUnVDY6KyQqRDxvbklkXEtIdSVtS2RI" +
+        "YGYxcDQqZylQUFJHImZRNmh0IytmV2AzZlNKcEVkIjZjOyQwSUEtZGZcc3AzLlsrQ0AqbURnTmRzVlZKMVhBMG5USj9NPyY5RG42J0hWYyVFSTA4YjpTKUI+" +
+        "ay8sJyFQKjJSPFVkVko6XDk3LCdDOShFQkd0JVY/YC46UileZlUpN14qaDNkJEQvLFdNPE8wZXBZVUpYUjBQYCUscFhjIjUiV1kkZCVFWldmcVNSUzIxVSdc" +
+        "ZS9rYkphZHM/bUtAZDs2ZkJwIjo1MGFUO243TSs3SzhHR0FwPT5PPEA6QGNqPypjQS9EO3JvaicpVVwtTWo8W05FY05YMFdoZSYhaHFxZj8vUFxLbyM8ZCpO" +
+        "UGclPSdAWzNsdGYoaUNhWztYci9IUF5SS2RSRVFXWzhsREEwVV9bWDxOJmExM15fXUtXczZvcVFiNC9iQi9Ycj9YdGlRcWpbJV44VEYjLEpOJW4tSCEpU0te" +
+        "NTdcKlIicUBsaUdqTyhmUThZbT8qKyszb1s8PHEwR09NXE5eTGJTKG1Jamh0RypVc3NRYlNTZls+RmUsTmZuWzVZXTheQ2cxQlUkWF9ZSCQoL1txK2c6TSVT" +
+        "XSFdNGc5aEd0bjhzUyxESGFmM1otIkxPc1BVb3M4SFhAa0RwbkA6QDE8Y2QnY20rbWltX2BGJEAhKTM+PE9nMHNSNUA5UT9iJV0yUlBpOFJBSDR0PWspaGNO" +
+        "cVhqJEZUSEtfYDZVRipqWCpyU0hOcFErS20wQjxpIjlfdUJHZ1k3RXE8K0MlNHQrdFs2bW1jMlg3RHFcY100MDZIMTkzTys0VnRvaygmWTZiMT9PUmNCRCRm" +
+        "QmxBKGFTcFhZU0kvM0JzY1BvJiMvKT04NS83Ni1IcTdSWC08PE1ISTk0JGIvb09sTEFGbnBLT1xCNihiMWRgVGFSXFxdZ3AkOjNLVyFpWVNgJnMxZktibic/" +
+        "Xy1bI3RfaFtFRU8+cFFta3A+X0c6N2pgK2RQPCRsVUsiM2opRCs8RDZeODBgZEgrU1gwXSpPVmEzKSVXVztEOUZpTVc7czE+SHEqUC5MPDY5VUs0K0YsKSph" +
+        "aDdJbU1fTEMlODxCWV4mZUQ3K11yQGEybWpsSUBEMV5kWzpLQzBeRU8nTTcqclRkZzUmKjM/LjVCbHBQUSs0c14mJmI3XWRePGpsaDByXD9FNT1lTiEnaF5p" +
+        "V0I+RnFpXkoyaTU2cVorNEYtTG5iN2hxQjVRQGhAY2ZXS0E+P1puMVBCS1NoKy5ELzBILWxNJmEzKSVXXDg5aFJoOSonOmNTalIiaDhlLlRDWSNTbFwlMUho" +
+        "Wj06Y1ttRGdNVS82XUYlbj1gdSFWRUNlZmBXMT5HUDJFS1BLQzJVVGBsPlQ7XkloYUJPcD5JOSRrX2AocExQIjxYJmFBTS8tKT9pbzJIYkZgZkQzW0RqKDIo" +
+        "IysxTjRGPEAhJW9dVDAiOUdIKXJwP2Y/SDNqYDdkYkNmVl4zJy5vPGpoWGxuOj9iZ0lkJVEqTlNwMFZYZnBTRW4xSidlLWxuZEknPS9cczNUcHNhPigiUEw3" +
+        "RG8pTCNqSDw7MTheW0pmQVZoJEc7SCRNIl4yIzclMTxFKnNgWEVfQkM2V1RIczg7JUU0J0VDIjshPDBZJXVPcGlSNS8+aURQSSJALnE9RUdiKjRAL0FMQzA9" +
+        "RTopQDpIZihGJFcqNlUvcFVraClxLUE/bmZzKjRhJio/TUlNOEd0LGBbWmZ0a21nQThWRy9vdDMmc1A3JU5NRS9ESyE1XVFAVkUwLmA/VGRocGhobVdDcFJb" +
+        "ais6NC06LFFQNTxhOTJrYTVaWS1FcTg5X2gzV05xUmw+OC9XJTdxQS4uQ1VjJ10rLHUqU25LRkNiaDs5YCxcM0EyLzUhYWYkc1hcZF5YO1cqOFJlT2sudUdT" +
+        "VCxlOzxvQUpyPF5UTGRnYC8jITAuX2tjPE1uNTJScnFGMEM8LGNsQCxVWHUqNTYlcypmczFlPVpSTihzazxbXTBUVmpGPE8kRVZHSGJWbjgxMWFfXUhtKmpI" +
+        "YiUpaVVDTS0xQT4kQFtqTkg+RSdHNCIiRHJhUjhUVElCO0cqX11AKmY3KHU6NGJhV2pfW2V1NT8hNm5CPzZaVTVcbDBdcUtDMXJjcSdQOkBqMls1SCgoVVpW" +
+        "My09QUdVT0NfbFM9Vi4wckZlXmEtY3EjSic2SzpRYio0PWIqTF1tYmNAYnBGKkMqRCtvJj8pUUdzcUJUXG9tPyRyOj5YL2lAOiVaLFZHVDFbcjowVElCOUtn" +
+        "UzJrWDlDQj1LbidbUG8tNjJWMDxvLCFnUGlQYCFDa3UlVnFaWUoxIVYxRzM2QkhHQkFxcTkoTTM9Y0hbSE0jUmRobWRbZGxkcj01KDsrWUlgV0hgNlROaCNF" +
+        "LV9BXGZqODovbzhQLj1DR3U6OCVLb0NzIWFbOHVVb1FlZjsiNmRRbz83KWxeNlxjL3JhaVE5RyRQPlgxSUopLUMjN29PKF5mQDZuOFIrLD9OWjomV15PQ1Vl" +
+        "T1YtbS9YLV0qOix1WUhXOnQwX1AldVMscUM9VD0xb0BLQ25pUF5rTVQhJXQiXEhaUD5gcS8iS2tpVDQ4RGdpYSQ4NFxoJktUNyc3YXVnSWEvTTBdWiE+a2I3" +
+        "cllnXS0kXlhQTTBrODVlRy9qJSMqPUk5OmJdaGtDSExSKjRGbUdAU0Q+ZmloKGU1WiZQYVJxIkRyKlRMST5xU1M+XDFMMWA7LHVFNGFKcUMySEp0PlZcWFok" +
+        "Ji0tKyFhN0VdUWdpTTRMUzRPXjNuIV5eNTBKTiI9UHEqKDRrZHUqb2hzRydzbG9aWykoYmU1Oy11Lj43XFNeKFpOQjVoJ0RqTG1VMShYMilhWCJFQW5ZNUlK" +
+        "WV42IS1gYmxHKEtmblMhIVZHOnIwOEw6OF1sdHVobG90Qz87amVTWThQKUw7LVZwbU1cWyQ/Xm05Xmw9QV9OP2RkQFIvM1ZkSHJRK1liXWttRm5ybE9MQW9T" +
+        "OSkkXm84bjVvJWVOR01iNWB0LjtHcV8wOT02QC1hOSRTW2xaMkFRUz9XT2BbN14+Ty5MbiQyP2pARXAsbTs2TFYlPS5Ic1s7NT9qTVxQYzRldVckT3BbPms9" +
+        "bCZvMCxNPnJKNShPbVkuPmQ/XCxBRTheaDJmc0UuV1dZJWNgIUcwT00kUktzZ2tuRT5iXWhHN0hMUiosR2pgLSpqOXBqMDJmLi1OMi9DZCFcPDM7T1M9UTMm" +
+        "QidicEFCRDFjTF00QiRIaVBVSCpyIWY9dFgrUkhISF1qYVc2Vz4rUGo6UUIsQVdALHU6YypHYipZZDItPk5hQD9FNl1ePSZUR1xKXzRmW2ZJLmMja2BxSldG" +
+        "R3FlLWhCPyhJLDBgVi1lJDBdKzVmZDJMbDAtMjJXMEBNNEtYXTM3cD9NQ11ERm1JVTluRDE+bk9wPjhKSjAqJGhCa186YD5JUU1vJXQ1LyszazM8aC1BZ0xK" +
+        "QCZIYmolIkRoKiEpUSguOEtKVCJadFVjYkdGVUlHNls3WE4ycnNeRTs2RjA3YmZpYWpdQ1lcWFIuJiYkai44QF0vNlQ4SHJlUU8ncFw0XklNXz9AUWoyK1Mv" +
+        "JU43L3BbcjNjdFhEaToiTUZcZjRHSnNRLjQ6Z1QzSitBR2tHUDMlJG87ZE1FYl0kP19pcCFBNV4zZlVXajpNQ21NQ2U1PEsrPDxnZSZhXiNvMGRbOGFZZkdb" +
+        "S2NnbzttSGg+NyVnbjQyMEBwKGxJYCRiaEpsXSRaLkdsIVpZI05AV2xALTRARVQ+JyFeMl1oMGo/X3I2Y2w7UEtPSURXbFdEYjEuXGZwbU1LPCozdTpSaSs9" +
+        "KidAZlQnX0MwMiFXWFdCXUkrM3NoN0lsdHI2KkMtND1FMmNAQihFIXI2YiNKJDosYFdHTHRNZkItJWFGRHIrYTVJIU5pb1Ajbm50YFVDUDxjQ3BpPnAnRSFt" +
+        "cVhpMiZqTFRMIio5cHRbYWIwQ2EmIm85TV8+TzErIjxCQDdQU3I7PXM0K3FjQXRVTnNraE5gP09YIUA5KUFyTj87PENsKG5FNkVuUU1nWCpxKWdXXG1UZGte" +
+        "I3VPUHNjS3FUTmo/YE8xKkIzL3RyOzA3dCdITkslMWA5YmZHa3BvQTglW2E2USlgJ01DPVQ+TDZUbHR1SC1qWTZvVVwwWVoiOylvbk9xKVtJMF4pYSY9OURF" +
+        "I0lxbnJtPjFsQ3JyKkVtcjM1bmQ9b2VVT2FLK20pZCdtcSNSRDhOZWNcIVlxLjckNmNQKDFmbHAiIT9tbSZQKmRfMGlfXipWXF9fJGFGKV9rVz1xY1s7NEM+" +
+        "bjcnVydEXl5eWFQuPnEqXjBtKUdLREVlJVRYWCNLK1poYzRycXVTN2xJOWZvbiJpW0RJZUQ1bVBFTSg7b1JYJjpeKmlKPDY6Lzgqa3FbLDBaalJbJihgTzRq" +
+        "NVM8MHJIMTolRlVCKEFyXHBqZkNUKkwoO1FsKTcrRD5qRzNjXm07Y2JgMyQpKmQjPFFuUGdSOjg0WjhnMGssaDZGN0xuND0wPSsiX1ZWdFFTXzpFbz0vbj8q" +
+        "bSpQLUZrS11YWyRQcC00a2ZhJFFAMzJlc2MtPihPQyIlLkw0Vm8uXG1hK110JSIucDlWbzopWzkxcShSRzcxUS9SQFtOOl5PNi5jIiYiayw7NkYwN2xJRHBv" +
+        "Q3RQdCVhLFlURW9RZkRMKFonVDdoLFVMVixwanRxXTZEU2gwYF83U0o7UkdibikobltVUTdWOG86USdcbkE+ZGdYJmkoSmBeMyFZYDdkb189IkwvQlU4I1N1" +
+        "TWs+SXJuXShrRSo4bU0ibjJXS2gzVyZPOyc5ZGg9bkRRTlZvU0FOZigzciwkMWMtPHQ1bD1dOllQUnFYTV1hNmJhOEdjKWo1XTAqclc1MGExJnE6U3p6enp6" +
+        "enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6el50OEFfISEhIUlsb1o6TWkyJlAhMGBfN1MhMTsnXFlsZT1UZGg8QXAhISVRNjQ8" +
+        "Nktgenp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6" +
+        "ISEhITgzLjFNalp0W3V1QFVeNjdESHNWZGZxPiIyaThFT0xMa2xmdT1wdUIxRTtvZTJrS11XPkVZbks8aC03Uj1wIypaPWBAYVI/XnFgNE1zKFUmYz1pJ2dC" +
+        "XFtgWTxEQihRTj1PWC1BN0AwOCtNXFJhU0QpUVYrPmpKImBXYDcqXjopN0VlNTVWRigsVGhDIjBpKiFgYidXVGpCQzBkPXFYbSMtKjw2KGksJjZgM2MkZyFB" +
+        "SS4yXWJITlljQUYrKyZga0tUSlRwWEEwa24pKDZPW3InbS4pO0EiVDY6LjUoRm1LaHJRajZFWDNuOk5JOTctJ0pLNFo1OiFXVzU5KSJPPVFxVzQmTj4uOENP" +
+        "UmZsYWZwP2U/PlNGIlVfJU5JSClVLW88SVJdOEpwcT08V15lWio+ai1QKVlzNDl0b2UhK1kqXWkrb08wQW83OCJLK0dRIlA+TSxAWDA0aVc2ZmhnTjtVcWRJ" +
+        "cFs2aWZeRnRSLkkyOGhGcSMnYTBDVVlaJVJYbVIsISEhIi9hRmgzPGZzNS9pITxLM148TWA8UWRBJzNNaDdFOi9XRGknR2tyM1A7NEVnJ24+WzYoQl8xVHBx" +
+        "LkFMVnQoKUUzdE88Q201NGFabE4yZi1tOWBRIWxWWT9ubzJQRVRMX3JPJEZtSnFBVFVtNyRfUlxvZDFkcnB1Y0tsdGkwWWFiLWBfKld1SENKMi0rTiswcD1s" +
+        "cDB1IXUuRjInZDhCPG1dXU9OVTYkK0ZnLilFRGk2XlZATyhYNzVXSlpZLlZMbVM2YGlER21LNldLYFZdbUlva3RZPzEvUmtGWzZJb0RpPFkwQlBQIyEhJTZH" +
+        "bnQ8MXJFb2ZwaG8mWixhWCRWTElMQ1lKbWZldEg4OjNsInRCW3MsSl4iW3A4IXNdPUNbZj5BMHMvPE9HQVVeXmRdPS0zZF8layVEISEhIVFMLTRaTVBcWWBB" +
+        "PmUrbTNNMkNlbUorXz5uV2RCWFtCP28jYFVmWGErZiNGSVNOUkhZJWZXZXFnbUNSSyksMlk9PU0qKSVEISEkTk1LMEo4QFRnUGorSSIoVikoUUs3SzFNMlRP" +
+        "Nj9tYk1tRyMqLWczO2kzYWtITlQ9J2o6VnMyIy1zPVBKJmdoVkhUSV8oYkYmISEhIlhuT09fNkU4ZVpjIlVlZEtAW10sZjtSJ11NVFYucWInZTIlVGU3Y1hK" +
+        "IURBXzBkSl1aKlkzYk5BJ2U8PldsZHI9YG1GaWpZUFVLa05HW3RAR1A+PUJRRzQiIz1nZyQ+PEE3XT5TPmUwRilWazBuZVZiVW89VzdYXlkuazdXKFtFQD5R" +
+        "bVBKVigrUVs8YGpIMnFAJ00xcWonQj5hZTFMbkU1TlY0QVNHJyMsQ05aOigtNGFIUEZWK1tHL3A2YzFQYydwWXE/RzNwMF5aKEpYWCZlV0hMRUBRckRWVkMj" +
+        "XSxXa0NCJFdxPGM1YCheNElESiVbcGQvWW5eRkc4LXJFXmcnVTliZGtiMEcoVk9UbCNoVSpDJWJBLTRjU1diQnAmbj1xVklmNShZI1ZmQGdAOjskL2VuajZY" +
+        "clJlQWJgUDFjcl00XlguKkBMUWdCJEhlLVQ3PVJwajJSb2dRYVQiaGFedU8sRzQiIz1cVDd1Yyo4JUsoX3QpcDQjNnRLaEtTNS8maDZebkZCOmFCXHFYaiMi" +
+        "OlMpWjRbZkhJL11TXlNKJ15JODY3dS5TTVorRyk/Yzk6cFdGL2lHTS5dI2ImUlFQazlIQCEvP2tBO2koW3Ina0goOSRxYU1oUzRxSzwhNG85cSxuSldiJCs0" +
+        "ZXVgLydHLkRrWGBYVDIjPEhjTFJVS1pnKFJBNmkuKD1LMmVnMkBLWU82I24kYE9RcEdDbWFMP1k2QmQ0MU5WXiZOL1MyJEMrYyQ5TCxqYFsyRDlgOSM3bF0q" +
+        "QnMzdG07PCMpUkArPVM4Qlg7M2hOa3A+UU1zLihwNmJpTlUpZFRzbVUhLUJXNUA7cSZkO0BeTjxVP2JvI0M/LjRYa2BYJFhdcVBpTkRiMU1ldSEnKFJdVFxz" +
+        "X09ZcmYhISdlUlwyK1hKPklMVlhuYCNeU2A6RTkoaGdYJkJJKTFOcmlsLWd1ZkA8bSU8YFJ1clI2SCYxRnM9LyxFb3RSYG1FUjdjWjopN0Y5LyF1UzFcQiw2" +
+        "MTAlSmZAIzEjNVJbVTY7ImZlTmVjJDwtVWd1Lip1cTNsQmZjSUpsVW8lQF04OStJdVtLYiwlOlZ0cj1UUnRfPWhVM2VPbmpAXTc5PVVaOTBuQlJSZGcxP2hz" +
+        "S0NlNk1aWmpZRERrMmcwXU0+IlklZV1iM24lUjk9Mj8zX0IrbGchblcqSzxuTU4hS2Y6LzlDKF1QPS5NQV1ra0YwUEprQkQtUDJTT1tZMEQ4VHIrYk0qOiJf" +
+        "NipZKik8ZHQpSXBSUzkhJywuLkJWVEtdXVJnMTw5U0VPV1xOQkNtb0NjJnEtI0dvIUNpb0IoXDFUJjVvZzc6J14jREhmXkd0LEVJaUI0VyFySGFIUV8hME9Z" +
+        "VmUpcFFiZmc4IylFP0dmbmZSbzQtdS5QJCNKXjMtOTMmPDFjJ2xuSzRhWzUuckAnMEVnIkcnPF5PLFxAUjRyJyRsTV1zMUhNITxzZy9OaDsqQGItbkQjKyk5" +
+        "KysvJWRfTSttYFQ+I0MwY0UxPFtwP3BgdUhMdGxOPCpbLmJxMmxtbFhTNU9wW3IqZSdVIkNWOCxOSkxiZ0w/QERVSU00QD1oOF5TYF5sUGIjOSxSO1czIVhJ" +
+        "Zi5MXjk5cT09Rj1cWFFEalxOUUcldD1CPlZsS0kwTVxkSHJGUWYvTkNRYWpEZGFIUzNoUyI6I2RcV0tyR0RaXl5WK1ZXSj0zOWdqNidHb1VVS2klP2FwWG5R" +
+        "YSxcXU49MUEqV2g3QGBBY0NCMVRuRFA8RkRNV1pjYikyYWlET0gzNEtyKFpEQ0BvdUQjOmlpVihgT0ZrYVg8XjpfNz1nXFU/TFJMSGhYW01eT0crVkpIWkRz" +
+        "RlJJcGVGWkErLE1tNUNzXjQja2MnZTM+Yl5Ma2BaQFBXbDBnJEphR0MiJjw7I243PVlRZlAjPFMnSVdqMDxUOmZjVkwpbVs8Q3FARU09QzBDMU0kSipXdUhD" +
+        "Nz8mN1gtWmYiSj1sbTYrRlFxNXNRN11HcHEhLUQxaDdAYC1HM1BZIXIyNzZKV2BMa1tycjJuKypHRyU2aE0pSVlQa2hJVlJsNGA4L2NKNmtaWS5PT0FUSk5p" +
+        "MTpKZ09YWGU3Sl9fYGVRQW4+TyZdLk5rKGYmPW1nJ0ohTCQ1P2tSNEJzNEFkY11cc2dgbkZgRCV1Tj9BcVdNRzhTaW1JMSN1cDArS2FYV21NXGUkIXBgb0JC" +
+        "VUkvOjU6XiZLVEBKb29qLDIzbEwvQ0lBSFkkSTtFWzZJY19SJGRbJEB1bElcVVJRcnJEVlYwMWdaW2o3TkViXGZudD1OaCZMNFlJUDFsXicnNU0oaUpPTEAq" +
+        "bV50TVFZcDVDRltANzBzISMuMithRmhYcz5maS1UJyt0cWJnWV1ca1tvS0owZWtJJj9DMU02Xz1gQyg1ckUyYShAJ1EuYEhhXnBAWipDUlZgckdrXEoqYVIi" +
+        "LjFfO1lYS2xaRT4uJ2tPUiUwXEovNktXNkgkXy1WLFMqKi9gIlU5J3BbQCJzQiQ/QkpoSkA6aUdtQG44RVQwQkdwMG5MW0s6RFIhRj50TzA1JG4lXC4sVExO" +
+        "WGhDJUdqP188am09SzYyXD1tYFJDIiJEPUxCQE1WOyE9PTwjQ2xYPDJzJXNVazAwNTxaXidmdUhoS1dIV0VMXllEVlxMbig1PTY8PiQtWklZa0lYOmhuRk5d" +
+        "cDBXPUpbQ3FrUWpoVyRncikkVHRqKiUjaWJmaWMyK1A5PTJoTi51JypCVS1nJDIqVDZGNjY+bFZUcVlWWSEmYF0hWisyMEIkR0A6RWpSYkM0YU9LQ0k7ITtt" +
+        "JFU0a0haRTpQKlw4Z1FxMilDYS1YJlEnPWxkZFpUNHJjZTlndEgnQ0ZdTVAvXzFNYWchJUAzWGNAXiZLb3AwWEMwRTQiVWpbXCNtJlkhVzokVXBJYlpzMTpt" +
+        "QT9nPUY+MjtvcVBxLUthNUMpZzFhbzhvMGxKbkdrXG9pKS5WV3ReXHAvXWYlTzlcNElFOmVObDBRZjpyRjZ1OVQoVXQkQjA0MWxvYWQrTV9QYWUxJkVQZmdd" +
+        "PT1POFlVZUAlLHA2bGxFSzlJV1ZkZD1yNyw9ZWomNzM5KmdwVEJXJyE8PCpKIW1KckJiLSwwMylEdC4kQHJLKldWS0c3UVk/dD9gJ0VcQzxEVnIxMT4/OlJM" +
+        "TW5tK25oLGkpNG1HIytaRFh1ZUYwP1BBZzlEbipfcyYsR11gdWZmZHEzaG0tJl4kUERZP25XaWJUJCtcUmw1LGJENXBbQFknXG5yUyNOX2tTbmVpZF5WR1BC" +
+        "b0ImZCc5ZUtiYlcxM3JTcjojPyZJQl9HOkZmVm9kYEpQRHQyKUNhLU51Z0hhZ1A9Oy48OTVHRj9QKkdBISU/aSNjJUZeJmZxRys1ZXVdcDwoNU1INTZcPlJQ" +
+        "Q3BtMW4nXmA7KmwtbFBrRmQhJU9HWCxqU2pWKFw2KnAhcEstLVdrYFctWFZgZkE3VEM6SlZkcGg6YTI2MkhJO2EjLiVzOyxoRiolS24wVXROLnU/X0N0dU50" +
+        "QWgwISM1UHNlJyZaKkolVyk5PFpmczUxc2hzXzZ1KixNZ0NZcmlqPSgrL2spPG9tOCo5OXEtPkdrIzgrRiNPKCE1aUgzZipeIkglS1gsaGY1WDcmWEpILC5A" +
+        "WWRwZEBHRihWKzp0NThOUmFSaXBLPDFRYEE9IS9OSWlnLWUtOlZTXChZWjMuTyljWT1zOEhELDxnSUtGXiVWPlViInFzQisrTzNuREc6UlBjVUxMLzRYXls/" +
+        "KFA4PC04KV5JSlgwYGZuLVJURUIxLjo3RnBGPm0uIWJzN3NbVjQmVG8mc10zU3VxOUxwJDEpSDA8c3AhW3FlM3EnRUEtKzgyMnQ0V2o3UmxwP2pdNz87ck4q" +
+        "LTA2SiVxWGZwJ0FBRV1yTmMqaUNCP20jRSVSb2Q9W0BKa0lIRzQmXDciaTc+Km1dSSdyOiM/RVgtMzRdbG5OaUY4b2o7Yj1XIlhbbnBnWnM7WE5yMFdhNnQw" +
+        "TztnLHJmVzhkPCVzST9vPFYjQFpaYTJgOGtbPGlmW1ZPSmlyJ0w7NF5dKj9VZ0tPWFghLjo/OkgxNztBXittJ048JTFrTFIqR0lyK1YvMHNBaCJuXG4sMyVm" +
+        "W3InbHMqKlxDQS9mcj5rbGRyPUFGdTtIST9GUWQ5WlktJFlmLGcwMVdIaUlLZXVkKFZNMmxVbipnQW4jcjszKyg8SVdUVFZOP24kVms4Rzdxc1Y6ZDArLmFb" +
+        "Om1kVz0jTTYrYUNOcF9yPDBbIUkrQkhcLmQ7XFsoKyZmKDQ8RTomJEdkK2xJaE5lQ2puKHQwTjtoTmMwOzNHXSpiLzFlUkdqIUFDKUR1N1g0IlJpKmhuVDMo" +
+        "SDFRNEhnMyo4YUJwI3IqOltdIk45JWknUkgtZGBmMCE4LU46OmRAMkJAITBhclV1X1VgO29yPUklQDZeOnBpKC5JSjo0R01GXGU5cnFZYEJfXkdTVzFZKT9x" +
+        "bUFtPWNuSUBhRGs8W15LWypuPG8uKjhxXjAuTmlTWkZATW5vdCNQSFo/QkMkSTk7UW41bW45MWtLZmRYWUAjJiUnZUIuNitYVVZxO05lPF0hISEhX2IxJlFL" +
+        "YjpnVVlNZ3RhJWtIPS5HSWhlKS5cODloUmpZMDpqKD1mO0pmPDs1XTUsZSMyM0tOPmhmMDROIm0rRWYvbSx1TCMyQGtdOkJQZUN0J2RgR3NRSz87Vi5oQyEi" +
+        "bnQ9RlFQOilcSj1ZYVs7K1FdWG0vX1tbUG1zS05gISEiKk1DKigkMWxeJStSRGUkZUdFRiRXYlgsLGlRZUM3R3RMdGZDV1Q8VjtjazA2aVVDIjApRDdVcU1C" +
+        "XzJPPjNUVipFQyleZiI7QC5uRSRqUCM2bDBKPHMmLzZVRVRCI11jSTExZj9maXNrKWlvPjNWJ0ZuYj1bOkhuU0JvciZqc0klcT5UITVNW1drSj1xMmpZLDFz" +
+        "bmtYWk1haklcIjwpZio/SE4ham0sJ2QjOCNHSEExaD9KazVWbC1UMCRUPEcwRkgsdThjXCJSPVtWYC1gUzo+W25XTyNIbkNDX29QWm9mYjJYKWJYYmdVOWhS" +
+        "RCM8cW5RIThOVCpqalMpQHUlQS1QOXMiRXEoO1hJITUrVkYqZG1rUFwjbW9MVVNCLiROdXBTbT1iIm50OWVQYCtJaGVNOnEhV180Z1tGbU5yOjNLTk1eXCZg" +
+        "JEs5dCZbcjowVEJeWkNVOyMuOitfVjJENUZqIk1SRlouQmBtNlRqJ1EzWFR1XFlBR2diYCtGL0xOPD9AK1YrcCZsZGlLM0BkKTE0QiddUiEhNUxcPGs8XDRw" +
+        "NFg7OkBudHNGc2oyW0UsZFZJUkRXPSomOz8kLFhGSVh0XlYmSjVVYW00SCpLZjNhIzVYQjcyZyJsNTc+R3NgVzhIMUliT3JtW3VNMDBNSShcJEEvb2M6Myle" +
+        "NGZFYldubUhXYVtXOTU5Pi1waTBqcUNOUWlWLltfT1UjKnRCT1RfTmBZM09zISEhP0pxKWwwOHFmWk9EcTBPVmY1US5zMF91QlczaG4rKlktKFhlMTRMZXFE" +
+        "JyczUTlvWzZDPExFUyQqM0I5MmE+ZSg2KVRvTDBXLl5TTSRoZ0QyRktqOlpaWGBQNWkycm03ak40RV4mTG4oMkRnYEgnIVVJLzo1OyEqMVVZXCkuS2VpJUMi" +
+        "W2EhIj1kalIxa2VoIlE7XUtacDVdNjViTyxmSTlQTSVfOEpIa3ViXyErJjteJXVQTSNuaTdQUC5wJCZhQk1oWio7SidPPHArQiszNDtlbk1WVkZoQjo3Wms0" +
+        "b2lLdGA/K3RcaFg+IWtmREpjUkNPaWk9UHBZUUNeXSNSbUg3Izw/a1ZKJTZEPklTTDApRSNbcGhkPHBaYUhcTyxlYj40aC1vLnRjOVArNk5wP1sobWdjOkE6" +
+        "KEc4cztwIW0rWzA0JW9ROCo4JmNMVWQmTmJmYlhWTCguKClFbTBuKlxbZjZTUnUmZ1xIMUdLMT48SiZSUVMyX0ZlNUsuW2ZXWk1MLm5kTE5cM1BCNWxEPGs6" +
+        "TlpDMmxGb19SQzpjUVBaNi9mcDVUPHUvaTtzTXU8P2JtMFpeJ1p0RitAJm0+TXFfYV5OaHJWTWsyYlUhVjU3Si9GRDlYSElFUnAuSGdTNW1SUSMvJjhNT10p" +
+        "QzlLaWovSXIxdGApUFxqVyo2VW9iOmdXQ0Q7Mk1KVmJecjlBO0RRIk0lXzhUQFE2OChbVlhYJldsPzRsOFxUTXM5Q2ViRmwpMS9STl5DcXMmUVFjXjNkXlI6" +
+        "SD9zbUxBbkgoKG51YzkxVkdFaWBjcEo9SDUpaCNWZ1Q1IzhDaWttTCYnRE9JXDlJQ0o8QD9QLkJzVmpBOGVGZmVlLk9TKWFIN10nQiQ6ZztjSXRQXSMjTWMm" +
+        "ODAyJEdFMXMrVkJQP1YpTyQ1VTliKjlFR1w8QTo5VlBMInVoZm4yKVBva0pNQEZDckNQcSxwOnA5bWhuN1EoPyUhISM4bWpcUiFcSWYtXVg/aG5FQVIwU0VW" +
+        "NVEiPyNEYkNeZzpkbHFrPE9cOlQ8Ti9rYlhSSU5baj83Y0JeVkYlXkFEIyhYcTwjbWoiJ2Z0RmsyZW0vRUYiVmlyal82NVNZIilZJUxFRkoxJk5ANyEhISFA" +
+        "alxSITRHNCF1dSkmXUVZVlF1Tm5LbD1hKTxxUW5dKTxBVmMmZWJxRFk+MTApM2UtREItMkc2ITw/O2hpLzZKU0NgM00iVDRJQycoQ2MnLVgjQSVXa2JmSWs9" +
+        "ZjwxWjxobyYpXjkyIzBdcXNUZiJrVVVxX0N0WipVR09DXEUlS0hLKlFvTE4+S3JoQVdlWjJhXipCTFE9YkVga248YEluVWRgQCdYcCQ6NjBwOiVmJS9tVlht" +
+        "S2lZPFpbRlxjOD8vbUImNzViWWAzQjkrQ1E3Wm4rWyZOSUlxWVUvNmxka0k4biVOamIoWihHX0whdXFxJWlkUjVpJFcsOitzUz1GY0M/PjhOLTcpMWM6NV5B" +
+        "NTpCSiVAL2ctIVtZcD9NRUNYJSwmc3RMaVAzJWZjaE4uc3UxR2RYYj46NGs5bCRmM2kmOiRBcjJFIVFVPWYqcVMhISZPVVFCbnNmX1pnXS1nOWtddFZiUzg7" +
+        "KztbXHExMWVVYSdsVSFGU2M4OFo1RGMwWXE7YjNoM2NtbkRYW1EnJ2ZXXyVkX25hJlFaK15ZWCVyXiUjUjdPVm0sZGo3QmlldF9lSUl0b1cwZWtEQilgT3Al" +
+        "WihhNT1ZY3Q+TTIvO2RNZyUxMV5oTUA1UmY3Ii4qTU8yT1ZmLGcubzo3WEYnQERXLiU4c1xuJSRzOWlKYnMyLWImJG9sbVxwRiVMQkRaOyUjX2tFYWxrIT0t" +
+        "RHI4ODwpRG04K0xfKldYODRcT3IiRUF1JCpeIlxgSmQhU1AuQSNyU3p6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6" +
+        "enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6eiE2NidDSSFGQVBCZV89c04+amYvPklKP0U6ZikrTUUoISleTVxbbEslTklI" +
+        "WHJxcGojYz9bIV43RnVuVF4kIyxTcCQ6NihGRV1rOWRcVFU7PGlwXThbRl1hIW1UbTs+aC9fVyIiVTUwcy45ISpFWF1oOFdHOS9cXGdjKyw8UEVWM2psIyRQ" +
+        "JiEhJD1XMmBMTCZjVGNAKV1YYVhVSXQuSzloN0BJWFthITksL3JJYCZxPWooO21iUEteSixUJyhrXC9mOi5SWmBxOjdqYCtbQWUtNWdwc0d1TGMiRDZxPl5L" +
+        "cUpEOiJtYjpmdSVcIUMwIy8rcjthMmBXbk9kc1dsUWFGaEEoaGdiK1k+U1l1IkJsai5DQnBXciJyOyNyXDhzTFMyIVdXNG4mR1lPa1k8a1REJTRuYDtXYD8r" +
+        "Zmg3TTpmOClTYCNIZ05dVihkQGBRS0NUc1JrIT9vWEk9ZV5kLXJkNkovTGAtanEkb09ga2JBPD5QNlYqZyE4cXBhL1ImdSUmPjM0WzxpSnUub11YXCxbcis/" +
+        "T2w7VyhVcVRZS2dOdV46dChEZiNUbkRIJzViLD81NktuVWZ1LF5CL0ZIams7SSk2LGYkXjNvYGhUNy1GLk8kOzo0SixkS0coVUxFUWAvSGoka2c1OCsxWzxK" +
+        "aFVSSj1wKURpITdTRCFkUFQ3KDwtQ20jIyghIShxXVtWdCYwWEI3ND1SUGxFOmpJTE1PYWovMj9cJmthVlttbEF0bDBuKUVnYVlFS3I5VytDRFg9bVoxSFZj" +
+        "VEtmZzFgJi5mS2daW1ZrIU5UaHBBb19SbVdYK0srJ24lV2RjZjlcLXQoOjJncFZlNDJCPE5CLkglZnVfMl5fXjplRWkiMFpvI2MpcUthSlApKyRNNl5ELVU9" +
+        "TjpmKjZvZ0soRltuSiJLPWo/W0ZzYTJeRkFtJ0ZgbSpLdDsoSWYrSFA+Y2dvIzhtWWhxWiFJK2lmP1tXNWUjI2hgIi1ObGkhIShyOGAvN2EvODFtdUg+W2gw" +
+        "OnI4cUA3b3AraCFpZiJhMmJqMCpoNlFVP0lYSzNzYUUiZF4icS5CZVBldWk6b1hZPV9QNWstNV81bF5sYnBuQy0yJV1NWWBxOEYuVzMqS2s6UW5jX2ppU2li" +
+        "KURyM0lKW3RQPzxkKjpFcG8xZT1PclVlUTcqTmE7WnFYciFyLnBKcUpQcSxyLGFiJ1FuITpXXjgicT1IX051clouJkhiSk1kYUI8YSxGKkRLOlM3KEdZMCty" +
+        "NWNKSCpRa0cxXDVAVWBnM2Y8NjguJko1XWsnR19IYlpZJUpVbUchW0I0KkpNciVKVDtIRistVylIJFEuNlpkMWZTJ2JxSCUpSHNkdW5gbloqNVAzO2k7bDM1" +
+        "S0osWylTIm5KPVVEOyk/ZzNEbltbbFJiVVdgNV1mIzJ1aSYqcyhWOXJuZlJvNCEuPChPKWBMKU02Qm9aJ0BpcTxWazAwNmdYT0YrRixDOyIyM2pVX0tcOFwt" +
+        "OEVSZVBFN0NSK2wnQnM+Uk5aRWBXJWkzUj06Sl5CM1szYlI9czgubCw1NSpXPVE5UktWbjZra01jMGEkdCIkOmYhQTolWlonMUkiaVc3OCJYNT8ubVNrREw3" +
+        "XV5MRy5oamUpIyFeTCkjOy80QVIrRFZNPSI0LDo3ZU84L0twalQvLEYxcylIOV5dIWsxbGFDKjJHLiU8MEduOXJVISdXb1xwaSJydFovSlRbV04hanAoS1hY" +
+        "IUVUMllyUUtJOXAmXlZMKTYlOFJDcixxMkoqU2gyPmJfJ25URU4xRihkdVlfP0VjWjowKEEtPENSJEVxOlRnQXFLVCs8Iy0+XiguZzchTVxePmU1JFZvZ19a" +
+        "QC81Y0UxVjNiTU8wQylmNkosWyFhLVFkZC9PbzJZJUJrXUc/ZiFLNkFjTWtxTC1gb1RXJWZ1XzJedXBOXFUwSlghb0QhX1ctNzIyYkQ5ZVkzMk9ldGwqWWIy" +
+        "a2pyKXRiVzpGPkRJIWZtUFlbbV1Yb0IkYz1rZD5cNFFuVnMjcCE2OXIuT0cqcDpfPWJOKWhzLSdobj1CZ3FCUElOSzsxcXQ8cVxwVC9TIVBMbz9LRz8rLT9k" +
+        "LyEhKHF1KUUpRTE+VDwuY1tFRnRRO2w8QWo8Wj0vR1lnJGN0YUZiM1g8ZkUjdHJUJy88cD9eSVJuYCVOcFsnWTJTbVRtU1ZyUDNzZCRQaztXZ3BzYUAlNFVh" +
+        "VmZxY2lFKkJTR0c/RzNwbWpaZGhLYmVvMkhNXzhSUUFnU2ZNSUpXMytXYFBnSktuWkEjVlEndUxFdW1HbnJkNnNySkZ1RXFHTC9gbyddSUhOZVNEQSVWWW1F" +
+        "W2o/W2RHWD1rInNiKkZWMHMjJjZcXTZASjdWK0hqdFdjb0pIIzY9ZilpKjNMbVpCWGc3JjhQUjZTIihyJmgwN2EqZkRJNChbJzg2LV1LRFJLUW1kITprX0A/" +
+        "Q0JJW2xTXD9TX3ExPWgnKWRGJFw6VGk4WGZfZGBRPW5NWGEpU3JvL19bOy9pVGJJTV1XZzhmJmJHcVtsc2QpbC02cjhTbSQ+O14zSTlQK3FNKW0sVilxdG0h" +
+        "SEZcO0kuMD9KaSZCJD0ocDZpUFE9LCJSU1dbVShCaCNtbVU5aj9XYkchO01rVVVhNSdVXDVvXzg6KTZNdTowJixFXF4ra0RvQ0FQQWlvQidhR0pWI2xwMDNO" +
+        "ciJuVVpqTSVfYyNNa051MGMmTmYrZzIjckRII1VybS9dcl9FbCkxLnEyXEU9Qmc6aDRHU3VTRS82UVNAMmsiTm1bLSo7U0Q/RypmQyc/UCpWVDpyW0dIMUUn" +
+        "WCEhJURpTyRFV0I+YlxdRGchW3VvUkAwSkNjdCliQVI/dXUjVG4hK0Flc2JYPU5STVI/YihDbzhqUSxCOChLWig7LzJUMzVoQ1ZDaGJfKDFkR3U3RjllZFos" +
+        "IUEkdCY9LFU9ZVlCQUwuQVdXak5qSzM7PltYXXI4OHA+SStucGtScT0jN19eWiRrMExaPFA8XiRScFcqPiVmdV8yXnBnNytoViMjODJzNHRWKlxpISxldWFP" +
+        "QF1JKzQ+NlY8W3Q+cjVgYm8mMCojYkI4YEREUiVsQWc4XUFaXz5OMj9bJ0UpVicmJGl1SG1OLi1DPVFTW0RGYDpzM2NxPWtGTDVmNWIydG9oJ0k4Xjg3Pmhy" +
+        "NCVHLmRqRG1MPSwmLSlcMV4/JmAlcU5sNVZyOm88NTQndHBTb245QUlZQTFROkNgX0JDRmZWb15gSlBCZj10OSxPNVg8LTBSbD5KSj9iQ1ZcZyNqSCtwcV5Q" +
+        "dVlLX15PWT9yKSNkKDY/bVZvQGZVSXVDLy9qbEZPSWpuSWFVbiVBN1BubSVEMD03NUcuWl1hKFdxc00pSSUxPkFNYSwydGIhISEjVkBgSkA0ZUxVR04xLDkz" +
+        "RkVESVZpT21UTCQ0clpAbzw2KCI+Q1hmOltbVlQrLl9mSC5sJU0lJ2dWVGFaJSlEbVE/Rio7YDhaTXFrJylmN00pZyxwYmwpYEdwT1hpQHQlNVEoIjxDVTpn" +
+        "bF51J1Y8YyhWaDxEOENmLWFxR3FtWDFgPVVkLi0vOlhnYnNkUFVVXDxkTnM1bGFiJ1FuITpWUmVwP1lZWlBGX2FRP3JnPG9aQ285RzJPZywqI0V0QDhMQz4l" +
+        "RW88TlRVTj5MJW9vOlllKTk5a2IxLXNYL3BRLUQ1RFMtVCltbXNjay4tVSdgTkFodCM2WF9tcS5tSGArT2JkTSEiJEtZMz1KcUFVQCJuUj86bygiaGJsdEc1" +
+        "S2osWkZVQk05SE0hISVPZjNITz5BRWpdOGRHJjhUN1doKGtJXjNrM3FidFFCN1dZXDVkNyYtaktJSW86Q2NOIWpQLkRQWjskXykiRzM9Y0k2Z1U9TS1ybk1T" +
+        "QCdsNSFaVTJnW09EVmFVQTAkTFlGbTk4Z3NAL1RHQmQrO1NSW3FYLVgzUyYlOTBbdE9yJCRkJ14hISdfWjFHZExmbWlVPm5ENDw6IUZRaClmQWknJkxURWxk" +
+        "Yj5CNWBKJWkyTm9rdS1qMCtYJiMuV011bSUrc14+MmU+bFlINCNGTHMyckIiWFMuLERycmVoUkdRSl9WcVxUPVQ+USpQM1ZsNVZtLzlZM0g1Ji0pXDE1LFVd" +
+        "ISMwSzFWczFLbk9WRzxcXlhDZ3A0aF43SSQ0KlUsQlcpNXE4OVo0NDhyVk9wMTJmSTxOPylMSmpeM1Q+NGg3SWtPL1NlM29vM2MwQkIpMiNaWFZHSGxSJWFH" +
+        "V0xrai4halxERjNoOWwnR3E9YFFdPEtGXitlJWhYYUosXSYzWGtRVT4xZUcvPkduOXJVISdZJmJpNSpQblpOdFp1PDlyO0pZSGxrMFQ2dCtTUjdWWyNxPDop" +
+        "Oj0wR3FzMDQzOV9xb3EoV2thJlYpWj9dN2A1Q1U4WSpAXWw7K2JGLHA4ckEycjAiNT8yJWQhOldLYiRCQl5zTz4uInE6IUImV08rISEhISJEZCMmUGdQUkgo" +
+        "SipkR0o+V1UmMD5YNyInXUhkOEdYSWFiM2VJT1w4WS9oVG4lZmssM2hoUyRQLzV1XmdKYGt1NWRRN2xVSj5Mb01za0o9SztjUkwkWSwtbmNQN3EwNmE1OUUi" +
+        "NFledGRkKEVYYCtaPUhQZ0Jtb1R0MlwiN1slZnVfMlRbNTIraXFEY29CPDlVcUgxUjhDMW5tS05BPkhXZG0rSl5WTUQmNUU6ZylSY0UpV1Y2ZV0vVHFIL2ps" +
+        "Q0ZOW2klalpGckk2YWRhQjYtOFxRNCpLc2VOYT4lPUshRjtmb1s/VCNLblk0MEhoRWA/cjVEYmVuZlJvNCEvY0FAU3A8ZjlHNCIrdFt0LGFmbDA1NTptT19W" +
+        "TGFCbW1SOXEjMVJyVW1ARFEpVXRiMTcrVzhpMEtMZlRrcHJNZ0dZSiptRyMsJS9vLCQpKllhMUVnODc7cyg2WHNTVj1VQT1xRls1OEQ2YW9gJU0kNCFva09L" +
+        "cCczIk1iYyZHX0hVJkZsX1d1YGtpYXQnWTRZIXNIOCEhIzhdRTpEZE9JdCl0MG8oQzBaXk4/aT1uZzlTdFYrUiNTWD1TXlhQb29AP2llXSUpTWU/Wzg9MCNA" +
+        "cj1oZT9gXTVtImpaQFRcSmpYTDAhYjpmbDxdMTtHTWdNYWlERCVkcDEvUWspQDNZKi4zWUVZQj89L1NlNkNScUcnVmkiJERJIVZeKG11IlxOQFVgZWtHZSE8" +
+        "XE5ZakxmU0s2WDYxJnE6U241NGZCJThuZ1MsOWU9IjxnKUE8bGBcJyheOjFzVG1qVHUkYSxbUjkvNi9dTDdSaSxVckMpVltrbHMpLykza1hmbVM2ckIuJnBN" +
+        "JmIuS2hyR09BXk9SdWlfblM9Q1NAaWZcVDZFLishY2UjIlNjTmNPVGI5OidobTlkTk9xRzNpPWIkNUpmJ0VsYT1jRExWMFxHbjlyVSEnXVxqUHExIWldRWpj" +
+        "UDxCPkh1VzZEXU1cJUUjMUhoUHRHQUNbXFtiNGFROElmL2xqP1VgYjMkI1ZWOWYhST5LZ1U9NS0qMS9VIVE8c1k2YWIvP1dEY2NYQGUjI2omYD9rLEtpVkcj" +
+        "US40TkRAOTgmJVM+NXMqJVcpOi1xMDNQU0tmbzs+KUhIQjhKJDUsLmo4c0xtS2lXQkFuMEg+RUssN2FoVSE1TmVxZ1U5aCFPMDpzLiZsWVokXFRkTTZdaE5E" +
+        "I1xnO3JZbEVkP0ZDPUtLXj1BYy1rb1E5RGdeK0lIOWtLXVZWPlE0OUQ6VEM4KjdXOTspQ21fTlFRbmApa0YpcV5JYktlRCk0Rih0YFJlRm0tUiRTJnM6NG4u" +
+        "TVhOYDRyWS5TR3FVODRUXGJmaWNKaWZcVDZFO2JCQyRsTk1xZ2dvaCJTITQwKFNORWJHaWJELlxONWhZTiVzXF1kISEjMyJsLWNFTmYqWVZaWF1rRFpRWDpN" +
+        "Qm5hdShwKSZYOzkiLmhKbEBgKnAwWipDUUZiRWMtY1kjKGdEcG8yS083WkpJZmdlXC0+czgwUzInQnI8QmNjWEJDTS9xRmBGVFZnVllfTERSIXNePTFnQy50" +
+        "SHBbMiZTVmJOWD0ucCZtZEU4Y0RJLjRRRSJFYioxSyk5USMrb110KylcI2I6L0d1L2JWYVhAJlpMcCFiZFAwQVE1bFBFTj5LUzwwbDNscWVhOFU0Ly5tNzpg" +
+        "dUdPT3NfU3JhMFghIShzQzxqLGkzciNEQHNSUGVrLTE4RW9qO0dwQ2w/aGklbEp0XkVja2pzOnJnMm9MV3B1QUE1LT9xIU4qXj4qWUdNJkouSz8hMzJlPmNN" +
+        "IWVWNThmYkE5XWoiOThFJV1caFxjTEM6OVxbMDZeO14mN0hFMUBLXW9nOjs6Jm5sKT1XTHQkVkJtVG1wc1IkIU5ZWSRGLTInVGVXSC08Vzdhaj8raldnOWpU" +
+        "TD4vbC9hYWIuVXVnU0JeTCwxTEJqODYwNGZuZlJvNCE4c0RnRil0RWE9T0YzUTFSW0AzODBZaEpxUSRrQW1HNUNgQyImc1EuWWlcMV1fVV1aUTNXJmAjPCo1" +
+        "OTd1ZVJncUNcUkFNJVYqXTlxJTw7U2FCNlZaaCdoNEslOS86WCtxMCpnOVA7NU1BN1khSU9iNldBMCpSKGhrbGwlRF5yTFYuZlpyJG5mUm80IThxJm8nLDA4" +
+        "UXM4Pi0wcUQ8JEBZWTpIP0pVckJnXzgzLFZdU0xbJnJIOEthLCgkSXFaZl8pSFQ5IyJtL21HY2NmTDgxcjctRGpkYEIrJVlgSl1Kb1NpViIvX0xyNl9nOWhV" +
+        "MTgoODcrVmU0MkJKLCRvJ0IkSGNVSCdeUk4mWk8/LWwycShoUCoxdGpoJzJuIiEhJG1fNkQ+cUIvbTVLdWUiKShQRlIuTiZISlgjQ21kOTksem46N0s6Vl5g" +
+        "cCI1WDwsQidlO0UmLkA7Vj8waTw1RWo1VCZcaCcybiIhISZWXF8kOyYxZG06NkpgRScqRWpsb09WNyo+Nyk2cTBZV3MuL1RZISEhIzNhN1NXRlEnIWFTMFE+" +
+        "OioyNGo0TTlYLyREIzNFQ0VuJUpIWGgnMm4iISEiJnVGNjYvLTlGKHQ0Pi8sTyJWYFAnS2FpcXNrRm1ASkdEbmAydUs0MCJMcSFIaEY0bCVzcSEhISJMbGc8" +
+        "SDljZDA+WVpZK1dySylibE8hISNyMmpNQi00NDZQYmdIRmVfL3o7cVQ5RypCSjo1OWhrOyZtZjM9ZiEhJFYuay8iakteZTBrQXAkVVhfcT08VzA7XFQzM3p6" +
+        "enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6el5eSzhiaksp" +
+        "TGpCI3AmV04+amc6TGtsPEYlLnNGaEIkSGNpXHAjUmBtYllZU2VRNis7KSlKLiJhLFtRQmVMRmUzQ3BASGdfU1gwaTxpdCllRm1FXDRJSjJLQGhxYmhhVmVH" +
+        "NVJOYypeZHE7bXJNXkFSUUZoN0BfQjN0Zi46NCI9Qz1VdENmc3EwaS82SUpgRUAyZklRQ1JAMzwmais8SzVNLS5IO3Ajc2V1Z1U6cyddbUI/TFYrTG1wImM2" +
+        "U19wJDEoY00yO2hOaW9uZGJObjFqYmwtY1MzWCdVLz9bR0pURGY8JjhkPmUrbjdmM09lIkFdL3VbZ3EhJGRFVD1lL2pyPGpmZCM+akMhISVfPD0/dV5zJDQk" +
+        "bktsXSchLGE+Um5oTiNYaXVpUEw5dC40TGtWcCZBdDFyciNcazs+KiVIKmVcZiw1U0dbO25GMURhLycrSDBuYCNUbG5xYVFva05BSWVJZXI8LEs3ZWVmRnNP" +
+        "NkFmXCJoXl02NSZPVTFyKVJXTidnalxDIVBeUyVocyhYQjZXUTVuJnV1Z084dG0pPGNmMEY2Q2hLb2lyYXFMRlFoR0FcSXAlUmouXm5TdWJcWDNwa2I4PTFf" +
+        "WFJEWFFyS10zZydkcCN0VVFSMGIhYj0mNUdQPnIhL09cOGFtNVZSQlg2QWlWXDMhISdnOGtpVF41YDRFPSpzOE0zLFNiJHNcbzhha087UjBoKU5OU0VMQD9V" +
+        "KW9zJ0A3aCU0bitKb11bVThRZlI1Z0pISCxxZlNlK2lIaFcySCJHW0plQERkaSIsIzpEdVVrOGRAP1QqRDdlPlpAbzQkLVpQSnVBMXRxPUVjQlBxJldxXE8x" +
+        "V3IuNE01blVJT2dQV0U/RTcsITlUUydKaUl0UlQ1aDhELC1dZVhrUihOKzkyQnFPOVtBVVdwMC0kNVBLIVdnVTFncGgrQC9bYmNsNlVmJkZaLCluVShNb0FI" +
+        "Y1ddLi1nXEE4RW43Jko1V0cjUEksPDU4TD0zJ0dQWl5sO14/cGE1MWEicT1FY0I8cScnMEkuWWZWJFssYDwldU4+TFVJR1twQkJucjhzMT50NWBxI2QhWF1k" +
+        "Um86OjMxTVAhJDZxaz11ODooXVhQXCk4Z2FIbixDKDxZQCMnJDtgdHBpNnRMIyIySmo/SyhGUmU6SSFsM3IzZHBqSEJQPUAwPiVsTmpoPGBoJDdBUk04altz" +
+        "LHNBcFNlImZzPj5rP1tNTWZDZGlYTCYiS1gkIWw5SWQ8LTJxUiJEaz86QkVVczo4akw/SkBaL0FHLyFmczEhPlM8Q1lUbVgoZWpLcXQmT2ZZMTcwZ0ghZkti" +
+        "W3E3Ui5NKCFsKnBdU1hhdVw7c3A1dWNhZDotWUxhaitoWVpaR1RBP2kjQkFbP0dULW1tYyVpSS01biVKSCpCMWYlNGF1b0lPQHVrMWtjSUdzIlhbZUVuZjNF" +
+        "Q0E5LyFzbTAoZyM2P01yVydocCVaT285RUJgXGMpNlYlbVUhXWV1YC9zbT5LLD4tXz5RbGNJOUZaXTBILGpXaVd1N3FGZCwqOF5rUkxhYitmb0giWUYuZSoi" +
+        "UkdwWVMzP2x1cS0jR0tWU0k5VWRxV2RAcyZvclVhI0o0TjxGKEooZVY3LG4/WEZwJDVERjQ/NyZITSovO24zcFJjMmpIMkNXRk9TYT07ZU9GSnJTcnInL21Q" +
+        "cFVOQW9dIjgmWmdFQ20lb3RRPFM1RSlBRlUwayc4WklTRTdxXChWUiFRSjMib3BqbkFHYHMjbmI7ZnM1MlxrS2VZTmVROVpNbWFiVFxTW11MQihTJ0ghQT5O" +
+        "N1NlUSNbXmIlVEEtPVVCOixURUdLQEdbUG4rS0YlO0hqLFkhX0FCcF0qPSdnL2BMQ1A/aVY5PUtpVkcoLSZOQV1fJzFoYjdvUXQpL0UyLz83TyJpSyIzTVYy" +
+        "ZEtdZVpLdWIpSGBfWFtTLWBSRlQ6JjlRJTJdMkNVYDAuLkFoO2pkMD5HVk1FbU9LQ2U2TWJJZTFuZDcsKF9EOy10LzREQiwvMyxyRDpAZzxNYyonVExUTkJk" +
+        "OidVQ2MjOWBkQCdXOCdbRSNHcV4zPF1tQj5pNCpHRmtCNVlWamM4aydYNmsvK2o5Mmc0YSthQj1CSkg+Z288amQzLHBASFRwP1phW2FNPGctbzAiSWRkTVom" +
+        "ZWJOXTg0XTZkTT5lPSVXciJZUEkrLyYpcjVWSDFVMWVeXS9jKkFdKlgrYUg3XUM1UTE1a2MwIT9FKyw+dSleU0ozNlQ3NEFNM2hMWlZNJUZGTWtKPWR1XGd0" +
+        "K3VMKCwqWUVROSk+IUU1bWsvU2FbMF5GRzNeMnBWP3UybyMvX2ZZRDZLVztTajJWYmByL2xHREJjKSkxWnMuSilKSiE8Xz5NTyN1ZD5fWDIhW1IqaF4kUD4o" +
+        "azhwZC09UEREbDRXVWEocF9FblttNy41dGVxXmskSkNEOyk/R24sOWxuPkpZOVdJL2BzKUFhQ0I6Vy1xK3JfKCxFW29uc1Y4aVYjUT9gLEdMQkhLcUlbViQ/" +
+        "cU5LRyxVcHBrSz4iPjR0c0wqImZAdSJLNidqVFpoLHRVLiRIJUh1ZEJMaDdAYVBYPi01SmJFYV9xZjwvRSRrPyRaSGFzajZZJyl1a1UvQ2pHamJCXCdOUW5i" +
+        "Ik8qSHAoRGk/b3I0XzQ+YycuQmBMLE8kQmRqT21pQ2pNYGdeY0BsPCkqP1VjdTZNW3MtQ3E7biZoPkBrc0EuPDNbYHBxbjJyZU1AMzBaQlVGVUI/Y2xGbigx" +
+        "VV9aXlAxM0cwTGBqUWJXSHBwJ11mLmQlUTQ5KUJcZElJZW1jKHFnXE0xW2k3LzsmP2hoLEJjOVNXUCJZY01vZVVCcm4lU1w5JidtPytdWmEvVFs7Jl5rWyJh" +
+        "RlAuZl1NQl5HQ3FUIyMxT0NSNj5uP2k+dV9pJidnZTNKLFQmbFk/Sz1XQ1RbOUsoTE82bC4xXj0nZDcwTm1nOikhbUFzJUgvXWY0Zmw+QXEzXzdVLEZqSypE" +
+        "ZEJdLGBiRDwqP2U8T25GbE9hTzAsNykkIWNBOSN1VzhaR3Jfam1CdFBEWHRGOCxPWCFCaWxJRHFGYSxbOStbcjEhMm5bZSVoXUBCcWRwJExOLk5dWllXQzIx" +
+        "MzVHMiJUSTVcWU1KTjVdPTNcb2QxaCVtRzcxZDc4LGdwIXRddVsmQ1JXNU4lJW88YFZCLFFTM2pMT1trRW9vI1QnNmdUNSw8VlE2bzdIRlJNUWV1ZFtBPSdT" +
+        "VWQ6YnViMFMzLTJQMU5fQko5OisiNmtWZFA+WSRKWnNzOE1jVVNwVG5zY1RlJmpyTWM7OlxkLUFlTyQzM1gqLUdcImJNTjdyN2lgPjo9W2MlWzs2b3M/bjhQ" +
+        "SVhwWUMmUExYVytwTV50YjZNKCokIV84TGJ1QzJbQS5BZmNtUUdlIS5MZ1QjXik2NjsqSys2aDpTO2pwLnBOPmlbUEIiPE5KJzJMXyZHPDonPWkzSUhvR2Zf" +
+        "ZTRTKjs6MyE8RERkZGRsPFtxczR0TCdzOztPPyJFKkFSR2g9Ll4oJDNBYnIrK2NvWzZDSXJWInVuU10malk8TkFvZjRyI1pIOHIsZyU3NUFsT1dNYz9BR2lP" +
+        "ZGlxcVFdJHJEdVRTWUo6J19hRDpUdD89U3NQNkkzV2JBLyZlSGhuT1knRWI4JmksUnRiT1hQLU10YklAZCxDPjNVN2MuKDREPWdSW0JeMG5kL2AlV3NjXjo3" +
+        "NnImRDYiY0YyQTUyQTpDckhOXVVqJSpfdVAnSTpoWlluQT5oLzFJI1UnVzZwQUJJVFc3dT4wRFA8LDI3MWI0WW89K2lVYGU/aCZlMmtvOmRhYUgwJGFKcD5V" +
+        "dWAva2BbMW5RNCR0bGBAQzYkTlI4NVY8LFBdaDdMXiM0byswJkwiaFkwNFpgT2hENE5iNGM4UzNZPW41dDJNUSljMF5NXlI/TDQkT0RoZ1A3JHJIXU42cHUr" +
+        "V2BhUV8+ZU8laypXbitQTFM/WiE0JDtVdWdtSixUJERIN1NHKlcwLnUwamc8SzM5PVxiamBRcFtPRjZDaCM5PUlwaFxgXVFvb0JqJEVeNVNXR1BJTyRyVS4i" +
+        "LUYycjhkaGszITBsMW9QUz5kdTlmQm5ELzxHTj88bEFnVUQqUCpibSY1L21jMU1vOG1URTgjQihTVCh1QG1IMToxLGNdMmNucEFNZ14lMydjcHAiLSRZOUko" +
+        "MytEbj4yMVo/M19VbV5wTnFeQFRXM0FhJ3MxPUxoJklLM04vczdELi1OWUorMjVuXipzc2xQNCxkJTV1OlFWLVdbVD1ONGdNLGtCUj5aIiIwc2pRYi1mN2tO" +
+        "PSswKDc2b1t1YiwuSSNdJ1w/P2ZuYDImRj5kQWAhU2kuWzEwKkM2I25IMkpjSnVdJDhxKDI6bCkzYG00L15cTGIpLDlmQ1pNcmArYiVuXEkibGFIMlg3azAv" +
+        "SC5JX0M8azFqVCZtZkNTWjM0KmBNJCZiTkJQL3JQM1o2NjZQZDJhNyE1cFs7SiFJOkBUTyFtYFk6LmwjSzpaZDFnPm8wKmc0bGdELi86LFZKUiEycDh0YUZp" +
+        "RywtPTNLRlVJTy1qcypfVyQlbTk+SF1qTCpcXGF0VWgsR241LHFPZGZja0dPciQkTkhZWkgxRCtUPmdUY2ZiSUNeTG1iUDNmPTRKdThRRkU1MkVXNFsnUVgv" +
+        "MEpHTVQ5S0RtW25dPSddcktcRGYrMFNVW0wlZmtuNFNnOikhLXAkWmlvKW9CZCZEbldQZF8xRWJYcHUuRTQ0ckg0bTwrNXBwazA5QXNIXFdkclEpSyEkZVE1" +
+        "ISdcRG5XWG5BMitCZF9pbVRCP20lMVNwTigwOTctJDE4KEIyYkkhTXEvSF88dWJvJi9vRWhrJkoxQUs4QCZYMCZnZjQrSDRDKFd0OUw1NGRzYE83MTshSEto" +
+        "OF8jNFg1UWwiOydgUU5xMEtTL0RSVXJWInUhP09zUSsjSyx1U2dvcChzWiIpY25cLlxAP087TFEzbkRNLllwL2tmJ18uTHJcJ24xWmtdbDguLS07cHI+YlA4" +
+        "RztRUyxDY1wqJ0I1SV85QyhnaT8nNHFaSG9hSmVJV15AYFhILyhOZ2xdYGc/M0k+LW8sMEg/P21AP1toZl5pYUtMRGZGQm5WNC5dLSJNTV5xK2BecVBLPCZI" +
+        "J28qTjxdMF5rIkw5SVRXbWRhZSFrSSk3TTBwP3RZOlpNKzo/Z29dUWw+bmRAIShDWSNUVmwlQm1SQ087XkhMJThVVzphI3FcNFpAOTZwbCUjUyNhYjlDbS5u" +
+        "W0RJdUlhUyUwKkwoVjk+OzgrKlY9VnAkOjVVSWAxYz03aW1MRzJUNU1NaDwpbjVfPElraVN1MEN0a0o3XnUxKFFCdTw7PW03MC1xTyRRM1kyKXJxalhHZV8+" +
+        "I1dyTVdTZ2hMIl8pYEpZT2Y+U1toMEI6YUJcXmpsR1tSbDhOdSNvV1FkN2lzPjdWQnRBXzVPbFoqQ1luNyM1UUJOOTlxK2hLVSVpUT9xNTM8MSFXW0AvWjFI" +
+        "P2peKlRwYG5FJUpHUmwicDMvR2wubCteQGIvWWVwcz03Q0xvYldyaSM/TVRwYmcuT0k2LCpJSS5YZUo7KVFvaXViI0thIyZZNCpQUV5iLy5JOmQoIWA3U29O" +
+        "KTMqZFZLbyJyT0gqaURIOjIoZ00rJy0xdTwzRzIkbFs1NVhcJEEmYG9pZmsyVVFxb0w0WGA0XiQjbl0nWj9cOkV0VGdGZmhQNG5kTVFdMFY2LFhdcjlbWm9S" +
+        "OTlBKCNJJys6ajJsWy0hZm1BcSUvMjAiXjMyVSFlNVVKZFgxWkh1LCU1Iz9VaGRsZCVaXV1aLHBNazwpO0BLaWdCSWIqNnBgPSVNdUI8NkI8c3FXYixaSCZd" +
+        "KDRNNkAoXHJlVV5XPFhJPT1fLkNmVS9SNWdUW0ZcXygwaypRMUgrImkjZGNdcmxvP1RYXjA4Y3BFbV5iN0pdXmB1XG5OL19WNVE/LEZROjlvT2FxXixdP1oi" +
+        "Tig4YjoyUFhqdG4yRjZBWUUkWzNRKUQ6R3EsZHNUSk06N0Ytbj9NZ1VoREhgNnQ0dEQmKzwlXF05clJtcjlPKlV0YF9yLjI/JV9ETiVYJF90P3EyRkVuMD44" +
+        "OnQmQ1AuIyRJN2haMnJCU0dRdURRLTFYN3MpNSEwVDQ+I11AYiJuSCY/blxsPGJeTz5uOUxVMj8rQkhAUzNiby9IUzw3USdlcD9jcD07OT0qZmIsOmtccVVg" +
+        "TF0yMy0sPFxwKlVsaGdQNiFIWztQKlUxY1k3Q2lJS0JRXiI/MEdcbCNZImpdNzFAJFFxY0Vbc2JsaVtsaVdwIypaPTFHLjNfRG5ZZjNZZic8ayg3NytfVyci" +
+        "MW1ATThKZWpqPEcnPG1PIzBuVy5HXkkuR0IsaiRoZ1NzOEFKNGM5OnBXXDYwOT1VOT0uSTssUTtWbikobTBUJG5sdF9bU081ZEBmMko7OStfPisibkFUSThE" +
+        "KldVUk91SDFzLEpUN2BhTS1AM01VTWdOMj05KGZuI2gzcFU9KmdUYjgvbSZxTl1RTnRFaigvR2koRzNta09jImBDSF5dNDwxQ1RrRTBDZmZRdCxEPkI4JW1L" +
+        "Y1I9J2Q+ckIpUjUiKkh0Y0Ryc2gtVzptVW5Ya0tUS19NOWoiTVJyKTN0NG9wMkZVVTMvOVtWYWNdLD1gTmBuSWBQJ0ZtPnMoVkN1WjFUTCJ0TEYmKChZVjVR" +
+        "TFlcUkgzSWxlUWRCOiIqdEhlQzEnVks3c1tMPG5sZyhmc0JeNVFvSyhwYz1YaWdoPSErOWc6KSEtX3R0QDs1ITNTcktGJjw4aEtlOiE6UjNLaGlyQSJyMC5x" +
+        "M2xycVBON2E2aXAlYSQzVjNwYEciYEVVQzBjY0UtR2ksRT0yIVw5JGlZUj9rSlFcbmVeRShYQFhgWkpLVEVJVylUNkgxOkNKMEArYEU/cUFWLG9BRTdwXiFy" +
+        "YENMUWs6dFByLFpgPTZtMDgvclRVQ2VaLi9ZKSlIJFtCOWc3MW07SSFqPSdUYDY9aDRiOmxBLSlEQCRgS09XZFI1YT5rYzU/LTU3TnQsOV9OYURwJ2BBYmgi" +
+        "Q28qaXMkMEVXMF8wXVFvcXByK2BAKiFkY1J0Ol0xJU4qODlFLERuaDsjJmJQREAwN0QpKmYzJTpUVVhtKkpgWiZRXUZdTFYqQS0nPTJeQUN1PUk/aC4yVms4" +
+        "RSFEQWkiYzdFYlxeXl0idE9ZNCouIl9oSlZZKXM9aGNTNUYsRXI4RURRMlY7RGk5Uzg8YGhEalRGXDNZaT5pLVhxK1FQaVQsQV1wQlxrMDFzIVpFdV9SRFZW" +
+        "Yj85VWFeUFpkIklnaFk+QVhtc09gTzJyViE1MmZFIzlQOEkpbWxKaktOOG9xQzBOWjhyMmV0Ym0kSSxGNFJpNCRLIkQ1UUtOJTMqVGE0aEZyXiFzIUkwQyVo" +
+        "ajpbOyVSLV9MciFITCtDOVJJPWhfNSlGYllDPThiXDgndCVyODNvO0Y4a0o8I2snQmNRYG1zTlloNFpRIjxhWE5lYmk7V1dCY1lhOkhCXUUrTUkuUFQzSGBt" +
+        "PDFZZC9wVHJAcWclPl41NF1xc00oN0ktV0AtKjRJcnMnJVpYTktEWSxQSXFEdSdnVThcXVwrYmU2XjUwTjUzOkZOTyQ/b2ZuKlhsciJwIiRXSUBVUnFfak1C" +
+        "cyRRY0ZTNCQ2Ui8zak07XWlCI0kndUtIbiVDbjZFOzNjLlptMFNgNEtLaUlobCVoUD1ONklKO1FjTSk0R3ExPm0hZTdrOixtSCNkLyNWL0tRPyE0QiQiR1Zc" +
+        "NGJDQFU8JkRuYyYwRms5b2NcLSgwZEMiIStjNjcvaVo4ZXVHPl4vXnVUSywjc2JjPGkkWHE1VWlLJVFOQnMyIl8iQTlvXSY8XS5eZTRgLywvZjxTLV9sWlBG" +
+        "JTNQcS9AYURuWWhwVEwiM041ISMnUFBgTGtpcl0iZG9kSUJZPGNebDAnRCkkImZeaE9ZbDVwNFhqOXErJXBvNCs0TyhqXyM8VW9fJl5ITF5KbVEsblU6Tycm" +
+        "OXNuQ09IKWo2ZTVTXyNrMzEwV29dPkxfNT9xSitMb0RNJVI9KkkuPjAiW2NcSDpgZixiTEgzZjZjXlgiPzNpXVl0TSpkWGNEU0hBazc2MkxDKFE3Y0hoZzFk" +
+        "SihOU0NqVlFaKWBrYHVdVC8/OSpcPmVwUi5kY1t1cmFWTStrSWZCUU0kK3FLXFM0I1VGPFVlLWJKcDBAS0FUTT5mK2MxJ10wJ0AuNXVDdFVUQF4hPyE/I0Fh" +
+        "PDY9WyNubEVDRi1ZNDdCZ1xtMzdETTk+YCxaVFEtRF9SLC1xZStbXCQiLlhONSwzSEpmcGsxc2RRWFl0JU1bKTIzZ2MlQDFiYSo0ZTRmTzlPbDxCXjZHWmdo" +
+        "WiRtRnNTTWByJnA1J11NNE9UbiZYSEk/bl4+aWwxRi5jZG80JlFYdFtjITIqKDlHIT5jPyVtTjBvSitWLFlrQTMlZ2JhPF88Om1PNEdkOixfaD9aaUtCJ3Vm" +
+        "QFAoTEQ+MEFeQGQhI083dCRoNEFsUDI8Ul0ocGRNO21vJlJuLVdiOnFKMm07MjNuKGtVIkpjOFUxXycjPUcxO3I3dHBJZilESy4hMS42RGg0S0spY15XI0h0" +
+        "b0FxUkdJMlBCVVFsQFopaHQ0Y25lMGo9OGpPLmMsLV4lNFJXPGwqZj5hTXUsYTltJ0ZtaTU2K0xyJ1VvPUQvUiRaPElKXDhPUzYpaExuJUdjbUM6al02bzNi" +
+        "IkYuM1gya1s8Ym0ncVheR2hFLVRraUxFMVA/XVpJKEFFXzpNRUB1YFByRERRK11ZWSVsWHBhQWVhXDhnUFYiNjZJMi00X0ZtZDVnQltGL2pbcXAscSE6RHI3" +
+        "IiVGZDgnSFpNUkdBb2U6Z2pvVFknSzVySkdxSytIQl0yLj1AVC07QnJJJFdkLyZdKixiNlxuZXM5UF8xPWMhMztEcG8zaCg2SixWNjFBRz1vKGNZaUBKZ01i" +
+        "LExtXy9BT1o8KlZdJXAkJyknKFQrMFgoT2tZNEJVSjFBODopbVcsIUgja2IzNmJGKyxyaWhnS18oLUtSJT1gQ19EQk9wcktzNFBxWDprSjpRcF4lXWdaPlty" +
+        "YU5XWztJY2ptbGdXSVYiVVoxPDQ1MnBPRTJaMDo6biFuPiZYPlJQZWpyMC9bRmlUXTEsYiRBaCdARzFnR25aRUY8MFchYzU9Sz9LVDdoZ1lJaWovJj5ubERb" +
+        "MUBFJmVVQ0gkQUQ9QjlwNyVvUWRbOGBLWkohbDw2PiQ7V1BZPzk5cURQZ2MzY1tMQFwtaF9WbkFEXV9VXVplUXVONz1LaW5OVTpBbGxZSiF1bjEobk1ZZU82" +
+        "PDFTYXJuWlcnJ2p0LyRIbU46SFwwYydydF5gbStKXlhnaCtzLjc0QVZWa2I9IXAiZm9uIztsMzYmaFJuLUg4QD9AS1FLSHREY10tTmg1KjhJPSJUVlpoOSN1" +
+        "WSRVUTdTVzBAZElHZkJiRDhCJiU0L2Mscz06RVYlUlpZKmRaLj0nX2wpZyxwNGpfcks/cjU1SWtuKmQsYFdXRGhoVUImQSUyYy5PWklwanRhL2t0Z0NtLE9u" +
+        "Nio7KTpFQFFYNHVQXVFpKS1TQlpyNkswZXRfXWViV2UyLzRzcnFYZGM/JiwsPkAwNWQhUUgtdFo1NTxmJHRAPkQ9LmZlUkdQbUBWLEAvNyNpL14lS3QiWEpL" +
+        "KCtCJ0JzXSEzZzJlL0lyJz9ENzxmYGklclxBUEB1WGhpNHVrPScyTF9maFRDYyFLOVtzYVsvPHFVbDpJMEVjVENVLlxFNU1VYG1nZzA4Zm8qc2JydGdWJzYh" +
+        "PW9gdUw7TGciVUdbKlQmbFo9NzFpWGowTChba2gza0QoQT9eQiszKF5aRzFwWGpSaF9DdFZiTldyTzAqYEwrYnMkMTU1T28vKkRiZ0wkU0k1QzotWT1ENExT" +
+        "JmFxWGs0WUJfcGtcRG0kTSE+NEdjazNwRUhJZ0phcDtPaThpTmlVWyRMNVtARTIqX11mbUE1QFhRaEwiXzE9MTRZXEZYbGtUcSpqRF1hcVtpWXJpMGMsVXJl" +
+        "ODxWYmBAaGhLNzRAaXNGYic8VSVEclkxW2EuclNtRkZeZlc9SnBcUy4lQ0Eka21ZRWxFNDc+aHJbcTlPUE5KK0NEXCsyZz46bC1sUGBES2psVWExL1EiSWVZ" +
+        "KHU5c0p0X2BOUWEzYDFnMSozQDQqZW1jVkYpLUFUOiFBaEUmYE8sb1htZFxUVU5RNkEjZV1DKjdNaigiLTVbZFh1ZzIzRSwoWkEudG8hISUuRWFhI1JGTUtK" +
+        "OkEzRjtFaWtGUD5SM1RROGhpV2IvWkhLYGVSOT9VPVw7MGZCZGBLWlwnbDw2PmJubUhGYDVtSl1OWS91JyUnZzRcSVxEclVabzZiYmZNRFxlV0o4Z09FKyJh" +
+        "OzJtQzF0Wm4oMGMia2JFTmJrS2ZkWFtWYWQvRUprU2EtOzllJ2UvSDVNaDRbMmtbRlxfSHJvKlw5VC0mOF1nKV0jXiw9XVZCaklBMylLS001MGV1XFdoTipm" +
+        "VmZbanBJVCx0ak9MIzVsLjVxV2VNQlo+ZWQ+L1tzTGo/Nm5FdEowMDc4QEBLL2xpZywjaXA5ITlVZ0JHZmgxRkpkU0llMWZDWUwmLixKQF9FNzRMY1NOM3BG" +
+        "P09nKzFRWXFYaiQvVGIiX1htMkUtRVdwUClnXVFxRE0la21pJEhhLmsjNkgsMVojTz4+UC5KKUswbiVQOiRraj9jbWEzOXItJGhQRkFvP1REVk4xQUAtPTds" +
+        "IVw6YGNdMWAkKGVFSEtxS1U1UT8sPVpjLkBtclYocEslOCZfYVJkXUBTTiUlXSYsYzZrODRuUydsbiRDPigvJWpnMmppYTlCbERhNC1dMnBSIWtKN11PaWdB" +
+        "RSlBXXBVUXA4U2pOSWYrJEY1NVhdMWg1NWlmKGtncUY/NjQ1UiVnSFs8SCJMPCZMZj5OWmtBMSJbVms6dFE+M2wuWHBobkMnMms0NG9EUmEtMVo8KzU5QWMx" +
+        "WzlnWClXXWo0LkZcamN1KjgoQkNcZmVLYlpbTXBJRCg0MyExazU/PSIzbzZAZE5tRzVCdSNSSm5WOiZGZVFZSlhyOmlsLWk9YmFCK3NxKnBEZElKMj8sR05t" +
+        "UFBDQF5lM0pRLSVFYFRGdUQnaVQsb1hBZWVmYl8qYTE7NTRhXUxMcEFXbWlTdUxgZihlbUlmIXRRKTA9dWQlOV9yXFgwOnNCWF1uZD5iJzElYkVlZC5SbzNi" +
+        "JVcySm5JOGxEU1tUKy0tN3A1NUFhKkpkJWsrNz5ocTByOi5nZzRSdSNLMy9RQk5fLnAkUVE9ZEBgN2ohLjkmSUdLcjNGcDZuS2pUPClqZjYhN25uKEUuO2w8" +
+        "QyhvP0tGWTU1T0tdTlEhamY1NXQ/O25aUnM7cnFNWSM2QjwwTmltMCxDcl47Q2VvJipTVkk/alNWK0NnXFhLM3MqJ0FfPnN1Yi88MWFvP0I0TEsvam5kNVEx" +
+        "NFE4Q1FWPU49LzZkaWQ2cXVpNHNuKF0sYFk7OEJ1WEhoVk5WSj8uPzwkW2I1OFxBT0VJLEI0Ik1vIXMjQmZSY006LUE7PkYibWJQS2ZcJTI0ZENaPz9AbCc0" +
+        "Q0I8aGJ0TWpNQUUrOlxtMmAsM3VNTzFeWj8sPS8hTyxHNEslRzY1WStGaUoxQDdsYWMyTU1vVSZuNihBMldvXVslaC5YTS9vb0tyODFdKmEqOGRAZGovXDA+" +
+        "X2RkWXEwTSYkR1w9QiMqYUlUPmw/V20/ZDotP1MxSFdNJV84VmJQKDtVMV09VFpeb0Y+ZkgjVkhCQVZqSnI/QDs6Xmx0NTp0TkQjNGhRVVc6bEArZ0k7QDMy" +
+        "S3BvYjxZcks5N0JLLUpuNUFYUk5pJFByTG5rP2xuW11UdTZacWosNypzZ3BxSjo0blIrTDxuRyQzcEYwJTw8OyNrNT0ncFkwUmVddDxbVmAnbmRePVRvTVxh" +
+        "OkBbbUY9bCR1QWdeKlhrMVo3U1RrZldvVXUyXkMxXjxJOGRZW0U2XihCXUpzOFJbQEBKXzRuZE5RZnMsJi1WSSgpPT07QkA/JWdJNzhJPFhJNl4zP0A3Y18j" +
+        "Xjc3Mk5ARmQzP2c9OVk1SzhjOGsnWFwpMllIXmo4WiFLQjRcXmsnPTBgZTVMMCkkcE9PT1VWZFInWFFuM1ghXUpcPUs0MlpQL1FvQlRmKE1AbyRLXSojazw4" +
+        "UnBGMlNZXGpHWVxkS0hxRDtsOlcwYDI4bShZJW1Ecl9GOVQkZGVaKy0hclwocVI2Sk9xOyY9QmZMM2llIzQrZCNZOUBuRHJVI0Q7IVFMTShQVC5bMTA+cjAi" +
+        "Y2k0bls8OmMnaFowQDxNIm5xMS9ibC4sOCREay8hLyJSbDUsUD1gRChJZXVTIm1NPyhIbFRaKWcqNU91bD8raG0/Vm8/TmhBWjpWUypEcU06JmJFYV9JQz9Y" +
+        "QlpsZ2AiO0osVCZsXlxkSDJzK0E7P18wWE9zM0hPPVcycjJ1YT0wSmE4aFJbanFlcjpTKkM+UVchTClZJF9VSVVDOmNUY3AtVWUqdWFNOCpmbUpJYXM+QC5g" +
+        "WzErXjV0M2kuNG10KzBNRy1fNGc0Vz0/Q1pqJ186aEFUZ0wyJ1NtN1MsIT5bOm1HbFJhOiVpQCFuPklTS1kldTdZLGVlUWNnW1ZhZCdwPjNLMD9adCs2ajJS" +
+        "KVVuXSlfZV4rTy5RSHNWJFFGaz1fX1Q9ay1yZ1VEK1k1KCRccWxyXFclWzVab2BlLEIkdUorMkM0aVA4UksyJCphWHp6enp6enp6enp6enp6enp6enp6enp6" +
+        "enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6" +
+        "enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6" +
+        "enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6eno6YT51TkxDRUx1fj5lbmRzdHJlYW0KZW5kb2JqCjQgMCBvYmoK" +
+        "PDwKL0NvbnRlbnRzIDggMCBSIC9NZWRpYUJveCBbIDAgMCA2MDAgNDAwIF0gL1BhcmVudCA3IDAgUiAvUmVzb3VyY2VzIDw8Ci9Gb250IDEgMCBSIC9Qcm9j" +
+        "U2V0IFsgL1BERiAvVGV4dCAvSW1hZ2VCIC9JbWFnZUMgL0ltYWdlSSBdIC9YT2JqZWN0IDw8Ci9Gb3JtWG9iLjk0Mzk3YmQ4YWI0ZWNmNzY3YjE5OGMyZDZi" +
+        "M2UyYjJiIDMgMCBSCj4+Cj4+IC9Sb3RhdGUgMCAvVHJhbnMgPDwKCj4+IAogIC9UeXBlIC9QYWdlCj4+CmVuZG9iago1IDAgb2JqCjw8Ci9QYWdlTW9kZSAv" +
+        "VXNlTm9uZSAvUGFnZXMgNyAwIFIgL1R5cGUgL0NhdGFsb2cKPj4KZW5kb2JqCjYgMCBvYmoKPDwKL0F1dGhvciAoYW5vbnltb3VzKSAvQ3JlYXRpb25EYXRl" +
+        "IChEOjIwMDAwMTAxMDAwMDAwKzAwJzAwJykgL0NyZWF0b3IgKGFub255bW91cykgL0tleXdvcmRzICgpIC9Nb2REYXRlIChEOjIwMDAwMTAxMDAwMDAwKzAw" +
+        "JzAwJykgL1Byb2R1Y2VyIChSZXBvcnRMYWIgUERGIExpYnJhcnkgLSBcKG9wZW5zb3VyY2VcKSkgCiAgL1N1YmplY3QgKHVuc3BlY2lmaWVkKSAvVGl0bGUg" +
+        "KHVudGl0bGVkKSAvVHJhcHBlZCAvRmFsc2UKPj4KZW5kb2JqCjcgMCBvYmoKPDwKL0NvdW50IDEgL0tpZHMgWyA0IDAgUiBdIC9UeXBlIC9QYWdlcwo+Pgpl" +
+        "bmRvYmoKOCAwIG9iago8PAovRmlsdGVyIFsgL0FTQ0lJODVEZWNvZGUgL0ZsYXRlRGVjb2RlIF0gL0xlbmd0aCAxMjcKPj4Kc3RyZWFtCkdhcEBDMGFgRmIm" +
+        "LVZsV2BQK1RZYWNWcmtlQjE2T0BJJEFMNkk+YEtNVEVTLDFDV2xsVDV0JjBLUV5oLzc2ODk1I2giWWRkNylvWm11a0dyOmNtND5YQXRgPC9kQy5EOiQnSC9u" +
+        "M0snWGckVzImQEZaaV44ZGcxazIob2lcfj5lbmRzdHJlYW0KZW5kb2JqCnhyZWYKMCA5CjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDA2MSAwMDAwMCBu" +
+        "IAowMDAwMDAwMDkyIDAwMDAwIG4gCjAwMDAwMDAxOTkgMDAwMDAgbiAKMDAwMDAzMTEzMiAwMDAwMCBuIAowMDAwMDMxMzg4IDAwMDAwIG4gCjAwMDAwMzE0" +
+        "NTYgMDAwMDAgbiAKMDAwMDAzMTcxNyAwMDAwMCBuIAowMDAwMDMxNzc2IDAwMDAwIG4gCnRyYWlsZXIKPDwKL0lEIApbPDFjMTc4MTk4ZmJkZmE1MWIyNTk5" +
+        "NWQ4OWQ0MTAyMDQzPjwxYzE3ODE5OGZiZGZhNTFiMjU5OTVkODlkNDEwMjA0Mz5dCiUgUmVwb3J0TGFiIGdlbmVyYXRlZCBQREYgZG9jdW1lbnQgLS0gZGln" +
+        "ZXN0IChvcGVuc291cmNlKQoKL0luZm8gNiAwIFIKL1Jvb3QgNSAwIFIKL1NpemUgOQo+PgpzdGFydHhyZWYKMzE5OTMKJSVFT0YK");
+
+static async Task M3d1RealRecognition(string extension, string encoded)
+{
+    using var setup = new TestContext();
+    string path = Path.Combine(setup.Workspace, "real-ocr." + extension);
+    File.WriteAllBytes(path, Convert.FromBase64String(encoded));
+    string hash = M3bHash(path);
+    var tool = new OcrReadTool(new WorkspacePathResolver(setup.Workspace));
+    var receipt = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new {path, page = 1, languageTag = "en"}), default);
+    Assert(receipt.Success, "Real OCR failed: " + receipt.ErrorCode + " " + receipt.Summary + " " + receipt.Data.GetRawText());
+    string text = receipt.Data.GetProperty("text").GetString() ?? "";
+    Assert(receipt.Data.GetProperty("backend").GetString() == "rapidocr-cpu" &&
+        text.Contains("Inventory", StringComparison.OrdinalIgnoreCase) &&
+        text.Contains("chairs", StringComparison.OrdinalIgnoreCase) &&
+        text.Contains("24", StringComparison.Ordinal) && text.Contains("4827", StringComparison.Ordinal),
+        "Real CPU OCR did not recognize expected inventory fields: " + text);
+    Assert(!receipt.ChangedState && M3bHash(path) == hash &&
+        receipt.Data.GetProperty("sourceSha256").GetString() == hash, "Real OCR changed the source.");
+}
+
+static async Task M3d1Diagnostic()
+{
+    using var setup = new TestContext();
+    string path = M3cFixture(setup);
+    var tool = new OcrReadTool(new WorkspacePathResolver(setup.Workspace), (_, _, _, _) =>
+        Task.FromResult(new OcrPageResult(false, "OCR_BACKENDS_FAILED", "", "", 0, 0, 0)
+            { Backend = "rapidocr-cpu + windows-ocr", Diagnostic = "RapidOCR: OCR_CPU_FAILED; Windows: OCR_INVALID_RESULT" }));
+    var receipt = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new {path}), default);
+    Assert(!receipt.Success && !receipt.ChangedState && receipt.ErrorCode == "OCR_BACKENDS_FAILED" &&
+        receipt.Data.GetProperty("diagnostic").GetString()!.Contains("OCR_INVALID_RESULT", StringComparison.Ordinal),
+        "Both backend failures must be visible without inventing text.");
+}
+
+static VisionProvider M3eProvider() => new(new Uri("https://vision.example/v1/"), "visual-test", () => "test-vision-key");
+
+static string M3eImage(TestContext setup)
+{
+    string path = Path.Combine(setup.Workspace, "vision.png");
+    File.WriteAllBytes(path, Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAoAAAAGkCAIAAAAuegPJAAAIGElEQVR42u3bzU3zWhSGUYzSARINOBN3kTpojA5oKZO4gTSxmSIxCQh8ft61RndwpWvvbx89Pl90l6p6AgCO9WwEACDAACDAAIAAA4AAAwACDAACDAAIMAAIMAAgwAAgwAAgwACAAAOAAAMAAgwAAgwACDAACDAAIMAAIMAAIMAAgAADgAADAAIMAAIMAAgwAAgwACDAACDAACDAAIAAA4AAAwACDAACDAAIMAAIMAAgwAAgwAAgwACAAAOAAAMAAgwAAgwACDAACDAAIMAAIMAAIMAAgAADwKxORtCh27o98q+d96tZ2Q27gd0Y1FJVpjDQ4XGo7IbdwG4IMI0Pj0NlN+yG3bAbAkwXR8hxsht2w27YDQGm2RFynOyG3bAbdkOAaXaEHCe7YTfsht0QYEdo6+ExHCe7YTfsht3oh/8POOUUdfUk2A3sBgKctbvOkj8Lu2E37EYn/BV06Mr6ayW7YTfsht1wA3aKPKHd8ITYDQEmZkedJTO3G2ZuNwTYKfK0dsPT2g1PK8Ak7aWzZM52w5zthgA7RZ7cbnhyu+HJBZikXXSWzNZumK3dEGAAEGBiPgN9zJqq3TBVuyHA9s+7mKd3sRveRYBJ2jxnySTthkl6IwEGAAEm5qPPx6wZ2g0z9F4CDAACTMznno9Z07MbpuftBBgABJiYDz0fs+ZmN8zNOwowAAiwz9iYTzwfsybmTU3MmwowAAgwACDAACDAk0v7ecPPOWblfc3K+wowAAgwACDAACDA08r8YcPPOabkrU3JWwswAAgwACDAACDAAIAAA4AAAwACDAACDAACDAAIMAAIMAAgwAAgwNM671dvjSnZDVPy1gIMAAIMAAgwAAjwPNJ+2PBDjll5X7PyvgIMAAIMAAgwAAjw5HJ+3vBDjol5UxPzpgIMAALsYzbgE89nrLnZDXPzjgIMAAJMwIeez1jTsxum5+0EGAAEmIDPPZ+xZmg3zNB7CTAACDABH30+Y03SbpikNxJgm+ddzNO72A3vIsDMvn9OkanaDVO1GwIMAAJMwGegz1iztRtmazcE2C56crvhye2GJxdgZt9Ip8ic7YY52w0BdpY8rd3wtHbD0wows2+nU2TmdsPM7YYAO0ue0G54QrthN7IsVWUK/+e2bo4QdgO7gRtw+tY6Rf4s7IbdsBsC7Cw5RXbDbmA3cvkr6OM0/GslR8hu2A27YTcE2HHaHCHsBnYDAZ72ODlCdsNu2A27IcAcepwcIbthN+yG3RBgDjpUDo/dsBt2w24IMAcdKofHbtgN7IYAAwA/4P8DBgABBgABBgAEGAAEGAAQYAAQYABAgAFAgAEAAQYAAQYAAQYABBgABBgAEGAAEGAAQIABQIABAAEGAAEGAAEGAAQYAAQYABBgABBgAECAAUCAAQABBgABBgABBgAEGAAEGAAQYAAQYABAgAFAgAEAAQYAAQYAAQYABBgABBgAEGAAEGAAQIABQIABAAEGAAEGAAEGAAQYAAQYABBgABjayQj4nde33RC+un+shmA37AZuwAAgwACAAAOAAAOAAAMAAgwAAgwACDAACDAAIMAAIMAAgAADgAADgAADAAIMAAIMAAgwAAgwACDAACDAAIAAA4AAA4AAAwACDAACDAAIMAAIMAAgwAAgwACAAAOAAAOAAAMAAgwAAgwACDAACDAAIMAAIMAAgAADgAADgAADAAIMAAIMAAgwAAgwACDAACDAAIAAA4AAAwACDAACDAACDAAIMAAIMAAgwAAgwACAAAOAAAMAAgwAAgwAAgwACDAACDAAIMAAIMAAgAADgAADAAIMAAIMAAIMAAgwAAgwACDAACDAAIAAA4AAAwACDAACDAACDAAIMAAIMAAgwAAgwACAAAOAAAMAAgwAAgwAAgwACDAACDAA8FeWqjIFAHADBgABBgAEGAAEGAAQYAAQYABAgAFAgAFAgI0AAAQYAAQYABBgABBgAECAAUCAAQABBgABBgAEGAAEGAAEGAAQYAAQYABAgAFAgAEAAQYAAQYABBgABBgABBgYwcv7xRBAgIEG9dVgEGAAQIAh4Pr7/Z8BAQYABBgmvf66BIMAA23qq8EgwACAAEPM9dclGAQYaFNfDQYBBgAEGGKuvy7BIMAAgABDzPXXJRgEGGhTXw0GAQYABBhirr8uwSDAQJv6ajAIMAAgwBBz/XUJBgEGAAQYYq6/LsEgwEDLXmowCDAAIMAQcP11CQYBBlo2UoNBgAFAgIGA669LMAgwAAgwEHP9dQkGAQZaFlGDQYABQICBgOuvSzAIMKjvJfa/DgIMAAgwuP66BIMAAwACDK6/LsEgwMAszdNgEGAAEGAg5rrpEgwCDOrr2UCAAQABBtdfl2AQYABAgMHl0iUYBBgYt2oaDAIMAAIMxFwoXYJBgEF9PTkIMAAgwOAS6flBgAEAAQbXR28BAgzq610AAQYAAQbXX28EAgxolQaDAAOAAAPZ10SXYBBgABBgIOaC6BIMAgzK5E1BgAEAAQaXQu8LAgxq5K0BAQYAAQYXQe8OAgwACDC4ApoACDCgPeYAAgwAAgyufaYBCDDojZmAAAMAAgyueiYDAgwAAgy45JkPCDCoiymBAAMAAgwudmYFw1uqyhQAwA0YAAQYABBgABBgAECAAUCAAQABBgABBgABNgIAEGAAEGAAQIABQIABAAEGAAEGAAQYAAQYABBgABBgABBgAECAAUCAAQABBgABBgAEGAAEGAAQYAAQYAAQYABAgAFAgAEAAQYAAQYAHvEJ3OlUdWoJ+m4AAAAASUVORK5CYII="));
+    return path;
+}
+
+static JsonElement M3eArgs(string path) => JsonSerializer.SerializeToElement(new { path, question = "Count and identify the colored shapes." });
+
+static Task M3eRegistry()
+{
+    using var setup = new TestContext();
+    using var http = new HttpClient();
+    var ordinary = NiraStandardTools.Create(setup.Workspace, setup.Store, http);
+    var enabled = NiraStandardTools.Create(setup.Workspace, setup.Store, http, vision: M3eProvider());
+    Assert(!ordinary.TryGet("vision.analyze", out _) && enabled.TryGet("vision.analyze", out var tool) &&
+        tool is not null && tool.Descriptor.Risk == ToolRisk.ReadExternal && !tool.Descriptor.HasSideEffects &&
+        enabled.TryGet("productivity.ocr_read", out _), "Vision must be opt-in, external read, and retain OCR.");
+    Assert(!enabled.Validate("vision.analyze", "{\"path\":\"a.png\",\"question\":\"What is it?\",\"endpoint\":\"https://evil.example/\"}", out _, out _),
+        "Model must never change the destination.");
+    return Task.CompletedTask;
+}
+
+static Task M3eEndpoint()
+{
+    foreach (string url in new[] { "http://vision.example/v1/", "https://user:pass@vision.example/v1/", "https://vision.example/v1/?key=x", "https://vision.example/v1" })
+    {
+        bool rejected = false;
+        try { _ = new VisionProvider(new Uri(url), "model", () => null); }
+        catch (ArgumentException) { rejected = true; }
+        Assert(rejected, "Unsafe endpoint accepted: " + url);
+    }
+    var local = new VisionProvider(new Uri("http://127.0.0.1:11434/v1/"), "local-model", () => null);
+    Assert(local.Endpoint.AbsoluteUri == "http://127.0.0.1:11434/v1/chat/completions", "Local endpoint incorrect.");
+    return Task.CompletedTask;
+}
+
+static async Task M3eWire()
+{
+    using var setup = new TestContext();
+    string path = M3eImage(setup), hash = M3bHash(path);
+    var handler = new FakeApiHandler("{\"choices\":[{\"message\":{\"content\":\"Three red circles, two blue squares and a green triangle.\"}}]}");
+    using var http = new HttpClient(handler);
+    var tool = new VisionAnalyzeTool(new WorkspacePathResolver(setup.Workspace), http, M3eProvider());
+    ToolReceipt r = await tool.ExecuteAsync(M3eArgs(path), default);
+    Assert(r.Success && !r.ChangedState && handler.Calls == 1, "Image wire operation failed: " + r.Summary);
+    using var doc = JsonDocument.Parse(handler.RequestBody!);
+    JsonElement body = doc.RootElement;
+    JsonElement parts = body.GetProperty("messages")[0].GetProperty("content");
+    string uri = parts[1].GetProperty("image_url").GetProperty("url").GetString()!;
+    const string prefix = "data:image/jpeg;base64,";
+    Assert(uri.StartsWith(prefix, StringComparison.Ordinal) && body.GetProperty("model").GetString() == "visual-test" &&
+        !body.TryGetProperty("tools", out _) && handler.AuthorizationHeader == "Bearer test-vision-key", "Wrong vision protocol.");
+    byte[] sent = Convert.FromBase64String(uri[prefix.Length..]);
+    Assert(sent.Length > 100 && sent[0] == 0xff && sent[1] == 0xd8 &&
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(sent)).ToLowerInvariant() == r.Data.GetProperty("sentImageSha256").GetString(), "Image bytes do not match receipt.");
+    Assert(r.Data.GetProperty("sourceSha256").GetString() == hash && M3bHash(path) == hash &&
+        !r.Data.GetProperty("independentlyVerified").GetBoolean() &&
+        r.Data.GetProperty("analysis").GetString()!.Contains("green triangle", StringComparison.Ordinal), "Source or analysis evidence incorrect.");
+    Assert(!handler.RequestBody!.Contains(path, StringComparison.Ordinal) && !r.Data.GetRawText().Contains("test-vision-key", StringComparison.Ordinal), "Path or credential leaked.");
+}
+
+static async Task M3eDenial()
+{
+    using var setup = new TestContext();
+    var handler = new FakeApiHandler("{}");
+    using var http = new HttpClient(handler);
+    var tool = new VisionAnalyzeTool(new WorkspacePathResolver(setup.Workspace), http, M3eProvider());
+    string path = M3eImage(setup);
+    Assert(tool.GetTarget(M3eArgs(path)).Contains("https://vision.example/v1/chat/completions", StringComparison.Ordinal), "Approval must display destination.");
+    var model = new FakeModel(new ModelReply[] { new(null, [Call("vision-denied", "vision.analyze", new { path, question = "Describe it" })]) });
+    var approvals = new FakeApprovals(false);
+    var engine = new NiraEngine(model, new ToolRegistry([tool]), setup.Store, new WorkspaceAuthority(setup.Workspace));
+    var result = await engine.RunAsync(Guid.NewGuid(), "Describe the image", approvals);
+    Assert(result.Status == ConversationStatus.Paused && approvals.Calls == 1 && handler.Calls == 0, "Denied image transfer occurred.");
+}
+
+static async Task M3eInvalid()
+{
+    using var setup = new TestContext();
+    var handler = new FakeApiHandler("{}");
+    using var http = new HttpClient(handler);
+    var tool = new VisionAnalyzeTool(new WorkspacePathResolver(setup.Workspace), http, M3eProvider());
+    string path = Path.Combine(setup.Workspace, "invalid.png");
+    File.WriteAllText(path, "not an image");
+    var bad = await tool.ExecuteAsync(M3eArgs(path), default);
+    var pdf = await tool.ExecuteAsync(M3eArgs("sample.pdf"), default);
+    Assert(!bad.Success && !pdf.Success && handler.Calls == 0, "Invalid image dispatched.");
+}
+
+static async Task M3eEmpty()
+{
+    using var setup = new TestContext();
+    var handler = new FakeApiHandler("{\"choices\":[{\"message\":{\"content\":\"\"}}]}");
+    using var http = new HttpClient(handler);
+    var tool = new VisionAnalyzeTool(new WorkspacePathResolver(setup.Workspace), http, M3eProvider());
+    var r = await tool.ExecuteAsync(M3eArgs(M3eImage(setup)), default);
+    Assert(!r.Success && r.ErrorCode == "VISION_EMPTY" && handler.Calls == 1, "Empty vision result incorrectly succeeded: " + r.Summary);
+}
+
+static async Task M3eHttpError()
+{
+    using var setup = new TestContext();
+    using var http = new HttpClient(new ModelRejectionHandler("private-response-token"));
+    var tool = new VisionAnalyzeTool(new WorkspacePathResolver(setup.Workspace), http, M3eProvider());
+    var r = await tool.ExecuteAsync(M3eArgs(M3eImage(setup)), default);
+    Assert(!r.Success && r.ErrorCode == "VISION_PROVIDER_HTTP" && !r.Summary.Contains("private-response-token", StringComparison.Ordinal), "HTTP failure leaked or succeeded.");
+}
+
+static async Task M3eAgent()
+{
+    using var setup = new TestContext();
+    string path = M3eImage(setup);
+    var handler = new FakeApiHandler("{\"choices\":[{\"message\":{\"content\":\"Three red circles.\"}}]}");
+    using var http = new HttpClient(handler);
+    var tool = new VisionAnalyzeTool(new WorkspacePathResolver(setup.Workspace), http, M3eProvider());
+    var model = new FakeModel(new ModelReply[] { new(null, [Call("vision-approved", "vision.analyze", new { path, question = "Count circles" })]), new("Three red circles.", []) });
+    var engine = new NiraEngine(model, new ToolRegistry([tool]), setup.Store, new WorkspaceAuthority(setup.Workspace));
+    var approvals = new FakeApprovals(true);
+    Guid id = Guid.NewGuid();
+    var result = await engine.RunAsync(id, "Count the circles", approvals);
+    var saved = await setup.Store.LoadAsync(id, default);
+    Assert(result.Status == ConversationStatus.Completed && approvals.Calls == 1 && handler.Calls == 1 &&
+        saved is not null && saved.Operations.Any(op => op.ToolName == "vision.analyze" && op.Status == OperationStatus.Succeeded && op.ResultJson!.Contains("sentImageSha256", StringComparison.Ordinal)), "Approved vision result did not reach the durable journal.");
+}
+
+internal sealed class FakeDesktopBackend : IDesktopAutomationBackend
+{
+    public int ListCalls, InspectCalls, ActivateCalls, InvokeCalls, SetTextCalls, TypeTextCalls;
+    public bool UnverifiedTypeText, UnverifiedSetText;
+    public string? LastText;
+    private const string Window = "win-demo-0001";
+    private static DesktopWindow Item => new(Window, "Demo editor", "demo", 3000, false, false);
+    public IReadOnlyList<DesktopWindow> ListWindows()
+    { ListCalls++; return new[] { Item }; }
+    public DesktopInspection Inspect(string windowId)
+    {
+        InspectCalls++;
+        if (windowId != Window) throw new DesktopAutomationException("WINDOW_STALE", "window changed");
+        return new DesktopInspection(Item, new DesktopControl[] {
+            new("ctrl-button-01", "Run", "ControlType.Button", "run", true, false, true, false),
+            new("ctrl-edit-001", "Editor", "ControlType.Edit", "editor", true, false, false, true),
+            new("ctrl-doc-01", "Rich editor", "ControlType.Document", "document", true, false,
+                false, false, true)
+        }, false);
+    }
+    public DesktopAction Activate(string windowId)
+    {
+        if (windowId != Window) throw new DesktopAutomationException("WINDOW_STALE", "window changed");
+        ActivateCalls++;
+        return new DesktopAction(true, true, "Observed selected window in foreground", Verified: true);
+    }
+    public DesktopAction Invoke(string windowId, string controlId)
+    {
+        if (windowId != Window || controlId != "ctrl-button-01")
+            throw new DesktopAutomationException("CONTROL_STALE", "control changed");
+        InvokeCalls++;
+        return new DesktopAction(true, true, "Button invocation dispatched; outcome unknown", Verified: false);
+    }
+    public DesktopAction SetText(string windowId, string controlId, string text)
+    {
+        if (windowId != Window || controlId is not ("ctrl-edit-001" or "ctrl-doc-01"))
+            throw new DesktopAutomationException("CONTROL_STALE", "control changed");
+        if (controlId == "ctrl-doc-01")
+            return new DesktopAction(false, false,
+                "Rich editor has TextPattern, not ValuePattern; requires separately approved foreground input.",
+                "CONTROL_REQUIRES_KEYBOARD");
+        SetTextCalls++; LastText = text;
+        return new DesktopAction(true, true, UnverifiedSetText
+            ? "Edit value sent but not verified" : "Text set and verified",
+            Verified: !UnverifiedSetText);
+    }
+    public DesktopAction TypeText(string windowId, string controlId, string text)
+    {
+        if (windowId != Window || controlId != "ctrl-doc-01")
+            throw new DesktopAutomationException("CONTROL_STALE", "control changed");
+        TypeTextCalls++; LastText = text;
+        return new DesktopAction(true, true, UnverifiedTypeText
+            ? "Keyboard input dispatched, actual text differs" : "Approved typing verified",
+            Verified: !UnverifiedTypeText);
+    }
+}
+
 internal sealed class FakeMultipleBrowserCloser : IAgentTool
 {
     public List<string> Ids { get; } = [];
@@ -4378,6 +10070,105 @@ internal sealed class FakeMultipleBrowserCloser : IAgentTool
     }
 }
 
+internal sealed class PlanningTestModel(ModelReply planningDecision, FakeModel execution,
+    ModelReply? planningFallback = null) : IChatModel, IWorkflowPlanningModel
+{
+    public int PlanCalls { get; private set; }
+    public int FallbackCalls { get; private set; }
+    public int FallbackToolCount { get; private set; } = -1;
+    public ToolDescriptor? DecisionTool { get; private set; }
+    public Task<ModelReply> ProposeWorkflowAsync(IReadOnlyList<ChatEntry> messages,
+        ToolDescriptor decisionTool, CancellationToken ct)
+    {
+        PlanCalls++;
+        DecisionTool = decisionTool;
+        return Task.FromResult(planningDecision);
+    }
+    public Task<ModelReply> CompleteAsync(IReadOnlyList<ChatEntry> messages,
+        IReadOnlyList<ToolDescriptor> tools, CancellationToken ct)
+    {
+        if (messages.Count == 2 && messages[0].Role == "system" &&
+            messages[0].Content?.Contains("NIRA PLANNING FALLBACK", StringComparison.Ordinal) == true)
+        {
+            FallbackCalls++;
+            FallbackToolCount = tools.Count;
+            return Task.FromResult(planningFallback ?? new ModelReply("{}", []));
+        }
+        return execution.CompleteAsync(messages, tools, ct);
+    }
+}
+
+/// <summary>Real model transport: invalid native planning, strict tool-free
+/// JSON retry, then a normal structured-tool execution transcript.</summary>
+internal sealed class PlanningRetryWireHandler : HttpMessageHandler
+{
+    public int RequestCount { get; private set; }
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
+        CancellationToken ct)
+    {
+        string body = await request.Content!.ReadAsStringAsync(ct);
+        using JsonDocument parsed = JsonDocument.Parse(body);
+        JsonElement input = parsed.RootElement;
+        JsonElement[] messages = input.GetProperty("messages").EnumerateArray().ToArray();
+        int round = RequestCount++;
+        if (round == 0)
+        {
+            JsonElement[] functions = input.GetProperty("tools").EnumerateArray().ToArray();
+            if (functions.Length != 1 ||
+                functions[0].GetProperty("function").GetProperty("name").GetString() != "nira_decide_workflow" ||
+                messages.Length != 2)
+                throw new InvalidOperationException("Initial planning preflight exposed executor tools");
+            return Answer(new { role="assistant", content="I have an unstructured idea." });
+        }
+        if (round == 1)
+        {
+            if (input.TryGetProperty("tools", out _) || input.TryGetProperty("tool_choice", out _) ||
+                messages.Length != 2 ||
+                messages[0].GetProperty("role").GetString() != "system" ||
+                !messages[0].GetProperty("content").GetString()!.Contains("NIRA PLANNING FALLBACK", StringComparison.Ordinal) ||
+                messages[1].GetProperty("role").GetString() != "user" ||
+                messages.Any(m => m.TryGetProperty("tool_calls", out _) || m.TryGetProperty("tool_call_id", out _)))
+                throw new InvalidOperationException("Planning fallback offered executable tools or provider history");
+            return Answer(new { role="assistant", content=JsonSerializer.Serialize(new {
+                mode="plan",steps=new[] {
+                    new { description="Analyze observation one", successCriterion="First interpretation verified", kind="analysis" },
+                    new { description="Analyze observation two", successCriterion="Second interpretation verified", kind="analysis" }
+                }
+            }) });
+        }
+        if (round == 2 || round == 3)
+        {
+            JsonElement[] functions = input.GetProperty("tools").EnumerateArray().ToArray();
+            if (functions.Any(f => f.GetProperty("function").GetProperty("name").GetString() == "nira_decide_workflow") ||
+                !functions.Any(f => f.GetProperty("function").GetProperty("name").GetString() == "nira_plan_update") ||
+                !messages.Any(m => m.GetProperty("role").GetString() == "system" &&
+                    m.GetProperty("content").GetString()!.Contains("A durable plan was already created automatically", StringComparison.Ordinal)))
+                throw new InvalidOperationException("Execution transcript lost its approved plan or tool isolation");
+            if (round == 3 && !messages.Any(m =>
+                m.GetProperty("role").GetString() == "tool" && m.TryGetProperty("tool_call_id", out _)))
+                throw new InvalidOperationException("Missing first plan-update receipt in provider history");
+            return Answer(new { role="assistant", content=(string?)null,
+                tool_calls=new[] {new { id="update-"+round, type="function", function=new {
+                    name="nira_plan_update",
+                    arguments=JsonSerializer.Serialize(new { index=round-2, status="completed" })
+                }}}
+            });
+        }
+        if (round == 4)
+        {
+            if (messages.Count(m => m.GetProperty("role").GetString() == "tool") < 2)
+                throw new InvalidOperationException("Execution receipts missing before final answer");
+            return Answer(new { role="assistant", content="Both analysis steps are complete." });
+        }
+        throw new InvalidOperationException("Unexpected model request after verified completion");
+    }
+    private static HttpResponseMessage Answer(object message) => new(System.Net.HttpStatusCode.OK) {
+        Content = new StringContent(JsonSerializer.Serialize(new {
+            choices=new[] {new {message}}
+        }), System.Text.Encoding.UTF8, "application/json")
+    };
+}
+
 internal sealed class TestContext : IDisposable
 {
     public string Root { get; } = Path.Combine(Path.GetTempPath(), "nira-kernel-" + Guid.NewGuid().ToString("N"));
@@ -4391,9 +10182,10 @@ internal sealed class TestContext : IDisposable
         Directory.CreateDirectory(Workspace);
         Store = new SqliteConversationStore(Database);
     }
-    public NiraEngine Engine(IChatModel model) => new(model,
-        NiraStandardTools.Create(Workspace, Store, _http), Store,
-        new WorkspaceAuthority(Workspace));
+    public NiraEngine Engine(IChatModel model, IDesktopAutomationBackend? desktop = null, bool routing = false,
+        bool adaptive = false) => new(model,
+        NiraStandardTools.Create(Workspace, Store, _http, desktopBackend: desktop), Store,
+        new WorkspaceAuthority(Workspace), enableCapabilityRouting: routing, enableAdaptivePlanning: adaptive);
     public void Dispose()
     {
         _http.Dispose();
@@ -4426,18 +10218,89 @@ internal sealed class ScriptedApprovals(IEnumerable<bool> outcomes) : IApprovalB
     }
 }
 
+internal sealed class M5bDesktopProgress : IStreamingProgress
+{
+    public void Report(AgentProgress value) { }
+}
+
 internal sealed class FakeModel : IChatModel
 {
     private readonly Queue<ModelReply>? _script;
     private readonly Func<IReadOnlyList<ChatEntry>, ModelReply>? _respond;
+    public List<IReadOnlyList<ToolDescriptor>> ToolSnapshots { get; } = [];
+    public List<IReadOnlyList<ChatEntry>> PromptSnapshots { get; } = [];
     public FakeModel(IEnumerable<ModelReply> replies) { _script = new Queue<ModelReply>(replies); }
     public FakeModel(Func<IReadOnlyList<ChatEntry>, ModelReply> responder) { _respond = responder; }
     public Task<ModelReply> CompleteAsync(IReadOnlyList<ChatEntry> messages,
         IReadOnlyList<ToolDescriptor> tools, CancellationToken ct)
     {
+        ToolSnapshots.Add(tools.ToArray());
+        PromptSnapshots.Add(messages.ToArray());
         if (_respond is not null) return Task.FromResult(_respond(messages));
         if (_script is null || _script.Count == 0) throw new InvalidOperationException("Fake model out of script");
         return Task.FromResult(_script.Dequeue());
+    }
+}
+
+internal sealed class EmptyContextSequenceHandler(bool alwaysEmpty = false) : HttpMessageHandler
+{
+    public List<string> RequestBodies { get; } = [];
+    protected override async Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request, CancellationToken ct)
+    {
+        RequestBodies.Add(request.Content is null ? "" : await request.Content.ReadAsStringAsync(ct));
+        string body = alwaysEmpty || RequestBodies.Count == 1
+            ? "{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":null,\"reasoning_content\":\"private\"}}]}"
+            : "{\"choices\":[{\"message\":{\"content\":\"Recovered visible response\"}}]}";
+        return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
+            Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json")
+        };
+    }
+}
+
+internal sealed class ContextRecoverySequenceHandler(
+    bool alwaysReject = false,
+    string errorBody = "{\"error\":{\"code\":\"context_length_exceeded\"}}")
+    : HttpMessageHandler
+{
+    public List<string> RequestBodies { get; } = [];
+    protected override async Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request, CancellationToken ct)
+    {
+        RequestBodies.Add(request.Content is null ? "" :
+            await request.Content.ReadAsStringAsync(ct));
+        if (alwaysReject || RequestBodies.Count == 1)
+            return new HttpResponseMessage(System.Net.HttpStatusCode.BadRequest) {
+                Content = new StringContent(errorBody, System.Text.Encoding.UTF8, "application/json")
+            };
+        return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
+            Content = new StringContent(
+                "{\"choices\":[{\"message\":{\"content\":\"Recovered normal answer\"}}]}",
+                System.Text.Encoding.UTF8, "application/json")
+        };
+    }
+}
+
+internal sealed class ModelRejectionHandler(string responseBody) : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request, CancellationToken ct) =>
+        Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.BadRequest) {
+            Content = new StringContent(responseBody, System.Text.Encoding.UTF8, "application/json")
+        });
+}
+
+internal sealed class M4b3StreamHandler(string body) : HttpMessageHandler
+{
+    public int Calls { get; private set; }
+    public bool StreamRequested { get; private set; }
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        Calls++;
+        using var json = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+        StreamRequested = json.RootElement.GetProperty("stream").GetBoolean();
+        return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
+            Content = new StringContent(body, System.Text.Encoding.UTF8, "text/event-stream") };
     }
 }
 
@@ -4464,10 +10327,49 @@ internal sealed class FakeApiHandler(string responseBody) : HttpMessageHandler
 /// matching tool_call_id transcript, workspace writes, reads and hash results.
 /// This is a deterministic wire-protocol integration test, not a live Ollama test.
 /// </summary>
+// Planning is an isolated, non-executing HTTP turn. Existing wire-pipeline tests
+// must acknowledge it without counting it as an ordinary tool invocation.
+// This also verifies that the preflight advertises NO executable operations.
+internal static class WirePlanningPreflight
+{
+    public static HttpResponseMessage? AnswerIfRequested(JsonElement request)
+    {
+        if (!request.TryGetProperty("tools", out JsonElement tools) ||
+            tools.ValueKind != JsonValueKind.Array || tools.GetArrayLength() != 1 ||
+            tools[0].GetProperty("function").GetProperty("name").GetString() != "nira_decide_workflow")
+            return null;
+
+        JsonElement[] messages = request.GetProperty("messages").EnumerateArray().ToArray();
+        if (messages.Length != 2 ||
+            messages[0].GetProperty("role").GetString() != "system" ||
+            messages[1].GetProperty("role").GetString() != "user" ||
+            messages.Any(entry => entry.TryGetProperty("tool_calls", out _) ||
+                entry.GetProperty("role").GetString() == "tool"))
+            throw new InvalidOperationException("Planning request leaked an executable transcript");
+        if (!tools[0].GetProperty("function").GetProperty("parameters")
+                .GetProperty("properties").TryGetProperty("mode", out _))
+            throw new InvalidOperationException("Planning decision schema is missing");
+
+        // The legacy wire tests are about executable-tool transcripts. The
+        // dedicated auto-planning tests separately exercise nontrivial plans.
+        string response = JsonSerializer.Serialize(new { choices = new[] { new { message = new {
+            role = "assistant", content = (string?)null,
+            tool_calls = new[] { new { id = "wire-plan-only", type = "function",
+                function = new { name = "nira_decide_workflow",
+                    arguments = JsonSerializer.Serialize(new { mode = "direct",
+                        steps = Array.Empty<object>() }) } } }
+        } } } });
+        return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
+            Content = new StringContent(response, System.Text.Encoding.UTF8, "application/json")
+        };
+    }
+}
+
 internal sealed class WireToolPipelineHandler(string workspace) : HttpMessageHandler
 {
     public const string FileName = "wire-created.txt";
     public const string FileContent = "NIRA_TOOL_PIPELINE_CONFIRMED";
+    public int PlanningRequests { get; private set; }
     public int RequestCount { get; private set; }
     public bool ReadbackSeen { get; private set; }
     public bool HashSeen { get; private set; }
@@ -4479,6 +10381,8 @@ internal sealed class WireToolPipelineHandler(string workspace) : HttpMessageHan
         if (request.Headers.Authorization?.ToString() != "Bearer wire-test-key")
             throw new InvalidOperationException("Wire request lost the Bearer header");
         using var json = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+        HttpResponseMessage? planning = WirePlanningPreflight.AnswerIfRequested(json.RootElement);
+        if (planning is not null) { PlanningRequests++; return planning; }
         JsonElement root = json.RootElement;
         var wire = root.GetProperty("messages").EnumerateArray().ToArray();
         int step = RequestCount++;
@@ -4547,6 +10451,7 @@ internal sealed class WireToolPipelineHandler(string workspace) : HttpMessageHan
 
 internal sealed class WireEditPipelineHandler(string path) : HttpMessageHandler
 {
+    public int PlanningRequests { get; private set; }
     public int Rounds { get; private set; }
     public bool ReadbackVerified { get; private set; }
     private string? _hash;
@@ -4558,6 +10463,8 @@ internal sealed class WireEditPipelineHandler(string path) : HttpMessageHandler
         if (request.Headers.Authorization?.ToString() != "Bearer integration-key")
             throw new InvalidOperationException("Authorization header lost in edit wire test");
         using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+        HttpResponseMessage? planning = WirePlanningPreflight.AnswerIfRequested(body.RootElement);
+        if (planning is not null) { PlanningRequests++; return planning; }
         JsonElement[] messages = body.RootElement.GetProperty("messages").EnumerateArray().ToArray();
         int round = Rounds++;
         JsonElement[] tools = messages.Where(m => m.GetProperty("role").GetString() == "tool").ToArray();
@@ -4609,6 +10516,7 @@ internal sealed class WireEditPipelineHandler(string path) : HttpMessageHandler
 
 internal sealed class WirePermissionGateHandler : HttpMessageHandler
 {
+    public int PlanningRequests { get; private set; }
     public int Rounds { get; private set; }
     public bool HostDenialObserved { get; private set; }
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
@@ -4617,6 +10525,8 @@ internal sealed class WirePermissionGateHandler : HttpMessageHandler
         if (request.Headers.Authorization?.ToString() != "Bearer wire-auth")
             throw new InvalidOperationException("Wire gate request lost model credential");
         using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+        HttpResponseMessage? planning = WirePlanningPreflight.AnswerIfRequested(body.RootElement);
+        if (planning is not null) { PlanningRequests++; return planning; }
         JsonElement[] entries = body.RootElement.GetProperty("messages").EnumerateArray().ToArray();
         int turn = Rounds++;
         JsonElement[] receipts = entries.Where(x => x.GetProperty("role").GetString() == "tool").ToArray();
@@ -4678,6 +10588,7 @@ internal sealed class FakeBrowserReader : IBrowserPageReader
 
 internal sealed class BrowserWireHandler : HttpMessageHandler
 {
+    public int PlanningRequests { get; private set; }
     public int Rounds { get; private set; }
     public bool ObservedReceipt { get; private set; }
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
@@ -4686,6 +10597,8 @@ internal sealed class BrowserWireHandler : HttpMessageHandler
         if (request.Headers.Authorization?.ToString() != "Bearer wire-browser-key")
             throw new InvalidOperationException("Browser wire tool lost model API authorization");
         using var document = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+        HttpResponseMessage? planning = WirePlanningPreflight.AnswerIfRequested(document.RootElement);
+        if (planning is not null) { PlanningRequests++; return planning; }
         int step = Rounds++;
         JsonElement[] wire = document.RootElement.GetProperty("messages").EnumerateArray().ToArray();
         if (step == 1)
@@ -4732,6 +10645,7 @@ internal sealed class BrowserJourneyReader : IBrowserPageReader
 
 internal sealed class BrowserLinkWireHandler : HttpMessageHandler
 {
+    public int PlanningRequests { get; private set; }
     public int Rounds { get; private set; }
     public bool ObservedReceipt { get; private set; }
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
@@ -4740,6 +10654,8 @@ internal sealed class BrowserLinkWireHandler : HttpMessageHandler
         if (request.Headers.Authorization?.ToString()!="Bearer wire-link-key")
             throw new InvalidOperationException("Link wire authorization header not forwarded");
         using var requestJson=JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+        HttpResponseMessage? planning = WirePlanningPreflight.AnswerIfRequested(requestJson.RootElement);
+        if (planning is not null) { PlanningRequests++; return planning; }
         JsonElement[] entries=requestJson.RootElement.GetProperty("messages").EnumerateArray().ToArray();
         int round=Rounds++;
         if (round==1)
@@ -4773,6 +10689,8 @@ internal sealed class FakePublicBrowserSessions : IPublicBrowserSessions
     public int InspectCalls { get; private set; }
     public int PageControlInspectCalls { get; private set; }
     public int PageLinkInspectCalls { get; private set; }
+    public int PageTextInspectCalls { get; private set; }
+    public string PublicVisibleText { get; set; } = new string('X',10000) + "LATE ARTICLE PARAGRAPH";
     public bool LaterLinkChangedHref { get; set; }
     public bool LaterLinkSameNameDifferentHref { get; set; }
     public bool LaterLinkExactDuplicate { get; set; }
@@ -4910,6 +10828,16 @@ internal sealed class FakePublicBrowserSessions : IPublicBrowserSessions
     private BrowserLink LaterLink() => new("Developer guide",
         LaterLinkChangedHref ? "https://www.example.com/changed" : "https://www.example.com/guide",
         "Developer guide");
+    public Task<BrowserSessionVisibleTextPageObservation> InspectVisibleTextAsync(
+        string id, int pageNumber, CancellationToken ct)
+    {
+        _=BrowserVisibleTextPagination.OffsetForPage(pageNumber);
+        if(Closed || id!=Id) throw new InvalidOperationException("Session closed");
+        PageTextInspectCalls++;
+        return Task.FromResult(BrowserVisibleTextPagination.Slice(id,Current,
+            "Example",PublicVisibleText,pageNumber));
+    }
+
     public Task<BrowserSessionLinkPageObservation> InspectLinksAsync(string id,
         int pageNumber, CancellationToken ct)
     {

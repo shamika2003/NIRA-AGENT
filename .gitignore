@@ -19,3 +19,5 @@ artifacts/
 NIRA_AGENT_FULL_CODE.md
 .nira-source-*.tmp
 .nira-source-*.bak
+
+*_wpftmp.csproj

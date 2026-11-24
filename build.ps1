@@ -18,7 +18,7 @@ $projects = @(
     'src/Nira.Cli/Nira.Cli.csproj',
     'tests/Nira.Kernel.Tests/Nira.Kernel.Tests.csproj'
 )
-if (-not $SkipDesktop) { $projects += 'src/Nira.Desktop/Nira.Desktop.csproj' }
+if (-not $SkipDesktop) { $projects += @('src/Nira.Desktop/Nira.Desktop.csproj', 'tests/Nira.Desktop.Tests/Nira.Desktop.Tests.csproj') }
 foreach ($project in $projects) {
     $projectFile = Join-Path $root $project
     & dotnet build $projectFile -c Debug -t:Rebuild --nologo
@@ -35,6 +35,12 @@ Write-Host 'NIRA executing rebuilt kernel test DLL:' -ForegroundColor Cyan
 Write-Host $testDll
 & dotnet $testDll
 if ($LASTEXITCODE -ne 0) { throw 'Kernel tests failed.' }
+if (-not $SkipDesktop) {
+    $desktopTestDll = Join-Path $root 'tests/Nira.Desktop.Tests/bin/Debug/net10.0-windows/Nira.Desktop.Tests.dll'
+    if (-not (Test-Path -LiteralPath $desktopTestDll -PathType Leaf)) { throw 'Fresh desktop test assembly missing.' }
+    & dotnet $desktopTestDll
+    if ($LASTEXITCODE -ne 0) { throw 'Desktop renderer tests failed.' }
+}
 
 # One source document, created from real files; no extra ZIP or manifest.
 if (-not $SkipExport) {

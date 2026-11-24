@@ -1,9 +1,17 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><TargetFramework>net10.0-windows</TargetFramework></PropertyGroup>
+  <PropertyGroup><TargetFramework>net10.0-windows</TargetFramework><UseWPF>true</UseWPF></PropertyGroup>
   <ItemGroup>
+    <!-- WPF changes SDK-generated implicit namespaces in net10.0-windows.
+         These types are used by NiraRuntimeFactory, OpenAiCompatibleModel,
+         StandardTools, and ProcessExecutionTool. Preserve the imports explicitly. -->
+    <Using Include="System.IO" />
+    <Using Include="System.Net.Http" />
+
     <ProjectReference Include="../Nira.Core/Nira.Core.csproj" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.15" />
     <PackageReference Include="Microsoft.Playwright" Version="1.65.1" />
-    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.15" />
+    <PackageReference Include="ClosedXML" Version="0.105.1" />
+    <PackageReference Include="DocumentFormat.OpenXml" Version="3.5.1" />
+    <PackageReference Include="PdfPig" Version="0.1.13" />
   </ItemGroup>
 </Project>
