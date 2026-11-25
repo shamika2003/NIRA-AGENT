@@ -76,16 +76,20 @@ internal static class DesktopToolInput
         (args.TryGetProperty("controlId", out var id) ? "/" + id.GetString() : "");
 
     public static async Task<ToolReceipt> Run(Func<DesktopAction> action,
-        CancellationToken ct)
+        CancellationToken ct, bool requireVerification = false)
     {
         try
         {
             DesktopAction result = await Task.Run(action, ct);
+            if (result.Dispatched && (!result.Success || (requireVerification && result.Verified != true)))
+                return ToolReceipt.Ok(result.Summary, new { result.Dispatched, result.Verified,
+                    result.ObservedCharacters, result.VerificationStatus }, changedState: true,
+                    recovery: ToolRecovery.UnverifiedEffect);
             return result.Success
                 ? ToolReceipt.Ok(result.Summary, new { result.Dispatched, result.Verified,
-                    result.ObservedCharacters, result.VerificationStatus },
-                    changedState: result.Dispatched)
-                : ToolReceipt.Fail(result.ErrorCode ?? "DESKTOP_ACTION_FAILED", result.Summary);
+                    result.ObservedCharacters, result.VerificationStatus }, changedState: result.Dispatched)
+                : ToolReceipt.Fail(result.ErrorCode ?? "DESKTOP_ACTION_FAILED", result.Summary,
+                    recovery: ToolRecovery.Reobserve);
         }
         catch (DesktopAutomationException e)
         {
@@ -191,7 +195,7 @@ public sealed class DesktopSetTextTool(IDesktopAutomationBackend desktop) : IAge
         "?characters=" + args.GetProperty("text").GetString()!.Length;
     public Task<ToolReceipt> ExecuteAsync(JsonElement args, CancellationToken ct) =>
         DesktopToolInput.Run(() => desktop.SetText(DesktopToolInput.Window(args),
-            DesktopToolInput.Control(args), args.GetProperty("text").GetString()!), ct);
+            DesktopToolInput.Control(args), args.GetProperty("text").GetString()!), ct, requireVerification: true);
 }
 
 /// <summary>
@@ -204,7 +208,7 @@ public sealed class DesktopTypeTextTool(IDesktopAutomationBackend desktop) : IAg
 {
     public ToolDescriptor Descriptor { get; } = new("desktop.control_type_text",
         "TYPE into one observed, verified-empty, non-password Edit/Document control through " +
-        "foreground-only Windows Unicode keyboard input. NOT background text setting. " +
+        "paced foreground-only Windows Unicode keyboard input with exact read-back after each character. NOT background text setting. " +
         "Use ONLY after explicit host approval for this exact target and text. " +
         "After approval, NIRA itself activates the exact observed window; " +
         "the user does not need to switch applications. Refuses wrong " +
@@ -230,7 +234,7 @@ public sealed class DesktopTypeTextTool(IDesktopAutomationBackend desktop) : IAg
             return Task.FromResult(ToolReceipt.Fail("TEXT_CHARACTERS_UNSUPPORTED",
                 "Only printable text is supported; no control keys or newlines."));
         return DesktopToolInput.Run(() => desktop.TypeText(DesktopToolInput.Window(args),
-            DesktopToolInput.Control(args), text, ct), ct);
+            DesktopToolInput.Control(args), text, ct), ct, requireVerification: true);
     }
 }
 
@@ -246,7 +250,7 @@ public sealed class DesktopAutomationException(string code, string message) : Ex
 /// permission broker handles each operation, including reads.
 /// </summary>
 [SupportedOSPlatform("windows")]
-public sealed class WindowsDesktopAutomationBackend : IDesktopAutomationBackend
+public sealed partial class WindowsDesktopAutomationBackend : IDesktopAutomationBackend
 {
     private const int MaxWindows = 80;
     private const int MaxControls = 100;
@@ -445,87 +449,77 @@ public sealed class WindowsDesktopAutomationBackend : IDesktopAutomationBackend
             return new DesktopAction(false, false,
                 "Target lost foreground before dispatch; nothing was typed.", "WINDOW_NOT_FOREGROUND");
 
-        // Bound the global keyboard-dispatch interval. Recheck foreground and
-        // exact UIA focus for each code unit, so user interference stops further
-        // input instead of forwarding the rest to an unrelated application.
-        // Once any event is accepted, the result is uncertain if interrupted;
-        // never issue an automatic second typing attempt.
-        bool anyDispatched = false;
-        for (int index = 0; index < text.Length; index++)
+        // Pin the approved live window and editor before any mutation. Titles and
+        // accessibility names can change as soon as an unsaved document is edited.
+        // Keep strict title-bound selection before dispatch; within this one action,
+        // use the original HWND, process creation time and exact UIA runtime identity.
+        int pid = window.Info.ProcessId;
+        DateTime processStarted;
+        int[] runtimeId;
+        try
         {
-            if (ct.IsCancellationRequested)
-                return anyDispatched
-                    ? new DesktopAction(true, true,
-                        "Task paused after partial keyboard input; document may have changed. " +
-                        "No more characters were sent and no retry is allowed.",
-                        Verified: false, VerificationStatus: "interrupted")
-                    : new DesktopAction(false, false,
-                        "Task paused before keyboard dispatch.", "TASK_CANCELED");
-            if (GetForegroundWindow() != window.Handle ||
-                !fresh.Element.Current.HasKeyboardFocus)
-            {
-                if (anyDispatched)
-                    return new DesktopAction(true, true,
-                        "Foreground or editor focus changed during text entry; " +
-                        "the document may have been partially modified. No retry performed.",
-                        Verified: false, VerificationStatus: "interrupted");
-                return new DesktopAction(false, false,
-                    "Foreground or editor focus changed before text entry.", "CONTROL_NOT_FOCUSED");
-            }
-            var inputs = new[] { UnicodeInput(text[index], keyUp: false),
-                UnicodeInput(text[index], keyUp: true) };
-            uint inserted = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<NativeInput>());
-            if (inserted != (uint)inputs.Length)
-            {
-                // A Win32 return of zero is not proof no previous key down happened.
-                // Keep the host's possible side-effect receipt, even on the first key.
-                return new DesktopAction(true, true,
-                    "Windows accepted an uncertain number of keyboard events. " +
-                    "The target document may have changed; no retry performed.",
-                    Verified: false, VerificationStatus: "incomplete");
-            }
-            anyDispatched = true;
+            using Process process = Process.GetProcessById(pid);
+            processStarted = process.StartTime.ToUniversalTime();
+            runtimeId = fresh.Element.GetRuntimeId();
         }
-
-        // SendInput's return count attests that Windows accepted the keyboard
-        // events, not that the target editor inserted the intended characters. Providers
-        // may update their TextPattern ranges asynchronously; reacquire the
-        // exact control and compare the resulting text up to four times.
-        // A mismatch is NEVER silently retried with another typing operation.
-        bool verified = false;
-        int? observedCharacters = null;
-        bool readable = false;
-        for (int attempt = 0; attempt < 4; attempt++)
+        catch (Exception error) when (error is Win32Exception or ArgumentException or
+            InvalidOperationException or COMException or ElementNotAvailableException)
         {
-            System.Threading.Thread.Sleep(180);
+            return new DesktopAction(false, false, "Cannot pin the approved editor identity; no input sent.", "CONTROL_CHANGED");
+        }
+        if (runtimeId.Length == 0)
+            return new DesktopAction(false, false, "Editor identity unavailable; no input sent.", "CONTROL_CHANGED");
+
+        bool SameEditor(bool requireFocus)
+        {
             try
             {
-                if (ResolveWindow(windowId).Handle != window.Handle) break;
-                var current = ResolveControl(window.Handle, windowId, controlId);
-                if (!current.Element.TryGetCurrentPattern(TextPattern.Pattern, out object? readPattern) ||
-                    readPattern is not TextPattern reader) break;
-                string observed = reader.DocumentRange.GetText(text.Length + 64);
-                readable = true;
-                observedCharacters = observed.TrimEnd('\r', '\n').Length;
-                if (DesktopTextVerification.Exact(observed, text))
-                {
-                    verified = true;
-                    break;
-                }
+                if (!IsWindow(window.Handle) || IsIconic(window.Handle) || GetForegroundWindow() != window.Handle)
+                    return false;
+                _ = GetWindowThreadProcessId(window.Handle, out uint currentPid);
+                if (currentPid != (uint)pid) return false;
+                using Process process = Process.GetProcessById(pid);
+                if (process.StartTime.ToUniversalTime() != processStarted) return false;
+                var info = fresh.Element.Current;
+                return !info.IsPassword && info.IsEnabled && !info.IsOffscreen &&
+                    (!requireFocus || info.HasKeyboardFocus) &&
+                    fresh.Element.GetRuntimeId().SequenceEqual(runtimeId);
             }
-            catch (COMException) { /* Input was dispatched; content cannot be verified. */ }
-            catch (ElementNotAvailableException) { /* Control may have changed. */ }
-            catch (DesktopAutomationException) { /* Window/control identity changed. */ }
+            catch (Exception error) when (error is Win32Exception or ArgumentException or
+                InvalidOperationException or COMException or ElementNotAvailableException)
+            { return false; }
         }
-        string status = verified ? "exact_match" : readable ? "mismatch" : "unavailable";
-        return new DesktopAction(true, true, verified
-            ? "Approved foreground text typed and independently verified through TextPattern"
-            : readable
-                ? "Approved keyboard events dispatched, but editor text differs from the requested text"
-                : "Approved keyboard events dispatched; editor contents could not be read back",
-            Verified: verified, ObservedCharacters: observedCharacters,
-            VerificationStatus: status);
+
+        string? ReadApprovedEditor()
+        {
+            try
+            {
+                if (!SameEditor(true) ||
+                    !fresh.Element.TryGetCurrentPattern(TextPattern.Pattern, out object? readPattern) ||
+                    readPattern is not TextPattern reader) return null;
+                return reader.DocumentRange.GetText(text.Length + 64);
+            }
+            catch (Exception error) when (error is COMException or ElementNotAvailableException or InvalidOperationException)
+            { return null; }
+        }
+
+        bool CanSend() => SameEditor(true) && !ModifierKeysPressed();
+        bool SendUnit(string unit)
+        {
+            if (!CanSend()) return false;
+            NativeInput[] inputs = unit.SelectMany(c => new[] { UnicodeInput(c, false), UnicodeInput(c, true) }).ToArray();
+            return SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<NativeInput>()) == (uint)inputs.Length;
+        }
+
+        return DesktopVerifiedTextInput.Write(text, CanSend, ReadApprovedEditor, SendUnit,
+            () => System.Threading.Thread.Sleep(35), ct);
     }
+
+    private static bool ModifierKeysPressed() => new[] { 0x10, 0x11, 0x12, 0x5B, 0x5C }
+        .Any(key => (GetAsyncKeyState(key) & 0x8000) != 0);
+
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int virtualKey);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct NativeInput

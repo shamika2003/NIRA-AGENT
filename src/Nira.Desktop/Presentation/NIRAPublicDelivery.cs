@@ -8,7 +8,7 @@ namespace NIRAAgent.UI.Presentation;
 public static class NIRAPublicDelivery
 {
     private static readonly TimeSpan Limit = TimeSpan.FromMilliseconds(100);
-    private static readonly Regex Internal = new(@"(?<![\w.])(?:nira_(?:select_tools|plan(?:_status|_update)?|finish|ask_user|decide_workflow)|(?:browser\.follow_public_link|browser\.inspect_public|browser\.session_click_button|browser\.session_close|browser\.session_fill_text|browser\.session_follow|browser\.session_follow_named_link|browser\.session_inspect|browser\.session_inspect_controls|browser\.session_inspect_links|browser\.session_inspect_text|browser\.session_open|browser\.session_select_option|browser\.session_semantic_action|browser\.session_set_checked|desktop\.control_invoke|desktop\.control_set_text|desktop\.control_type_text|desktop\.window_activate|desktop\.window_inspect|desktop\.windows_list|filesystem\.edit_text|filesystem\.find|filesystem\.list|filesystem\.mkdir|filesystem\.read_text|filesystem\.sha256|filesystem\.write_text|image\.retrieve|image\.generate|image\.search|memory\.remember|memory\.search|process\.run|productivity\.create_document|productivity\.create_workbook|productivity\.inspect|productivity\.ocr_read|productivity\.pdf_export_text|productivity\.pdf_search|productivity\.read|productivity\.revise_document|productivity\.revise_workbook|vision\.analyze|web\.search|video\.search|workspace\.info)|[a-f0-9]{32}-[a-f0-9]{24}|call_[a-z0-9]{5,}|(?:receipt|operation)[\s\u202f\u00a0]+ID\b|ArgumentsJson|ResultJson|ToolCalls|CandidateId|MediaUrl|ThumbnailUrl|SourceUrl|active capability schemas|model round\s+\d+|nira_decide_workflow|tool_calls|ToolCallId|EvidenceId|ResultReference|ArgumentReference|AutomaticPlanningOutcome|RetryBlockCode|pixelsVerified|visualIdentityVerified|(?:internal|private)\s+(?:tool|execution)\s+(?:log|trace|journal)|\b(?:receipt|operation)\s+identifier)(?![\w.])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, Limit);
+    private static readonly Regex Internal = new(@"(?<![\w.])(?:nira_(?:select_tools|plan(?:_status|_update)?|finish|ask_user|decide_workflow)|(?:browser\.follow_public_link|browser\.inspect_public|browser\.session_click_button|browser\.session_close|browser\.session_fill_text|browser\.session_follow|browser\.session_follow_named_link|browser\.session_inspect|browser\.session_inspect_controls|browser\.session_inspect_links|browser\.session_inspect_text|browser\.session_open|browser\.session_select_option|browser\.session_semantic_action|browser\.session_set_checked|desktop\.application_find|desktop\.application_launch|desktop\.control_sequence|desktop\.control_invoke|desktop\.control_set_text|desktop\.control_type_text|desktop\.window_activate|desktop\.window_inspect|desktop\.windows_list|filesystem\.edit_text|filesystem\.find|filesystem\.list|filesystem\.mkdir|filesystem\.read_text|filesystem\.sha256|filesystem\.write_text|image\.retrieve|image\.generate|image\.search|memory\.(?:remember|search_history|search|manage)|process\.run|productivity\.create_document|productivity\.create_workbook|productivity\.inspect|productivity\.ocr_read|productivity\.pdf_export_text|productivity\.pdf_search|productivity\.read|productivity\.revise_document|productivity\.revise_workbook|vision\.analyze|web\.search|video\.search|system\.inspect|workspace\.info)|[a-f0-9]{32}-[a-f0-9]{24}|call_[a-z0-9]{5,}|(?:receipt|operation)[\s\u202f\u00a0]+ID\b|ArgumentsJson|ResultJson|ToolCalls|CandidateId|MediaUrl|ThumbnailUrl|SourceUrl|active capability schemas|model round\s+\d+|nira_decide_workflow|tool_calls|ToolCallId|EvidenceId|ResultReference|ArgumentReference|AutomaticPlanningOutcome|RetryBlockCode|pixelsVerified|visualIdentityVerified|(?:internal|private)\s+(?:tool|execution)\s+(?:log|trace|journal)|\b(?:receipt|operation)\s+identifier)(?![\w.])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, Limit);
     private static readonly Regex Heading = new(@"^\s*(?:#{1,6}\s+|\*\*|__)", RegexOptions.CultureInvariant, Limit);
     private static readonly Regex Diary = new(@"^\s*(?:#{1,6}\s+|\*\*|__)?(?:how (?:the (?:list|results|images|information) (?:was|were) (?:obtained|found)|i (?:searched|found|used (?:the )?tools))|(?:internal |tool )?(?:execution|tool call|capability) (?:details|log|trace|history)|recorded (?:verification )?observations|host-recorded execution evidence)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, Limit);
 
@@ -49,7 +49,23 @@ public static class NIRAPublicDelivery
                     clean = clean.Replace("(MediaUrl)", "", StringComparison.OrdinalIgnoreCase)
                         .Replace("(SourceUrl)", "", StringComparison.OrdinalIgnoreCase)
                         .Replace("(ThumbnailUrl)", "", StringComparison.OrdinalIgnoreCase);
-                if (fence is null && Internal.IsMatch(clean)) continue;
+                if (fence is null)
+                {
+                    clean = Regex.Replace(clean, @"`(?<name>(?:nira_[a-z_]+|[a-z]+\.[a-z_]+))`", match =>
+                    {
+                        string name = match.Groups["name"].Value;
+                        if (!ContainsInternal(name)) return match.Value;
+                        return name switch
+                        {
+                            "nira_plan" => "task planning", "nira_plan_update" => "progress tracking",
+                            "nira_plan_status" => "progress review", "nira_ask_user" => "a clarification question",
+                            "nira_finish" => "completion review", "nira_select_tools" => "capability selection",
+                            _ => name.Replace('.', ' ').Replace('_', ' ')
+                        };
+                    }, RegexOptions.CultureInvariant, Limit);
+                    clean = clean.Replace("`nira-ui`", "native visual components", StringComparison.OrdinalIgnoreCase);
+                    if (Internal.IsMatch(clean)) continue;
+                }
                 if (fence is not null && Regex.IsMatch(clean, @"\b(?:call_[a-z0-9]{5,}|[a-f0-9]{32}-[a-f0-9]{24}|ArgumentsJson|ResultJson|nira_select_tools|image\.search|image\.retrieve|image\.generate|video\.search|browser\.session_[a-z_]+|filesystem\.[a-z_]+)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, Limit)) continue;
                 output.Add(clean);
             }
@@ -87,14 +103,21 @@ public static class NIRAPublicDelivery
 
     private static string ActionTitle(string? id) => id switch
     {
+        "memory.remember" => "Save long-term memory",
+        "memory.manage" => "Change saved memory",
+        "memory.search_history" => "Read relevant private conversation history",
+        "memory.search" => "Search saved memories",
         "image.retrieve" => "Loading images",
         "image.generate" => "Creating your artwork",
+        "system.inspect" => "Checking computer information",
+        "desktop.application_find" => "Finding applications",
+        "desktop.application_launch" => "Opening the selected application",
         "filesystem.write_text" => "Creating a text file",
         "filesystem.edit_text" => "Editing a text file",
         "filesystem.mkdir" => "Creating a folder",
         "process.run" => "Running a program",
         "desktop.control_type_text" or "desktop.control_set_text" => "Entering text",
-        "desktop.control_invoke" => "Interacting with an application",
+        "desktop.control_invoke" or "desktop.control_sequence" => "Interacting with an application",
         "desktop.window_activate" => "Opening the selected window",
         "browser.session_fill_text" => "Filling a web form",
         "browser.session_click_button" => "Clicking a web button",
@@ -115,6 +138,7 @@ public static class NIRAPublicDelivery
             ToolRisk.WriteOutsideWorkspace => "Change files outside your workspace",
             _ => "Perform a potentially sensitive action"
         };
+        if (request.ToolName == "memory.search_history") risk = "Read selected private history and send matching excerpts to the configured reasoning model";
         var lines = new List<string> { ActionTitle(request.ToolName), risk, "", "Destination:", request.Target, "", "Requested details:" };
         try
         {

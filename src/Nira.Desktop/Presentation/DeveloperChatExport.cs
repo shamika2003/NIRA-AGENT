@@ -38,6 +38,7 @@ internal static class DeveloperChatExport
                     m.Role, content = m.Role == "user" ? m.UserDisplayText ?? m.Content : m.Content,
                     m.AttachmentPaths, m.ToolCalls
                 }),
+                protocolErrors = t.Messages.Where(IsProtocolError).Select(m => new { m.ToolCallId, m.Content }),
                 plan = t.Plan,
                 operations = t.Operations.Select(o => new { o.Id, o.ToolName, o.Status, o.CreatedUtc, o.CompletedUtc,
                     o.ErrorCode, o.ArgumentsJson, o.ResultJson }),
@@ -46,6 +47,19 @@ internal static class DeveloperChatExport
             }),
             rendered
         }, Options);
+    }
+
+    private static bool IsProtocolError(ChatEntry entry)
+    {
+        if (entry.Role != "tool" || string.IsNullOrWhiteSpace(entry.Content)) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(entry.Content);
+            return doc.RootElement.ValueKind == JsonValueKind.Object &&
+                doc.RootElement.TryGetProperty("success", out var success) && success.ValueKind == JsonValueKind.False &&
+                doc.RootElement.TryGetProperty("errorCode", out var code) && code.ValueKind == JsonValueKind.String;
+        }
+        catch (JsonException) { return false; }
     }
 
     private static void Capture(DependencyObject element, List<object> result)
@@ -59,7 +73,11 @@ internal static class DeveloperChatExport
             case TextBox box:
                 result.Add(new { type = "text-box", text = box.Text }); return;
             case TextBlock text:
-                result.Add(new { type = "label", text = text.Text }); return;
+                // Rich labels are built from WPF Inlines and may have an empty Text
+                // property even when the user can see their content. Export the actual
+                // inline text and style tree, not a misleading empty diagnostic label.
+                result.Add(new { type = "label", text = text.Inlines.Count == 0 ? text.Text : string.Concat(text.Inlines.Select(InlineText)),
+                    inlines = text.Inlines.Select(DescribeInline).ToArray() }); return;
             case Button button when button.Content is string title:
                 result.Add(new { type = "button", text = title }); return;
             case Expander expander:
@@ -69,6 +87,14 @@ internal static class DeveloperChatExport
         foreach (object child in LogicalTreeHelper.GetChildren(element))
             if (child is DependencyObject dependency) Capture(dependency, result);
     }
+
+    private static string InlineText(Inline inline) => inline switch
+    {
+        Run run => run.Text,
+        Span span => string.Concat(span.Inlines.Select(InlineText)),
+        LineBreak => "\n",
+        _ => ""
+    };
 
     private static object DescribeBlock(Block block) => block switch
     {

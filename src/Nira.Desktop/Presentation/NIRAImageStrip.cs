@@ -12,7 +12,7 @@ namespace NIRAAgent.UI.Presentation;
 /// <summary>Old NIRA's photo-first strip and single-image view, adapted to receipt-bound local previews.</summary>
 internal static class NIRAImageStrip
 {
-    internal sealed record Photo(BitmapImage Bitmap, string Title, string Author, string License, string Source, byte[]? Animation = null, int FrameDurationMs = 0)
+    internal sealed record Photo(BitmapImage Bitmap, string Title, string Author, string License, string Source, byte[]? Animation = null, int FrameDurationMs = 0, bool IsLocalCapture = false)
     {
         public bool IsAnimated => Animation is not null;
         public ImageSource FullImage => Bitmap;
@@ -23,8 +23,8 @@ internal static class NIRAImageStrip
 
     internal static FrameworkElement? Create(ConversationState state, string workspace, Window owner)
     {
-        var entries = ImageGalleryEntry.FromTask(state);
-        var photos = LoadPhotos(entries.OrderByDescending(entry => entry.IsGenerated), workspace, 6);
+        var entries = ImageGalleryEntry.ForChat(state);
+        var photos = LoadPhotos(entries.OrderByDescending(entry => entry.IsLocalCapture).ThenByDescending(entry => entry.IsGenerated), workspace, 6);
         if (photos.Count == 0) return null;
         var panel = new StackPanel { Margin = new Thickness(0,8,0,15) };
         var strip = new StackPanel { Orientation = Orientation.Horizontal };
@@ -35,13 +35,21 @@ internal static class NIRAImageStrip
             Photo photo = photos[i];
             double width = single ? 345 : 192, height = single ? Math.Min(285, 345.0 * photo.Bitmap.PixelHeight / photo.Bitmap.PixelWidth) : 144;
             if (single && photo.Bitmap.PixelHeight > photo.Bitmap.PixelWidth) width = Math.Min(width, height * photo.Bitmap.PixelWidth / photo.Bitmap.PixelHeight);
+            if (photo.IsLocalCapture)
+            {
+                // Fit the entire screenshot, including menus and status bars. Do not crop it like a photograph.
+                double scale = Math.Min(1, Math.Min((single ? 650.0 : 320.0) / photo.Bitmap.PixelWidth,
+                    (single ? 420.0 : 225.0) / photo.Bitmap.PixelHeight));
+                width = photo.Bitmap.PixelWidth * scale;
+                height = photo.Bitmap.PixelHeight * scale;
+            }
             var frame = new Grid { Width = width, Height = height, Margin = new Thickness(0,0,9,0),
-                Clip = new RectangleGeometry(new Rect(0,0,width,height),11,11) };
-            var image = new Image { Source = photo.Bitmap, Stretch = single ? Stretch.Uniform : Stretch.UniformToFill };
+                Clip = new RectangleGeometry(new Rect(0,0,width,height), photo.IsLocalCapture ? 0 : 11, photo.IsLocalCapture ? 0 : 11) };
+            var image = new Image { Source = photo.Bitmap, Stretch = single || photo.IsLocalCapture ? Stretch.Uniform : Stretch.UniformToFill };
             RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.HighQuality);
             frame.Children.Add(image);
             if (photo.IsAnimated) new NIRAGifPlayback(image).SetPhoto(photo);
-            if (!single)
+            if (!single && !photo.IsLocalCapture)
             {
                 var shade = new Border { Height = 51, VerticalAlignment = VerticalAlignment.Bottom, IsHitTestVisible = false,
                     Background = new LinearGradientBrush(Color.FromArgb(0,9,21,43), Color.FromArgb(219,8,20,38), 90) };
@@ -50,7 +58,15 @@ internal static class NIRAImageStrip
                 caption.Children.Add(new TextBlock { Text = photo.Author.Length == 0 ? "View source" : photo.Author, Foreground = Brushes.LightBlue, FontSize = 10, TextTrimming = TextTrimming.CharacterEllipsis });
                 shade.Child = caption; frame.Children.Add(shade);
             }
-            var open = new Button { Content = frame, Padding = new Thickness(0), BorderThickness = new Thickness(0), Background = Brushes.Transparent, Style = null, ToolTip = "Open image gallery", Cursor = System.Windows.Input.Cursors.Hand };
+            FrameworkElement visual = frame;
+            if (photo.IsLocalCapture && !single)
+            {
+                var item = new StackPanel { Width = width + 9 };
+                item.Children.Add(frame);
+                item.Children.Add(Label(photo.Title, true));
+                visual = item;
+            }
+            var open = new Button { Content = visual, Padding = new Thickness(0), BorderThickness = new Thickness(0), Background = Brushes.Transparent, Style = null, ToolTip = photo.IsLocalCapture ? "Enlarge screenshot" : "Open image gallery", Cursor = System.Windows.Input.Cursors.Hand };
             open.Click += (_, _) => ShowPhotos(photos, index, owner);
             strip.Children.Add(open);
         }
@@ -60,9 +76,11 @@ internal static class NIRAImageStrip
             panel.Children.Add(Label(photos[0].Title, true));
             if (photos[0].License.StartsWith("AI-generated", StringComparison.Ordinal)) panel.Children.Add(Label(photos[0].Credit, false));
         }
+        if (photos.Any(photo => photo.IsLocalCapture))
+            panel.Children.Add(Label("Local screenshot · select to enlarge. Not uploaded by the capture tool.", false));
         if (entries.Any(entry => entry.IsGenerated))
             panel.Children.Add(Label(photos.Any(p => p.IsAnimated) ? "AI-generated four-frame loop. Open the viewer to play or pause." : "AI-generated artwork is labeled in the viewer. Select an image to enlarge it.", false));
-        if (entries.Any(entry => !entry.IsGenerated))
+        if (entries.Any(entry => !entry.IsGenerated && !entry.IsLocalCapture))
             panel.Children.Add(Label("Select a photo to see its source and attribution. Image identity and usage rights have not been independently checked.", false));
         return panel;
     }
@@ -77,19 +95,26 @@ internal static class NIRAImageStrip
             try
             {
                 var resolver = new WorkspacePathResolver(workspace);
-                string path = resolver.Resolve(entry.Path), cache = resolver.Resolve(entry.IsGenerated ? ImageGenerationTool.CacheFolder : ImagePreviewTool.CacheFolder);
+                string path = resolver.Resolve(entry.Path);
+                string cache = entry.IsLocalCapture ? Path.TrimEndingDirectorySeparator(resolver.Resolve(resolver.Root)) :
+                    resolver.Resolve(entry.IsGenerated ? ImageGenerationTool.CacheFolder : ImagePreviewTool.CacheFolder);
+                if (entry.IsLocalCapture && (entry.IsGenerated || entry.IsAnimated)) continue;
                 if (!string.Equals(Path.GetDirectoryName(path), cache, StringComparison.OrdinalIgnoreCase) ||
                     !path.EndsWith(entry.IsGenerated && entry.IsAnimated ? ".gif" : ".png", StringComparison.OrdinalIgnoreCase)) continue;
                 using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-                if (input.Length < 1 || input.Length > (entry.IsGenerated ? ImageGenerationTool.MaxBytes : ImagePreviewTool.MaxBytes)) continue;
+                long maximumBytes = entry.IsLocalCapture ? DesktopWindowCaptureTool.MaximumBytes :
+                    entry.IsGenerated ? ImageGenerationTool.MaxBytes : ImagePreviewTool.MaxBytes;
+                if (input.Length < 1 || input.Length > maximumBytes) continue;
                 byte[] bytes = new byte[(int)input.Length]; input.ReadExactly(bytes);
                 string hash = Convert.ToHexString(SHA256.HashData(bytes));
                 if (!hash.Equals(entry.Sha256, StringComparison.OrdinalIgnoreCase) || seen.Contains(hash)) continue;
+                if (entry.IsLocalCapture && !DesktopWindowCaptureTool.TryReadPngDimensions(bytes, out _, out _)) continue;
                 using var stream = new MemoryStream(bytes);
                 var bitmap = new BitmapImage(); bitmap.BeginInit(); bitmap.CacheOption = BitmapCacheOption.OnLoad;
                 bitmap.StreamSource = stream; bitmap.EndInit(); bitmap.Freeze();
                 int maxDimension = entry.IsAnimated ? 960 : entry.IsGenerated ? 1920 : 1200;
-                if (bitmap.PixelWidth > maxDimension || bitmap.PixelHeight > maxDimension) continue;
+                if (entry.IsLocalCapture ? !DesktopWindowCaptureTool.DimensionsAllowed(bitmap.PixelWidth, bitmap.PixelHeight) :
+                    bitmap.PixelWidth > maxDimension || bitmap.PixelHeight > maxDimension) continue;
                 seen.Add(hash);
                 if (entry.IsAnimated)
                 {
@@ -99,9 +124,9 @@ internal static class NIRAImageStrip
                     if (gif.Frames.Count != 4 || gif.Frames.Any(f => f.PixelWidth != bitmap.PixelWidth || f.PixelHeight != bitmap.PixelHeight)) continue;
                 }
                 photos.Add(new Photo(bitmap, entry.Title, entry.Author, entry.License, entry.Source,
-                    entry.IsAnimated ? bytes : null, entry.FrameDurationMs));
+                    entry.IsAnimated ? bytes : null, entry.FrameDurationMs, entry.IsLocalCapture));
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException or NotSupportedException or System.Runtime.InteropServices.COMException) { }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException or NotSupportedException or FormatException or System.Runtime.InteropServices.COMException) { }
         }
         return photos;
     }

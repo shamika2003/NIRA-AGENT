@@ -934,7 +934,7 @@
 
                 <Viewbox Grid.Column="1" Stretch="Uniform" StretchDirection="DownOnly" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="10,0"><StackPanel Orientation="Horizontal">
                     <Button x:Name="ChatNavButton" Style="{StaticResource NavButtonStyle}" Content="Chat" Tag="ACTIVE" Click="OpenChat_Click"/>
-                    <Button Style="{StaticResource NavButtonStyle}" Content="Memory" Click="MemoryButton_Click"/>
+                    <Button x:Name="MemoryNavButton" Style="{StaticResource NavButtonStyle}" Content="Memory" Click="MemoryButton_Click"/>
                     <Button x:Name="GoalsNavButton" Style="{StaticResource NavButtonStyle}" Content="Goals" ToolTip="Not yet connected to the new runtime" IsEnabled="False"/>
                     <Button Style="{StaticResource NavButtonStyle}" Content="Tools" Tag="What tools and capabilities can you use for me right now?" Click="QuickPrompt_Click"/>
                     <Button Style="{StaticResource NavButtonStyle}" Content="System" Tag="Give me a concise status of your current system state and active work." Click="QuickPrompt_Click"/>
@@ -1517,6 +1517,8 @@
         <!-- Soft modal context: darkens the owner while a NIRA utility window is open.
              No outlined frame, no effect on the existing HALO/ECLIPSE images. -->
         <Border x:Name="UtilityWindowScrim" Grid.RowSpan="2" Panel.ZIndex="900" Background="#F201040A" Opacity="0" Visibility="Visible" IsHitTestVisible="False"/>
+        <gallery:NIRAMemoryPage x:Name="MemoryPage" Grid.Row="1" Margin="12,10,12,12"
+                                 Visibility="Collapsed" Panel.ZIndex="8"/>
         <!-- Read-only Goals workspace; no cloud call or state mutation on opening. -->
         <!-- Original NIRA Gallery workspace: chat remains mounted, not recreated. -->
         <gallery:NIRAGalleryPage x:Name="GalleryPage" Grid.Row="1" Margin="12,10,12,12"

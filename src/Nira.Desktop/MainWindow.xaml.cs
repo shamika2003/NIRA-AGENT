@@ -123,9 +123,21 @@ public partial class MainWindow : Window
         if (_busy) return;
         string text = PromptBox.Text.Trim();
         if (string.IsNullOrWhiteSpace(text) && _selectedAttachments.Count == 0) return;
-        if (_completed)
+        bool pausedTask = false;
+        if (_hasTask && !_completed)
         {
-            // Completed work remains immutable. Link a new isolated task to the
+            SetBusy(true);
+            try
+            {
+                var current = await _runtime.Conversations.LoadAsync(_conversationId, default);
+                pausedTask = current is { Status: ConversationStatus.Paused };
+            }
+            catch (Exception error) { Debug.WriteLine(error); AddLine("System", "Unable to check current task state."); return; }
+            finally { SetBusy(false); }
+        }
+        if (_completed || pausedTask)
+        {
+            // Completed or paused work remains immutable on a new message. Resume/Retry is explicit. Link a new isolated task to the
             // current chat instead of clearing its transcript or reusing old receipts.
             SetBusy(true);
             try
@@ -133,9 +145,10 @@ public partial class MainWindow : Window
                 if (_runtime.Conversations is not SqliteConversationStore store)
                     throw new InvalidOperationException("Chat thread storage unavailable.");
                 var saved = await store.LoadAsync(_conversationId, default);
-                if (saved?.Status != ConversationStatus.Completed)
+                if (saved?.Status != ConversationStatus.Completed &&
+                    saved is not { Status: ConversationStatus.Paused })
                 { StatusLabel.Text = "This task cannot continue. Start a new conversation."; return; }
-                _conversationId = await store.CreateFollowupAsync(_conversationId, default);
+                _conversationId = await store.CreateFollowupAsync(_conversationId, default, startNewAfterPause: pausedTask);
                 _completed = false;
                 _hasTask = false;
                 UpdateConversationLabel();
@@ -228,6 +241,16 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             Debug.WriteLine(ex);
+#if DEBUG
+            // Record the exception category without invoking rendering from an error handler.
+            if (!_debugActivity.TryGetValue(runningTaskId, out var interruptedEvents))
+            {
+                if (_debugActivity.Count >= 100) _debugActivity.Remove(_debugActivity.Keys.First());
+                _debugActivity[runningTaskId] = interruptedEvents = [];
+            }
+            if (interruptedEvents.Count < 1000)
+                interruptedEvents.Add(new(DateTimeOffset.UtcNow, "error", "Execution interrupted: " + ex.GetType().Name, null));
+#endif
             AddLine("System", "Something went wrong. Your task has been saved; you can retry when ready.");
             StatusLabel.Text = "Your task is retained. Check your connection or model settings.";
             RunStateLabel.Text = "ERROR";
@@ -586,6 +609,7 @@ public partial class MainWindow : Window
         _busy = busy;
         DeveloperCopyChatButton.IsEnabled = !busy && _hasTask;
         GalleryNavButton.IsEnabled = !busy;
+        MemoryNavButton.IsEnabled = !busy;
         _presence.SetIntent(busy ? NIRAVisualIntent.RestingOrb with { Energy = 0.65, Focus = 0.7, Pulse = 0.46 } : NIRAVisualIntent.RestingOrb);
         AttachFilesButton.IsEnabled = !busy;
         AttachmentPanel.IsEnabled = !busy;
@@ -799,12 +823,22 @@ public partial class MainWindow : Window
         }
     }
 
+    private enum WorkspacePage { Chat, Memory, Gallery }
+
+    private void ShowWorkspace(WorkspacePage page)
+    {
+        if (page != WorkspacePage.Chat) _miniStop?.Invoke();
+        MainWorkspace.Visibility = page == WorkspacePage.Chat ? Visibility.Visible : Visibility.Collapsed;
+        MemoryPage.Visibility = page == WorkspacePage.Memory ? Visibility.Visible : Visibility.Collapsed;
+        GalleryPage.Visibility = page == WorkspacePage.Gallery ? Visibility.Visible : Visibility.Collapsed;
+        ChatNavButton.Tag = page == WorkspacePage.Chat ? "ACTIVE" : null;
+        MemoryNavButton.Tag = page == WorkspacePage.Memory ? "ACTIVE" : null;
+        GalleryNavButton.Tag = page == WorkspacePage.Gallery ? "ACTIVE" : null;
+    }
+
     private void OpenChat_Click(object sender, RoutedEventArgs e)
     {
-        GalleryPage.Visibility = Visibility.Collapsed;
-        MainWorkspace.Visibility = Visibility.Visible;
-        GalleryNavButton.Tag = null;
-        ChatNavButton.Tag = "ACTIVE";
+        ShowWorkspace(WorkspacePage.Chat);
         MainWorkspace.UpdateLayout();
         FitWorkspaceLayout();
         PromptBox.Focus();
@@ -813,12 +847,15 @@ public partial class MainWindow : Window
     private async void OpenGallery_Click(object sender, RoutedEventArgs e)
     {
         if (_busy || _runtime.Conversations is not SqliteConversationStore store) return;
-        _miniStop?.Invoke();
-        MainWorkspace.Visibility = Visibility.Collapsed;
-        GalleryPage.Visibility = Visibility.Visible;
-        ChatNavButton.Tag = null;
-        GalleryNavButton.Tag = "ACTIVE";
+        ShowWorkspace(WorkspacePage.Gallery);
         await GalleryPage.InitializeAsync(store, _runtime.Workspace, _runtime.DatabasePath);
+    }
+
+    private async void MemoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy || _runtime.Conversations is not SqliteConversationStore store) return;
+        ShowWorkspace(WorkspacePage.Memory);
+        await MemoryPage.InitializeAsync(store);
     }
     // Restore the original utility-window scrim; only the owner is darkened.
     private void SetUtilityWindowScrim(bool visible)
@@ -866,7 +903,6 @@ public partial class MainWindow : Window
         catch (Exception error) { Debug.WriteLine(error); StatusLabel.Text = "Unable to open settings."; }
     }
     private void SettingsButton_Click(object sender, RoutedEventArgs e) => OpenControlCenter("Appearance");
-    private void MemoryButton_Click(object sender, RoutedEventArgs e) => OpenControlCenter("Memory");
     private void PermissionsButton_Click(object sender, RoutedEventArgs e) => OpenControlCenter("Permissions");
     private void AttachFilesButton_Click(object sender, RoutedEventArgs e)
     {

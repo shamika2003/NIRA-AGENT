@@ -312,7 +312,6 @@
                             </Button>
                             <Button Tag="Model" Content="Model &amp; credentials" Style="{StaticResource SettingsNavigationButton}" Click="SettingsNavigation_Click"/>
                             <Button Tag="History" Content="Conversation history" Style="{StaticResource SettingsNavigationButton}" Click="SettingsNavigation_Click"/>
-                            <Button Tag="Memory" Content="Saved memory" Style="{StaticResource SettingsNavigationButton}" Click="SettingsNavigation_Click"/>
                             <Button Tag="Permissions" Content="Permissions" Style="{StaticResource SettingsNavigationButton}" Click="SettingsNavigation_Click"/>
                         </StackPanel>
 

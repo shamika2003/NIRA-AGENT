@@ -11,10 +11,10 @@ namespace NIRAAgent.UI.Presentation;
 /// <summary>Interleaves native components with selectable prose. Model data is never executable markup.</summary>
 public static class NIRARichAnswer
 {
-    public const string Revision = "M6F4-MEDIA-STABILITY-1";
+    public const string Revision = "M8C-CONTEXTUAL-LEARNING-1";
     private static readonly Regex Fence = new(@"^\s{0,3}(`{3,}|~{3,})([^\r\n]*)$", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
     private static readonly HashSet<string> Types = new(StringComparer.Ordinal)
-    { "heading", "text", "hero", "insight", "source", "video", "card", "metric", "equation", "table", "chart", "bar", "code", "details", "list", "quote", "timeline", "checklist", "progress", "tabs", "followups", "status" };
+    { "heading", "text", "hero", "insight", "source", "video", "card", "metric", "equation", "table", "chart", "bar", "code", "details", "list", "quote", "timeline", "checklist", "progress", "tabs", "followups", "status", "calculator", "form", "column", "pie", "diagram" };
 
     public static FrameworkElement Create(string answer, FrameworkElement? media = null, Action<string>? followup = null, IReadOnlySet<string>? videoUrls = null, IReadOnlyDictionary<string, string>? videoTitles = null, IReadOnlyList<string>? searchFallback = null)
     {
@@ -208,7 +208,7 @@ public static class NIRARichAnswer
             { i++; while (i + 1 < lines.Length && lines[i + 1].TrimStart().StartsWith('|')) i++; continue; }
             // The receipt-backed strip is already visible. Remove standalone Markdown
             // embeds so the model cannot add a second unverified media reference.
-            if (Regex.IsMatch(lines[i], @"^\s*!\[[^\]\r\n]*\]\(https?://[^\r\n]*\)\s*$", RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(100))) continue;
+            if (Regex.IsMatch(lines[i], @"^\s*!\[[^\]\r\n]*\]\([^\r\n]+\)\s*$", RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(100))) continue;
             output.AppendLine(lines[i]);
         }
         return output.ToString().Trim();
@@ -220,7 +220,7 @@ public static class NIRARichAnswer
         var result = new List<NIRARichBlock>();
         try
         {
-            using var doc = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = 12 });
+            using var doc = ParseVisualDocument(json);
             JsonElement envelope = doc.RootElement;
             if (envelope.ValueKind == JsonValueKind.Object && !envelope.TryGetProperty("type", out _))
             {
@@ -249,10 +249,27 @@ public static class NIRARichAnswer
                 var items = Strings(item, "items", 32, 600); var panels = Strings(item, "panels", 6, 5000);
                 var cols = Strings(item, "columns", 8, 150); var labels = Strings(item, "labels", 40, 100);
                 var values = Arr(item, "values", 40).Select(v => Number(v) ?? double.NaN).ToArray();
+                var series = new List<NIRAChartSeries>();
+                if (type is "chart" or "column" && item.TryGetProperty("datasets", out var datasets))
+                {
+                    if (datasets.ValueKind != JsonValueKind.Array || datasets.GetArrayLength() is < 1 or > 4 || values.Length != 0) continue;
+                    foreach (var entry in datasets.EnumerateArray())
+                    {
+                        if (entry.ValueKind != JsonValueKind.Object) break;
+                        string name = Str(entry, "label", 100);
+                        var points = Arr(entry, "data", 41).Select(v => Number(v) ?? double.NaN).ToArray();
+                        if (string.IsNullOrWhiteSpace(name) || NIRAPublicDelivery.ContainsInternal(name) || points.Length != labels.Length || points.Any(v => !double.IsFinite(v) || Math.Abs(v) > 1e100)) break;
+                        series.Add(new NIRAChartSeries(name, points));
+                    }
+                    if (series.Count != datasets.GetArrayLength() || series.Select(s => s.Label).Distinct(StringComparer.OrdinalIgnoreCase).Count() != series.Count) continue;
+                    values = series[0].Values.ToArray();
+                }
                 var rows = Arr(item, "rows", 80).Select(row => (IReadOnlyList<string>)(row.ValueKind == JsonValueKind.Array ? row.EnumerateArray().Take(9).Select(v => Clip(v, 500)).ToArray() : [])).ToArray();
+                if (type == "diagram" && !TryDiagram(item, ref items, out rows)) continue;
                 double? value = Num(item, "value"), max = Num(item, "maximum");
+                string formula = Str(item, "formula", 257);
                 string unit = Str(item, "unit", 40), icon = Str(item, "icon", 30), color = Str(item, "color", 7), language = Str(item, "language", 30);
-                if (new[] { title, text, unit, icon, color, language }.Concat(items).Concat(panels).Concat(cols).Concat(labels).Concat(rows.SelectMany(r => r)).Any(NIRAPublicDelivery.ContainsInternal)) continue;
+                if (new[] { title, text, unit, icon, color, language, formula }.Concat(items).Concat(panels).Concat(cols).Concat(labels).Concat(rows.SelectMany(r => r)).Any(NIRAPublicDelivery.ContainsInternal)) continue;
                 if (type is "source" or "video")
                 {
                     // Never fetch or execute from presentation. These are click-only links,
@@ -267,12 +284,89 @@ public static class NIRARichAnswer
                 if (type == "progress" && (value is null || max is null || max <= 0 || value < 0 || value > max || max > 1e100)) continue;
                 if ((type is "equation" or "code" or "details") && text.Length == 0) continue;
                 if (type == "metric" && (title.Length == 0 || text.Length == 0)) continue;
-                result.Add(new NIRARichBlock { Type=type, Title=title, Text=text, Unit=unit, Language=language, Icon=icon, Color=color,
-                    Items=items, Panels=panels, Columns=cols, Rows=rows, Labels=labels, Values=values, ProgressValue=value, ProgressMaximum=max });
+                var block = new NIRARichBlock { Type=type, Title=title, Text=text, Unit=unit, Language=language, Icon=icon, Color=color,
+                    Items=items, Panels=panels, Columns=cols, Rows=rows, Labels=labels, Values=values, ProgressValue=value, ProgressMaximum=max, Formula=formula, Series=series };
+                if (type is "column" or "pie")
+                {
+                    if (labels.Length < 2 || labels.Length > (type == "pie" ? 8 : 20) || labels.Length != values.Length ||
+                        labels.Any(string.IsNullOrWhiteSpace) || values.Any(v => !double.IsFinite(v) || Math.Abs(v) > 1e100) ||
+                        (type == "pie" && (values.Any(v => v < 0) || values.Sum() <= 0))) continue;
+                }
+                if (type == "calculator" && (labels.Length is < 1 or > 8 || labels.Length != values.Length ||
+                    labels.Any(string.IsNullOrWhiteSpace) || !NIRAVisualArithmetic.TryEvaluate(formula, values, out _))) continue;
+                if (type == "form" && (items.Length is < 1 or > 6 || items.Any(string.IsNullOrWhiteSpace) ||
+                    (panels.Length != 0 && panels.Length != items.Length) || panels.Any(v => v.Length > 500))) continue;
+                if (type == "diagram" && !NIRAVisualDiagram.TryLayers(block, out _)) continue;
+                result.Add(block);
             }
         }
         catch (JsonException) { return []; }
         return result;
+    }
+    private static JsonDocument ParseVisualDocument(string json)
+    {
+        var options = new JsonDocumentOptions { MaxDepth = 12 };
+        try { return JsonDocument.Parse(json, options); }
+        catch (JsonException)
+        {
+            // One narrowly defined presentation-only repair: a complete object (or
+            // objects) in an array with just the final outer ] missing. Never repair
+            // string contents, truncated objects, malformed code or executable calls.
+            string trimmed = json.Trim();
+            if (trimmed.Length >= 2 && trimmed[0] == '[' && trimmed[^1] == '}')
+                return JsonDocument.Parse(trimmed + "]", options);
+            throw;
+        }
+    }
+    private static bool TryDiagram(JsonElement item, ref string[] items, out IReadOnlyList<string>[] rows)
+    {
+        rows = [];
+        // Normalize only declared graph data, never interpret Mermaid/code or execute text.
+        var ids = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        if (item.TryGetProperty("nodes", out var nodes) && items.Length == 0)
+        {
+            if (nodes.ValueKind != JsonValueKind.Array || nodes.GetArrayLength() is < 2 or > 12) return false;
+            var labels = new List<string>();
+            foreach (var node in nodes.EnumerateArray())
+            {
+                if (node.ValueKind == JsonValueKind.String) labels.Add(Clip(node, 91));
+                else if (node.ValueKind == JsonValueKind.Object)
+                {
+                    string id = Str(node, "id", 91), label = Str(node, "label", 91);
+                    if (label.Length == 0) label = id;
+                    if (id.Length == 0 || !ids.TryAdd(id, labels.Count + 1)) return false;
+                    labels.Add(label);
+                }
+                else return false;
+            }
+            items = labels.ToArray();
+        }
+        if (items.Length is < 2 or > 12) return false;
+        string[] names = items;
+        if (!item.TryGetProperty("rows", out var links) && !item.TryGetProperty("edges", out links)) return false;
+        if (links.ValueKind != JsonValueKind.Array || links.GetArrayLength() is < 1 or > 24) return false;
+        int Index(JsonElement v)
+        {
+            if (v.ValueKind == JsonValueKind.Number) return v.TryGetInt32(out int numeric) ? numeric : -1;
+            string name = Clip(v, 91);
+            if (ids.TryGetValue(name, out int id)) return id;
+            if (int.TryParse(name, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int index)) return index;
+            return Array.FindIndex(names, n => n.Equals(name, StringComparison.OrdinalIgnoreCase)) + 1;
+        }
+        var result = new List<IReadOnlyList<string>>();
+        foreach (var edge in links.EnumerateArray())
+        {
+            JsonElement a, b;
+            if (edge.ValueKind == JsonValueKind.Array && edge.GetArrayLength() == 2) { a = edge[0]; b = edge[1]; }
+            else if (edge.ValueKind == JsonValueKind.Object &&
+                (edge.TryGetProperty("from", out a) || edge.TryGetProperty("source", out a)) &&
+                (edge.TryGetProperty("to", out b) || edge.TryGetProperty("target", out b))) { }
+            else return false;
+            int from = Index(a), to = Index(b);
+            if (from < 1 || from > items.Length || to < 1 || to > items.Length) return false;
+            result.Add(new[] { from.ToString(System.Globalization.CultureInfo.InvariantCulture), to.ToString(System.Globalization.CultureInfo.InvariantCulture) });
+        }
+        rows = result.ToArray(); return true;
     }
     private static string Clip(JsonElement value, int limit) => value.ValueKind == JsonValueKind.String ? (value.GetString() ?? "")[..Math.Min((value.GetString() ?? "").Length, limit)] : "";
     private static string Str(JsonElement item, string key, int limit) => item.TryGetProperty(key, out var v) ? Clip(v, limit) : "";

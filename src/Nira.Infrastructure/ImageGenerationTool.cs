@@ -62,10 +62,10 @@ public sealed class ImageGenerationTool(WorkspacePathResolver paths, HttpClient 
     public const int MaxBytes = 16 * 1024 * 1024;
     private const int MaxResponse = 24 * 1024 * 1024;
     public ToolDescriptor Descriptor { get; } = new("image.generate",
-        "Create one new AI artwork from a text prompt via Cloudflare FLUX.2 Klein 4B. External prompt transmission and possible charges are governed by host authorization. Returns saved image evidence. Optional animation=true creates a four-frame looping GIF from one generated 2x2 sprite sheet. Not video or reference-image editing.",
+        "Create one new AI artwork from a text prompt via Cloudflare FLUX.2 Klein 4B. External prompt transmission and possible charges are governed by host authorization. Returns saved image evidence. For still images use prompt, width and height only. Optional animation=true creates a four-frame looping GIF; frameDurationMs is used only for animation. Not video or reference-image editing.",
         ToolRisk.ReadExternal, ToolSchemas.New("""
         {"type":"object","properties":{"prompt":{"type":"string","minLength":4,"maxLength":2400},"width":{"type":"integer"},"height":{"type":"integer"},"animation":{"type":"boolean"},"frameDurationMs":{"type":"integer"}},"required":["prompt","width","height"],"additionalProperties":false}
-        """), HasSideEffects: true);
+        """), HasSideEffects: true) { MaximumDispatchAttempts = 1 };
 
     private static (string Prompt, int Width, int Height, bool Animated, int Delay) Validate(JsonElement arguments)
     {
@@ -76,8 +76,11 @@ public sealed class ImageGenerationTool(WorkspacePathResolver paths, HttpClient 
             throw new ArgumentException("Use a 4–2400 character prompt and dimensions 256–1920 divisible by eight.");
         bool animated = arguments.TryGetProperty("animation", out var animation) && animation.GetBoolean();
         int delay = 300;
-        if (arguments.TryGetProperty("frameDurationMs", out var timing) &&
-            (!animated || !timing.TryGetInt32(out delay) || delay is < 100 or > 2000 || delay % 10 != 0))
+        // A still request has no timing. Ignore a redundant integer timing field rather
+        // than waste a provider round correcting harmless optional metadata. The strict
+        // argument schema still rejects non-integers; animated timing remains validated.
+        if (animated && arguments.TryGetProperty("frameDurationMs", out var timing) &&
+            (!timing.TryGetInt32(out delay) || delay is < 100 or > 2000 || delay % 10 != 0))
             throw new ArgumentException("Animation delay must be 100–2000 ms in multiples of ten.");
         if (animated && (w % 16 != 0 || h % 16 != 0 || w < 512 || h < 512))
             throw new ArgumentException("Animated sprite sheet dimensions must be 512–1920 and divisible by sixteen.");
@@ -95,7 +98,7 @@ public sealed class ImageGenerationTool(WorkspacePathResolver paths, HttpClient 
         var (prompt, width, height, animated, delay) = Validate(arguments);
         // Resolve again after consent; saving or clearing credentials takes effect immediately.
         ImageGenerationProvider? provider = CurrentProvider();
-        if (provider is null) return ToolReceipt.Fail("IMAGE_CREDENTIALS_MISSING", MissingCredentials);
+        if (provider is null) return ToolReceipt.Fail("IMAGE_CREDENTIALS_MISSING", MissingCredentials, recovery: ToolRecovery.Stop);
         string? partial = null;
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(TimeSpan.FromSeconds(110));
@@ -110,7 +113,7 @@ public sealed class ImageGenerationTool(WorkspacePathResolver paths, HttpClient 
             provider.Authenticate(request);
             using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
             if (!response.IsSuccessStatusCode)
-                return ToolReceipt.Fail("IMAGE_GENERATION_HTTP", $"Image service returned HTTP {(int)response.StatusCode}. Check access or quota. No image saved; do not automatically retry.");
+                return ToolReceipt.Fail("IMAGE_GENERATION_HTTP", $"Image service returned HTTP {(int)response.StatusCode}. Check access or quota. No image saved; do not automatically retry.", recovery: ToolRecovery.Stop);
             await using var source = await response.Content.ReadAsStreamAsync(token);
             using var buffer = new MemoryStream();
             byte[] chunk = new byte[65536];
@@ -140,7 +143,7 @@ public sealed class ImageGenerationTool(WorkspacePathResolver paths, HttpClient 
                 width = decoded.Width, height = decoded.Height, bytes = decoded.Bytes.Length, generated = true, animated, frameCount = animated ? 4 : 1, frameDurationMs = animated ? delay : 0 }, changedState: true);
         }
         catch (Exception ex) when (!ct.IsCancellationRequested && ex is HttpRequestException or IOException or JsonException or FormatException or InvalidOperationException or ArgumentException or NotSupportedException or UnauthorizedAccessException or OperationCanceledException or System.Runtime.InteropServices.COMException)
-        { return ToolReceipt.Fail("IMAGE_GENERATION_UNAVAILABLE", "No verified artwork was saved. The request may have consumed quota; do not automatically retry."); }
+        { return ToolReceipt.Fail("IMAGE_GENERATION_UNAVAILABLE", "No verified artwork was saved. The request may have consumed quota; do not automatically retry.", recovery: ToolRecovery.Stop); }
         finally { if (partial is not null && File.Exists(partial)) File.Delete(partial); }
     }
 

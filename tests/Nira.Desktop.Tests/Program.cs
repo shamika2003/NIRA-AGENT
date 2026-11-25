@@ -26,6 +26,72 @@ internal static class Program
         {
             NIRAAgent.UI.Presentation.NIRAVideoThumbnailService.DisableNetworkForOfflineAcceptance = true;
             NIRAAgent.UI.Presentation.NIRAVideoPlayer.DisableNetworkForOfflineAcceptance = true;
+            // Exercise the actual native preview pipeline using a local, receipt-bound PNG.
+            string captureRoot = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "nira-capture-ui-" + Guid.NewGuid().ToString("N"));
+            System.IO.Directory.CreateDirectory(captureRoot);
+            try
+            {
+                string capturePath = System.IO.Path.Combine(captureRoot, "window-capture-fixture.png");
+                var pixels = System.Windows.Media.Imaging.BitmapSource.Create(1440, 753, 96, 96,
+                    PixelFormats.Bgr24, null, new byte[1440 * 753 * 3], 1440 * 3);
+                var png = new System.Windows.Media.Imaging.PngBitmapEncoder();
+                png.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(pixels));
+                using (var stream = System.IO.File.Create(capturePath)) png.Save(stream);
+                string hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.IO.File.ReadAllBytes(capturePath)));
+                var captureState = new Nira.Core.ConversationState();
+                captureState.Operations.Add(new Nira.Core.AgentOperation {
+                    ToolName = "desktop.window_capture", Status = Nira.Core.OperationStatus.Succeeded,
+                    ResultJson = System.Text.Json.JsonSerializer.Serialize(Nira.Core.ToolReceipt.Ok("Captured", new {
+                        path = capturePath, sha256 = hash, contentVerified = true, Window = new { Title = "Example window" }
+                    }, changedState: true))
+                });
+                var stripType = typeof(Nira.Desktop.MainWindow).Assembly.GetType("NIRAAgent.UI.Presentation.NIRAImageStrip", true)!;
+                var createStrip = stripType.GetMethod("Create", BindingFlags.Static | BindingFlags.NonPublic)!;
+                var loadPhotos = stripType.GetMethod("LoadPhotos", BindingFlags.Static | BindingFlags.NonPublic)!;
+                var entries = Nira.Infrastructure.ImageGalleryEntry.ForChat(captureState);
+                var photos = (System.Collections.IList)loadPhotos.Invoke(null, [entries, captureRoot, 6])!;
+                Check(photos.Count == 1, "ui-local-screenshot-native-preview-larger-than-web-limit");
+                var owner = new Window();
+                try
+                {
+                    var capturePreview = (FrameworkElement)createStrip.Invoke(null, [captureState, captureRoot, owner])!;
+                    var image = VisualChildren(capturePreview).OfType<Image>().Single();
+                    Check(image.Stretch == Stretch.Uniform && image.Source is System.Windows.Media.Imaging.BitmapSource { PixelWidth: 1440, PixelHeight: 753 } &&
+                        VisualChildren(capturePreview).OfType<Button>().Any(b => Equals(b.ToolTip, "Enlarge screenshot")),
+                        "ui-local-screenshot-inline-uncropped-and-clickable");
+                    System.IO.File.AppendAllText(capturePath, "modified");
+                    Check(createStrip.Invoke(null, [captureState, captureRoot, owner]) is null,
+                        "ui-local-screenshot-changed-file-not-rendered");
+                    System.IO.File.Delete(capturePath);
+                    Check(createStrip.Invoke(null, [captureState, captureRoot, owner]) is null,
+                        "ui-local-screenshot-missing-file-not-rendered");
+                }
+                finally { owner.Close(); }
+            }
+            finally { System.IO.Directory.Delete(captureRoot, recursive: true); }
+            var imageCleanup = typeof(NIRAAgent.UI.Presentation.NIRARichAnswer).GetMethod("WithoutImageTables", BindingFlags.Static | BindingFlags.NonPublic)!;
+            const string localEmbed = @"![Screenshot](C:\NIRA\window-capture.png)";
+            string cleaned = (string)imageCleanup.Invoke(null, ["Result\n" + localEmbed + "\n```text\n" + localEmbed + "\n```\nDone"])!;
+            // AppendLine follows the host OS. Compare the Markdown content, not its line endings.
+            string normalizedCleanup = cleaned.Replace("\r\n", "\n", StringComparison.Ordinal);
+            string expectedCleanup = "Result\n```text\n" + localEmbed + "\n```\nDone";
+            Check(string.Equals(normalizedCleanup, expectedCleanup, StringComparison.Ordinal),
+                "ui-receipt-image-removes-redundant-local-markdown-preserves-code");
+            FrameworkElement memoryPage = new NIRAAgent.UI.Presentation.NIRAMemoryPage();
+            var memoryNotes = (Button)memoryPage.FindName("NotesButton")!;
+            var memorySuggestions = (Button)memoryPage.FindName("SuggestionsButton")!;
+            var memoryPreferences = (Button)memoryPage.FindName("PreferencesButton")!;
+            var memoryTitle = (TextBlock)memoryPage.FindName("SectionTitle")!;
+            Check(memoryPage is UserControl && Equals(memoryNotes.Tag, "ACTIVE"), "ui-memory-embedded-default-section");
+            memorySuggestions.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(Equals(memorySuggestions.Tag, "ACTIVE") && memoryNotes.Tag is null &&
+                memoryTitle.Text == "Learning suggestions", "ui-memory-suggestions-navigation");
+            memoryPreferences.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(Equals(memoryPreferences.Tag, "ACTIVE") && memorySuggestions.Tag is null &&
+                memoryTitle.Text == "Memory preferences", "ui-memory-preferences-navigation");
+            memoryNotes.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(Equals(memoryNotes.Tag, "ACTIVE") && memoryPreferences.Tag is null &&
+                memoryTitle.Text == "Saved memories", "ui-memory-notes-navigation");
             const string watchUrl = "https://www.youtube.com/watch?v=abcdefghijk";
             // Valid JPEG loads immediately before the preview is mounted. No CDN access.
             Check(Nira.Core.NIRAVideoReferencePolicy.TryParse(watchUrl, out var posterReference) && posterReference is not null, "ui-poster-reference");
@@ -254,12 +320,13 @@ internal static class Program
             var exporter = typeof(Nira.Desktop.MainWindow).Assembly.GetType("NIRAAgent.UI.Presentation.DeveloperChatExport", throwOnError: true)!;
             var activityType = exporter.GetNestedType("ActivityEntry", BindingFlags.NonPublic)!;
             var dictionaryType = typeof(Dictionary<,>).MakeGenericType(typeof(Guid), typeof(List<>).MakeGenericType(activityType));
-            var task = new Nira.Core.ConversationState { Messages = [new("system", "SECRET_SYSTEM_TEST"), new("user", "hello"), new("assistant", "**hello**")] };
+            var task = new Nira.Core.ConversationState { Messages = [new("system", "SECRET_SYSTEM_TEST"), new("user", "hello"), new("assistant", "**hello**"), new("tool", "{\"success\":false,\"errorCode\":\"EVIDENCE_REQUIRED\",\"message\":\"A required observation is missing.\"}", "test-call")] };
             task.Operations.Add(new Nira.Core.AgentOperation { ToolName = "web.search", ArgumentsJson = "{}", ResultJson = "{}" });
             string diagnostic = (string)exporter.GetMethod("Build", BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null,
                 [new[] { task }, Activator.CreateInstance(dictionaryType), breaks, "Halo", 1200d, 800d, 276d, 292d, "test-model", "test-vision"])!;
             using var json = System.Text.Json.JsonDocument.Parse(diagnostic);
             Check(!diagnostic.Contains("SECRET_SYSTEM_TEST") && diagnostic.Contains("web.search") && diagnostic.Contains("line-break") && diagnostic.Contains("**hello**") && json.RootElement.GetProperty("turns").GetArrayLength() == 1, "ui-debug-export-records-and-render-tree");
+            Check(json.RootElement.GetProperty("turns")[0].GetProperty("protocolErrors").GetArrayLength() == 1 && diagnostic.Contains("EVIDENCE_REQUIRED") && diagnostic.Contains("test-call"), "ui-debug-export-preflight-errors");
             var normalColors = Render("## Overview\n\n**Important concept** remains readable.");
             Check(((Paragraph)normalColors.Document.Blocks.FirstBlock!).Foreground is SolidColorBrush &&
                 normalColors.Document.Blocks.OfType<Paragraph>().Last().Inlines.OfType<Span>().First().Foreground is SolidColorBrush, "ui-default-color-without-user-prompt");
@@ -277,6 +344,122 @@ internal static class Program
             Check(invalid.Count == 0, "ui-rich-rejects-private-invalid-and-unknown");
             var data = NIRAAgent.UI.Presentation.NIRARichAnswer.Parse("[{\"type\":\"bar\",\"labels\":[\"A\",\"B\"],\"values\":[2,3]},{\"type\":\"progress\",\"title\":\"Progress\",\"value\":2,\"maximum\":3},{\"type\":\"equation\",\"text\":\"x^2\"},{\"type\":\"tabs\",\"items\":[\"A\",\"B\"],\"panels\":[\"One\",\"Two\"]},{\"type\":\"checklist\",\"items\":[\"First\",\"Second\"]}]");
             Check(data.Count == 5 && data.All(block => NIRAAgent.UI.Presentation.NIRARichBlockRenderer.Render(block) is FrameworkElement), "ui-rich-real-native-controls");
+            // M6G: declarative visual components share the production parser and renderer.
+            var interactive = NIRAAgent.UI.Presentation.NIRARichAnswer.Parse("""
+                [{"type":"calculator","title":"Cost","labels":["Quantity","Price"],"values":[3,100],"formula":"x1*x2","unit":"LKR"},
+                 {"type":"form","title":"Trip","items":["Destination","Days"],"panels":["","3"]},
+                 {"type":"column","labels":["A","B"],"values":[-2,3]},
+                 {"type":"pie","labels":["A","B"],"values":[2,3]},
+                 {"type":"diagram","items":["Input","Read","Analyze","Answer"],"rows":[["1","2"],["1","3"],["2","4"],["3","4"]]}]
+                """);
+            Check(interactive.Count == 5, "ui-interactive-native-parse");
+            var multi = NIRAAgent.UI.Presentation.NIRARichAnswer.Parse("""
+                [{"type":"column","title":"Comparison","labels":["January","February","March","April"],"datasets":[{"label":"Sales","data":[25000,42000,38000,62000]},{"label":"Expenses","data":[25000,42000,38000,62000]}]},
+                 {"type":"chart","labels":["A","B"],"datasets":[{"label":"First","data":[1,2]},{"label":"Second","data":[3,4]}]},
+                 {"type":"column","labels":["A","B"],"datasets":[{"label":"Bad","data":[1]}]}]
+                """);
+            Check(multi.Count == 2 && multi[0].Series.Count == 2, "ui-multi-series-validation");
+            // Live Test 4: complete chart object but missing only the final array bracket.
+            var recoveredChart = NIRAAgent.UI.Presentation.NIRARichAnswer.Parse("""
+                [{"type":"column","labels":["January","February","March","April"],"datasets":[{"label":"Revenue","data":[25000,42000,38000,62000]},{"label":"Expenses","data":[20000,35000,30000,45000]},{"label":"Profit","data":[5000,7000,8000,17000]}]}
+                """);
+            Check(recoveredChart.Count == 1 && recoveredChart[0].Series.Count == 3 && recoveredChart[0].Series[2].Values[3] == 17000,
+                "ui-m7a-missing-array-close-recovers-three-series");
+            Check(NIRAAgent.UI.Presentation.NIRARichAnswer.Parse("[{\"type\":\"card\",\"text\":\"incomplete").Count == 0 &&
+                NIRAAgent.UI.Presentation.NIRARichAnswer.Parse("[{\"type\":\"card\",\"text\":\"image.search receipt ID abc\"}").Count == 0,
+                "ui-m7a-visual-recovery-does-not-bypass-validation");
+            var repairedChartSurface = NIRAAgent.UI.Presentation.NIRARichBlockRenderer.Render(recoveredChart[0]);
+            var repairedPlot = VisualChildren(repairedChartSurface).OfType<Canvas>().Single();
+            repairedPlot.Measure(new Size(600, 250)); repairedPlot.Arrange(new Rect(0, 0, 600, 250));
+            repairedPlot.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+            Check(repairedPlot.Children.OfType<System.Windows.Shapes.Rectangle>().Count() == 12, "ui-m7a-recovered-chart-all-bars");
+            // Test 5: real inline content and accents must survive rich-card diagnostic export.
+            var testFive = NIRAAgent.UI.Presentation.NIRARichAnswer.Create("""
+                ```nira-ui
+                [{"type":"card","title":"Intelligence","text":"**Problem solving** and adaptation.","icon":"brain","color":"#8651B5"},
+                 {"type":"card","title":"Consciousness","text":"*Subjective awareness*.","color":"#087A68"}]
+                ```
+                """);
+            string cardDiagnostic = (string)exporter.GetMethod("Build", BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null,
+                [new[] { task }, Activator.CreateInstance(dictionaryType), testFive, "Halo", 1200d, 800d, 276d, 292d, "test-model", "test-vision"])!;
+            using var cardJson = System.Text.Json.JsonDocument.Parse(cardDiagnostic);
+            var cardLabels = cardJson.RootElement.GetProperty("rendered").EnumerateArray().Where(x => x.GetProperty("type").GetString() == "label").Select(x => x.GetProperty("text").GetString()).ToArray();
+            Check(cardLabels.Any(x => x == "Intelligence") && cardLabels.Any(x => x == "Consciousness") &&
+                cardLabels.Any(x => x?.Contains("Problem solving", StringComparison.Ordinal) == true) &&
+                cardLabels.Any(x => x?.Contains("Subjective awareness", StringComparison.Ordinal) == true), "ui-m7a-rich-card-text-diagnostic");
+            var grouped = NIRAAgent.UI.Presentation.NIRARichBlockRenderer.Render(multi[0]);
+            var groupedPlot = VisualChildren(grouped).OfType<Canvas>().Single();
+            groupedPlot.Measure(new Size(600, 250)); groupedPlot.Arrange(new Rect(0, 0, 600, 250));
+            groupedPlot.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+            Check(groupedPlot.Children.OfType<System.Windows.Shapes.Rectangle>().Count() == 8, "ui-grouped-columns-preserve-both-series");
+            // Verify the actual painted tick labels (including order), not merely
+            // a matching substring in an unrelated label or a formatter in isolation.
+            string[] expectedTicks = ["0", "15.5k", "31k", "46.5k", "62k"];
+            string[] ReadAxisTicks() => groupedPlot.Children.OfType<TextBlock>()
+                .Where(label => Canvas.GetLeft(label) == 1).Select(label => label.Text).ToArray();
+            string[] actualTicks = ReadAxisTicks();
+            Check(actualTicks.SequenceEqual(expectedTicks), "ui-chart-readable-axis (actual: " + string.Join(", ", actualTicks) + ")");
+            Check(groupedPlot.Children.OfType<System.Windows.Shapes.Rectangle>().Any(bar =>
+                bar.ToolTip is string tip && tip == "April · Sales: 62,000"), "ui-chart-exact-value-tooltip");
+            groupedPlot.Measure(new Size(480, 250)); groupedPlot.Arrange(new Rect(0, 0, 480, 250));
+            groupedPlot.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+            Check(ReadAxisTicks().SequenceEqual(expectedTicks) && groupedPlot.Children.OfType<System.Windows.Shapes.Rectangle>().Count() == 8,
+                "ui-chart-readable-axis-after-resize");
+            string cleanTable = NIRAAgent.UI.Presentation.NIRAPublicDelivery.Answer("| What | How |\n|---|---|\n| Research | `web.search` |\n| Planning | `nira_plan` |\n- Use `nira_ask_user` for details.");
+            Check(cleanTable.Contains("| Research | web search |") && cleanTable.Contains("| Planning | task planning |") && cleanTable.Contains("clarification question") && !cleanTable.Contains("nira_"), "ui-public-content-preserves-table-and-list");
+            Check(NIRAAgent.Presentation.NIRAVisualArithmetic.TryEvaluate("2^3^2 + x1*(-2)", [3], out double calculated) && calculated == 506 &&
+                NIRAAgent.Presentation.NIRAVisualArithmetic.TryEvaluate("(1+x1/100)^x2", [10, 2], out double growth) && Math.Abs(growth - 1.21) < 1e-10 &&
+                !NIRAAgent.Presentation.NIRAVisualArithmetic.TryEvaluate("x1/0", [1], out _) &&
+                !NIRAAgent.Presentation.NIRAVisualArithmetic.TryEvaluate("System.IO.File", [1], out _) &&
+                !NIRAAgent.Presentation.NIRAVisualArithmetic.TryEvaluate("x9", [1], out _) &&
+                !NIRAAgent.Presentation.NIRAVisualArithmetic.TryEvaluate("1+", [1], out _), "ui-bounded-local-arithmetic");
+            var calc = NIRAAgent.UI.Presentation.NIRARichBlockRenderer.Render(interactive[0]);
+            var inputs = VisualChildren(calc).OfType<TextBox>().ToArray();
+            bool Shows(string prefix) => VisualChildren(calc).OfType<TextBlock>().Any(b => b.Text.StartsWith(prefix, StringComparison.Ordinal));
+            Check(inputs.Length == 2 && Shows("300 LKR"), "ui-calculator-initial-value");
+            inputs[0].Text = "4";
+            Check(Shows("400 LKR"), "ui-calculator-live-edit");
+            inputs[0].Text = "not a number";
+            Check(Shows("Enter valid numbers"), "ui-calculator-invalid-input");
+            VisualChildren(calc).OfType<Button>().Single().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(Shows("300 LKR"), "ui-calculator-reset");
+            string? draft = null;
+            var form = NIRAAgent.UI.Presentation.NIRARichBlockRenderer.Render(interactive[1], followUp: value => draft = value);
+            var formFields = VisualChildren(form).OfType<TextBox>().ToArray();
+            Check(formFields.Length == 2 && draft is null, "ui-form-no-automatic-submission");
+            formFields[0].Text = "Kandy";
+            Check(draft is null, "ui-form-edit-does-not-send");
+            VisualChildren(form).OfType<Button>().Single().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(draft is not null && draft.Contains("Destination: Kandy") && draft.Contains("Days: 3"), "ui-form-explicit-draft");
+            var interactiveColumn = NIRAAgent.UI.Presentation.NIRARichBlockRenderer.Render(interactive[2]);
+            var plot = VisualChildren(interactiveColumn).OfType<Canvas>().Single();
+            plot.Measure(new Size(480, 215)); plot.Arrange(new Rect(0, 0, 480, 215));
+            plot.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+            Check(plot.Children.OfType<System.Windows.Shapes.Rectangle>().Count() == 2, "ui-column-signed-bars");
+            var pie = NIRAAgent.UI.Presentation.NIRARichBlockRenderer.Render(interactive[3]);
+            Check(VisualChildren(pie).OfType<System.Windows.Shapes.Path>().Count() == 2, "ui-pie-native-sectors");
+            Check(NIRAAgent.Presentation.NIRAVisualDiagram.TryLayers(interactive[4], out int[] diagramLayers) && diagramLayers.SequenceEqual(new[] { 0, 1, 1, 2 }), "ui-diagram-layering");
+            var diagram = NIRAAgent.UI.Presentation.NIRARichBlockRenderer.Render(interactive[4]);
+            // The viewbox contains a Canvas with four nodes and four directed wires.
+            var graph = VisualChildren(diagram).OfType<Canvas>().Single();
+            Check(graph.Children.OfType<System.Windows.Shapes.Polyline>().Count() == 4 && graph.Children.OfType<Border>().Count() == 4, "ui-diagram-native-nodes-edges");
+            var graphVariants = NIRAAgent.UI.Presentation.NIRARichAnswer.Parse("""
+                [{"type":"diagram","items":["A","B","C"],"rows":[[2,1],[1,3],[3,2]]},
+                 {"type":"diagram","nodes":[{"id":"a","label":"Input"},{"id":"b","label":"Output"}],"edges":[{"from":"b","to":"a"}]},
+                 {"type":"diagram","items":["A","B"],"rows":[[1,3]]}]
+                """);
+            Check(graphVariants.Count == 2 && NIRAAgent.Presentation.NIRAVisualDiagram.TryLayout(graphVariants[0], out _, out bool radial) && radial &&
+                NIRAAgent.Presentation.NIRAVisualDiagram.TryLayout(graphVariants[1], out var reversed, out bool radial2) && !radial2 && reversed.SequenceEqual(new[] { 1, 0 }), "ui-graph-normalization-cycle-and-backward");
+            var cyclicGraph = VisualChildren(NIRAAgent.UI.Presentation.NIRARichBlockRenderer.Render(graphVariants[0])).OfType<Canvas>().Single();
+            Check(cyclicGraph.Children.OfType<System.Windows.Shapes.Polyline>().Count() == 3 && cyclicGraph.Children.OfType<Border>().Count() == 3, "ui-cyclic-graph-native-render");
+            var invalidVisuals = NIRAAgent.UI.Presentation.NIRARichAnswer.Parse("""
+                [{"type":"calculator","labels":["A"],"values":[1],"formula":"x1/0"},
+                 {"type":"pie","labels":["A","B"],"values":[-2,3]},
+                 {"type":"pie","labels":["A","B"],"values":[0,0]},
+                 {"type":"form","items":["A","B"],"panels":["one"]},
+                 {"type":"diagram","items":["A","B"],"rows":[["1","1"]]}]
+                """);
+            Check(invalidVisuals.Count == 0, "ui-interactive-invalid-data-rejected");
             Check(NIRAAgent.UI.Presentation.NIRAPublicDelivery.Status(Nira.Core.ConversationStatus.NeedsReconciliation).Contains("review", StringComparison.OrdinalIgnoreCase), "ui-natural-uncertainty-status");
             var varied = Render("## First\n\n**First idea**.\n\n## Second\n\n**Second idea**.\n\n## Third\n\n**Third idea**.");
             var variedColors = varied.Document.Blocks.OfType<Paragraph>().SelectMany(x => x.Inlines.OfType<Span>())

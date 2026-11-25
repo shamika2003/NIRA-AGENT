@@ -495,7 +495,9 @@ public static class NIRAVideoPlayer
             try
             {
                 var view = new WebView2CompositionControl(); browser = view;
-                stage.Children.Clear(); stage.Children.Add(view);
+                // The poster remains mounted above the initializing composition surface.
+                stage.Children.Insert(0, view);
+                preview.IsHitTestVisible = false;
                 await ((IWebView2)view).EnsureCoreWebView2Async(null);
                 if (browser != view || current != version) return;
                 if (!card.IsLoaded || !InViewport()) { Reset(); return; }
@@ -552,6 +554,7 @@ public static class NIRAVideoPlayer
                         { if (browser == view && current == version) FailPlayer("EMBED FAILED · RELOAD OR OPEN VIDEO"); }));
                         return;
                     }
+                    stage.Children.Remove(preview);
                     if (status.Text == "LOADING PLAYER") status.Text = "PLAYER LOADED";
                     wide.IsEnabled = miniButton.IsEnabled = true;
                 };

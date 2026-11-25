@@ -25,6 +25,11 @@ public sealed class WorkspaceAuthority(string workspaceRoot, bool developmentMod
     {
         if (developmentMode)
         {
+            // The owner grants standing consent for local saved-note management in
+            // development mode. Limit it to these two registered tools and their exact
+            // local target; private history, learning review and other effects are separate.
+            if (target == "persistent-memory" && tool.Risk == ToolRisk.Dangerous && tool.HasSideEffects &&
+                tool.Name is "memory.remember" or "memory.manage") return true;
             // File/document mutations, arbitrary commands, UI changes and private uploads
             // never acquire authority from the debugging convenience policy.
             if (tool.Risk is ToolRisk.Dangerous or ToolRisk.WriteWorkspace or ToolRisk.WriteOutsideWorkspace)

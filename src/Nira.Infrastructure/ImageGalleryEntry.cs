@@ -5,8 +5,19 @@ namespace Nira.Infrastructure;
 
 /// <summary>Gallery index reconstructed only from successful, bound, saved observations.</summary>
 public sealed record ImageGalleryEntry(string Path, string Sha256, string Title, string Author,
-    string License, string Source, DateTimeOffset RetrievedUtc, bool IsGenerated = false, bool IsAnimated = false, int FrameDurationMs = 0)
+    string License, string Source, DateTimeOffset RetrievedUtc, bool IsGenerated = false, bool IsAnimated = false, int FrameDurationMs = 0, bool IsLocalCapture = false)
 {
+    // Private desktop captures are visible in their originating chat only. The
+    // global photo library continues to index public retrievals and generated art.
+    public static IReadOnlyList<ImageGalleryEntry> ForChat(ConversationState state)
+    {
+        var captures = RecordedFileArtifacts.From(state).Where(file => file.ToolName == "desktop.window_capture")
+            .Select(file => new ImageGalleryEntry(file.Path, file.Sha256,
+                file.Title.Length == 0 ? "Window screenshot" : file.Title,
+                "Local window capture", "Private · saved locally", "", state.UpdatedUtc, IsLocalCapture: true));
+        return captures.Concat(FromTask(state)).ToArray();
+    }
+
     public static IReadOnlyList<ImageGalleryEntry> FromTask(ConversationState state)
     {
         var candidates = ImageEvidenceBinding.Candidates(state).ToArray();

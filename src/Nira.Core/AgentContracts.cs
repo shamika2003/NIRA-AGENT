@@ -15,6 +15,12 @@ public enum OperationStatus
 
 public enum ToolRisk { ReadLocal, ReadExternal, WriteWorkspace, WriteOutsideWorkspace, Dangerous }
 
+// An outcome contract supplied by the executing adapter, never the model.
+// Reobserve means the requested mutation did not dispatch. UnverifiedEffect
+// means it may have occurred and must not be replayed. Stop covers non-retryable
+// outcomes such as a potentially billed provider request.
+public enum ToolRecovery { None, Reobserve, Stop, UnverifiedEffect }
+
 // One confirmation only arms abandonment. The second press within a bounded
 // interval actually abandons. This is UI safety logic, independent of any task.
 public sealed class TaskAbandonConfirmation
@@ -43,7 +49,7 @@ public sealed class TaskAbandonConfirmation
         // erase that uncertainty just because the user abandoned future steps.
         if (task.Status == ConversationStatus.NeedsReconciliation ||
             task.Operations.Any(op => op.Status is OperationStatus.Dispatched or OperationStatus.Unknown) ||
-            task.RetryBlockCode == "DESKTOP_TEXT_NOT_VERIFIED")
+            ToolRecoveryPolicy.HasUnverifiedEffect(task))
         {
             task.Status = ConversationStatus.NeedsReconciliation;
             task.RetryBlockCode = "USER_ABANDONED_WITH_UNCERTAIN_ACTION";
@@ -84,6 +90,7 @@ public sealed class AgentOperation
     public OperationStatus Status { get; set; }
     public string? ResultJson { get; set; }
     public string? ErrorCode { get; set; }
+    public ToolRecovery Recovery { get; set; }
     public DateTimeOffset CreatedUtc { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? CompletedUtc { get; set; }
 }
@@ -131,11 +138,15 @@ public sealed record ToolReceipt(
     bool ChangedState = false,
     string? ErrorCode = null)
 {
-    public static ToolReceipt Ok(string message, object? payload = null, bool changedState = false) =>
-        new(true, message, JsonSerializer.SerializeToElement(payload ?? new { }), changedState);
+    public ToolRecovery Recovery { get; init; }
 
-    public static ToolReceipt Fail(string errorCode, string message, object? detail = null) =>
-        new(false, message, JsonSerializer.SerializeToElement(detail ?? new { }), false, errorCode);
+    public static ToolReceipt Ok(string message, object? payload = null, bool changedState = false,
+        ToolRecovery recovery = ToolRecovery.None) =>
+        new(true, message, JsonSerializer.SerializeToElement(payload ?? new { }), changedState) { Recovery = recovery };
+
+    public static ToolReceipt Fail(string errorCode, string message, object? detail = null,
+        ToolRecovery recovery = ToolRecovery.None) =>
+        new(false, message, JsonSerializer.SerializeToElement(detail ?? new { }), false, errorCode) { Recovery = recovery };
 }
 
 public sealed record AgentRunResult(
@@ -190,6 +201,13 @@ public interface IAgentTool
     Task<ToolReceipt> ExecuteAsync(JsonElement arguments, CancellationToken ct);
 }
 
+// Optional tool-owned evidence constraint. The host checks it before approval and dispatch.
+// Evidence is the current task journal, never a claim from the model or prior chat.
+public interface IToolEvidenceRequirement
+{
+    string? MissingEvidence(ConversationState state, JsonElement arguments);
+}
+
 // Optional local readiness check; never grants permission or dispatches an action.
 public interface IToolReadiness
 {
@@ -199,7 +217,12 @@ public interface IToolReadiness
 public sealed record ToolDescriptor(
     string Name, string Description, ToolRisk Risk,
     JsonElement Parameters,
-    bool HasSideEffects = false);
+    bool HasSideEffects = false)
+{
+    // Null means ordinary bounded execution; a tool can impose a stricter
+    // per-task dispatch budget for costly or otherwise non-repeatable effects.
+    public int? MaximumDispatchAttempts { get; init; }
+}
 
 public interface IToolAuthorization
 {

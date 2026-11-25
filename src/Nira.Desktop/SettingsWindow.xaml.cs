@@ -70,7 +70,7 @@ public partial class SettingsWindow : Window
         _loading = true; _page = page; PageCard.IsEnabled = false;
         try
         {
-            PageTitle.Text = page == "Model" ? "Model & credentials" : page == "History" ? "Conversation history" : page == "Memory" ? "Saved memory" : page;
+            PageTitle.Text = page == "Model" ? "Model & credentials" : page == "History" ? "Conversation history" : page;
             PageBody.Children.Clear(); StatusText.Text = "Ready"; SettingsContentScroll.ScrollToTop();
             switch (page)
             {
@@ -126,12 +126,11 @@ public partial class SettingsWindow : Window
                     });
                     break;
                 case "History": await ShowHistoryAsync(); break;
-                case "Memory": await ShowMemoryAsync(); break;
                 case "Permissions":
                     AddText("Current authorized workspace", true); AddText(_runtime.Workspace);
                     AddText(_runtime.DevelopmentPermissions ? "Development permissions · ACTIVE" : "Standard permissions · ACTIVE", true);
                     AddText(_runtime.DevelopmentPermissions
-                        ? "Public searches, ordinary reads, public browsing and requested image/GIF generation run without repeated confirmation. File creation, editing, deletion, private-file uploads, commands and desktop/browser mutations still require approval. Image generation may consume provider quota or incur charges."
+                        ? "Public searches, ordinary reads, public browsing, requested image/GIF generation and explicitly requested local saved-note changes run without repeated confirmation. Private conversation history, file creation, editing, deletion, private-file uploads, commands and desktop/browser mutations still require approval. Image generation may consume provider quota or incur charges."
                         : "Each outside-workspace or dangerous operation requires the runtime's one-time approval. Attachments and saved chats grant no extra authority.");
                     if (_runtime.DevelopmentPermissions) AddText("This policy applies to Debug builds only. Restart with NIRA_DEVELOPMENT_PERMISSIONS=0 to use standard permissions.");
                     AddText("This page is read-only. It cannot issue approvals, change workspace scope or replay previous operations.");
@@ -166,42 +165,6 @@ public partial class SettingsWindow : Window
         finally { _loading = false; if (!_closed) PageCard.IsEnabled = true; }
         await ShowPageAsync(_page);
         if (!_closed) StatusText.Text = "Conversation preferences saved";
-    }
-    private async Task ShowMemoryAsync()
-    {
-        AddText("Explicit saved notes", true);
-        AddText("These notes are separate from chat history. Add only facts you want NIRA to retain. Do not store passwords or secret keys.");
-        var notes = await _store.ListMemoryNotesAsync(default);
-        if (_closed) return;
-        var list = new ListBox { ItemsSource = notes, DisplayMemberPath = nameof(SavedMemoryNote.Content), MaxHeight = 210, MinHeight = 65, Margin = new Thickness(0, 0, 0, 12) };
-        PageBody.Children.Add(list);
-        var selected = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12) };
-        selected.SetResourceReference(TextBlock.ForegroundProperty, "NIRATextBrush");
-        list.SelectionChanged += (_, _) => selected.Text = (list.SelectedItem as SavedMemoryNote)?.Content ?? "";
-        PageBody.Children.Add(selected);
-        AddButton("Remove selected note", () => {
-            if (list.SelectedItem is SavedMemoryNote note && MessageBox.Show(this, "Remove this saved note? Original chats and audit records will remain.", "NIRA", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
-                _ = ChangeMemoryAsync(null, note.Id);
-        });
-        AddText("Add a note", true);
-        var input = new TextBox { MaxLength = 3000, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 80, Margin = new Thickness(0, 0, 0, 12) };
-        PageBody.Children.Add(input);
-        AddButton("Save note", () => _ = ChangeMemoryAsync(input.Text, null));
-        AddText("Notes are searchable through NIRA's existing memory tool; automatic recall is not added by this update. Up to 500 recent notes are shown.");
-    }
-    private async Task ChangeMemoryAsync(string? note, string? id)
-    {
-        if (_loading || _closed) return;
-        _loading = true; PageCard.IsEnabled = false;
-        try
-        {
-            if (id is not null) { if (!await _store.RemoveMemoryNoteAsync(id, default)) throw new InvalidOperationException("Note no longer exists."); }
-            else { string text = note?.Trim() ?? ""; if (text.Length is < 1 or > 3000) throw new ArgumentException("Enter 1–3000 characters."); await _store.StoreMemoryAsync(text, "explicit-settings-user", default); }
-        }
-        catch (Exception error) { StatusText.Text = error.Message; return; }
-        finally { _loading = false; if (!_closed) PageCard.IsEnabled = true; }
-        await ShowPageAsync(_page);
-        if (!_closed) StatusText.Text = "Saved notes updated";
     }
     private sealed record HistoryChoice(SavedConversationSummary Item)
     {

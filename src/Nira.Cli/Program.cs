@@ -219,9 +219,11 @@ internal sealed class CliApprovalBroker : IApprovalBroker
     public Task<bool> RequestApprovalAsync(ApprovalRequest request, CancellationToken ct)
     {
         Console.WriteLine("ACTION APPROVAL REQUIRED: " + request.Description);
-        if (request.ToolName is "desktop.window_activate" or "desktop.control_invoke" or
+        if (request.ToolName.StartsWith("memory.", StringComparison.Ordinal) || request.ToolName is "desktop.window_activate" or "desktop.control_invoke" or "desktop.control_sequence" or
             "desktop.control_set_text" or "desktop.control_type_text")
-            Console.WriteLine("Exact desktop action arguments: " + request.ArgumentsJson);
+            Console.WriteLine("Exact approved action arguments: " + request.ArgumentsJson);
+        if (request.ToolName == "memory.search_history")
+            Console.WriteLine("Matching private excerpts will be sent to the configured reasoning model.");
         if (request.ToolName == "desktop.control_type_text")
             Console.WriteLine("NIRA will activate the approved observed window itself after YES. " +
                 "Windows still verifies the exact window and focused editor before typing. " +

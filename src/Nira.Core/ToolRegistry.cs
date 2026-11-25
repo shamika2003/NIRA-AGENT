@@ -6,14 +6,22 @@ public sealed class ToolRegistry
 {
     private readonly Dictionary<string, IAgentTool> _tools = new(StringComparer.Ordinal);
 
-    public ToolRegistry(IEnumerable<IAgentTool> tools)
+    // The composition root defines ordered starter capabilities. This is catalog
+    // configuration, not task classification, execution authority, or a required workflow.
+    // Optional providers may be absent; the remaining priorities keep their order.
+    public ToolRegistry(IEnumerable<IAgentTool> tools, IEnumerable<string>? defaultCapabilityOrder = null)
     {
         foreach (IAgentTool tool in tools)
         {
             if (!_tools.TryAdd(tool.Descriptor.Name, tool))
                 throw new AgentException($"Duplicate tool name: {tool.Descriptor.Name}");
         }
+        DefaultDescriptors = Array.AsReadOnly((defaultCapabilityOrder ?? Array.Empty<string>())
+            .Distinct(StringComparer.Ordinal).Where(_tools.ContainsKey)
+            .Select(name => _tools[name].Descriptor).ToArray());
     }
+
+    public IReadOnlyList<ToolDescriptor> DefaultDescriptors { get; }
 
     public IReadOnlyList<ToolDescriptor> Descriptors =>
         _tools.Values.Select(t => t.Descriptor).ToArray();

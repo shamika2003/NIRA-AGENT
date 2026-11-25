@@ -3,7 +3,76 @@ using Nira.Core;
 using Nira.Infrastructure;
 
 var cases = new (string Name, Func<Task> Test)[] {
+    ("m8c-learning-compares-approved-notes-only-with-recall-consent", M8cLearningContext),
+    ("m8c-learning-format-dedup-and-acceptance-race", M8cLearningDedup),
+    ("m8c-explicit-memory-actions-not-relearned", M8cLearningSkipsExplicitActions),
+    ("m8c-contextual-aliases-and-generic-recall-isolation", M8cRecallAliases),
+    ("m8b-new-note-direct-save-and-fresh-lookup", M8bDirectSaveAndRecall),
+    ("m8b-development-memory-management-policy", M8bDevelopmentMemoryManagement),
+    ("m8b-memory-related-note-guard", M8bRelatedNoteGuard),
+    ("m8b-memory-correction-metadata-and-recall", M8bCorrectionPreservesMetadata),
+    ("m8b-memory-topic-and-original-history", M8bTopicAndHistory),
+    ("m8-memory-additive-migration", M8MemoryMigration),
+    ("m8-memory-ranked-recall-dedup", M8MemoryRankAndDedup),
+    ("m8-memory-context-opt-in-isolated", M8MemoryContextIsolation),
+    ("m8-memory-correction-cas", M8MemoryCorrection),
+    ("m8-memory-tools-evidence-approval", M8MemoryToolEvidence),
+    ("m8-memory-learning-consent", M8MemoryLearningConsent),
+    ("m8-memory-learning-rejects-untrusted", M8MemoryLearningRejectsUntrusted),
+    ("m8-memory-history-scope", M8MemoryHistoryScope),
+    ("m8-memory-learning-engine-integration", M8MemoryLearningIntegration),
+    ("m8-memory-protected-metadata", M8MemoryProtectedMetadata),
     ("schema-rejects-unexpected-properties", SchemaRejectsUnexpectedProperties),
+    ("capture-observed-window-saves-verified-artifact", WindowCaptureApproved),
+    ("capture-denial-does-not-read-pixels", WindowCaptureDenied),
+    ("capture-unobserved-target-rejected", WindowCaptureUnobserved),
+    ("capture-title-mismatch-rejected", WindowCaptureMismatch),
+    ("capture-stale-window-no-file", WindowCaptureStale),
+    ("capture-protects-vision-transfer", WindowCaptureVisionPolicy),
+    ("schema-enum-feedback-lists-valid-values", SchemaEnumFeedback),
+    ("capture-chat-media-only-from-verified-receipt", CaptureChatEvidence),
+    ("schema-property-feedback-lists-real-fields", SchemaPropertyFeedback),
+    ("catalog-stable-with-optional-providers", CatalogStableWithOptionalProviders),
+    ("catalog-configurable-priority-and-family", CatalogConfigurablePriorityAndFamily),
+    ("generic-recovery-requires-new-observation", GenericRecoveryFreshObservation),
+    ("generic-recovery-bounds-equivalent-rejected-actions", GenericRecoveryBoundsReplay),
+    ("generic-recovery-preserves-uncertain-effects", GenericRecoveryUnverified),
+    ("generic-recovery-alternative-denial-is-respected", GenericRecoveryDenial),
+    ("m7c-ordered-controls-verified", OrderedControlsVerified),
+    ("m7c-ordered-controls-denied", OrderedControlsDenied),
+    ("m7c-ordered-controls-require-observation", OrderedControlsUnobserved),
+    ("m7c-ordered-controls-stop-on-stale", OrderedControlsStale),
+    ("m7c-ordered-controls-mismatch-blocks-retry", OrderedControlsMismatch),
+    ("m7c-paused-task-explicit-isolation", PausedTaskIsolation),
+    ("m7c-nonempty-editor-safe-recovery", NonemptyEditorRecovery),
+    ("m7c-verified-input-paced-readback", VerifiedInputPaced),
+    ("m7c-verified-input-stops-on-corruption", VerifiedInputCorruption),
+    ("m7c-verified-input-stops-on-focus-loss", VerifiedInputFocusLoss),
+    ("m7c-verified-input-never-retypes-on-timeout", VerifiedInputTimeout),
+    ("m7c-verified-input-unicode-scalar", VerifiedInputUnicode),
+    ("m7c-unverified-input-followup-isolated", VerifiedInputFollowup),
+    ("m7c-app-detection-positive-path-evidence", M7cDetectionStatus),
+    ("m7c-application-launch-denied-without-dispatch", M7cLaunchDenied),
+    ("m7c-application-launch-requires-current-observation", M7cLaunchUnobserved),
+    ("m7c-application-launch-observed-approved", M7cLaunchApproved),
+    ("m7c-application-launch-stale-file-rejected", M7cLaunchStale),
+    ("m7c-application-discovery-bounded-schema", M7cDiscoverySchema),
+    ("m7c-physical-core-count-observation", M7cPhysicalCores),
+    ("m7b-process-inspection-direct-and-optional-filter", M7bProcessInspectionDirect),
+    ("m7b-applications-multi-query-and-path-metadata", M7bApplicationsLookup),
+    ("m7b-clarification-review-uses-capabilities", M7bClarificationReview),
+    ("m7b-clarification-review-preserves-user-choice", M7bRealClarification),
+    ("m7b-windows-product-family", M7bWindowsFamily),
+    ("m7b-optional-system-inventory", M7bSystemInventory),
+    ("m7b-search-domain-scope", M7bDomainSearch),
+    ("m7b-browser-reference-recovery", M7bBrowserReferences),
+    ("m7a-system-snapshot-readonly-and-bounded", M7aSystemSnapshot),
+    ("m7a-system-snapshot-routed-and-authorized", M7aSystemRoute),
+    ("m7a-search-bounded-and-filtered", M7aSearchResults),
+    ("m7a-search-invalid-empty-and-oversized", M7aSearchFailures),
+    ("m7a-search-receipt-reaches-model", M7aSearchRoute),
+    ("m7a-response-quality-guidance", M7aQualityGuidance),
+    ("m7a-still-image-redundant-timing", M7aStillTiming),
     ("clarification-resumes-original-objective", ClarificationResumes),
     ("authorized-workspace-write-has-observed-receipt", WorkspaceWrite),
     ("out-of-scope-write-cannot-run-without-consent", ExternalWriteDenied),
@@ -572,6 +641,507 @@ foreach (var (name, test) in cases)
 Console.WriteLine($"NIRA KERNEL TESTS: {cases.Length - failed}/{cases.Length} passed");
 return failed == 0 ? 0 : 1;
 
+static async Task<(int Captures, int Approvals, ConversationState State, string[] Files)> WindowCaptureCase(
+    bool observe, bool approve, bool mismatch = false, bool stale = false)
+{
+    using var setup = new TestContext();
+    using var http = new HttpClient();
+    var backend = new CaptureTestBackend { Stale = stale };
+    var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http, desktopBackend: backend);
+    var replies = new List<ModelReply>();
+    if (observe) replies.Add(new ModelReply(null, [Call("list", "desktop.windows_list", new { })]));
+    replies.Add(new ModelReply(null, [Call("capture", "desktop.window_capture", new {
+        windowId = CaptureTestBackend.Item.WindowId,
+        title = mismatch ? "Other window" : CaptureTestBackend.Item.Title })]));
+    replies.Add(new ModelReply("The requested window operation has been evaluated.", []));
+    var approvals = new FakeApprovals(approve);
+    Guid id = Guid.NewGuid();
+    await new NiraEngine(new FakeModel(replies.ToArray()), registry, setup.Store,
+        new WorkspaceAuthority(setup.Workspace, developmentMode: true), enableAdaptivePlanning: true)
+        .RunAsync(id, "Capture the application window.", approvals);
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    var files = Directory.GetFiles(setup.Workspace);
+    foreach (var artifact in RecordedFileArtifacts.From(state))
+        Assert(await RecordedFileArtifacts.MatchesAsync(artifact, setup.Workspace), "Artifact must match saved bytes.");
+    return (backend.CaptureCalls, approvals.Calls, state, files);
+}
+
+static async Task WindowCaptureApproved()
+{
+    var r = await WindowCaptureCase(true, true);
+    Assert(r.Captures == 1 && r.Approvals == 1 && r.Files.Length == 1 && r.State.Status == ConversationStatus.Completed,
+        "Observed capture requires one approval and publishes a single verified file.");
+    var op = r.State.Operations.Single(o => o.ToolName == "desktop.window_capture");
+    using var json = JsonDocument.Parse(op.ResultJson!);
+    var data = json.RootElement.GetProperty("Data");
+    Assert(op.Status == OperationStatus.Succeeded && data.GetProperty("contentVerified").GetBoolean() &&
+        !data.GetProperty("visuallyInterpreted").GetBoolean() && !data.GetProperty("uploaded").GetBoolean() &&
+        RecordedFileArtifacts.From(r.State).Count == 1, "Capture does not establish visual analysis or upload.");
+}
+
+static async Task WindowCaptureDenied()
+{
+    var r = await WindowCaptureCase(true, false);
+    Assert(r.Captures == 0 && r.Approvals == 1 && r.Files.Length == 0, "Denial must precede pixel access.");
+}
+
+static async Task WindowCaptureUnobserved()
+{
+    var r = await WindowCaptureCase(false, true);
+    Assert(r.Captures == 0 && r.Approvals == 0 && r.Files.Length == 0, "Unobserved target must never dispatch.");
+}
+
+static async Task WindowCaptureMismatch()
+{
+    var r = await WindowCaptureCase(true, true, mismatch: true);
+    Assert(r.Captures == 0 && r.Approvals == 0 && r.Files.Length == 0, "Approval cannot describe a different title.");
+}
+
+static async Task WindowCaptureStale()
+{
+    var r = await WindowCaptureCase(true, true, stale: true);
+    Assert(r.Captures == 1 && r.Approvals == 1 && r.Files.Length == 0 &&
+        r.State.Operations.Any(o => o.ToolName == "desktop.window_capture" && o.Status == OperationStatus.Failed),
+        "Changed native window must not publish an image.");
+}
+
+static Task WindowCaptureVisionPolicy()
+{
+    using var setup = new TestContext();
+    using var http = new HttpClient();
+    var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http, desktopBackend: new CaptureTestBackend(), vision: M3eProvider());
+    Assert(registry.TryGet("desktop.window_capture", out var capture) && capture is not null, "Capture must be discoverable.");
+    Assert(registry.TryGet("vision.analyze", out var vision) && vision is not null, "Vision stays separately configured.");
+    var policy = new WorkspaceAuthority(setup.Workspace, developmentMode: true);
+    Assert(!policy.IsPreapproved(capture!.Descriptor, "desktop window") && !policy.IsPreapproved(vision!.Descriptor, "private pixels"),
+        "Development policy must not authorize capture or external transfer automatically.");
+    Assert(!registry.Validate("desktop.window_capture", "{\"windowId\":\"win-demo-001\",\"title\":\"Demo\",\"wholeScreen\":true}", out _, out _),
+        "No arbitrary screen or destination parameters.");
+    return Task.CompletedTask;
+}
+
+static async Task CaptureChatEvidence()
+{
+    var r = await WindowCaptureCase(true, true);
+    var previews = ImageGalleryEntry.ForChat(r.State);
+    Assert(previews.Count == 1 && previews[0].IsLocalCapture && !previews[0].IsGenerated &&
+        previews[0].Title == CaptureTestBackend.Item.Title && previews[0].Source == "" &&
+        ImageGalleryEntry.FromTask(r.State).Count == 0,
+        "A verified screenshot belongs to the original chat, not the global photo library.");
+    var op = r.State.Operations.Single(o => o.ToolName == "desktop.window_capture");
+    op.Status = OperationStatus.Failed;
+    Assert(ImageGalleryEntry.ForChat(r.State).Count == 0, "Failed captures cannot become images.");
+    op.Status = OperationStatus.Succeeded;
+    using var parsed = JsonDocument.Parse(op.ResultJson!);
+    var original = parsed.RootElement.GetProperty("Data");
+    op.ResultJson = JsonSerializer.Serialize(ToolReceipt.Ok("Unverified image", new {
+        path = original.GetProperty("path").GetString(), sha256 = original.GetProperty("sha256").GetString(), contentVerified = false
+    }, changedState: true));
+    Assert(ImageGalleryEntry.ForChat(r.State).Count == 0 && RecordedFileArtifacts.From(r.State).Count == 0,
+        "Unverified captures must not be rendered or offered as verified files.");
+}
+
+static Task SchemaPropertyFeedback()
+{
+    var schema = JsonToolSchema.Schema("""
+        {"type":"object","properties":{"source":{"type":"string"},"mode":{"type":"string"}},"required":["source"],"additionalProperties":false}
+        """);
+    Assert(!JsonToolSchema.Validate(schema, JsonSerializer.SerializeToElement(new { guess = "x" }), out string missing) &&
+        missing.Contains("required properties:", StringComparison.Ordinal) && missing.Contains("source", StringComparison.Ordinal),
+        "Missing fields should show required properties.");
+    Assert(!JsonToolSchema.Validate(schema, JsonSerializer.SerializeToElement(new { source = "x", guess = "y" }), out string invalid) &&
+        invalid.Contains("allowed properties: source, mode", StringComparison.Ordinal), "Unknown fields should list the real fields.");
+    return Task.CompletedTask;
+}
+
+static Task SchemaEnumFeedback()
+{
+    var schema = JsonToolSchema.Schema("{\"type\":\"string\",\"enum\":[\"first\",\"second\"]}");
+    Assert(!JsonToolSchema.Validate(schema, JsonSerializer.SerializeToElement("other"), out string error) &&
+        error.Contains("first", StringComparison.Ordinal) && error.Contains("second", StringComparison.Ordinal),
+        "Validation feedback must show actual permitted values without accepting an invalid value.");
+    return Task.CompletedTask;
+}
+
+static Task M7cDetectionStatus()
+{
+    Assert(WindowsApplicationInventory.DetectionStatus(0, 1) == "path_command_observed" &&
+        WindowsApplicationInventory.DetectionStatus(1, 0) == "registered_observed" &&
+        WindowsApplicationInventory.DetectionStatus(1, 1) == "registered_and_path_observed" &&
+        WindowsApplicationInventory.DetectionStatus(0, 0) == "not_observed", "Positive command evidence must not become absence.");
+    return Task.CompletedTask;
+}
+
+static async Task<(AgentRunResult Result, ConversationState State, int Launches, int Approvals)> M7cLaunchCase(bool observed, bool approve)
+{
+    using var setup = new TestContext();
+    using var http = new HttpClient();
+    var candidate = new ApplicationCandidate(@"C:\Windows\notepad.exe", new string('A', 64), "test observation");
+    var backend = new M7cFakeApplicationBackend(candidate);
+    var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http, applicationBackend: backend);
+    var replies = new List<ModelReply>();
+    if (observed) replies.Add(new ModelReply(null, [Call("findapp", "desktop.application_find", new { executable = "notepad" })]));
+    replies.Add(new ModelReply(null, [Call("launchapp", "desktop.application_launch", new { executablePath = candidate.ExecutablePath, fingerprint = candidate.Fingerprint })]));
+    replies.Add(new ModelReply("The observed operation was handled.", []));
+    var model = new FakeModel(replies.ToArray());
+    var approvals = new FakeApprovals(approve);
+    Guid id = Guid.NewGuid();
+    var result = await new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace, developmentMode: true),
+        enableAdaptivePlanning: true).RunAsync(id, "Open the selected application.", approvals);
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    return (result, state, backend.LaunchCalls, approvals.Calls);
+}
+
+static async Task M7cLaunchDenied()
+{
+    var result = await M7cLaunchCase(true, false);
+    Assert(result.Result.Status == ConversationStatus.Paused && result.Launches == 0 && result.Approvals == 1 &&
+        result.State.Operations.Any(o => o.ToolName == "desktop.application_launch" && o.Status == OperationStatus.Rejected), "Launch cannot bypass exact host approval.");
+}
+
+static async Task M7cLaunchUnobserved()
+{
+    var result = await M7cLaunchCase(false, true);
+    Assert(result.Launches == 0 && result.Approvals == 0 && !result.State.Operations.Any(o => o.ToolName == "desktop.application_launch"), "Unobserved application must never dispatch or request approval.");
+}
+
+static async Task M7cLaunchApproved()
+{
+    var result = await M7cLaunchCase(true, true);
+    Assert(result.Launches == 1 && result.Approvals == 1 && result.State.Operations.Any(o => o.ToolName == "desktop.application_launch" && o.Status == OperationStatus.Succeeded), "Exact observed launch must execute once after approval.");
+    using var doc = JsonDocument.Parse(result.State.Operations.Single(o => o.ToolName == "desktop.application_launch").ResultJson!);
+    Assert(doc.RootElement.GetProperty("Data").GetProperty("processStarted").GetBoolean() &&
+        !doc.RootElement.GetProperty("Data").GetProperty("windowVerified").GetBoolean(), "Process launch must not imply a verified window.");
+}
+
+static Task M7cLaunchStale()
+{
+    // No real program is launched: an absent path must fail before process start.
+    using var setup = new TestContext();
+    var backend = new WindowsApplicationDesktopBackend();
+    string path = Path.Combine(setup.Workspace, "missing-" + Guid.NewGuid().ToString("N") + ".exe");
+    var receipt = backend.Launch(path, new string('A', 64), default);
+    Assert(!receipt.Success && !receipt.ChangedState && receipt.ErrorCode == "APPLICATION_STALE", "Missing launch target must not be executed.");
+    return Task.CompletedTask;
+}
+
+static Task M7cDiscoverySchema()
+{
+    Assert(ApplicationFindTool.NormalizeExecutable("example") == "example.exe" && ApplicationFindTool.NormalizeExecutable("example.exe") == "example.exe", "Exact name normalization.");
+    foreach (string invalid in new[] { "../example", "example.exe --flag", "*", @"C:\example.exe" })
+    {
+        bool rejected = false;
+        try { _ = ApplicationFindTool.NormalizeExecutable(invalid); } catch (ArgumentException) { rejected = true; }
+        Assert(rejected, "Discovery must reject paths, arguments and wildcards.");
+    }
+    var backend = new M7cFakeApplicationBackend(new ApplicationCandidate(@"C:\example.exe", new string('A', 64), "test"));
+    var launch = new ApplicationLaunchTool(backend);
+    Assert(launch.Descriptor.Risk == ToolRisk.Dangerous && launch.Descriptor.HasSideEffects &&
+        !JsonToolSchema.Validate(launch.Descriptor.Parameters, JsonSerializer.SerializeToElement(new { executablePath = @"C:\example.exe", fingerprint = new string('A', 64), arguments = new[] { "anything" } }), out _), "No command arguments or preapproval.");
+    return Task.CompletedTask;
+}
+
+static async Task M7cPhysicalCores()
+{
+    var receipt = await new SystemInspectTool().ExecuteAsync(JsonSerializer.SerializeToElement(new { }), default);
+    Assert(receipt.Success && receipt.Data.TryGetProperty("physicalProcessorCores", out var cores) &&
+        (cores.ValueKind == JsonValueKind.Null || cores.GetInt32() > 0), "Physical core count is observed or explicitly unavailable, never inferred.");
+}
+
+static async Task M7bProcessInspectionDirect()
+{
+    using var setup = new TestContext();
+    using var http = new HttpClient();
+    var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http);
+    var model = new FakeModel([
+        new ModelReply(null, [Call("processes", "system.inspect", new { includeProcesses = true, includeApplications = false, applicationNameContains = "" })]),
+        new ModelReply("Here are the observed processes ranked by memory.", [])]);
+    var approvals = new FakeApprovals(false);
+    Guid id = Guid.NewGuid();
+    var result = await new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace, developmentMode: true),
+        enableCapabilityRouting: true, enableAdaptivePlanning: true).RunAsync(id, "Which applications are using the most RAM?", approvals);
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Completed && approvals.Calls == 0 && model.ToolSnapshots.Count == 2 &&
+        model.ToolSnapshots[0].Any(t => t.Name == "system.inspect") && state.Operations.Count == 1 && state.Operations[0].Status == OperationStatus.Succeeded,
+        "Process inspection must be available in the initial catalog, without an irrelevant filter failure or approval.");
+    using var receipt = JsonDocument.Parse(state.Operations[0].ResultJson!);
+    var data = receipt.RootElement.GetProperty("Data");
+    Assert(data.GetProperty("processes").ValueKind == JsonValueKind.Object && data.GetProperty("applications").ValueKind == JsonValueKind.Null &&
+        !data.GetProperty("storageRequested").GetBoolean(), "Only the requested optional sections should be observed.");
+}
+
+static async Task M7bApplicationsLookup()
+{
+    using var setup = new TestContext();
+    var tool = new SystemInspectTool();
+    string[] queries = ["Java", "Python", "Visual Studio Code", "IntelliJ IDEA", "code", "idea"];
+    var receipt = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new { includeApplications = true, applicationNameContains = "", applicationQueries = queries }), default);
+    Assert(receipt.Success && !receipt.ChangedState && receipt.Data.GetProperty("processes").ValueKind == JsonValueKind.Null, "Application discovery must not require unrelated observations.");
+    var matches = receipt.Data.GetProperty("applications").GetProperty("matchesByQuery");
+    Assert(matches.EnumerateArray().Select(m => m.GetProperty("query").GetString()).SequenceEqual(queries), "Every requested name retains independent coverage even without a match.");
+    foreach (var match in matches.EnumerateArray())
+        Assert(match.GetProperty("registeredMatches").GetArrayLength() <= 10 && match.GetProperty("pathCommands").GetArrayLength() <= 4, "Application evidence remains bounded.");
+    var unused = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new { includeApplications = false, applicationNameContains = "a", applicationQueries = queries, includeProcesses = true }), default);
+    Assert(unused.Success && unused.Data.GetProperty("applications").ValueKind == JsonValueKind.Null, "Inactive filters do not force collection.");
+    var invalid = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new { includeApplications = true, applicationQueries = Enumerable.Repeat("x", 9).ToArray() }), default);
+    Assert(!invalid.Success, "Excessive application query arrays must be rejected.");
+    // Deliberately not executable. Discovery must rely on file presence only, without starting a process.
+    await File.WriteAllTextAsync(Path.Combine(setup.Workspace, "nira-probe.exe"), "not a program");
+    Assert(WindowsApplicationInventory.FindPathCommands("nira-probe", [setup.Workspace], default).SequenceEqual(new[] { "nira-probe.exe" }) &&
+        WindowsApplicationInventory.FindPathCommands("../nira-probe", [setup.Workspace], default).Count == 0 &&
+        WindowsApplicationInventory.FindPathCommands("nira-probe-absent", [setup.Workspace], default).Count == 0,
+        "PATH discovery checks safe exact basenames without executing or traversing arbitrary paths.");
+}
+
+static async Task M7bClarificationReview()
+{
+    using var setup = new TestContext();
+    using var http = new HttpClient();
+    var model = new FakeModel([
+        new ModelReply(null, [Call("unnecessary-question", "nira_ask_user", new { question = "Please run a command and paste the result." })]),
+        new ModelReply(null, [Call("observe-apps", "system.inspect", new { includeApplications = true, applicationQueries = new[] { "Java", "Python", "Visual Studio Code", "IntelliJ IDEA" } })]),
+        new ModelReply("Here are the observed applications.", [])]);
+    var approvals = new FakeApprovals(false);
+    var engine = new NiraEngine(model, NiraStandardTools.Create(setup.Workspace, setup.Store, http), setup.Store,
+        new WorkspaceAuthority(setup.Workspace, developmentMode: true), enableCapabilityRouting: true, enableAdaptivePlanning: true);
+    Guid id = Guid.NewGuid();
+    var result = await engine.RunAsync(id, "Check installed applications", approvals);
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Completed && state.PendingQuestion is null && approvals.Calls == 0 &&
+        state.Operations.Count == 1 && state.Operations[0].Status == OperationStatus.Succeeded &&
+        state.Messages.Any(m => m.Role == "tool" && m.Content?.Contains("REVIEW_CLARIFICATION", StringComparison.Ordinal) == true),
+        "An unnecessary clarification gets one opportunity to use available observations instead of blocking the task.");
+}
+
+static async Task M7bRealClarification()
+{
+    using var setup = new TestContext();
+    var model = new FakeModel([
+        new ModelReply(null, [Call("first", "nira_ask_user", new { question = "What is your preferred budget?" })]),
+        new ModelReply(null, [Call("reviewed", "nira_ask_user", new { question = "What is your preferred budget?" })])]);
+    var result = await setup.Engine(model, routing: true, adaptive: true).RunAsync(Guid.NewGuid(), "Help me choose something appropriate", new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.AwaitingUser && result.Message.Contains("preferred budget", StringComparison.Ordinal) && model.ToolSnapshots.Count == 2,
+        "The bounded clarification review must preserve legitimate questions without forcing unrelated tool use.");
+}
+
+static Task M7bWindowsFamily()
+{
+    Assert(SystemInspectTool.WindowsFamily(new Version(10, 0, 26300), "Client") == "Windows 11" &&
+        SystemInspectTool.WindowsFamily(new Version(10, 0, 19045), "Client") == "Windows 10" &&
+        SystemInspectTool.WindowsFamily(new Version(10, 0, 26100), "Server Core") == "Windows Server" &&
+        SystemInspectTool.WindowsFamily(new Version(10, 0, 26300), null) is null,
+        "NT kernel version alone must never identify Windows product family.");
+    return Task.CompletedTask;
+}
+
+static async Task M7bSystemInventory()
+{
+    var tool = new SystemInspectTool();
+    var basic = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new { }), default);
+    Assert(basic.Success && basic.Data.GetProperty("hardware").ValueKind == JsonValueKind.Null &&
+        basic.Data.GetProperty("processes").ValueKind == JsonValueKind.Null &&
+        basic.Data.GetProperty("applications").ValueKind == JsonValueKind.Null, "Optional inventory must be opt-in.");
+    var receipt = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new { includeHardware = true,
+        includeProcesses = true, includeApplications = true, applicationNameContains = "NIRA_TEST_NO_MATCH_49F31" }), default);
+    Assert(receipt.Success && !receipt.ChangedState && receipt.Data.GetProperty("hardware").GetProperty("displayAdapters").GetArrayLength() <= 32 &&
+        receipt.Data.GetProperty("applications").GetProperty("entries").GetArrayLength() == 0,
+        "Read-only inventory is bounded and app name filter is honored.");
+    var processes = receipt.Data.GetProperty("processes");
+    if (processes.TryGetProperty("topByWorkingSet", out var top))
+    {
+        Assert(top.GetArrayLength() <= 30, "Process inventory is bounded.");
+        long prior = long.MaxValue;
+        foreach (var item in top.EnumerateArray())
+        {
+            long current = item.GetProperty("workingSetBytes").GetInt64();
+            Assert(current <= prior && current >= 0 && !item.TryGetProperty("commandLine", out _), "Working set ordering and privacy.");
+            prior = current;
+        }
+    }
+    else Assert(processes.GetProperty("unavailable").GetBoolean(), "Unavailable process inventory must be explicit.");
+    var unused = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new { applicationNameContains = "Java" }), default);
+    Assert(unused.Success && unused.Data.GetProperty("applications").ValueKind == JsonValueKind.Null,
+        "Unused optional filter must never force application collection or fail an unrelated observation.");
+}
+
+static async Task M7bDomainSearch()
+{
+    using var handler = new FakeApiHandler("{\"results\":[{\"title\":\"Official\",\"url\":\"https://docs.example.org/release\"},{\"title\":\"Wrong host\",\"url\":\"https://example.org.evil.net/release\"}]}");
+    using var http = new HttpClient(handler);
+    var tool = new TavilySearchTool(http, () => "secret-test-key");
+    var receipt = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new { query = "official release", includeDomains = new[] { "example.org" } }), default);
+    Assert(receipt.Success && receipt.Data.GetProperty("results").GetArrayLength() == 1 &&
+        receipt.Data.GetProperty("results")[0].GetProperty("url").GetString() == "https://docs.example.org/release", "Scope must be enforced locally.");
+    using var request = JsonDocument.Parse(handler.RequestBody!);
+    Assert(request.RootElement.GetProperty("include_domains")[0].GetString() == "example.org", "Domain scope reaches provider.");
+    var invalid = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new { query = "test", includeDomains = new[] { "https://example.org/path" } }), default);
+    Assert(!invalid.Success && handler.Calls == 1, "Invalid scope must not dispatch.");
+}
+
+static async Task M7bBrowserReferences()
+{
+    using var setup = new TestContext();
+    Guid id = Guid.NewGuid();
+    const string known = "0123456789abcdef0123456789abcdef";
+    const string unknown = "ffffffffffffffffffffffffffffffff";
+    const string source = "https://example.org/release";
+    var state = new ConversationState { Id = id, Status = ConversationStatus.Running, Objective = "Explain sources", AutoPlanningAttempted = true,
+        Messages = [new ChatEntry("user", "Explain sources")],
+        Operations = [new AgentOperation { ToolName = "browser.session_inspect", Status = OperationStatus.Succeeded,
+            ResultJson = JsonSerializer.Serialize(ToolReceipt.Ok("Observed page", new { SessionId = known, Page = new { FinalUrl = source } })) }] };
+    await setup.Store.SaveAsync(state, default);
+    var model = new FakeModel([new ModelReply("Observed fact【" + known + "】. Other claim【" + unknown + "】.\n\n`【" + unknown + "】`", [])]);
+    var result = await setup.Engine(model).RunAsync(id, null, new FakeApprovals(false));
+    string publicAnswer = result.Message.Split("Host-recorded execution evidence:", StringSplitOptions.None)[0];
+    Assert(result.Status == ConversationStatus.Completed && publicAnswer.Contains("[source](" + source + ")", StringComparison.Ordinal) &&
+        publicAnswer.Contains("source reference unverified", StringComparison.Ordinal) && publicAnswer.Contains("`【" + unknown + "】`", StringComparison.Ordinal) &&
+        !publicAnswer.Contains("【" + known + "】", StringComparison.Ordinal), "Resolve only actual unique source references and preserve code examples.");
+}
+
+static async Task M7aSystemSnapshot()
+{
+    var tool = new SystemInspectTool();
+    var args = JsonSerializer.SerializeToElement(new { includeStorage = true });
+    var receipt = await tool.ExecuteAsync(args, default);
+    Assert(receipt.Success && !receipt.ChangedState && tool.Descriptor.Risk == ToolRisk.ReadLocal && !tool.Descriptor.HasSideEffects,
+        "System inspection must be read-only.");
+    var data = receipt.Data;
+    Assert(data.GetProperty("logicalProcessorsAvailableToProcess").GetInt32() > 0 &&
+        data.GetProperty("osVersion").GetString()!.Length > 0 &&
+        data.GetProperty("storageRequested").GetBoolean() && data.GetProperty("fixedDrives").GetArrayLength() <= 26 &&
+        !data.TryGetProperty("machineName", out _) && !data.TryGetProperty("userName", out _), "Bounded local snapshot fields.");
+    if (data.GetProperty("totalPhysicalMemoryBytes").ValueKind == JsonValueKind.Number)
+        Assert(data.GetProperty("totalPhysicalMemoryBytes").GetUInt64() > 0 &&
+            data.GetProperty("availablePhysicalMemoryBytes").GetUInt64() <= data.GetProperty("totalPhysicalMemoryBytes").GetUInt64(),
+            "Physical memory counters must be consistent.");
+    var noStorage = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new { }), default);
+    Assert(noStorage.Success && !noStorage.Data.GetProperty("storageRequested").GetBoolean() && noStorage.Data.GetProperty("fixedDrives").GetArrayLength() == 0,
+        "Storage inspection is optional.");
+    Assert(!(await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new { command = "whoami" }), default)).Success,
+        "System inspection cannot execute a command.");
+}
+
+static async Task M7aSystemRoute()
+{
+    using var setup = new TestContext();
+    using var http = new HttpClient();
+    var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http);
+    var tool = registry.Descriptors.Single(t => t.Name == "system.inspect");
+    var model = new FakeModel([
+        new ModelReply(null, [Call("selectsystem", "nira_select_tools", new { names = new[] { "system.inspect" } })]),
+        new ModelReply(null, [Call("systemread", "system.inspect", new { includeStorage = false })]),
+        new ModelReply("Here is the observed computer configuration.", [])]);
+    var approvals = new FakeApprovals(false);
+    var authority = new WorkspaceAuthority(setup.Workspace, developmentMode: true);
+    Assert(authority.IsPreapproved(tool, "local computer (read-only system information)") &&
+        !new WorkspaceAuthority(setup.Workspace).IsPreapproved(tool, "local computer (read-only system information)"),
+        "Development read-only policy must not silently change release approval.");
+    Guid id = Guid.NewGuid();
+    var result = await new NiraEngine(model, registry, setup.Store, authority, enableCapabilityRouting: true, enableAdaptivePlanning: true)
+        .RunAsync(id, "Inspect my computer", approvals);
+    var state = await setup.Store.LoadAsync(id, default);
+    Assert(result.Status == ConversationStatus.Completed && approvals.Calls == 0 && state is not null &&
+        state.Operations.Count == 1 && state.Operations[0].ToolName == "system.inspect" && state.Operations[0].Status == OperationStatus.Succeeded &&
+        model.PromptSnapshots.Last().Any(m => m.Role == "tool" && m.Content?.Contains("totalPhysicalMemoryBytes", StringComparison.Ordinal) == true),
+        "Registered system observation must reach the model as an audited receipt.");
+}
+
+static async Task M7aSearchResults()
+{
+    const string key = "fake-search-secret-123";
+    string large = new('x', 18000);
+    using var handler = new FakeApiHandler(JsonSerializer.Serialize(new { results = new object[] {
+        new { title = "First source", url = "https://example.org/guide#section", content = large + key },
+        new { title = "Duplicate", url = "https://example.org/guide", content = "duplicate" },
+        new { title = "Private", url = "https://localhost/private", content = "hidden" },
+        new { title = "Secret URL", url = "https://example.org/secret?key=" + key, content = "hidden" },
+        new { title = 42, url = "https://www.example.net/page", content = key },
+        "invalid row",
+        new { title = "Third source", url = "https://example.com/other", content = "usable" }
+    }}));
+    using var http = new HttpClient(handler);
+    var tool = new TavilySearchTool(http, () => key);
+    var receipt = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new { query = "current public facts", depth = "advanced", maxResults = 3 }), default);
+    var items = receipt.Data.GetProperty("results");
+    Assert(receipt.Success && !receipt.ChangedState && items.GetArrayLength() == 3 && handler.Calls == 1 &&
+        items[0].GetProperty("url").GetString() == "https://example.org/guide#section" &&
+        items[0].GetProperty("excerpt").GetString()!.Length == 1200 &&
+        items[1].GetProperty("title").GetString() == "www.example.net" &&
+        !receipt.Data.GetRawText().Contains(key, StringComparison.Ordinal), "Search must keep exact safe links and bounded excerpts without leaking credentials.");
+    using var request = JsonDocument.Parse(handler.RequestBody!);
+    Assert(request.RootElement.GetProperty("search_depth").GetString() == "advanced" && request.RootElement.GetProperty("max_results").GetInt32() == 3,
+        "Requested research depth and result count must reach the provider.");
+}
+
+static async Task M7aSearchFailures()
+{
+    var args = JsonSerializer.SerializeToElement(new { query = "public test" });
+    using var emptyHandler = new FakeApiHandler("{\"results\":[{\"url\":\"https://localhost/private\"},null]}");
+    using var emptyHttp = new HttpClient(emptyHandler);
+    var tool = new TavilySearchTool(emptyHttp, () => "secret");
+    var invalid = await tool.ExecuteAsync(JsonSerializer.SerializeToElement(new { query = "test", maxResults = 11 }), default);
+    Assert(!invalid.Success && emptyHandler.Calls == 0, "Invalid count must fail before network.");
+    bool targetRejected = false;
+    try { _ = tool.GetTarget(JsonSerializer.SerializeToElement(new { query = "test", maxResults = long.MaxValue })); }
+    catch (ArgumentException) { targetRejected = true; }
+    Assert(targetRejected, "Oversized integer must be rejected before approval.");
+    var empty = await tool.ExecuteAsync(args, default);
+    Assert(!empty.Success && empty.ErrorCode == "SEARCH_NO_USABLE_RESULTS", "No candidate is not a successful search.");
+    using var bigHandler = new FakeApiHandler(new string('x', 600000));
+    using var bigHttp = new HttpClient(bigHandler);
+    Assert((await new TavilySearchTool(bigHttp, () => "secret").ExecuteAsync(args, default)).ErrorCode == "SEARCH_RESPONSE_TOO_LARGE", "Response byte limit must fail closed.");
+    using var badHandler = new FakeApiHandler("{\"results\":[");
+    using var badHttp = new HttpClient(badHandler);
+    Assert((await new TavilySearchTool(badHttp, () => "secret").ExecuteAsync(args, default)).ErrorCode == "SEARCH_RESPONSE_INVALID", "Truncated JSON must not be evidence.");
+    Assert((await new TavilySearchTool(emptyHttp, () => null).ExecuteAsync(args, default)).ErrorCode == "SEARCH_KEY_MISSING" && emptyHandler.Calls == 1,
+        "Missing credentials must not dispatch.");
+}
+
+static async Task M7aSearchRoute()
+{
+    using var setup = new TestContext();
+    using var handler = new FakeApiHandler("{\"results\":[{\"title\":\"Source\",\"url\":\"https://example.org/source\",\"content\":\"Observed excerpt\"}]}");
+    using var http = new HttpClient(handler);
+    var model = new FakeModel([
+        new ModelReply(null, [Call("search", "web.search", new { query = "current public facts" })]),
+        new ModelReply("[Source](https://example.org/source)", [])]);
+    var approvals = new FakeApprovals(false);
+    var result = await new NiraEngine(model, new ToolRegistry([new TavilySearchTool(http, () => "secret")]), setup.Store,
+        new WorkspaceAuthority(setup.Workspace, developmentMode: true), enableAdaptivePlanning: true)
+        .RunAsync(Guid.NewGuid(), "Find a source", approvals);
+    Assert(result.Status == ConversationStatus.Completed && handler.Calls == 1 && approvals.Calls == 0 &&
+        !result.Message.Contains("Source check (host)", StringComparison.Ordinal) &&
+        model.PromptSnapshots.Last().Any(m => m.Role == "tool" && m.Content?.Contains("Observed excerpt", StringComparison.Ordinal) == true),
+        "Real search receipt must ground the answer without extra approvals in development mode.");
+}
+
+static async Task M7aQualityGuidance()
+{
+    using var setup = new TestContext();
+    var model = new FakeModel([new ModelReply("A concise distinction.", [])]);
+    await setup.Engine(model, routing: true, adaptive: true).RunAsync(Guid.NewGuid(), "Explain a conceptual distinction", new FakeApprovals(false), new M5bDesktopProgress());
+    string prompt = model.PromptSnapshots.Single()[0].Content!;
+    Assert(prompt.Contains("not both plus repeated summaries", StringComparison.Ordinal) &&
+        prompt.Contains("subjective experience", StringComparison.Ordinal) &&
+        prompt.Contains("Prefer native diagrams for simple cycles", StringComparison.Ordinal) &&
+        prompt.Contains("Close EVERY JSON object", StringComparison.Ordinal) &&
+        prompt.Contains("actual hardware", StringComparison.Ordinal) &&
+        model.ToolSnapshots.Single().Any(t => t.Name == "web.search"),
+        "General answer quality, visual choice and research guidance must reach the same inference.");
+}
+
+static Task M7aStillTiming()
+{
+    using var setup = new TestContext();
+    using var http = new HttpClient();
+    var tool = new ImageGenerationTool(new WorkspacePathResolver(setup.Workspace), http, new ImageGenerationProvider(new string('a', 32), new string('T', 32)));
+    string still = tool.GetTarget(JsonSerializer.SerializeToElement(new { prompt = "Illustrative diagram", width = 1024, height = 1024 }));
+    foreach (int timing in new[] { 0, 100 })
+        Assert(still == tool.GetTarget(JsonSerializer.SerializeToElement(new { prompt = "Illustrative diagram", width = 1024, height = 1024, animation = false, frameDurationMs = timing })),
+            "Redundant still timing must not change the target or initiate animation.");
+    return Task.CompletedTask;
+}
+
 // M3E.1: reproduce the live 11-message / 48-tool rejection and preserve
 // actual observations through a controls-only multi-step checkpoint review.
 static IReadOnlyList<ToolDescriptor> M3e1WideCatalog()
@@ -822,6 +1392,47 @@ static async Task M3e2NewInstruction()
         "New instructions are not swallowed by terminal recovery.");
 }
 
+
+static async Task CatalogStableWithOptionalProviders()
+{
+    using var setup = new TestContext();
+    using var http = new HttpClient();
+    foreach (bool includeImage in new[] { false, true })
+    {
+        Func<ImageGenerationProvider?>? resolver = includeImage ? () => null : null;
+        var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http, imageGenerationResolver: resolver);
+        var model = new FakeModel([new ModelReply("Ready.", [])]);
+        var result = await new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace),
+            enableCapabilityRouting: true, enableAdaptivePlanning: true)
+            .RunAsync(Guid.NewGuid(), "Hello", new FakeApprovals(false));
+        var active = model.ToolSnapshots.Single();
+        Assert(result.Status == ConversationStatus.Completed && active.Count <= 14 &&
+            active.Any(t => t.Name == "memory.search") && active.Any(t => t.Name == "filesystem.read_text") && active.Any(t => t.Name == "system.inspect") &&
+            active.Any(t => t.Name == "web.search") && active.Any(t => t.Name == "image.generate") == includeImage &&
+            model.PromptSnapshots.Single().Any(m => m.Content?.Contains("desktop.application_find", StringComparison.Ordinal) == true),
+            "Optional providers and newly registered desktop tools must not evict stable starter capabilities or hide discoverable tools.");
+    }
+}
+
+static async Task CatalogConfigurablePriorityAndFamily()
+{
+    using var setup = new TestContext();
+    string[] defaults = Enumerable.Range(0, 8).Select(i => "starter.entry" + i).ToArray();
+    var tools = defaults.Concat(new[] { "custom.lookup", "custom.inspect", "other.read" })
+        .Reverse().Select(name => new GenericRecoveryTool(name, false, _ => ToolReceipt.Ok("Observed"))).ToArray();
+    var registry = new ToolRegistry(tools, new[] { "optional.absent" }.Concat(defaults));
+    var model = new FakeModel([
+        new ModelReply(null, [Call("choose", "nira_select_tools", new { names = new[] { "custom.lookup" } })]),
+        new ModelReply("No action needed.", [])]);
+    var result = await new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace),
+        enableCapabilityRouting: true).RunAsync(Guid.NewGuid(), "Review options", new FakeApprovals(false));
+    var initial = model.ToolSnapshots[0].Take(8).Select(t => t.Name);
+    var next = model.ToolSnapshots[1].Take(8).Select(t => t.Name);
+    Assert(result.Status == ConversationStatus.Completed && initial.SequenceEqual(defaults) &&
+        next.SequenceEqual(new[] { "custom.lookup", "custom.inspect" }.Concat(defaults.Take(6))) &&
+        model.ToolSnapshots.All(snapshot => snapshot.Count <= 14) && tools.All(t => t.Calls == 0),
+        "Starter order is composition metadata independent of registration order; model-selected capability and family get priority without execution or additional schema slots.");
+}
 
 static async Task M3fBoundedCatalog()
 {
@@ -1139,6 +1750,418 @@ static async Task M4dChatPreferences()
         "Presentation metadata never rewrites execution journals or original objective");
 }
 
+static async Task M8bDirectSaveAndRecall()
+{
+    using var setup = new TestContext();
+    const string note = "The Cedar workshop uses a portable workbench and a manual saw.";
+    var registry = new ToolRegistry([new MemorySearchTool(setup.Store), new MemoryRememberTool(setup.Store)]);
+    var approvals = new FakeApprovals(true);
+    var model = new FakeModel([ModelCall("memory.remember", JsonSerializer.Serialize(new { note, topic = "Cedar workshop" })),
+        new ModelReply("Saved the note.", [])]);
+    var engine = new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace, developmentMode: true),
+        enableAdaptivePlanning: true, memoryContext: setup.Store);
+    Guid first = Guid.NewGuid();
+    var saved = await engine.RunAsync(first, "Remember: " + note, approvals);
+    var state = (await setup.Store.LoadAsync(first, default))!;
+    Assert(saved.Status == ConversationStatus.Completed && approvals.Calls == 0 &&
+        state.Operations.Count == 1 && state.Operations[0].ToolName == "memory.remember" && state.Operations[0].Status == OperationStatus.Succeeded &&
+        (await setup.Store.ListMemoryNotesAsync(default)).Single().Content == note,
+        "Development direct save must have a successful receipt and durable note without a confirmation or search loop.");
+    var freshStore = new SqliteConversationStore(setup.Database);
+    var freshModel = new FakeModel([ModelCall("memory.search", "{\"query\":\"Cedar workshop equipment\"}"), new ModelReply("A portable workbench and a manual saw.", [])]);
+    var freshEngine = new NiraEngine(freshModel, new ToolRegistry([new MemorySearchTool(freshStore)]), freshStore,
+        new WorkspaceAuthority(setup.Workspace), enableAdaptivePlanning: true, memoryContext: freshStore);
+    Guid second = Guid.NewGuid();
+    var recalled = await freshEngine.RunAsync(second, "What equipment does my Cedar workshop use?", new FakeApprovals(false));
+    var lookup = (await freshStore.LoadAsync(second, default))!;
+    Assert(recalled.Status == ConversationStatus.Completed && lookup.PreviousChatContext is null && lookup.Operations.Count == 1 &&
+        lookup.Operations[0].Status == OperationStatus.Succeeded && lookup.Operations[0].ResultJson?.Contains(note, StringComparison.Ordinal) == true,
+        "Fresh task retrieves the actual persisted note even with automatic recall off, not earlier conversation text.");
+    var deniedModel = new FakeModel([ModelCall("memory.remember", "{\"note\":\"A different fact\",\"topic\":\"Other subject\"}")]);
+    var deniedEngine = new NiraEngine(deniedModel, registry, setup.Store, new WorkspaceAuthority(setup.Workspace), enableAdaptivePlanning: true);
+    var denied = await deniedEngine.RunAsync(Guid.NewGuid(), "Remember a different fact.", new FakeApprovals(false));
+    Assert(denied.Status == ConversationStatus.Paused && (await setup.Store.ListMemoryNotesAsync(default)).Count == 1, "Standard-mode creation still requires approval.");
+}
+
+static async Task M8bDevelopmentMemoryManagement()
+{
+    using var setup = new TestContext();
+    const string original = "The user's studio uses a wired keyboard.";
+    const string revised = "The user's studio uses a wireless keyboard.";
+    var saved = await setup.Store.WriteMemoryAsync(original, "explicit-settings-user", new MemoryDetails("fact", "Studio equipment"), default);
+    var search = new MemorySearchTool(setup.Store);
+    var manage = new MemoryManageTool(setup.Store);
+    var remember = new MemoryRememberTool(setup.Store);
+    var history = new MemoryHistorySearchTool(setup.Store);
+    var dev = new WorkspaceAuthority(setup.Workspace, developmentMode: true);
+    var strict = new WorkspaceAuthority(setup.Workspace);
+    Assert(dev.IsPreapproved(remember.Descriptor, "persistent-memory") && dev.IsPreapproved(manage.Descriptor, "persistent-memory") &&
+        !strict.IsPreapproved(remember.Descriptor, "persistent-memory") && !strict.IsPreapproved(manage.Descriptor, "persistent-memory") &&
+        !dev.IsPreapproved(history.Descriptor, "private-conversation-history") &&
+        !dev.IsPreapproved(manage.Descriptor, "workspace") &&
+        !dev.IsPreapproved(manage.Descriptor with { Name = "memory.future" }, "persistent-memory"),
+        "Standing development consent is limited to registered saved-note changes and the exact local target.");
+    var registry = new ToolRegistry([search, manage]);
+    var broker = new FakeApprovals(false);
+    var updateModel = new FakeModel([ModelCall("memory.search", "{\"query\":\"Studio equipment\"}"),
+        ModelCall("memory.manage", JsonSerializer.Serialize(new { action = "replace", id = saved.Id, expectedContent = original, replacement = revised })),
+        new ModelReply("I updated my saved note.", [])]);
+    var update = await new NiraEngine(updateModel, registry, setup.Store, dev).RunAsync(Guid.NewGuid(),
+        "Update your memory: my studio now uses a wireless keyboard.", broker);
+    Assert(update.Status == ConversationStatus.Completed && broker.Calls == 0 &&
+        (await setup.Store.ListMemoryNotesAsync(default)).Single().Content == revised,
+        "Development correction requires no separate prompt but must change the actual note.");
+    var deleteModel = new FakeModel([ModelCall("memory.search", "{\"query\":\"Studio equipment\"}"),
+        ModelCall("memory.manage", JsonSerializer.Serialize(new { action = "delete", id = saved.Id, expectedContent = revised })),
+        new ModelReply("I removed the saved note.", [])]);
+    var deleted = await new NiraEngine(deleteModel, registry, setup.Store, dev).RunAsync(Guid.NewGuid(),
+        "Forget the saved note about my studio equipment.", broker);
+    Assert(deleted.Status == ConversationStatus.Completed && broker.Calls == 0 &&
+        (await setup.Store.ListMemoryNotesAsync(default)).Count == 0,
+        "Development deletion requires no separate prompt but must remove the exact note.");
+    Assert(updateModel.PromptSnapshots[0].Any(m => m.Role == "system" && m.Content?.Contains("SPEAKER PERSPECTIVE", StringComparison.Ordinal) == true),
+        "The live reasoning prompt distinguishes speaker perspective; no response-text substitution is used.");
+}
+
+static async Task M8bRelatedNoteGuard()
+{
+    using var setup = new TestContext();
+    const string old = "The Zephyr app uses Rust and a local database.";
+    const string updated = "The Zephyr app uses Rust and a remote database.";
+    var original = await setup.Store.WriteMemoryAsync(old, "explicit-settings-user", new MemoryDetails("project", "Zephyr", ["Rust"]), default);
+    var remember = new MemoryRememberTool(setup.Store);
+    var proposed = JsonToolSchema.Schema(JsonSerializer.Serialize(new { note = updated, topic = "Zephyr app" }));
+    var state = new ConversationState();
+    Assert(remember.MissingEvidence(state, proposed) is null, "A new note proposal needs no preliminary model search; the store still checks actual related records before writing.");
+    var search = new MemorySearchTool(setup.Store);
+    var query = JsonToolSchema.Schema("{\"query\":\"Zephyr app\"}");
+    var found = await search.ExecuteAsync(query, default);
+    state.Operations.Add(new AgentOperation { ToolName = "memory.search", Status = OperationStatus.Succeeded,
+        ArgumentsJson = query.GetRawText(), ResultJson = JsonSerializer.Serialize(found) });
+    Assert(remember.MissingEvidence(state, proposed) is not null, "A related saved record cannot silently be replaced by a new note.");
+    var rejected = await remember.ExecuteAsync(proposed, default);
+    Assert(!rejected.Success && rejected.ErrorCode == "MEMORY_RELATED_REVIEW" && !rejected.ChangedState &&
+        (await setup.Store.ListMemoryNotesAsync(default)).Count == 1, "Transactional guard preserves existing note even without preflight.");
+    var forged = JsonToolSchema.Schema(JsonSerializer.Serialize(new { note = updated, topic = "Zephyr app", relatedNoteIds = new[] { Guid.NewGuid().ToString("N") } }));
+    Assert(remember.MissingEvidence(state, forged) is not null, "Unobserved related IDs cannot satisfy the review.");
+    var distinct = JsonToolSchema.Schema(JsonSerializer.Serialize(new { note = "The Zephyr app has a desktop interface.", topic = "Zephyr app", relatedNoteIds = new[] { original.Id } }));
+    Assert(remember.MissingEvidence(state, distinct) is null && (await remember.ExecuteAsync(distinct, default)).Success,
+        "An explicitly reviewed distinct fact can coexist with the existing topic.");
+}
+
+static async Task M8bCorrectionPreservesMetadata()
+{
+    using var setup = new TestContext();
+    const string original = "The Sable project uses Go and a local database.";
+    const string revised = "The Sable project uses Go and a remote database.";
+    var saved = await setup.Store.WriteMemoryAsync(original, "explicit-settings-user", new MemoryDetails("project", "Sable", ["Go"], "old excerpt"), default);
+    await setup.Store.SetMemorySettingsAsync(new MemoryRecallSettings(true, false), default);
+    var model = new FakeModel([
+        ModelCall("memory.search", "{\"query\":\"Sable\"}"),
+        ModelCall("memory.manage", JsonSerializer.Serialize(new { action = "replace", id = saved.Id, expectedContent = original, replacement = revised })),
+        new ModelReply("Updated the project note.", [])]);
+    var approvals = new FakeApprovals(true);
+    var engine = new NiraEngine(model, new ToolRegistry([new MemorySearchTool(setup.Store), new MemoryManageTool(setup.Store)]), setup.Store,
+        new WorkspaceAuthority(setup.Workspace), memoryContext: setup.Store);
+    var result = await engine.RunAsync(Guid.NewGuid(), "Update my Sable database to a remote database.", approvals);
+    var current = (await setup.Store.ListMemoryNotesAsync(default)).Single();
+    Assert(result.Status == ConversationStatus.Completed && approvals.Calls == 1 && current.Id == saved.Id && current.Content == revised &&
+        current.Kind == "project" && current.Topic == "Sable" && current.Tags.SequenceEqual(new[] { "Go" }) && current.Metadata?.SourceExcerpt is null,
+        "An approved correction retains identity, classification and unaffected facts, without retaining stale provenance.");
+    Assert(model.PromptSnapshots[^1].Any(m => m.Role == "system" && m.Content?.Contains(revised, StringComparison.Ordinal) == true) &&
+        !model.PromptSnapshots[^1].Any(m => m.Role == "system" && m.Content?.Contains(original, StringComparison.Ordinal) == true),
+        "Automatic recall is refreshed after verified correction.");
+}
+
+static async Task M8bTopicAndHistory()
+{
+    using var setup = new TestContext();
+    var stored = await setup.Store.WriteMemoryAsync("The Meridian app has a Rust codebase.", "explicit-settings-user", new MemoryDetails("project", "Meridian"), default);
+    await setup.Store.WriteMemoryAsync("A different project has a graphical interface.", "explicit-settings-user", new MemoryDetails("project", "Cypress"), default);
+    var notes = await setup.Store.FindMemoryAsync("What architecture and framework does Meridian use?", [], 6, default);
+    Assert(notes.Count == 1 && notes[0].Id == stored.Id, "A distinctive topic matches even if requested attributes are absent.");
+    var oldest = new ConversationState { Status = ConversationStatus.Completed, Messages = [new ChatEntry("user", "Meridian was initially a command line application.")] };
+    await setup.Store.SaveAsync(oldest, default);
+    await Task.Delay(20);
+    var recent = new ConversationState { Status = ConversationStatus.Completed, Messages = [new ChatEntry("user", "Meridian now has a desktop UI.")] };
+    await setup.Store.SaveAsync(recent, default);
+    var history = new MemoryHistorySearchTool(setup.Store);
+    var receipt = await history.ExecuteAsync(JsonToolSchema.Schema("{\"query\":\"Meridian\",\"order\":\"oldest\"}"), default);
+    var results = receipt.Data.GetProperty("matches").EnumerateArray().ToArray();
+    Assert(results.Length == 2 && results[0].GetProperty("ConversationId").GetGuid() == oldest.Id && results[1].GetProperty("ConversationId").GetGuid() == recent.Id,
+        "Chronological history returns original user text, not saved memory summaries.");
+}
+
+static async Task M8MemoryMigration()
+{
+    using var setup = new TestContext();
+    string id = await setup.Store.StoreMemoryAsync("Legacy note about astronomy", "explicit-settings-user", default);
+    // Simulate the actual pre-M8 table shape while preserving the old DPAPI ciphertext.
+    await using (var conn = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=" + setup.Database))
+    {
+        await conn.OpenAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "ALTER TABLE memories DROP COLUMN metadata; DROP TABLE memory_preferences; DROP TABLE memory_candidates; DROP TABLE memory_reviewed_tasks;";
+        await cmd.ExecuteNonQueryAsync();
+    }
+    var reopened = new SqliteConversationStore(setup.Database);
+    var notes = await reopened.ListMemoryNotesAsync(default);
+    Assert(notes.Count == 1 && notes[0].Id == id && notes[0].Content == "Legacy note about astronomy" && notes[0].Kind == "note", "Legacy encrypted note preserved by additive schema migration.");
+    Assert(await reopened.GetMemorySettingsAsync(default) == new MemoryRecallSettings(), "Recall and learning must be disabled by default.");
+    Assert((await new SqliteConversationStore(setup.Database).ListMemoryNotesAsync(default)).Count == 1, "Repeated initialization must preserve data.");
+}
+
+static async Task M8MemoryRankAndDedup()
+{
+    using var setup = new TestContext();
+    var details = new MemoryDetails("project", "Orchid build system", ["CI", "compilation"]);
+    var first = await setup.Store.WriteMemoryAsync("Orchid uses a reproducible compiler pipeline.", "explicit-settings-user", details, default);
+    var duplicate = await setup.Store.WriteMemoryAsync(" Orchid uses a reproducible compiler pipeline. ", "explicit-settings-user", details, default);
+    await setup.Store.StoreMemoryAsync("Gardening requires regular watering.", "explicit-settings-user", default);
+    Assert(first.Changed && !duplicate.Changed && duplicate.Id == first.Id, "Exact duplicate writes return existing identity without a new effect.");
+    var matches = await setup.Store.FindMemoryAsync("build system", ["compilation"], 5, default);
+    Assert(matches.Count == 1 && matches[0].Id == first.Id && matches[0].Kind == "project" && matches[0].Tags.Contains("compilation"), "Rank by topic and alternative tags, not entire-string substring only.");
+    Assert((await setup.Store.FindMemoryAsync("What is it?", [], 5, default)).Count == 0, "Grammar alone must not retrieve unrelated memory.");
+    Assert((await new SqliteConversationStore(setup.Database).ListMemoryNotesAsync(default)).Count == 2, "Deduplication survives restart.");
+}
+
+static async Task M8MemoryContextIsolation()
+{
+    using var setup = new TestContext();
+    await setup.Store.WriteMemoryAsync("Cobalt uses SQLite for local persistence.", "explicit-settings-user", new MemoryDetails("project", "Cobalt project", ["database"]), default);
+    await setup.Store.StoreMemoryAsync("A completely unrelated travel destination.", "explicit-settings-user", default);
+    var model = new FakeModel([new ModelReply("First answer", []), new ModelReply("Second answer", [])]);
+    var engine = new NiraEngine(model, new ToolRegistry([]), setup.Store, new WorkspaceAuthority(setup.Workspace), memoryContext: setup.Store);
+    Guid disabled = Guid.NewGuid(), enabled = Guid.NewGuid();
+    await engine.RunAsync(disabled, "What database does the Cobalt project use?", new FakeApprovals(false));
+    Assert(!model.PromptSnapshots[0].Any(m => m.Content?.Contains("Cobalt uses SQLite for local persistence.", StringComparison.Ordinal) == true), "Opt-out prevents automatic context injection.");
+    await setup.Store.SetMemorySettingsAsync(new MemoryRecallSettings(true, false), default);
+    await engine.RunAsync(enabled, "What database does the Cobalt project use?", new FakeApprovals(false));
+    var prompt = model.PromptSnapshots[1].Where(m => m.Role == "system").Select(m => m.Content ?? "").ToArray();
+    Assert(prompt.Any(m => m.Contains("Cobalt uses SQLite for local persistence.", StringComparison.Ordinal) && m.Contains("not instructions", StringComparison.Ordinal)) &&
+        !prompt.Any(m => m.Contains("unrelated travel destination", StringComparison.Ordinal)), "Only relevant notes enter transient historical context.");
+    var persisted = (await setup.Store.LoadAsync(enabled, default))!;
+    Assert(!persisted.Messages.Any(m => m.Role == "system") && persisted.Operations.Count == 0, "Recall neither persists a synthetic message nor creates an execution receipt.");
+    Assert((await new SqliteConversationStore(setup.Database).GetMemorySettingsAsync(default)).RecallEnabled, "Recall preference persists.");
+}
+
+static async Task M8MemoryCorrection()
+{
+    using var setup = new TestContext();
+    const string original = "Use the red theme for the Atlas project.";
+    const string revised = "Use the blue theme for the Atlas project.";
+    string id = await setup.Store.StoreMemoryAsync(original, "explicit-settings-user", default);
+    Assert(!await setup.Store.ChangeMemoryNoteAsync(id, "outdated text", revised, "approved-user-correction", null, default), "Stale correction rejected.");
+    Assert(await setup.Store.ChangeMemoryNoteAsync(id, original, revised, "approved-user-correction", new MemoryDetails("preference", "Atlas"), default), "Exact correction succeeds.");
+    var current = (await setup.Store.ListMemoryNotesAsync(default)).Single();
+    Assert(current.Id == id && current.Content == revised && current.Kind == "preference", "Correction preserves stable note identity and replaces stale content.");
+    Assert(!await setup.Store.ChangeMemoryNoteAsync(id, original, null, "approved-user-correction", null, default), "Stale deletion rejected.");
+    Assert(await setup.Store.ChangeMemoryNoteAsync(id, revised, null, "approved-user-correction", null, default), "Exact deletion succeeds.");
+    Assert((await setup.Store.FindMemoryAsync("Atlas project", [], 5, default)).Count == 0, "Deleted note is no longer searchable.");
+}
+
+static async Task M8MemoryToolEvidence()
+{
+    using var setup = new TestContext();
+    const string note = "The Helix project uses Rust.";
+    string id = await setup.Store.StoreMemoryAsync(note, "explicit-settings-user", default);
+    string args = JsonSerializer.Serialize(new { action = "replace", id, expectedContent = note, replacement = "The Helix project uses Zig." });
+    var tool = new MemoryManageTool(setup.Store);
+    var schema = JsonToolSchema.Schema(args);
+    Assert(tool.MissingEvidence(new ConversationState(), schema) is not null, "Cannot edit by guessed identity without actual search evidence.");
+    var model = new FakeModel([ModelCall("memory.search", "{\"query\":\"Helix project\"}"), ModelCall("memory.manage", args)]);
+    var approvals = new FakeApprovals(false);
+    var engine = new NiraEngine(model, new ToolRegistry([new MemorySearchTool(setup.Store), tool]), setup.Store, new WorkspaceAuthority(setup.Workspace));
+    var result = await engine.RunAsync(Guid.NewGuid(), "Correct the Helix project language to Zig.", approvals);
+    Assert(result.Status == ConversationStatus.Paused && approvals.Calls == 1 && (await setup.Store.ListMemoryNotesAsync(default)).Single().Content == note, "Search does not authorize a change in standard mode, and refusal preserves original memory.");
+    var remember = new MemoryRememberTool(setup.Store);
+    var state = new ConversationState { Messages = [new ChatEntry("user", "I prefer an OLED screen.")] };
+    var screenQuery = JsonToolSchema.Schema("{\"query\":\"screen preference\"}");
+    var screenMatches = await new MemorySearchTool(setup.Store).ExecuteAsync(screenQuery, default);
+    state.Operations.Add(new AgentOperation { ToolName = "memory.search", Status = OperationStatus.Succeeded,
+        ArgumentsJson = screenQuery.GetRawText(), ResultJson = JsonSerializer.Serialize(screenMatches) });
+    Assert(remember.MissingEvidence(state, JsonToolSchema.Schema("{\"note\":\"Prefers OLED\",\"topic\":\"screen preference\",\"sourceExcerpt\":\"I prefer an OLED screen.\"}")) is null &&
+        remember.MissingEvidence(state, JsonToolSchema.Schema("{\"note\":\"Prefers LCD\",\"topic\":\"screen preference\",\"sourceExcerpt\":\"I prefer LCD.\"}")) is not null, "Exact user provenance, not a model-fabricated quote.");
+}
+
+static async Task M8cLearningContext()
+{
+    using var setup = new TestContext();
+    const string known = "Peregrine uses a local message queue.";
+    const string unrelated = "A separate pottery hobby is unrelated.";
+    const string userText = "For Peregrine I use a local message queue.";
+    await setup.Store.WriteMemoryAsync(known, "explicit-memory-user", new MemoryDetails("project", "Peregrine"), default);
+    await setup.Store.WriteMemoryAsync(unrelated, "explicit-memory-user", new MemoryDetails("fact", "Pottery"), default);
+    Guid first = Guid.NewGuid(), second = Guid.NewGuid();
+    foreach (Guid id in new[] { first, second })
+        await setup.Store.SaveAsync(new ConversationState { Id = id, Status = ConversationStatus.Completed,
+            Messages = [new ChatEntry("user", userText)] }, default);
+    var model = new FakeModel([new ModelReply("[]", []), new ModelReply("[]", [])]);
+    var learning = new MemoryLearningService(setup.Store, model);
+    await setup.Store.SetMemorySettingsAsync(new MemoryRecallSettings(false, true), default);
+    await learning.ObserveCompletedAsync(first, default);
+    await setup.Store.SetMemorySettingsAsync(new MemoryRecallSettings(true, true), default);
+    await learning.ObserveCompletedAsync(second, default);
+    Assert(model.PromptSnapshots.Count == 2 && model.ToolSnapshots.All(tools => tools.Count == 0), "Still one tool-free review per eligible task.");
+    Assert(!model.PromptSnapshots[0].Any(m => m.Content?.Contains(known, StringComparison.Ordinal) == true), "Learning alone does not transmit approved notes.");
+    Assert(model.PromptSnapshots[1].Any(m => m.Content?.Contains(known, StringComparison.Ordinal) == true) &&
+        !model.PromptSnapshots[1].Any(m => m.Content?.Contains(unrelated, StringComparison.Ordinal) == true), "Both preferences permit only relevant approved context.");
+    Assert((await setup.Store.ListMemoryCandidatesAsync(default)).Count == 0 && (await setup.Store.ListMemoryNotesAsync(default)).Count == 2,
+        "Model comparison never changes approved notes.");
+}
+
+static async Task M8cLearningDedup()
+{
+    using var setup = new TestContext();
+    await setup.Store.SetMemorySettingsAsync(new MemoryRecallSettings(false, true), default);
+    const string original = "Wren uses local storage.";
+    const string opposite = "Wren does not use local storage.";
+    const string other = "Wren uses a message queue.";
+    var details = new MemoryDetails("project", "Wren");
+    PendingMemoryCandidate Candidate(string text) => new(Guid.NewGuid().ToString("N"), Guid.NewGuid(), text, details, DateTimeOffset.UtcNow.ToString("O"));
+    await setup.Store.WriteMemoryAsync(original, "explicit-memory-user", details, default);
+    var conflict = Candidate(opposite);
+    await setup.Store.StageMemoryCandidatesAsync([Candidate("Wren  uses local storage."), conflict, Candidate(other)], default);
+    await setup.Store.StageMemoryCandidatesAsync([Candidate("Wren uses a  message queue.")], default);
+    var pending = await setup.Store.ListMemoryCandidatesAsync(default);
+    Assert(pending.Count == 2 && pending.Any(c => c.Content == opposite) && pending.Any(c => c.Content == other),
+        "Formatting duplicates are blocked against approved and pending notes, but meaning-changing negation is preserved for review.");
+    Assert(SqliteConversationStore.RelatedLearningNotes(conflict, await setup.Store.ListMemoryNotesAsync(default)).Single().Content == original,
+        "A related approved note is available for local comparison.");
+    await setup.Store.WriteMemoryAsync("Wren uses a  message queue.", "explicit-memory-user", details, default);
+    Assert(await setup.Store.ReviewMemoryCandidateAsync(pending.Single(c => c.Content == other).Id, true, default), "Stale duplicate suggestion can be consumed.");
+    Assert((await setup.Store.ListMemoryNotesAsync(default)).Count == 2 && (await setup.Store.ListMemoryCandidatesAsync(default)).Single().Content == opposite,
+        "Acceptance rechecks duplicate identity and does not silently merge conflicting facts.");
+}
+
+static async Task M8cLearningSkipsExplicitActions()
+{
+    using var setup = new TestContext();
+    await setup.Store.SetMemorySettingsAsync(new MemoryRecallSettings(true, true), default);
+    var model = new FakeModel([]);
+    var learning = new MemoryLearningService(setup.Store, model);
+    foreach (string name in new[] { "memory.remember", "memory.manage" })
+    {
+        var task = new ConversationState { Status = ConversationStatus.Completed,
+            Messages = [new ChatEntry("user", "Explicitly manage my saved fact.")],
+            Operations = [new AgentOperation { ToolName = name, Status = OperationStatus.Succeeded }] };
+        await setup.Store.SaveAsync(task, default);
+        await learning.ObserveCompletedAsync(task.Id, default);
+    }
+    Assert(model.PromptSnapshots.Count == 0 && (await setup.Store.ListMemoryCandidatesAsync(default)).Count == 0,
+        "Explicit memory operations do not trigger redundant learning or reintroduce removed facts from the same task.");
+}
+
+static async Task M8cRecallAliases()
+{
+    using var setup = new TestContext();
+    await setup.Store.SetMemorySettingsAsync(new MemoryRecallSettings(true, false), default);
+    var note = await setup.Store.WriteMemoryAsync("Lark uses a relational data store.", "explicit-memory-user",
+        new MemoryDetails("project", "Lark project", ["SQL database", "persistence"]), default);
+    await setup.Store.WriteMemoryAsync("Finch uses a different architecture.", "explicit-memory-user",
+        new MemoryDetails("project", "Finch project"), default);
+    Assert((await setup.Store.RecallAsync("project", default)).Items.Count == 0 &&
+        (await setup.Store.RecallAsync("project details", default)).Items.Count == 0, "Generic shared context alone cannot automatically disclose saved notes.");
+    var matches = await setup.Store.FindMemoryAsync("Lark persistence", ["SQL database"], 5, default);
+    Assert(matches.Count == 1 && matches[0].Id == note.Id, "Subject-specific aliases and tags support explicit contextual lookup.");
+}
+
+static async Task M8MemoryLearningConsent()
+{
+    using var setup = new TestContext();
+    const string userText = "For my Juniper project I always use a dark editor theme.";
+    Guid id = Guid.NewGuid();
+    await setup.Store.SaveAsync(new ConversationState { Id = id, Objective = userText, Status = ConversationStatus.Completed,
+        Messages = [new ChatEntry("user", userText), new ChatEntry("assistant", "Noted.")] }, default);
+    string valid = JsonSerializer.Serialize(new[] { new { note = "Juniper project uses a dark editor theme.", kind = "preference", topic = "Juniper project", tags = new[] { "editor", "theme" }, sourceExcerpt = userText } });
+    var model = new FakeModel([new ModelReply(valid, [])]);
+    var learning = new MemoryLearningService(setup.Store, model);
+    await learning.ObserveCompletedAsync(id, default);
+    Assert(model.PromptSnapshots.Count == 0, "Learning disabled means no additional model call.");
+    await setup.Store.SetMemorySettingsAsync(new MemoryRecallSettings(true, true), default);
+    await learning.ObserveCompletedAsync(id, default);
+    await learning.ObserveCompletedAsync(id, default);
+    Assert(model.ToolSnapshots.Count == 1 && model.ToolSnapshots[0].Count == 0, "One non-executing review per completed task.");
+    Assert(!model.PromptSnapshots[0].Any(m => m.Content?.Contains("Noted.", StringComparison.Ordinal) == true), "Assistant output is not evidence for learned user facts.");
+    var pending = (await setup.Store.ListMemoryCandidatesAsync(default)).Single();
+    Assert(pending.Details.SourceConversationId == id && pending.Details.SourceExcerpt == userText, "Candidate has actual source and task provenance.");
+    Assert((await setup.Store.ListMemoryNotesAsync(default)).Count == 0 && (await setup.Store.RecallAsync("Juniper project", default)).Items.Count == 0, "Unapproved candidate cannot be recalled.");
+    Assert(await setup.Store.ReviewMemoryCandidateAsync(pending.Id, true, default), "Explicit candidate acceptance.");
+    Assert((await setup.Store.ListMemoryCandidatesAsync(default)).Count == 0 && (await setup.Store.RecallAsync("Juniper project", default)).Items.Count == 1, "Acceptance atomically moves candidate into approved recall.");
+}
+
+static async Task M8MemoryLearningRejectsUntrusted()
+{
+    using var setup = new TestContext();
+    await setup.Store.SetMemorySettingsAsync(new MemoryRecallSettings(false, true), default);
+    Guid first = Guid.NewGuid(), second = Guid.NewGuid(), third = Guid.NewGuid();
+    foreach (Guid id in new[] { first, second, third })
+        await setup.Store.SaveAsync(new ConversationState { Id = id, Objective = "I prefer mechanical keyboards.", Status = ConversationStatus.Completed,
+            Messages = [new ChatEntry("user", "I prefer mechanical keyboards.")] }, default);
+    var model = new FakeModel([
+        new ModelReply("[{\"note\":\"Prefers an ergonomic mouse\",\"kind\":\"preference\",\"topic\":\"Hardware\",\"tags\":[],\"sourceExcerpt\":\"I prefer ergonomic mice.\"}]", []),
+        ModelCall("memory.remember", "{\"note\":\"untrusted\"}"),
+        new ModelReply("[{\"note\":\"Prefers mechanical keyboards.\",\"kind\":\"preference\",\"topic\":\"Hardware\",\"tags\":[],\"sourceExcerpt\":\"I prefer mechanical keyboards.\"}]", [])]);
+    var learning = new MemoryLearningService(setup.Store, model);
+    await learning.ObserveCompletedAsync(first, default);
+    await learning.ObserveCompletedAsync(second, default);
+    Assert((await setup.Store.ListMemoryCandidatesAsync(default)).Count == 0, "Fabricated evidence and structured tool calls are not accepted by the learning review.");
+    await learning.ObserveCompletedAsync(third, default);
+    var pending = (await setup.Store.ListMemoryCandidatesAsync(default)).Single();
+    Assert(await setup.Store.ReviewMemoryCandidateAsync(pending.Id, false, default), "Dismiss candidate explicitly.");
+    await learning.ObserveCompletedAsync(third, default);
+    Assert((await setup.Store.ListMemoryCandidatesAsync(default)).Count == 0 && (await setup.Store.ListMemoryNotesAsync(default)).Count == 0 && model.PromptSnapshots.Count == 3, "Dismissed candidate does not get re-created from the same completed task.");
+}
+
+static async Task M8MemoryHistoryScope()
+{
+    using var setup = new TestContext();
+    Guid visible = Guid.NewGuid(), archived = Guid.NewGuid(), attached = Guid.NewGuid();
+    foreach (Guid id in new[] { visible, archived, attached })
+        await setup.Store.SaveAsync(new ConversationState { Id = id, Objective = "Lunar project", Status = ConversationStatus.Completed,
+            Messages = [new ChatEntry("user", "Lunar project uses " + id.ToString("N"), AttachmentPaths: id == attached ? ["private-file"] : null),
+                new ChatEntry("assistant", "Lunar project invented answer"), new ChatEntry("tool", "Lunar project private tool data")] }, default);
+    await setup.Store.SetChatPreferencesAsync(archived, null, true, default);
+    var matches = await setup.Store.SearchUserHistoryAsync("Lunar project", [], default);
+    Assert(matches.Count == 1 && matches[0].ConversationId == visible && matches[0].Content.Contains(visible.ToString("N"), StringComparison.Ordinal), "Only user-authored completed, nonarchived, nonattachment text is eligible.");
+    var approvals = new FakeApprovals(false);
+    var engine = new NiraEngine(new FakeModel([ModelCall("memory.search_history", "{\"query\":\"Lunar project\"}")]),
+        new ToolRegistry([new MemoryHistorySearchTool(setup.Store)]), setup.Store, new WorkspaceAuthority(setup.Workspace, developmentMode: true));
+    var result = await engine.RunAsync(Guid.NewGuid(), "Find old Lunar project discussions", approvals);
+    Assert(result.Status == ConversationStatus.Paused && approvals.Calls == 1, "Private history reading still requires separate approval in development mode.");
+}
+
+static async Task M8MemoryLearningIntegration()
+{
+    using var setup = new TestContext();
+    await setup.Store.SetMemorySettingsAsync(new MemoryRecallSettings(false, true), default);
+    const string input = "My Aurora project uses a modular architecture.";
+    string proposal = JsonSerializer.Serialize(new[] { new { note = input, kind = "project", topic = "Aurora project", tags = new[] { "architecture" }, sourceExcerpt = input } });
+    var model = new FakeModel([new ModelReply("Understood.", []), new ModelReply(proposal, [])]);
+    var engine = new NiraEngine(model, new ToolRegistry([]), setup.Store, new WorkspaceAuthority(setup.Workspace), memoryContext: setup.Store,
+        memoryLearning: new MemoryLearningService(setup.Store, model));
+    Guid id = Guid.NewGuid();
+    var result = await engine.RunAsync(id, input, new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.Completed && result.Message == "Understood." && model.PromptSnapshots.Count == 2 &&
+        (await setup.Store.ListMemoryCandidatesAsync(default)).Count == 1, "Actual agent completion drives a bounded optional review without altering the delivered answer.");
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(state.Status == ConversationStatus.Completed && state.Operations.Count == 0 && state.Messages.All(m => m.Role != "system"), "Learning is not an action receipt or synthetic conversation entry.");
+}
+
+static async Task M8MemoryProtectedMetadata()
+{
+    using var setup = new TestContext();
+    const string marker = "UNIQUE_MEMORY_METADATA_7823";
+    await setup.Store.WriteMemoryAsync("Protected note", "explicit-settings-user", new MemoryDetails("project", marker, [marker], marker), default);
+    await using var conn = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=" + setup.Database);
+    await conn.OpenAsync();
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT metadata FROM memories";
+    string encrypted = (string)(await cmd.ExecuteScalarAsync() ?? throw new InvalidOperationException("No protected metadata"));
+    Assert(!encrypted.Contains(marker, StringComparison.Ordinal) && Convert.FromBase64String(encrypted).Length > 32 &&
+        (await setup.Store.ListMemoryNotesAsync(default)).Single().Metadata?.SourceExcerpt == marker, "Memory classification and provenance are DPAPI-protected at rest and round-trip.");
+}
+
 static async Task M4dMemoryManagement()
 {
     using var setup = new TestContext();
@@ -1334,19 +2357,42 @@ static async Task ClarificationResumes()
 {
     using var setup = new TestContext();
     var model = new FakeModel([
-        new ModelReply(null, [Call("ask1", "nira_ask_user", new { question="Which location should I use?" })]),
+        new ModelReply(null, [Call("ask1", "nira_ask_user", new { question="Which location should I use?", fields = new[] { "Location", "Purpose" } })]),
         new ModelReply(null, [Call("finish2", "nira_finish", new {
             outcome="answer", answer="I can use the location you provided.", evidence_ids=Array.Empty<string>() })])
     ]);
     var engine = setup.Engine(model);
     Guid id = Guid.NewGuid();
     var first = await engine.RunAsync(id, "Help me with an unspecified destination.", new FakeApprovals(false));
-    Assert(first.Status == ConversationStatus.AwaitingUser, "AwaitingUser should be persisted");
+    Assert(first.Status == ConversationStatus.AwaitingUser && first.Message.Contains("- Location") && first.Message.Contains("- Purpose"), "AwaitingUser and structured fields should be persisted");
     var next = await engine.RunAsync(id, "Use my Documents folder.", new FakeApprovals(false));
     Assert(next.Status == ConversationStatus.Completed, "Follow-up should finish same run");
     ConversationState saved = (await setup.Store.LoadAsync(id, default))!;
     Assert(saved.Objective == "Help me with an unspecified destination.", "Objective must survive follow-up");
     Assert(saved.Messages.Any(x => x.Role == "user" && x.Content == "Use my Documents folder."), "Follow-up must enter transcript");
+    var desktopModel = new FakeModel([
+        new ModelReply(null, [Call("ask-form", "nira_ask_user", new { question="Tell me your preferences.", fields = new[] { "Budget", "Resolution" } })]),
+        new ModelReply("Thanks for the details.", [])
+    ]);
+    var desktopEngine = setup.Engine(desktopModel);
+    Guid desktopId = Guid.NewGuid();
+    var form = await desktopEngine.RunAsync(desktopId, "Help me choose an appropriate configuration.", new FakeApprovals(false), new M5bDesktopProgress());
+    var pending = (await setup.Store.LoadAsync(desktopId, default))!;
+    Assert(form.Status == ConversationStatus.AwaitingUser && form.Message.Contains("```nira-ui") && form.Message.Contains("Budget") && pending.PendingQuestion == form.Message, "Desktop clarification must persist native form");
+    var resumed = await desktopEngine.RunAsync(desktopId, "Budget: 1000; Resolution: 1080p", new FakeApprovals(false), new M5bDesktopProgress());
+    Assert(resumed.Status == ConversationStatus.Completed, "Desktop clarification resumes normally");
+    var history = (await setup.Store.LoadAsync(desktopId, default))!;
+    Assert(history.Messages.Any(m => m.Role == "assistant" && m.Content == form.Message), "Delivered form survives continuation for history replay.");
+    var repairModel = new FakeModel([
+        new ModelReply("Could you tell me the following details?\n1. Budget\n2. Primary use\n3. Constraints", []),
+        new ModelReply(null, [Call("repair-ask", "nira_ask_user", new { question = "Tell me the essentials.", fields = new[] { "Budget", "Primary use", "Constraints" } })])
+    ]);
+    var repaired = await setup.Engine(repairModel).RunAsync(Guid.NewGuid(), "Help me choose an option.", new FakeApprovals(false), new M5bDesktopProgress());
+    Assert(repaired.Status == ConversationStatus.AwaitingUser && repaired.Message.Contains("```nira-ui") && repairModel.ToolSnapshots.Count == 2 &&
+        repairModel.ToolSnapshots[1].Select(t => t.Name).SequenceEqual(new[] { "nira_ask_user" }), "Prose questionnaire gets one non-executing structured correction.");
+    var ordinaryModel = new FakeModel([new ModelReply("Here are the steps:\n1. Read\n2. Compare", [])]);
+    var ordinary = await setup.Engine(ordinaryModel).RunAsync(Guid.NewGuid(), "Explain the procedure.", new FakeApprovals(false), new M5bDesktopProgress());
+    Assert(ordinary.Status == ConversationStatus.Completed && ordinaryModel.ToolSnapshots.Count == 1, "Ordinary lists do not trigger clarification repair.");
 }
 
 static async Task WorkspaceWrite()
@@ -1637,7 +2683,7 @@ static async Task M6eGenerationSuccess()
         imageGenerationResolver: () => ImageGenerationProvider.Load(setup.Root));
     Assert(registry.Descriptors.Any(t => t.Name == "image.generate"), "Generation must remain registered before setup.");
     ImageGenerationProvider.Save(setup.Root, new string('a', 32), new string('T', 32));
-    var args = new { prompt = "Blue geometric landscape", width = 256, height = 256 };
+    var args = new { prompt = "Blue geometric landscape", width = 256, height = 256, animation = false, frameDurationMs = 0 };
     var model = new FakeModel([new ModelReply(null, [Call("gen1", "image.generate", args)]),
         new ModelReply(null, [Call("gen2", "image.generate", args)]), new ModelReply("Here is your artwork.", [])]);
     var approvals = new FakeApprovals(true);
@@ -1649,7 +2695,7 @@ static async Task M6eGenerationSuccess()
     Assert(handler.AuthorizationHeader == "Bearer " + new string('T', 32) && handler.RequestBody is { } request && request.Contains("Blue geometric landscape", StringComparison.Ordinal), "Provider multipart/auth request incorrect.");
     var state = await setup.Store.LoadAsync(id, default) ?? throw new InvalidOperationException("Task missing.");
     var entries = await new SqliteConversationStore(setup.Database).ListGalleryAsync(default);
-    Assert(entries.Count == 1 && entries[0].IsGenerated && entries[0].Source == "" && File.Exists(entries[0].Path) &&
+    Assert(entries.Count == 1 && entries[0].IsGenerated && !entries[0].IsAnimated && entries[0].FrameDurationMs == 0 && entries[0].Source == "" && File.Exists(entries[0].Path) &&
         Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(entries[0].Path))) == entries[0].Sha256,
         "Generated artwork must persist with a verified hash and no fabricated web source.");
     Assert(state.Operations.Count(o => o.ToolName == "image.generate") == 1 && !JsonSerializer.Serialize(state).Contains(new string('T', 32), StringComparison.Ordinal),
@@ -1753,7 +2799,7 @@ static async Task M6e2RoutingCase(bool recover)
         enableCapabilityRouting: true).RunAsync(id, "Create an image of a city", approvals);
     Assert(result.Status == ConversationStatus.Paused && model.ToolSnapshots.Count == 3 &&
         model.ToolSnapshots.All(ts => ts.Any(t => t.Name == "image.generate")) &&
-        model.PromptSnapshots[2].Any(m => m.Role == "system" && m.Content!.Contains("selected the registered image generation capability", StringComparison.Ordinal)),
+        model.PromptSnapshots[2].Any(m => m.Role == "system" && m.Content!.Contains("selected a registered action capability", StringComparison.Ordinal)),
         "Selected generation must receive one bounded corrective round rather than false completion.");
     Assert(approvals.Calls == (recover ? 1 : 0) && handler.Calls == 0,
         "Recovery must never bypass approval or dispatch after a refusal.");
@@ -7635,7 +8681,7 @@ static Task DesktopToolsRegistered()
     ToolRegistry registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http,
         desktopBackend: backend);
     foreach (string name in new[] { "desktop.windows_list", "desktop.window_inspect",
-        "desktop.window_activate", "desktop.control_invoke", "desktop.control_set_text",
+        "desktop.window_activate", "desktop.control_invoke", "desktop.control_sequence", "desktop.control_set_text",
         "desktop.control_type_text" })
         Assert(registry.TryGet(name, out var tool) && tool is not null,
             "Missing registered desktop tool: " + name);
@@ -7852,7 +8898,7 @@ static async Task DesktopUnsupportedSetTextPauses()
     Assert(result.Status == ConversationStatus.Paused && saved.RetryBlockCode == "CONTROL_REQUIRES_KEYBOARD" &&
         saved.Operations.Count == 1 && saved.Operations.Single().Status == OperationStatus.Failed &&
         backend.SetTextCalls == 0,
-        "A known unsupported UIA action must pause immediately instead of consuming further model rounds");
+        "A rejected action with no verified alternative must remain paused");
 }
 static async Task DesktopBlockedRetrySafe()
 {
@@ -7860,7 +8906,8 @@ static async Task DesktopBlockedRetrySafe()
     var backend = new FakeDesktopBackend();
     var model = new FakeModel(new[] {
         ModelCall("desktop.control_set_text",
-            "{\"windowId\":\"win-demo-0001\",\"controlId\":\"ctrl-doc-01\",\"text\":\"Hello\"}")
+            "{\"windowId\":\"win-demo-0001\",\"controlId\":\"ctrl-doc-01\",\"text\":\"Hello\"}"),
+        new ModelReply("The requested method is unsupported.", [])
     });
     var engine = setup.Engine(model, backend);
     Guid id = Guid.NewGuid();
@@ -7888,6 +8935,219 @@ static async Task DesktopSetPermissionRoutesHost()
         "May I set text must be treated as a tool-approval probe, not a user clarification");
 }
 
+static async Task GenericRecoveryFreshObservation()
+{
+    using var setup = new TestContext();
+    var action = new GenericRecoveryTool("example.change", true, args => args.GetProperty("target").GetString() == "old"
+        ? ToolReceipt.Fail("ANY_NEW_PRECONDITION", "Target changed before dispatch.", recovery: ToolRecovery.Reobserve)
+        : ToolReceipt.Ok("Observed new target updated.", changedState: true));
+    var observation = new GenericRecoveryTool("example.observe", false, _ => ToolReceipt.Ok("New target observed."));
+    var model = new FakeModel(new[] {
+        ModelCall("example.change", "{\"target\":\"old\"}"),
+        ModelCall("example.change", "{\"target\":\"new\"}"), // must not execute before observation
+        ModelCall("example.observe", "{\"target\":\"new\"}"),
+        ModelCall("example.change", "{\"target\":\"new\"}"), new ModelReply("New target updated.", [])
+    });
+    var approval = new FakeApprovals(true); Guid id = Guid.NewGuid();
+    var engine = new NiraEngine(model, new ToolRegistry([action, observation]), setup.Store, new WorkspaceAuthority(setup.Workspace));
+    var result = await engine.RunAsync(id, "Update the intended target", approval);
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Completed && action.Calls == 2 && observation.Calls == 1 &&
+        approval.Calls == 3 && state.Operations.First().Recovery == ToolRecovery.Reobserve &&
+        state.Messages.Any(m => m.Content?.Contains("RECOVERY_PRECONDITION", StringComparison.Ordinal) == true),
+        "An unfamiliar rejection must require fresh observation and separate approval before an alternative effect.");
+}
+
+static async Task GenericRecoveryBoundsReplay()
+{
+    using var setup = new TestContext();
+    var action = new GenericRecoveryTool("example.change", true, _ => ToolReceipt.Fail("UNKNOWN_CONDITION", "Not applied.", recovery: ToolRecovery.Reobserve));
+    var observation = new GenericRecoveryTool("example.observe", false, _ => ToolReceipt.Ok("Observed."));
+    var model = new FakeModel(new[] {
+        ModelCall("example.change", "{\"target\":\"x\"}"), ModelCall("example.observe", "{\"target\":\"x\"}"),
+        ModelCall("example.change", "{ \"target\": \"x\" }"), ModelCall("example.observe", "{\"target\":\"x\"}"),
+        ModelCall("example.change", "{\"target\":\"x\"}"), new ModelReply("Done", [])
+    });
+    var engine = new NiraEngine(model, new ToolRegistry([action, observation]), setup.Store, new WorkspaceAuthority(setup.Workspace));
+    var result = await engine.RunAsync(Guid.NewGuid(), "Change target x", new FakeApprovals(true));
+    Assert(result.Status == ConversationStatus.Paused && action.Calls == 2 && observation.Calls == 2,
+        "Repeated equivalent rejected operations must be bounded even after new observations.");
+}
+
+static async Task GenericRecoveryUnverified()
+{
+    using var setup = new TestContext();
+    var action = new GenericRecoveryTool("example.change", true, _ => ToolReceipt.Ok("Effect uncertain.", changedState: true, recovery: ToolRecovery.UnverifiedEffect));
+    var engine = new NiraEngine(new FakeModel(new[] { ModelCall("example.change", "{\"target\":\"x\"}") }),
+        new ToolRegistry([action]), setup.Store, new WorkspaceAuthority(setup.Workspace));
+    Guid id = Guid.NewGuid(); var approval = new FakeApprovals(true);
+    var first = await engine.RunAsync(id, "Update x", approval);
+    var second = await engine.RunAsync(id, "Try again", approval);
+    Assert(first.Status == ConversationStatus.Paused && second.Status == ConversationStatus.Paused && action.Calls == 1 && approval.Calls == 1,
+        "Uncertain effects must block replay for every capability, not just text entry.");
+}
+
+static async Task GenericRecoveryDenial()
+{
+    using var setup = new TestContext();
+    var action = new GenericRecoveryTool("example.change", true, _ => ToolReceipt.Fail("UNFAMILIAR", "No effect.", recovery: ToolRecovery.Reobserve));
+    var observation = new GenericRecoveryTool("example.observe", false, _ => ToolReceipt.Ok("Alternate target observed."));
+    var model = new FakeModel(new[] { ModelCall("example.change", "{\"target\":\"x\"}"),
+        ModelCall("example.observe", "{\"target\":\"y\"}"), ModelCall("example.change", "{\"target\":\"y\"}") });
+    var engine = new NiraEngine(model, new ToolRegistry([action, observation]), setup.Store, new WorkspaceAuthority(setup.Workspace));
+    var result = await engine.RunAsync(Guid.NewGuid(), "Update target", new ScriptedApprovals([true, true, false]));
+    Assert(result.Status == ConversationStatus.Paused && action.Calls == 1 && observation.Calls == 1,
+        "Recovery must not grant authority for an alternative rejected by the user.");
+}
+
+static string OrderedControlArgs() => JsonSerializer.Serialize(new {
+    windowId = "win-seq-0001", steps = new[] {
+        new { controlId = "ctrl-first-01", name = "First" },
+        new { controlId = "ctrl-second-02", name = "Second" }
+    }, observeAutomationId = "display", expectedName = "Final result"
+});
+
+static async Task OrderedControlsVerified()
+{
+    using var setup = new TestContext();
+    var backend = new SequenceDesktopBackend();
+    var model = new FakeModel(new[] {
+        ModelCall("desktop.window_inspect", "{\"windowId\":\"win-seq-0001\"}"),
+        ModelCall("desktop.control_sequence", OrderedControlArgs()), new ModelReply("Observed final result.", [])
+    });
+    Guid id = Guid.NewGuid(); var approval = new FakeApprovals(true);
+    var result = await setup.Engine(model, backend).RunAsync(id, "Perform the two ordered actions and verify", approval);
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Completed && approval.Calls == 2 &&
+        backend.Invocations.SequenceEqual(new[] { "ctrl-first-01", "ctrl-second-02" }) &&
+        state.Operations.Last().ResultJson!.Contains("\"Verified\":true", StringComparison.Ordinal),
+        "One exact sequence approval must preserve order and independently observe the final result.");
+}
+static async Task OrderedControlsDenied()
+{
+    using var setup = new TestContext(); var backend = new SequenceDesktopBackend();
+    var model = new FakeModel(new[] { ModelCall("desktop.window_inspect", "{\"windowId\":\"win-seq-0001\"}"),
+        ModelCall("desktop.control_sequence", OrderedControlArgs()) });
+    var result = await setup.Engine(model, backend).RunAsync(Guid.NewGuid(), "Perform two actions", new ScriptedApprovals(new[] { true, false }));
+    Assert(result.Status == ConversationStatus.Paused && backend.Invocations.Count == 0, "Denied sequence cannot invoke any control.");
+}
+static async Task OrderedControlsUnobserved()
+{
+    using var setup = new TestContext(); var backend = new SequenceDesktopBackend(); var approval = new FakeApprovals(true);
+    var model = new FakeModel(new[] { ModelCall("desktop.control_sequence", OrderedControlArgs()), new ModelReply("No observation.", []) });
+    await setup.Engine(model, backend).RunAsync(Guid.NewGuid(), "Perform two actions", approval);
+    Assert(approval.Calls == 0 && backend.Invocations.Count == 0, "Invented control IDs cannot be approved or executed.");
+}
+static async Task OrderedControlsStale()
+{
+    var backend = new SequenceDesktopBackend { StaleAfterFirst = true };
+    using var args = JsonDocument.Parse(OrderedControlArgs());
+    var receipt = await new DesktopControlSequenceTool(backend).ExecuteAsync(args.RootElement, default);
+    Assert(receipt.ChangedState && !receipt.Data.GetProperty("Verified").GetBoolean() && backend.Invocations.Count == 1,
+        "Stale target after first action must stop without replaying or dispatching later actions.");
+}
+static async Task OrderedControlsMismatch()
+{
+    using var setup = new TestContext(); var backend = new SequenceDesktopBackend { WrongDisplay = true };
+    var model = new FakeModel(new[] { ModelCall("desktop.window_inspect", "{\"windowId\":\"win-seq-0001\"}"),
+        ModelCall("desktop.control_sequence", OrderedControlArgs()) });
+    var engine = setup.Engine(model, backend); Guid id = Guid.NewGuid(); var approval = new FakeApprovals(true);
+    var result = await engine.RunAsync(id, "Perform two actions and verify", approval);
+    var retry = await engine.RunAsync(id, null, approval);
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Paused && retry.Status == ConversationStatus.Paused &&
+        state.RetryBlockCode == ToolRecoveryPolicy.UnverifiedEffectCode && backend.Invocations.Count == 2,
+        "A mismatch must block automatic replay and preserve the actual display observation.");
+}
+static async Task PausedTaskIsolation()
+{
+    using var setup = new TestContext(); var prior = new ConversationState { Status = ConversationStatus.Paused,
+        RetryBlockCode = "EDITOR_NOT_EMPTY", Objective = "First objective", LastAnswer = "Original failure" };
+    await setup.Store.SaveAsync(prior, default);
+    Guid next = await setup.Store.CreateFollowupAsync(prior.Id, default, startNewAfterPause: true);
+    var fresh = (await setup.Store.LoadAsync(next, default))!; var saved = (await setup.Store.LoadAsync(prior.Id, default))!;
+    Assert(fresh.PreviousTaskId == prior.Id && fresh.Operations.Count == 0 && fresh.Objective == "" &&
+        saved.Objective == "First objective" && saved.RetryBlockCode == "EDITOR_NOT_EMPTY" && saved.Status == ConversationStatus.Paused,
+        "A new chat request must not rewrite a paused objective or its receipts.");
+}
+static async Task NonemptyEditorRecovery()
+{
+    using var setup = new TestContext(); var backend = new SequenceDesktopBackend { NonemptyFirst = true };
+    var model = new FakeModel(new[] {
+        ModelCall("desktop.control_type_text", "{\"windowId\":\"win-seq-0001\",\"controlId\":\"ctrl-editor-01\",\"text\":\"Hello.\",\"requireEmpty\":true}"),
+        ModelCall("desktop.window_inspect", "{\"windowId\":\"win-seq-0001\"}"),
+        ModelCall("desktop.control_invoke", "{\"windowId\":\"win-seq-0001\",\"controlId\":\"ctrl-first-01\"}"),
+        ModelCall("desktop.window_inspect", "{\"windowId\":\"win-seq-0001\"}"),
+        ModelCall("desktop.control_type_text", "{\"windowId\":\"win-seq-0001\",\"controlId\":\"ctrl-editor-02\",\"text\":\"Hello.\",\"requireEmpty\":true}"),
+        new ModelReply("Typed Hello. in a new blank editor.", []) });
+    Guid id = Guid.NewGuid(); var result = await setup.Engine(model, backend).RunAsync(id, "Type exactly Hello. in a new blank editor", new FakeApprovals(true));
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Completed && state.Operations.First().ErrorCode == "EDITOR_NOT_EMPTY" &&
+        state.Operations.Last().Status == OperationStatus.Succeeded && backend.Invocations.Count == 1 && backend.Typed == "Hello.",
+        "Known nonempty editor rejection can recover through a fresh approved blank editor without overwriting the first.");
+}
+
+static async Task VerifiedInputFollowup()
+{
+    using var setup = new TestContext();
+    var prior = new ConversationState { Status = ConversationStatus.Paused,
+        RetryBlockCode = "DESKTOP_TEXT_NOT_VERIFIED", Objective = "Write a paragraph",
+        LastAnswer = "Text entry not verified", Operations = [new AgentOperation {
+            ToolName = "desktop.control_type_text", Status = OperationStatus.Succeeded }] };
+    await setup.Store.SaveAsync(prior, default);
+    Guid childId = await setup.Store.CreateFollowupAsync(prior.Id, default);
+    var child = (await setup.Store.LoadAsync(childId, default))!;
+    var original = (await setup.Store.LoadAsync(prior.Id, default))!;
+    Assert(child.PreviousTaskId == prior.Id && child.Operations.Count == 0 && child.RetryBlockCode is null &&
+        child.PreviousChatContext?.Contains("Text entry not verified", StringComparison.Ordinal) == true &&
+        original.Status == ConversationStatus.Paused && original.RetryBlockCode == "DESKTOP_TEXT_NOT_VERIFIED",
+        "New requests must not turn an unverified write into a completed task.");
+}
+static Task VerifiedInputPaced()
+{
+    string value = "";
+    string pending = "";
+    int sends = 0;
+    var result = DesktopVerifiedTextInput.Write("abc", () => true, () => value, unit =>
+    {
+        Assert(pending.Length == 0, "Must observe the previous input before dispatching another.");
+        pending = unit; sends++; return true;
+    }, () => { value += pending; pending = ""; }, default);
+    Assert(result.Verified == true && sends == 3 && value == "abc", "Every character must be observed before continuing.");
+    return Task.CompletedTask;
+}
+static Task VerifiedInputCorruption()
+{
+    string value = ""; int sends = 0;
+    var result = DesktopVerifiedTextInput.Write("abc", () => true, () => value,
+        _ => { sends++; value += "s"; return true; }, () => { }, default);
+    Assert(result.Dispatched && result.Verified == false && sends == 1 && result.VerificationStatus == "mismatch", "Corruption must stop subsequent dispatch.");
+    return Task.CompletedTask;
+}
+static Task VerifiedInputFocusLoss()
+{
+    bool focused = true; int sends = 0;
+    var result = DesktopVerifiedTextInput.Write("abc", () => focused, () => "",
+        _ => { sends++; focused = false; return true; }, () => { }, default);
+    Assert(result.Dispatched && result.Verified == false && sends == 1, "Lost focus must stop typing without replay.");
+    return Task.CompletedTask;
+}
+static Task VerifiedInputTimeout()
+{
+    int sends = 0, waits = 0;
+    var result = DesktopVerifiedTextInput.Write("abc", () => true, () => "",
+        _ => { sends++; return true; }, () => waits++, default);
+    Assert(result.Dispatched && result.Verified == false && sends == 1 && waits == 20, "Read-back timeout must not retype.");
+    return Task.CompletedTask;
+}
+static Task VerifiedInputUnicode()
+{
+    string value = ""; int sends = 0;
+    var result = DesktopVerifiedTextInput.Write("A😀B", () => true, () => value,
+        unit => { value += unit; sends++; return true; }, () => { }, default);
+    Assert(result.Verified == true && sends == 3 && value == "A😀B", "Surrogate pairs must be sent together.");
+    return Task.CompletedTask;
+}
 static Task DesktopExactTextComparison()
 {
     string expected = "NIRA desktop control test successful.";
@@ -7913,7 +9173,7 @@ static async Task DesktopUnverifiedTypingPauses()
         "Type Hello in an empty editor with approval", new FakeApprovals(true));
     ConversationState state = (await setup.Store.LoadAsync(id, default))!;
     Assert(result.Status == ConversationStatus.Paused &&
-        state.RetryBlockCode == "DESKTOP_TEXT_NOT_VERIFIED" &&
+        state.RetryBlockCode == ToolRecoveryPolicy.UnverifiedEffectCode &&
         backend.TypeTextCalls == 1 && state.Operations.Count == 1 &&
         state.Operations[0].Status == OperationStatus.Succeeded &&
         state.Operations[0].ResultJson!.Contains("\"Verified\":false", StringComparison.Ordinal) &&
@@ -7934,7 +9194,8 @@ static async Task DesktopUnverifiedTypingRetryBlocked()
     AgentRunResult first = await engine.RunAsync(id, "Type Hello", new FakeApprovals(true));
     AgentRunResult second = await engine.RunAsync(id, null, new FakeApprovals(true));
     AgentRunResult third = await engine.RunAsync(id, "resume", new FakeApprovals(true));
-    Assert(first.Status == ConversationStatus.Paused &&
+    AgentRunResult fourth = await engine.RunAsync(id, "Try writing it again", new FakeApprovals(true));
+    Assert(fourth.Status == ConversationStatus.Paused && first.Status == ConversationStatus.Paused &&
         second.Status == ConversationStatus.Paused &&
         third.Status == ConversationStatus.Paused && backend.TypeTextCalls == 1,
         "A dispatched unverified write must not be retried by an unchanged resume.");
@@ -7953,7 +9214,7 @@ static async Task DesktopUnverifiedSetTextPauses()
         "Set edit field to Hello", new FakeApprovals(true));
     ConversationState state = (await setup.Store.LoadAsync(id, default))!;
     Assert(result.Status == ConversationStatus.Paused &&
-        state.RetryBlockCode == "DESKTOP_TEXT_NOT_VERIFIED" &&
+        state.RetryBlockCode == ToolRecoveryPolicy.UnverifiedEffectCode &&
         backend.SetTextCalls == 1 && state.Operations.Count == 1 &&
         state.Operations[0].Status == OperationStatus.Succeeded,
         "Unverified ValuePattern writes must not become completed tasks.");
@@ -10123,6 +11384,44 @@ static async Task M3eAgent()
         saved is not null && saved.Operations.Any(op => op.ToolName == "vision.analyze" && op.Status == OperationStatus.Succeeded && op.ResultJson!.Contains("sentImageSha256", StringComparison.Ordinal)), "Approved vision result did not reach the durable journal.");
 }
 
+internal sealed class GenericRecoveryTool(string name, bool effect, Func<JsonElement, ToolReceipt> execute) : IAgentTool
+{
+    public int Calls { get; private set; }
+    public ToolDescriptor Descriptor { get; } = new(name, "Test capability", effect ? ToolRisk.Dangerous : ToolRisk.ReadLocal,
+        JsonToolSchema.Schema("""{"type":"object","properties":{"target":{"type":"string"}},"required":["target"],"additionalProperties":false}"""), effect);
+    public string GetTarget(JsonElement args) => "external-test/" + args.GetProperty("target").GetString();
+    public Task<ToolReceipt> ExecuteAsync(JsonElement arguments, CancellationToken ct)
+    { Calls++; return Task.FromResult(execute(arguments)); }
+}
+
+internal sealed class SequenceDesktopBackend : IDesktopAutomationBackend
+{
+    public List<string> Invocations { get; } = [];
+    public bool StaleAfterFirst, WrongDisplay, NonemptyFirst;
+    public string? Typed;
+    private static DesktopWindow Item => new("win-seq-0001", "Test window", "test", 3001, true, false);
+    public IReadOnlyList<DesktopWindow> ListWindows() => [Item];
+    public DesktopInspection Inspect(string windowId)
+    {
+        var controls = new List<DesktopControl> {
+            new("ctrl-first-01", "First", "ControlType.Button", "first", true, false, true, false),
+            new("ctrl-display-01", Invocations.Count == 2 && !WrongDisplay ? "Final result" : "Initial result", "ControlType.Text", "display", true, false, false, false),
+            new(Invocations.Count == 0 ? "ctrl-editor-01" : "ctrl-editor-02", "Editor", "ControlType.Document", "editor", true, false, false, false, true)
+        };
+        if (!StaleAfterFirst || Invocations.Count == 0) controls.Add(new("ctrl-second-02", "Second", "ControlType.Button", "second", true, false, true, false));
+        return new DesktopInspection(Item, controls, false);
+    }
+    public DesktopAction Invoke(string windowId, string controlId)
+    { Invocations.Add(controlId); return new DesktopAction(true, true, "Dispatched", Verified: false); }
+    public DesktopAction Activate(string windowId) => throw new NotSupportedException();
+    public DesktopAction SetText(string windowId, string controlId, string text) => throw new NotSupportedException();
+    public DesktopAction TypeText(string windowId, string controlId, string text)
+    {
+        if (NonemptyFirst && controlId == "ctrl-editor-01") return new DesktopAction(false, false, "Not empty", "EDITOR_NOT_EMPTY");
+        Typed = text; return new DesktopAction(true, true, "Typed and verified", Verified: true);
+    }
+}
+
 internal sealed class FakeDesktopBackend : IDesktopAutomationBackend
 {
     public int ListCalls, InspectCalls, ActivateCalls, InvokeCalls, SetTextCalls, TypeTextCalls;
@@ -11138,4 +12437,37 @@ internal sealed class FakePublicBrowserSessions : IPublicBrowserSessions
         Closed=true;
         return Task.FromResult(true);
     }
+}
+
+
+internal sealed class M7cFakeApplicationBackend(ApplicationCandidate candidate) : IApplicationDesktopBackend
+{
+    public int LaunchCalls { get; private set; }
+    public IReadOnlyList<ApplicationCandidate> Find(string executable, CancellationToken ct) => [candidate];
+    public ToolReceipt Launch(string executablePath, string fingerprint, CancellationToken ct)
+    {
+        LaunchCalls++;
+        if (executablePath != candidate.ExecutablePath || fingerprint != candidate.Fingerprint) throw new InvalidOperationException("Wrong candidate");
+        return ToolReceipt.Ok("Fake process started; window unverified", new { processStarted = true, windowVerified = false }, changedState: true);
+    }
+}
+
+internal sealed class CaptureTestBackend : IDesktopAutomationBackend, IDesktopWindowCaptureBackend
+{
+    internal static DesktopWindow Item { get; } = new("window-fixture-01", "Sample window", "fixture", 1234, true, false);
+    public bool Stale { get; init; }
+    public int CaptureCalls { get; private set; }
+    public IReadOnlyList<DesktopWindow> ListWindows() => [Item];
+    public DesktopWindowCapture Capture(string windowId, string title)
+    {
+        CaptureCalls++;
+        if (Stale || windowId != Item.WindowId || title != Item.Title)
+            throw new DesktopAutomationException("CAPTURE_STALE", "Window changed before capture.");
+        return new DesktopWindowCapture(Item, Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAHElEQVR4nGMU0bDZwqXh8+0Go4iGDQMDAwMDAwAyxAPz8ep/7QAAAABJRU5ErkJggg=="), 3, 2);
+    }
+    public DesktopInspection Inspect(string windowId) => new(Item, [], false);
+    public DesktopAction Activate(string windowId) => throw new NotSupportedException();
+    public DesktopAction Invoke(string windowId, string controlId) => throw new NotSupportedException();
+    public DesktopAction SetText(string windowId, string controlId, string text) => throw new NotSupportedException();
+    public DesktopAction TypeText(string windowId, string controlId, string text) => throw new NotSupportedException();
 }

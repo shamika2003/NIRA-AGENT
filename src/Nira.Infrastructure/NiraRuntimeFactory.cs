@@ -71,7 +71,8 @@ public sealed class NiraRuntime : IDisposable
         developmentPermissions = Environment.GetEnvironmentVariable("NIRA_DEVELOPMENT_PERMISSIONS") != "0";
 #endif
         var engine = new NiraEngine(client, tools, state, new WorkspaceAuthority(workspace, developmentPermissions),
-            enableCapabilityRouting: routing, enableAdaptivePlanning: adaptive);
+            enableCapabilityRouting: routing, enableAdaptivePlanning: adaptive, memoryContext: state,
+            memoryLearning: new MemoryLearningService(state, client));
         return new NiraRuntime(engine, state, http, workspace, database, modelCredentials, sessions, developmentPermissions);
     }
 

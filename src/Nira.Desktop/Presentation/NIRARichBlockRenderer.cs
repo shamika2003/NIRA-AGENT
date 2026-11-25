@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Documents;
 using System.Windows.Media;
@@ -72,7 +73,12 @@ public static class NIRARichBlockRenderer
         "metric" => Frame(Metric(block)),
         "equation" => Frame(NIRAMathEquationRenderer.Render(block), false),
         "table" => DesignedSurface(Table(block), Palette[0], 11),
-        "chart" => DesignedSurface(Chart(block), Palette[0], 12),
+        "chart" => DesignedSurface(Chart(block), Tone(block, 0), 12),
+        "column" => DesignedSurface(Chart(block), Tone(block, 0), 12),
+        "pie" => DesignedSurface(Pie(block), Tone(block, 2), 12),
+        "diagram" => Frame(Diagram(block), false),
+        "calculator" => CompactInteractive(Calculator(block), Tone(block, 2)),
+        "form" => CompactInteractive(InputForm(block, followUp), Tone(block, 0)),
         "code" => DesignedSurface(Code(block), Palette[0], 12),
         "details" => Frame(Details(block, state, onStateChanged)),
         "tabs" => DesignedSurface(Tabs(block, state, onStateChanged), Palette[0], 13),
@@ -1172,78 +1178,323 @@ public static class NIRARichBlockRenderer
         return root;
     }
 
+    private static string ChartNumber(double number, bool compact = false)
+    {
+        double magnitude = Math.Abs(number);
+        if (compact && magnitude >= 1e3 && magnitude < 1e15)
+        {
+            (double scale, string suffix) = magnitude >= 1e12 ? (1e12, "T") : magnitude >= 1e9 ? (1e9, "B") : magnitude >= 1e6 ? (1e6, "M") : (1e3, "k");
+            return (number / scale).ToString("0.##", CultureInfo.InvariantCulture) + suffix;
+        }
+        return magnitude is >= 0.000001 and < 1e15 || number == 0
+            ? number.ToString("#,0.######", CultureInfo.InvariantCulture) : number.ToString("G6", CultureInfo.InvariantCulture);
+    }
+
     private static UIElement Chart(NIRARichBlock block)
     {
-        var root = new StackPanel();
+        var root = new StackPanel { MaxWidth = 820 };
         if (block.Title.Length > 0) root.Children.Add(Text(block.Title, 15, true));
-        var canvas = new Canvas
+        bool columns = block.Type == "column";
+        IReadOnlyList<NIRAChartSeries> series = block.Series.Count > 0 ? block.Series : [new NIRAChartSeries("Value", block.Values)];
+        Color SeriesColor(int index) => index == 0 ? Tone(block, 0) : Palette[index % Palette.Length];
+        if (series.Count > 1)
         {
-            Height = 215,
-            MinWidth = 225,
-            Margin = new Thickness(0, 10, 0, 0),
-            ClipToBounds = true,
-            SnapsToDevicePixels = true
-        };
+            var legend = new WrapPanel { Margin = new Thickness(0, 6, 0, 0) };
+            for (int i = 0; i < series.Count; i++)
+            {
+                var entry = Text("●  " + series[i].Label, 12, true);
+                entry.Foreground = NIRAResponsePalette.AccentBrush(SeriesColor(i));
+                entry.Margin = new Thickness(0, 0, 16, 0); legend.Children.Add(entry);
+            }
+            root.Children.Add(legend);
+        }
+        var canvas = new Canvas { Height = 250, MinWidth = 225, Margin = new Thickness(0, 10, 0, 0), ClipToBounds = true };
         root.Children.Add(canvas);
-        double min = Math.Min(0, block.Values.Min());
-        double max = Math.Max(0, block.Values.Max());
-        if (Math.Abs(max - min) < 1e-12) { min -= 1; max += 1; }
-
+        double min = Math.Min(0, series.SelectMany(s => s.Values).Min());
+        double max = Math.Max(0, series.SelectMany(s => s.Values).Max());
+        if (max == min) { min = -1; max = 1; }
         void Paint()
         {
             canvas.Children.Clear();
-            double width = Math.Max(225, canvas.ActualWidth), height = canvas.Height;
-            double left = 42, right = width - 20, top = 22, bottom = height - 36;
-            for (int tick = 0; tick <= 2; tick++)
+            double width = Math.Max(225, canvas.ActualWidth), left = 58, right = width - 20, top = 15, bottom = canvas.Height - 48;
+            double Y(double v) => bottom - (v - min) / (max - min) * (bottom - top);
+            for (int tick = 0; tick <= 4; tick++)
             {
-                double number = min + (max - min) * tick / 2;
-                double y = bottom - (bottom - top) * tick / 2;
-                var line = new Line { X1 = left, X2 = right, Y1 = y, Y2 = y,
-                    StrokeThickness = 1, Opacity = tick == 0 ? 0.38 : 0.15 };
-                Theme(line, Shape.StrokeProperty, "NIRASecondaryBrush");
-                canvas.Children.Add(line);
-                var axis = Text(number.ToString("0.##", CultureInfo.InvariantCulture), 10,
-                    false, "NIRASecondaryBrush");
-                Canvas.SetLeft(axis, 1); Canvas.SetTop(axis, y - 10);
-                canvas.Children.Add(axis);
+                double number = min + (max - min) * tick / 4, y = Y(number);
+                var line = new Line { X1 = left, X2 = right, Y1 = y, Y2 = y, StrokeThickness = 1, Opacity = .25 };
+                Theme(line, Shape.StrokeProperty, "NIRASecondaryBrush"); canvas.Children.Add(line);
+                // Numeric ticks are literal text, not model-authored Markdown. Set the
+                // native Text property directly so the label and its accessible value agree.
+                var axis = new TextBlock
+                {
+                    Text = ChartNumber(number, compact: true),
+                    FontSize = 10,
+                    FontWeight = FontWeights.Normal,
+                    LineHeight = 15.3,
+                    TextWrapping = TextWrapping.NoWrap
+                };
+                Theme(axis, TextBlock.ForegroundProperty, "NIRASecondaryBrush");
+                Canvas.SetLeft(axis, 1); Canvas.SetTop(axis, y - 8); canvas.Children.Add(axis);
             }
-            var trace = new Polyline { StrokeThickness = 2.5, StrokeLineJoin = PenLineJoin.Round };
-            Theme(trace, Shape.StrokeProperty, "NIRACyanBrush");
-            canvas.Children.Add(trace);
-            int step = Math.Max(1, (int)Math.Ceiling(block.Values.Count / 8.0));
-            for (int i = 0; i < block.Values.Count; i++)
+            double slot = (right - left) / block.Labels.Count;
+            double X(int i) => columns ? left + slot * (i + .5) : left + (right - left) * i / (block.Labels.Count - 1);
+            for (int j = 0; j < series.Count; j++)
             {
-                double x = left + (right - left) * i / (block.Values.Count - 1);
-                double y = bottom - (block.Values[i] - min) / (max - min) * (bottom - top);
-                trace.Points.Add(new Point(x, y));
-                var dot = new Ellipse { Width = 6, Height = 6,
-                    ToolTip = block.Labels[i] + ": " + block.Values[i].ToString("G", CultureInfo.InvariantCulture) +
-                              (block.Unit.Length == 0 ? "" : " " + block.Unit) };
-                Theme(dot, Shape.FillProperty, "NIRACyanBrush");
-                Canvas.SetLeft(dot, x - 3); Canvas.SetTop(dot, y - 3);
-                canvas.Children.Add(dot);
-                if (i % step != 0 && i != block.Values.Count - 1) continue;
-                var value = Text(block.Values[i].ToString("0.##", CultureInfo.InvariantCulture), 10,
-                    true, "NIRACyanBrush");
-                Canvas.SetLeft(value, Math.Clamp(x - 18, 0, width - 42));
-                Canvas.SetTop(value, Math.Max(0, y - 23));
-                canvas.Children.Add(value);
+                var brush = NIRAResponsePalette.AccentBrush(SeriesColor(j));
+                var trace = new Polyline { StrokeThickness = 2.5, Stroke = brush, StrokeLineJoin = PenLineJoin.Round };
+                if (!columns) canvas.Children.Add(trace);
+                for (int i = 0; i < block.Labels.Count; i++)
+                {
+                    double x = X(i), y = Y(series[j].Values[i]);
+                    string tip = block.Labels[i] + " · " + series[j].Label + ": " + ChartNumber(series[j].Values[i]) + (block.Unit.Length > 0 ? " " + block.Unit : "");
+                    if (columns)
+                    {
+                        double group = Math.Min(slot * .82, 100), barWidth = group / series.Count;
+                        var bar = new Rectangle { Width = Math.Max(1, barWidth * .86), Height = Math.Max(1, Math.Abs(y - Y(0))), RadiusX = 2, RadiusY = 2, Fill = brush, ToolTip = tip };
+                        Canvas.SetLeft(bar, x - group / 2 + (j + .5) * barWidth - bar.Width / 2); Canvas.SetTop(bar, Math.Min(y, Y(0))); canvas.Children.Add(bar);
+                    }
+                    else
+                    {
+                        trace.Points.Add(new Point(x, y));
+                        var dot = new Ellipse { Width = 8, Height = 8, Fill = brush, ToolTip = tip };
+                        Canvas.SetLeft(dot, x - 4); Canvas.SetTop(dot, y - 4); canvas.Children.Add(dot);
+                    }
+                }
+            }
+            int step = Math.Max(1, (int)Math.Ceiling(block.Labels.Count / Math.Max(2, (right-left)/65)));
+            for (int i = 0; i < block.Labels.Count; i++)
+            {
+                if (i % step != 0 && i != block.Labels.Count - 1) continue;
                 var label = Text(block.Labels[i], 10, false, "NIRASecondaryBrush");
-                label.Width = 60;
-                label.TextAlignment = TextAlignment.Center;
-                Canvas.SetLeft(label, Math.Clamp(x - 30, 0, width - 60));
-                Canvas.SetTop(label, bottom + 13);
-                canvas.Children.Add(label);
+                label.Width = 64; label.MaxHeight = 38; label.TextAlignment = TextAlignment.Center; label.ToolTip = block.Labels[i];
+                Canvas.SetLeft(label, Math.Clamp(X(i) - 32, 0, width - 64)); Canvas.SetTop(label, bottom + 8); canvas.Children.Add(label);
             }
         }
-        canvas.Loaded += (_, _) => Paint();
-        canvas.SizeChanged += (_, _) => Paint();
-        if (block.Unit.Length > 0)
+        canvas.Loaded += (_, _) => Paint(); canvas.SizeChanged += (_, _) => Paint();
+        if (block.Unit.Length > 0) root.Children.Add(Text("Unit: " + block.Unit, 11, false, "NIRASecondaryBrush"));
+        return root;
+    }
+
+    private static Border CompactInteractive(UIElement content, Color tone)
+    {
+        var frame = DesignedSurface(content, tone, 15);
+        frame.MaxWidth = 760;
+        frame.HorizontalAlignment = HorizontalAlignment.Left;
+        // Stretch to the available chat width, but do not occupy the entire wide desktop.
+        frame.SetBinding(FrameworkElement.WidthProperty, new Binding("ActualWidth") { RelativeSource = new RelativeSource(RelativeSourceMode.FindAncestor, typeof(StackPanel), 1) });
+        return frame;
+    }
+
+    private static StackPanel InteractiveRoot(NIRARichBlock block, string fallback)
+    {
+        var root = new StackPanel { MaxWidth = 760, HorizontalAlignment = HorizontalAlignment.Stretch };
+        root.Children.Add(BlockHeading(block with { Title = block.Title.Length == 0 ? fallback : block.Title }, 2));
+        if (block.Text.Length > 0) root.Children.Add(Text(block.Text, 13));
+        return root;
+    }
+
+    private static TextBox VisualInput(string label, string initial, int limit)
+    {
+        var input = new TextBox { Text = initial, MaxLength = limit, MinHeight = 33,
+            FontSize = 14, Padding = new Thickness(8, 5, 8, 5), Margin = new Thickness(0, 3, 0, 9),
+            VerticalContentAlignment = VerticalAlignment.Center };
+        System.Windows.Automation.AutomationProperties.SetName(input, label);
+        Theme(input, Control.BackgroundProperty, "NIRAInputTintBrush");
+        Theme(input, Control.ForegroundProperty, "NIRATextBrush");
+        Theme(input, Control.BorderBrushProperty, "NIRAGlassBorderBrush");
+        return input;
+    }
+
+    private static UIElement Calculator(NIRARichBlock block)
+    {
+        var root = InteractiveRoot(block, "Calculator");
+        var fields = new List<TextBox>();
+        var inputGrid = new UniformGrid { Columns = block.Labels.Count > 1 ? 2 : 1 };
+        root.Children.Add(inputGrid);
+        inputGrid.SizeChanged += (_, _) => inputGrid.Columns = inputGrid.ActualWidth >= 360 && block.Labels.Count > 1 ? 2 : 1;
+        for (int i = 0; i < block.Labels.Count; i++)
         {
-            var unit = Text("Unit: " + block.Unit, 10, false, "NIRASecondaryBrush");
-            unit.Margin = new Thickness(0, 2, 0, 0);
-            root.Children.Add(unit);
+            var cell = new StackPanel { Margin = new Thickness(0, 0, 8, 0) };
+            cell.Children.Add(Text(block.Labels[i], 13, true));
+            var input = VisualInput(block.Labels[i], block.Values[i].ToString("G17", CultureInfo.InvariantCulture), 48);
+            fields.Add(input); cell.Children.Add(input); inputGrid.Children.Add(cell);
+        }
+        var expression = new TextBlock { Text = "Formula: " + Regex.Replace(block.Formula, @"x[1-8]", match =>
+            "(" + block.Labels[match.Value[1] - '1'] + ")"), TextWrapping = TextWrapping.Wrap, FontSize = 12 };
+        Theme(expression, TextBlock.ForegroundProperty, "NIRASecondaryBrush"); root.Children.Add(expression);
+        var answer = new TextBlock { FontSize = 25, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 4, 0, 8) };
+        Theme(answer, TextBlock.ForegroundProperty, "NIRACyanBrush");
+        root.Children.Add(Text("Calculated result", 12, false, "NIRASecondaryBrush")); root.Children.Add(answer);
+        void Calculate()
+        {
+            var numbers = new List<double>();
+            foreach (var field in fields)
+            {
+                if (!double.TryParse(field.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out double n) &&
+                    !double.TryParse(field.Text, NumberStyles.Float, CultureInfo.CurrentCulture, out n))
+                { answer.Text = "Enter valid numbers"; return; }
+                numbers.Add(n);
+            }
+            answer.Text = NIRAVisualArithmetic.TryEvaluate(block.Formula, numbers, out double result)
+                ? (Math.Abs(result) is >= 0.000001 and < 1e12 || result == 0 ? result.ToString("#,0.######", CultureInfo.InvariantCulture) : result.ToString("G12", CultureInfo.InvariantCulture)) + (block.Unit.Length == 0 ? "" : " " + block.Unit)
+                : "Not defined for these values";
+        }
+        foreach (var input in fields) input.TextChanged += (_, _) => Calculate();
+        var actions = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right };
+        actions.Children.Add(ActionButton("Reset", () =>
+        {
+            for (int i = 0; i < fields.Count; i++) fields[i].Text = block.Values[i].ToString("G17", CultureInfo.InvariantCulture);
+            Calculate();
+        }));
+        root.Children.Add(actions);
+        root.Children.Add(Text("Updates locally as you edit. Use a decimal point for fractional inputs.", 11, false, "NIRASecondaryBrush"));
+        Calculate(); return root;
+    }
+
+    private static UIElement InputForm(NIRARichBlock block, Action<string>? draft)
+    {
+        var root = InteractiveRoot(block, "Your details");
+        var fields = new List<TextBox>();
+        for (int i = 0; i < block.Items.Count; i++)
+        {
+            root.Children.Add(Text(block.Items[i], 13, true));
+            var field = VisualInput(block.Items[i], block.Panels.Count == block.Items.Count ? block.Panels[i] : "", 500);
+            fields.Add(field); root.Children.Add(field);
+        }
+        var button = ActionButton("Use answers", () =>
+        {
+            if (draft is null) return;
+            var message = new StringBuilder("My answers to ");
+            message.AppendLine(block.Title.Length == 0 ? "your questions:" : block.Title + ":");
+            for (int i = 0; i < fields.Count; i++)
+                if (!string.IsNullOrWhiteSpace(fields[i].Text)) message.AppendLine(block.Items[i] + ": " + fields[i].Text.Trim());
+            draft(message.ToString().TrimEnd());
+        });
+        button.IsEnabled = false;
+        void Refresh() => button.IsEnabled = draft is not null && fields.Any(f => !string.IsNullOrWhiteSpace(f.Text));
+        foreach (var field in fields) field.TextChanged += (_, _) => Refresh();
+        Refresh(); root.Children.Add(button);
+        root.Children.Add(Text("Adds your answers to the message box for review. Nothing is sent until you send it.", 11, false, "NIRASecondaryBrush"));
+        return root;
+    }
+
+    private static UIElement Pie(NIRARichBlock block)
+    {
+        var root = InteractiveRoot(block, "Distribution");
+        var canvas = new Canvas { Width = 204, Height = 204, HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 12, 0, 10) };
+        var legend = new StackPanel();
+        root.Children.Add(canvas); root.Children.Add(legend);
+        double total = block.Values.Sum(), angle = -Math.PI / 2;
+        const double radius = 95, center = 102;
+        for (int i = 0; i < block.Values.Count; i++)
+        {
+            double fraction = block.Values[i] / total, sweep = fraction * Math.PI * 2;
+            Color segment = i < Palette.Length ? Palette[i] : i switch
+            {
+                5 => Color.FromRgb(157, 75, 125), 6 => Color.FromRgb(177, 85, 53), _ => Color.FromRgb(98, 120, 52)
+            };
+            var fill = NIRAResponsePalette.AccentBrush(segment);
+            string label = block.Labels[i] + ": " + block.Values[i].ToString("G", CultureInfo.CurrentCulture) +
+                (block.Unit.Length == 0 ? "" : " " + block.Unit) + " (" + fraction.ToString("P1", CultureInfo.CurrentCulture) + ")";
+            if (fraction >= 1 - 1e-12)
+            {
+                var full = new Ellipse { Width = radius * 2, Height = radius * 2, Fill = fill, ToolTip = label };
+                Canvas.SetLeft(full, center - radius); Canvas.SetTop(full, center - radius); canvas.Children.Add(full);
+            }
+            else if (fraction > 0)
+            {
+                Point Start(double a) => new(center + radius * Math.Cos(a), center + radius * Math.Sin(a));
+                var figure = new PathFigure { StartPoint = new Point(center, center), IsClosed = true };
+                figure.Segments.Add(new LineSegment(Start(angle), true));
+                figure.Segments.Add(new ArcSegment(Start(angle + sweep), new Size(radius, radius), 0, sweep > Math.PI, SweepDirection.Clockwise, true));
+                var geometry = new PathGeometry(); geometry.Figures.Add(figure);
+                canvas.Children.Add(new System.Windows.Shapes.Path { Data = geometry, Fill = fill, ToolTip = label, Stroke = Brushes.Transparent, StrokeThickness = .5 });
+            }
+            angle += sweep;
+            var row = new DockPanel { Margin = new Thickness(0, 2, 0, 2) };
+            var swatch = new Border { Width = 12, Height = 12, CornerRadius = new CornerRadius(3), Background = fill,
+                Margin = new Thickness(0, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center };
+            DockPanel.SetDock(swatch, Dock.Left); row.Children.Add(swatch); row.Children.Add(Text(label, 12)); legend.Children.Add(row);
         }
         return root;
+    }
+
+    private static UIElement Diagram(NIRARichBlock block)
+    {
+        var root = InteractiveRoot(block, "Relationships");
+        if (!NIRAVisualDiagram.TryLayout(block, out int[] layers, out bool radial)) return root;
+        const double width = 720, rowHeight = 110, nodeHeight = 65;
+        double height = radial ? 440 : (layers.Max() + 1) * rowHeight;
+        var canvas = new Canvas { Width = width, Height = height, ClipToBounds = true };
+        var nodes = new Rect[layers.Length];
+        if (radial)
+        {
+            for (int i = 0; i < nodes.Length; i++)
+            {
+                double angle = -Math.PI / 2 + 2 * Math.PI * i / nodes.Length;
+                nodes[i] = new Rect(width / 2 + 265 * Math.Cos(angle) - 80, height / 2 + 165 * Math.Sin(angle) - nodeHeight / 2, 160, nodeHeight);
+            }
+        }
+        else foreach (var group in Enumerable.Range(0, layers.Length).GroupBy(i => layers[i]))
+        {
+            int[] indices = group.ToArray(); double slot = width / indices.Length, w = Math.Min(225, slot - 20);
+            for (int col = 0; col < indices.Length; col++)
+                nodes[indices[col]] = new Rect(slot * (col + .5) - w / 2, group.Key * rowHeight + 12, w, nodeHeight);
+        }
+        foreach (var edge in block.Rows)
+        {
+            int from = int.Parse(edge[0], CultureInfo.InvariantCulture) - 1, to = int.Parse(edge[1], CultureInfo.InvariantCulture) - 1;
+            Rect a = nodes[from], b = nodes[to];
+            var start = new Point(a.Left + a.Width / 2, a.Bottom); var end = new Point(b.Left + b.Width / 2, b.Top);
+            PointCollection points;
+            Vector direction = new(0, 1);
+            if (radial)
+            {
+                Point ac = new(a.Left + a.Width / 2, a.Top + a.Height / 2), bc = new(b.Left + b.Width / 2, b.Top + b.Height / 2);
+                direction = bc - ac; direction.Normalize();
+                Vector normal = new(-direction.Y, direction.X);
+                bool reciprocal = block.Rows.Any(r => r[0] == edge[1] && r[1] == edge[0]);
+                double offset = reciprocal ? 5 : 0;
+                Point Boundary(Rect r, Point center, Vector toward)
+                {
+                    double tx = Math.Abs(toward.X) < 1e-8 ? double.PositiveInfinity : r.Width / 2 / Math.Abs(toward.X);
+                    double ty = Math.Abs(toward.Y) < 1e-8 ? double.PositiveInfinity : r.Height / 2 / Math.Abs(toward.Y);
+                    return center + toward * Math.Min(tx, ty);
+                }
+                start = Boundary(a, ac, direction) + normal * offset;
+                end = Boundary(b, bc, -direction) + normal * offset;
+                points = new PointCollection { start, end };
+            }
+            else
+            {
+                double mid = start.Y + (end.Y - start.Y) / 2;
+                points = new PointCollection { start, new Point(start.X, mid), new Point(end.X, mid), end };
+            }
+            var wire = new Polyline { Points = points, StrokeThickness = 1.7, StrokeLineJoin = PenLineJoin.Round, IsHitTestVisible = false };
+            Theme(wire, Shape.StrokeProperty, "NIRASecondaryBrush"); canvas.Children.Add(wire);
+            Vector side = new(-direction.Y, direction.X);
+            var arrow = new Polygon { Points = new PointCollection { end, end - direction * 8 + side * 4, end - direction * 8 - side * 4 }, IsHitTestVisible = false };
+            Theme(arrow, Shape.FillProperty, "NIRASecondaryBrush"); canvas.Children.Add(arrow);
+        }
+        for (int i = 0; i < nodes.Length; i++)
+        {
+            Rect r = nodes[i]; var label = Text(block.Items[i], 13, true);
+            label.TextAlignment = TextAlignment.Center; label.VerticalAlignment = VerticalAlignment.Center;
+            var node = new Border { Width = r.Width, Height = r.Height, Child = label, Padding = new Thickness(6),
+                CornerRadius = new CornerRadius(10), BorderThickness = new Thickness(1), ClipToBounds = true,
+                BorderBrush = NIRAResponsePalette.AccentBrush(Palette[layers[i] % Palette.Length]), ToolTip = block.Items[i] };
+            Theme(node, Border.BackgroundProperty, "NIRAGlassStrongTintBrush");
+            Canvas.SetLeft(node, r.X); Canvas.SetTop(node, r.Y); canvas.Children.Add(node);
+        }
+        root.Children.Add(new Viewbox { Child = canvas, Stretch = Stretch.Uniform, StretchDirection = StretchDirection.DownOnly,
+            HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 6, 0, 0) });
+        // Also expose the relationships as selectable readable text on narrow screens.
+        var readable = new Expander { Header = "Relationships as text", Margin = new Thickness(0, 4, 0, 0) };
+        Theme(readable, Control.ForegroundProperty, "NIRATextBrush");
+        var lines = new StackPanel();
+        foreach (var edge in block.Rows) lines.Children.Add(Text(block.Items[int.Parse(edge[0], CultureInfo.InvariantCulture) - 1] + " → " + block.Items[int.Parse(edge[1], CultureInfo.InvariantCulture) - 1], 12));
+        readable.Content = lines; root.Children.Add(readable); return root;
     }
 }

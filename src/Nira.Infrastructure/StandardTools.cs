@@ -1,4 +1,7 @@
 using System.Security.Cryptography;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using Microsoft.Win32;
 using System.Text;
 using System.Text.Json;
 using Nira.Core;
@@ -10,14 +13,16 @@ public static class NiraStandardTools
     public static ToolRegistry Create(string root, SqliteConversationStore store, HttpClient http,
         IPublicBrowserSessions? browserSessions = null, IDesktopAutomationBackend? desktopBackend = null,
         VisionProvider? vision = null, ImageGenerationProvider? imageGeneration = null,
-        Func<ImageGenerationProvider?>? imageGenerationResolver = null)
+        Func<ImageGenerationProvider?>? imageGenerationResolver = null,
+        IApplicationDesktopBackend? applicationBackend = null)
     {
         Directory.CreateDirectory(root);
         var resolver = new WorkspacePathResolver(root);
         browserSessions ??= new EdgePublicBrowserSessions();
         desktopBackend ??= new WindowsDesktopAutomationBackend();
+        applicationBackend ??= new WindowsApplicationDesktopBackend();
         return new ToolRegistry([
-            new WorkspaceInfoTool(resolver), new FileListTool(resolver),
+            new WorkspaceInfoTool(resolver), new SystemInspectTool(), new FileListTool(resolver),
             new FileReadTool(resolver), new FileWriteTool(resolver),
             new FileFindTool(resolver), new FileHashTool(resolver),
             new ProductivityInspectTool(resolver), new ProductivityReadTool(resolver),
@@ -28,8 +33,11 @@ public static class NiraStandardTools
             ..(vision is null ? Array.Empty<IAgentTool>() : new IAgentTool[] { new VisionAnalyzeTool(resolver, http, vision) }),
             new DirectoryCreateTool(resolver), new FileEditTextTool(resolver),
             new ProcessRunTool(resolver),
+            new ApplicationFindTool(applicationBackend), new ApplicationLaunchTool(applicationBackend),
             new DesktopWindowsTool(desktopBackend), new DesktopInspectTool(desktopBackend),
-            new DesktopActivateTool(desktopBackend), new DesktopInvokeTool(desktopBackend),
+            ..(desktopBackend is IDesktopWindowCaptureBackend capture
+                ? new IAgentTool[] { new DesktopWindowCaptureTool(resolver, capture) } : Array.Empty<IAgentTool>()),
+            new DesktopActivateTool(desktopBackend), new DesktopInvokeTool(desktopBackend), new DesktopControlSequenceTool(desktopBackend),
             new DesktopSetTextTool(desktopBackend), new DesktopTypeTextTool(desktopBackend),
             new PublicBrowserInspectionTool(),
             new PublicBrowserLinkTool(),
@@ -44,12 +52,18 @@ public static class NiraStandardTools
             new BrowserSessionSemanticActionTool(browserSessions),
             new BrowserSessionSelectOptionTool(browserSessions),
             new BrowserSessionSetCheckedTool(browserSessions),
-            new MemorySearchTool(store), new MemoryRememberTool(store),
+            new MemorySearchTool(store), new MemoryRememberTool(store), new MemoryManageTool(store), new MemoryHistorySearchTool(store),
             new TavilySearchTool(http), new VideoSearchTool(http), new ImageDiscoveryTool(http), new ImagePreviewTool(resolver),
             ..(imageGenerationResolver is not null
                 ? new IAgentTool[] { new ImageGenerationTool(resolver, http, imageGenerationResolver) }
                 : imageGeneration is null ? Array.Empty<IAgentTool>()
                 : new IAgentTool[] { new ImageGenerationTool(resolver, http, imageGeneration) })
+        ], defaultCapabilityOrder: [
+            // Keep established cross-domain entry points ahead of optional extensions.
+            // Additional registered capabilities remain discoverable and selectable.
+            "image.generate", "video.search", "web.search", "system.inspect",
+            "memory.search", "workspace.info", "filesystem.find", "filesystem.read_text", "filesystem.list",
+            "productivity.inspect", "desktop.application_find", "desktop.windows_list"
         ]);
     }
 }
@@ -98,6 +112,250 @@ public sealed class WorkspaceInfoTool(WorkspacePathResolver paths) : IAgentTool
     public Task<ToolReceipt> ExecuteAsync(JsonElement args, CancellationToken ct) =>
         Task.FromResult(ToolReceipt.Ok("Current workspace", new { path = paths.Root,
             writable = Directory.Exists(paths.Root) }));
+}
+
+/// <summary>Read-only local Windows snapshot. No shell, network, identifiers or user files.</summary>
+public sealed class SystemInspectTool : IAgentTool
+{
+    public ToolDescriptor Descriptor { get; } = new("system.inspect",
+        "Inspect this PC directly: Windows, CPU, RAM, optional running processes by RAM, registered applications and PATH commands, storage and display hardware. Set includeProcesses or includeApplications only when needed. No shell commands; read-only.",
+        ToolRisk.ReadLocal, ToolSchemas.New("""
+        {"type":"object","properties":{"includeStorage":{"type":"boolean","description":"Include fixed-drive capacity."},"includeHardware":{"type":"boolean","description":"Include motherboard and display adapters."},"includeProcesses":{"type":"boolean","description":"Include current process memory ranking."},"includeApplications":{"type":"boolean","description":"Include registered applications and optional PATH lookup. Defaults to false."},"applicationNameContains":{"type":"string","maxLength":100,"description":"Optional legacy single name filter; empty means no filter. Ignored unless includeApplications is true."},"applicationQueries":{"type":"array","items":{"type":"string","maxLength":100},"description":"Optional 1–8 product names or command basenames, matched independently; empty means unfiltered inventory. Only used when includeApplications is true."}},"additionalProperties":false}
+        """));
+    public string GetTarget(JsonElement arguments) => "local computer (read-only system information)";
+    public Task<ToolReceipt> ExecuteAsync(JsonElement args, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (!JsonToolSchema.Validate(Descriptor.Parameters, args, out string error))
+            return Task.FromResult(ToolReceipt.Fail("ARGUMENT_SCHEMA", error));
+        if (!OperatingSystem.IsWindows())
+            return Task.FromResult(ToolReceipt.Fail("SYSTEM_PLATFORM_UNSUPPORTED", "This system inspection currently supports Windows."));
+        string? processor = null;
+        try
+        {
+            using var cpu = Registry.LocalMachine.OpenSubKey(@"HARDWARE\DESCRIPTION\System\CentralProcessor\0", writable: false);
+            processor = (cpu?.GetValue("ProcessorNameString") as string)?.Trim();
+            if (processor is { Length: > 200 }) processor = processor[..200];
+        }
+        catch (Exception e) when (e is UnauthorizedAccessException or IOException or System.Security.SecurityException) { }
+        bool includeHardware = Requested(args, "includeHardware");
+        bool includeProcesses = Requested(args, "includeProcesses");
+        bool includeApplications = Requested(args, "includeApplications");
+        string? applicationFilter = includeApplications && args.TryGetProperty("applicationNameContains", out var filter) ? filter.GetString()?.Trim() : null;
+        string[] applicationQueries = [];
+        if (includeApplications)
+        {
+            var names = args.TryGetProperty("applicationQueries", out var supplied) ? supplied : default;
+            if (names.ValueKind == JsonValueKind.Array && names.GetArrayLength() > 8)
+                return Task.FromResult(ToolReceipt.Fail("ARGUMENT_SCHEMA", "Supply at most eight application names or command basenames."));
+            applicationQueries = (names.ValueKind == JsonValueKind.Array ? names.EnumerateArray().Select(v => v.GetString()!.Trim()) : Enumerable.Empty<string>())
+                .Append(applicationFilter ?? "").Where(name => name.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (applicationQueries.Length > 8 || applicationQueries.Any(name => name.Any(char.IsControl)))
+                return Task.FromResult(ToolReceipt.Fail("ARGUMENT_SCHEMA", "Use at most eight application names without control characters."));
+        }
+        string? installationType = ReadRegistry(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion", "InstallationType");
+        string? edition = ReadRegistry(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion", "EditionID");
+        string? displayVersion = ReadRegistry(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion", "DisplayVersion");
+        Version version = Environment.OSVersion.Version;
+        string? osFamily = WindowsFamily(version, installationType);
+        var memory = new MemoryStatus { Length = (uint)Marshal.SizeOf<MemoryStatus>() };
+        bool memoryAvailable = GlobalMemoryStatusEx(ref memory);
+        bool includeStorage = args.TryGetProperty("includeStorage", out var storage) && storage.GetBoolean();
+        var drives = new List<object>();
+        bool storageIncomplete = false;
+        if (includeStorage)
+        {
+            try
+            {
+                var fixedDrives = DriveInfo.GetDrives().Where(d => d.DriveType == DriveType.Fixed).ToArray();
+                storageIncomplete = fixedDrives.Length > 26;
+                foreach (var drive in fixedDrives.Take(26))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    try
+                    {
+                        if (!drive.IsReady) { storageIncomplete = true; continue; }
+                        drives.Add(new { drive = drive.Name, totalBytes = drive.TotalSize, availableBytes = drive.AvailableFreeSpace });
+                    }
+                    catch (Exception e) when (e is IOException or UnauthorizedAccessException) { storageIncomplete = true; }
+                }
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { storageIncomplete = true; }
+        }
+        return Task.FromResult(ToolReceipt.Ok("Observed local system information", new
+        {
+            observedUtc = DateTimeOffset.UtcNow,
+            osVersion = Environment.OSVersion.VersionString,
+            windowsFamily = osFamily,
+            windowsBuild = version.Build,
+            windowsEditionId = edition,
+            windowsDisplayVersion = displayVersion,
+            windowsInstallationType = installationType,
+            osArchitecture = RuntimeInformation.OSArchitecture.ToString(),
+            processorName = processor,
+            logicalProcessorsAvailableToProcess = Environment.ProcessorCount,
+            physicalProcessorCores = ReadPhysicalCoreCount(),
+            totalPhysicalMemoryBytes = memoryAvailable ? (ulong?)memory.TotalPhys : null,
+            availablePhysicalMemoryBytes = memoryAvailable ? (ulong?)memory.AvailPhys : null,
+            totalPhysicalMemoryGiB = memoryAvailable ? (double?)Math.Round(memory.TotalPhys / 1073741824d, 2) : null,
+            availablePhysicalMemoryGiB = memoryAvailable ? (double?)Math.Round(memory.AvailPhys / 1073741824d, 2) : null,
+            memoryLoadPercent = memoryAvailable ? (uint?)memory.MemoryLoad : null,
+            uptimeSeconds = Environment.TickCount64 / 1000,
+            storageRequested = includeStorage,
+            storageIncomplete,
+            fixedDrives = drives,
+            hardware = includeHardware ? Hardware(ct) : null,
+            processes = includeProcesses ? Processes(ct) : null,
+            applications = includeApplications ? WindowsApplicationInventory.Inspect(applicationQueries, ct) : null,
+            limitations = "Null optional sections were not requested. Missing fields are unknown. OS family is derived from the Windows client/server installation type and build; RAM GiB uses 1024-based units. No temperatures, health, GPU utilization, per-process CPU utilization or benchmarks are measured. Drive capacity does not identify drive speed."
+        }));
+    }
+
+    private static bool Requested(JsonElement args, string name) =>
+        args.TryGetProperty(name, out var value) && value.GetBoolean();
+
+    public static string? WindowsFamily(Version version, string? installationType)
+    {
+        if (installationType is null) return null;
+        if (installationType.StartsWith("Server", StringComparison.OrdinalIgnoreCase)) return "Windows Server";
+        if (!installationType.Equals("Client", StringComparison.OrdinalIgnoreCase)) return null;
+        if (version.Major == 10) return version.Build >= 22000 ? "Windows 11" : "Windows 10";
+        return null;
+    }
+
+    private static string? Bounded(string? value, int limit = 200)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        string text = new(value.Trim().Where(c => !char.IsControl(c)).Take(limit).ToArray());
+        return text.Length == 0 ? null : text;
+    }
+
+    private static string? ReadRegistry(string path, string name)
+    {
+        try
+        {
+            using var hive = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+            using var key = hive.OpenSubKey(path, writable: false);
+            return Bounded(key?.GetValue(name) as string);
+        }
+        catch (Exception e) when (e is UnauthorizedAccessException or IOException or System.Security.SecurityException) { return null; }
+    }
+
+    private static object Hardware(CancellationToken ct)
+    {
+        const string bios = @"HARDWARE\DESCRIPTION\System\BIOS";
+        var adapters = new List<object>();
+        bool incomplete = false;
+        for (uint i = 0; i < 32; i++)
+        {
+            ct.ThrowIfCancellationRequested();
+            var device = new DisplayDevice { Size = Marshal.SizeOf<DisplayDevice>(), Name = "", Description = "", Id = "", Key = "" };
+            if (!EnumDisplayDevices(null, i, ref device, 0)) break;
+            // Windows display enumeration includes virtual and disconnected entries. Do not imply physical presence.
+            const uint attached = 0x1, primary = 0x4, mirroring = 0x8;
+            string? name = Bounded(device.Description);
+            if (name is not null && (device.Flags & mirroring) == 0)
+                adapters.Add(new { name, attachedToDesktop = (device.Flags & attached) != 0, primaryDisplay = (device.Flags & primary) != 0 });
+            if (i == 31) incomplete = true;
+        }
+        return new
+        {
+            systemManufacturer = ReadRegistry(bios, "SystemManufacturer"),
+            systemProductName = ReadRegistry(bios, "SystemProductName"),
+            motherboardManufacturer = ReadRegistry(bios, "BaseBoardManufacturer"),
+            motherboardProduct = ReadRegistry(bios, "BaseBoardProduct"),
+            displayAdapters = adapters, incomplete,
+            limitations = "Display devices reported by Windows, including possible virtual/disconnected entries; not an exhaustive physical GPU inventory. No serial numbers, VRAM, utilization or benchmark measured."
+        };
+    }
+
+    private static object Processes(CancellationToken ct)
+    {
+        var rows = new List<(string Name, int Id, long WorkingSet)>();
+        int unavailable = 0;
+        Process[] running;
+        try { running = Process.GetProcesses(); }
+        catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
+        { return new { unavailable = true, limitations = "Windows process enumeration was unavailable." }; }
+        try
+        {
+            foreach (Process process in running.Take(4096))
+            {
+                ct.ThrowIfCancellationRequested();
+                try
+                {
+                    string? name = Bounded(process.ProcessName);
+                    if (name is not null) rows.Add((name, process.Id, process.WorkingSet64));
+                    else unavailable++;
+                }
+                catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException) { unavailable++; }
+            }
+            return new
+            {
+                observedProcessCount = running.Length, unreadableCount = unavailable,
+                truncated = running.Length > 4096 || rows.Count > 30,
+                returnedProcessCount = Math.Min(rows.Count, 30),
+                topByWorkingSet = rows.OrderByDescending(p => p.WorkingSet).Take(30)
+                    .Select(p => new { name = p.Name, pid = p.Id, workingSetBytes = p.WorkingSet, workingSetMiB = Math.Round(p.WorkingSet / 1048576d, 1) }).ToArray(),
+                limitations = "Instantaneous per-process working set, including shared pages; do not sum as unique RAM or infer CPU load. Memory compression does not establish paging activity, a threshold, a leak or the cause of slowness. No arguments, executable paths, window titles or process contents read."
+            };
+        }
+        finally { foreach (Process process in running) process.Dispose(); }
+    }
+
+    // RelationProcessorCore is zero. Count records rather than assuming core/thread ratios.
+    private static int? ReadPhysicalCoreCount()
+    {
+        uint size = 0;
+        _ = GetLogicalProcessorInformationEx(0, IntPtr.Zero, ref size);
+        if (size is < 8 or > 1048576) return null;
+        IntPtr buffer = Marshal.AllocHGlobal((int)size);
+        try
+        {
+            uint capacity = size;
+            if (!GetLogicalProcessorInformationEx(0, buffer, ref size) || size > capacity) return null;
+            int count = 0, offset = 0;
+            while (offset < size)
+            {
+                if (size - offset < 8) return null;
+                int relationship = Marshal.ReadInt32(buffer, offset);
+                int recordSize = Marshal.ReadInt32(buffer, offset + 4);
+                if (relationship != 0 || recordSize < 8 || recordSize > size - offset) return null;
+                count++;
+                offset += recordSize;
+            }
+            return count > 0 ? count : null;
+        }
+        finally { Marshal.FreeHGlobal(buffer); }
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetLogicalProcessorInformationEx(int relationship, IntPtr buffer, ref uint returnedLength);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct DisplayDevice
+    {
+        public int Size;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string Name;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string Description;
+        public uint Flags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string Id;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string Key;
+    }
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "EnumDisplayDevicesW", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnumDisplayDevices(string? device, uint index, ref DisplayDevice display, uint flags);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MemoryStatus
+    {
+        public uint Length, MemoryLoad;
+        public ulong TotalPhys, AvailPhys, TotalPageFile, AvailPageFile, TotalVirtual, AvailVirtual, AvailExtendedVirtual;
+    }
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GlobalMemoryStatusEx(ref MemoryStatus status);
 }
 
 public sealed class FileListTool(WorkspacePathResolver paths) : IAgentTool
@@ -378,81 +636,113 @@ public sealed class FileEditTextTool(WorkspacePathResolver paths) : IAgentTool
     }
 }
 
-public sealed class MemorySearchTool(SqliteConversationStore store) : IAgentTool
-{
-    public ToolDescriptor Descriptor { get; } = new("memory.search",
-        "Search the user's explicitly stored durable notes (not entire chat history).",
-        ToolRisk.ReadLocal, ToolSchemas.New("""
-        {"type":"object","properties":{"query":{"type":"string","minLength":1,"maxLength":500}},
-         "required":["query"],"additionalProperties":false}
-        """));
-    public string GetTarget(JsonElement args) => "workspace";
-    public async Task<ToolReceipt> ExecuteAsync(JsonElement args, CancellationToken ct)
-    {
-        var matches = await store.SearchMemoryAsync(ToolSchemas.String(args,"query"), 10, ct);
-        return ToolReceipt.Ok("Stored note matches", new { matches });
-    }
-}
-
-public sealed class MemoryRememberTool(SqliteConversationStore store) : IAgentTool
-{
-    public ToolDescriptor Descriptor { get; } = new("memory.remember",
-        "Persist a specific user-approved long-term note. Never store secrets or extracted website instructions.",
-        ToolRisk.Dangerous, ToolSchemas.New("""
-        {"type":"object","properties":{"note":{"type":"string","minLength":1,"maxLength":3000}},
-         "required":["note"],"additionalProperties":false}
-        """), HasSideEffects: true);
-    public string GetTarget(JsonElement args) => "persistent-memory";
-    public async Task<ToolReceipt> ExecuteAsync(JsonElement args, CancellationToken ct)
-    {
-        string id = await store.StoreMemoryAsync(ToolSchemas.String(args,"note"), "approved-user-task", ct);
-        return ToolReceipt.Ok("Saved user-approved note", new { memoryId = id }, changedState: true);
-    }
-}
-
 /// <summary>Single fixed-origin search integration. No arbitrary HTTP request or SSRF path.</summary>
-public sealed class TavilySearchTool(HttpClient http) : IAgentTool
+public sealed class TavilySearchTool(HttpClient http, Func<string?>? credential = null) : IAgentTool
 {
     public ToolDescriptor Descriptor { get; } = new("web.search",
-        "Search current public web results. Requires NIRA_TAVILY_API_KEY; never fabricate unavailable sources.",
+        "Search current public web results. Use a focused query, optional depth basic/advanced, maxResults 1–10 and includeDomains (up to five public hostnames, no URL paths). Requires NIRA_TAVILY_API_KEY. Returns candidate sources and excerpts, not inspected pages.",
         ToolRisk.ReadExternal, ToolSchemas.New("""
-        {"type":"object","properties":{"query":{"type":"string","minLength":1,"maxLength":500}},
+        {"type":"object","properties":{"query":{"type":"string","minLength":1,"maxLength":500},"depth":{"type":"string","enum":["basic","advanced"]},"maxResults":{"type":"integer"},"includeDomains":{"type":"array","items":{"type":"string","minLength":1,"maxLength":253}}},
          "required":["query"],"additionalProperties":false}
         """));
-    public string GetTarget(JsonElement args) => "https://api.tavily.com/search";
+    private static (string Query, string Depth, int Count, string[] Domains) Options(JsonElement args)
+    {
+        string query = ToolSchemas.String(args, "query").Trim();
+        string depth = args.TryGetProperty("depth", out var d) ? d.GetString()! : "basic";
+        int count = 5;
+        if (args.TryGetProperty("maxResults", out var c) && !c.TryGetInt32(out count))
+            throw new ArgumentException("maxResults must be an integer from 1 to 10.");
+        if (query.Length is < 1 or > 500 || query.Any(char.IsControl) || depth is not ("basic" or "advanced") || count is < 1 or > 10)
+            throw new ArgumentException("Use a focused public query, basic/advanced depth and 1–10 results.");
+        string[] domains = args.TryGetProperty("includeDomains", out var list)
+            ? list.EnumerateArray().Select(d => d.GetString()!.Trim().ToLowerInvariant()).ToArray() : [];
+        if (domains.Length > 5 || domains.Any(d => d.Length > 253 || !d.Contains('.') ||
+            Uri.CheckHostName(d) != UriHostNameType.Dns || d.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '.' or '-'))))
+            throw new ArgumentException("Use up to five public DNS hostnames, not URLs or IP addresses.");
+        foreach (string domain in domains) _ = PublicBrowserUrlPolicy.Parse("https://" + domain + "/");
+        return (query, depth, count, domains.Distinct(StringComparer.Ordinal).ToArray());
+    }
+    public string GetTarget(JsonElement args)
+    {
+        _ = Options(args);
+        return "https://api.tavily.com/search";
+    }
+    private static string ReadText(JsonElement value, string property, int maximum, string key)
+    {
+        if (!value.TryGetProperty(property, out var field) || field.ValueKind != JsonValueKind.String) return "";
+        string text = (field.GetString() ?? "").Replace(key, "[redacted]", StringComparison.Ordinal).Trim();
+        return text[..Math.Min(maximum, text.Length)];
+    }
     public async Task<ToolReceipt> ExecuteAsync(JsonElement args, CancellationToken ct)
     {
-        string? key = Environment.GetEnvironmentVariable("NIRA_TAVILY_API_KEY");
+        if (!JsonToolSchema.Validate(Descriptor.Parameters, args, out string error))
+            return ToolReceipt.Fail("ARGUMENT_SCHEMA", error);
+        string query, depth; int limit; string[] domains;
+        try { (query, depth, limit, domains) = Options(args); }
+        catch (Exception e) when (e is ArgumentException or FormatException or OverflowException)
+        { return ToolReceipt.Fail("INVALID_TARGET", "Search arguments are outside the supported bounds."); }
+        string? key = credential is null ? Environment.GetEnvironmentVariable("NIRA_TAVILY_API_KEY") : credential();
         if (string.IsNullOrWhiteSpace(key))
-            return ToolReceipt.Fail("SEARCH_KEY_MISSING", "Public search requires a Tavily API key. Ask user to configure it.");
-        using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.tavily.com/search");
-        request.Content = new StringContent(JsonSerializer.Serialize(new {
-            api_key = key, query = ToolSchemas.String(args,"query"),
-            search_depth = "basic", max_results = 5, include_answer = false
-        }), Encoding.UTF8, "application/json");
-        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-        if (!response.IsSuccessStatusCode)
-            return ToolReceipt.Fail("WEB_SEARCH_FAILED", "Search provider returned HTTP " + (int)response.StatusCode);
-        // Limit provider response size; never return credentials to the model.
-        await using Stream stream = await response.Content.ReadAsStreamAsync(ct);
-        using var reader = new StreamReader(stream, Encoding.UTF8);
-        char[] buffer = new char[16000];
-        int count = await reader.ReadBlockAsync(buffer.AsMemory(), ct);
-        string raw = new(buffer, 0, count);
+            return ToolReceipt.Fail("SEARCH_KEY_MISSING", "Public search requires a Tavily API key. Configure NIRA_TAVILY_API_KEY.");
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(TimeSpan.FromSeconds(45));
         try
         {
-            using var parsed = JsonDocument.Parse(raw);
-            if (!parsed.RootElement.TryGetProperty("results", out var items) || items.ValueKind != JsonValueKind.Array)
+            using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.tavily.com/search");
+            var body = new Dictionary<string, object> { ["api_key"] = key, ["query"] = query, ["search_depth"] = depth,
+                ["max_results"] = limit, ["include_answer"] = false };
+            if (domains.Length > 0) body["include_domains"] = domains;
+            request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+            using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
+            if (!response.IsSuccessStatusCode)
+                return ToolReceipt.Fail("WEB_SEARCH_FAILED", "Search provider returned HTTP " + (int)response.StatusCode);
+            // Bound bytes, not characters. Never parse a cut-off JSON document as a result.
+            const int maximumBytes = 512 * 1024;
+            if (response.Content.Headers.ContentLength > maximumBytes)
+                return ToolReceipt.Fail("SEARCH_RESPONSE_TOO_LARGE", "Search response exceeded the local size limit.");
+            await using Stream stream = await response.Content.ReadAsStreamAsync(deadline.Token);
+            using var buffer = new MemoryStream();
+            byte[] chunk = new byte[8192];
+            int count;
+            while ((count = await stream.ReadAsync(chunk.AsMemory(), deadline.Token)) != 0)
+            {
+                if (buffer.Length + count > maximumBytes)
+                    return ToolReceipt.Fail("SEARCH_RESPONSE_TOO_LARGE", "Search response exceeded the local size limit.");
+                buffer.Write(chunk, 0, count);
+            }
+            using var parsed = JsonDocument.Parse(buffer.ToArray(), new JsonDocumentOptions { MaxDepth = 24 });
+            if (parsed.RootElement.ValueKind != JsonValueKind.Object ||
+                !parsed.RootElement.TryGetProperty("results", out var items) || items.ValueKind != JsonValueKind.Array)
                 return ToolReceipt.Fail("SEARCH_RESPONSE_INVALID", "The provider did not return usable results.");
-            var results = items.EnumerateArray().Take(5).Select(x => new {
-                title = x.TryGetProperty("title", out var t) ? t.GetString() : null,
-                url = x.TryGetProperty("url", out var u) ? u.GetString() : null,
-                excerpt = x.TryGetProperty("content", out var c) ?
-                    (c.GetString() ?? "")[..Math.Min(700, c.GetString()?.Length ?? 0)] : null
-            }).ToArray();
-            return ToolReceipt.Ok("Live search results", new { results });
+            var results = new List<object>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var item in items.EnumerateArray().Take(100))
+            {
+                if (results.Count >= limit) break;
+                if (item.ValueKind != JsonValueKind.Object || !item.TryGetProperty("url", out var field) || field.ValueKind != JsonValueKind.String) continue;
+                string url = field.GetString() ?? "";
+                if (url.Length is < 12 or > 2048 || url != url.Trim() || url.Any(char.IsControl) || url.Contains(key, StringComparison.Ordinal)) continue;
+                Uri uri;
+                try { uri = PublicBrowserUrlPolicy.Parse(url.Split('#')[0]); }
+                catch (ArgumentException) { continue; }
+                if (domains.Length > 0 && !domains.Any(domain => uri.Host.Equals(domain, StringComparison.OrdinalIgnoreCase) ||
+                    uri.Host.EndsWith("." + domain, StringComparison.OrdinalIgnoreCase))) continue;
+                if (!seen.Add(uri.AbsoluteUri)) continue;
+                string title = ReadText(item, "title", 240, key);
+                string excerpt = ReadText(item, "content", 1200, key);
+                results.Add(new { title = title.Length == 0 ? uri.Host : title, url, excerpt });
+            }
+            if (results.Count == 0)
+                return ToolReceipt.Fail("SEARCH_NO_USABLE_RESULTS", "No usable public HTTPS sources were returned.");
+            return ToolReceipt.Ok("Live search results (candidate sources, not inspected pages)", new
+            {
+                observedUtc = DateTimeOffset.UtcNow, depth, requestedResults = limit, includeDomains = domains, results
+            });
         }
-        catch (JsonException)
-        { return ToolReceipt.Fail("SEARCH_RESPONSE_INVALID", "Provider returned incomplete or invalid JSON."); }
+        catch (JsonException) { return ToolReceipt.Fail("SEARCH_RESPONSE_INVALID", "Provider returned incomplete or invalid JSON."); }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        { return ToolReceipt.Fail("SEARCH_TIMEOUT", "The public search timed out."); }
+        catch (Exception e) when (e is HttpRequestException or IOException)
+        { return ToolReceipt.Fail("WEB_SEARCH_FAILED", "The public search could not be completed."); }
     }
 }

@@ -4,7 +4,7 @@ using Nira.Core;
 
 namespace Nira.Infrastructure;
 
-public sealed record RecordedFileArtifact(string Path, string Sha256, string ToolName);
+public sealed record RecordedFileArtifact(string Path, string Sha256, string ToolName, string Title = "");
 
 public static class RecordedFileArtifacts
 {
@@ -21,20 +21,27 @@ public static class RecordedFileArtifacts
             if (op.Status != OperationStatus.Succeeded || op.ResultJson is null) continue;
             bool revision = op.ToolName is "productivity.revise_workbook" or "productivity.revise_document" or "productivity.pdf_export_text";
             if (!revision && op.ToolName is not ("productivity.create_workbook" or "productivity.create_document" or
-                "filesystem.write_text" or "filesystem.edit_text")) continue;
+                "filesystem.write_text" or "filesystem.edit_text" or "desktop.window_capture")) continue;
             try
             {
                 using var doc = JsonDocument.Parse(op.ResultJson);
                 var root = doc.RootElement;
                 if (!True(root, "Success") || !True(root, "ChangedState") ||
                     !root.TryGetProperty("Data", out var data) || data.ValueKind != JsonValueKind.Object) continue;
-                if (op.ToolName.StartsWith("productivity.", StringComparison.Ordinal) && !True(data, "contentVerified")) continue;
+                if ((op.ToolName.StartsWith("productivity.", StringComparison.Ordinal) || op.ToolName == "desktop.window_capture") && !True(data, "contentVerified")) continue;
                 if (!data.TryGetProperty(revision ? "outputPath" : "path", out var pathValue) || pathValue.ValueKind != JsonValueKind.String ||
                     !data.TryGetProperty(revision ? "outputSha256" : "sha256", out var hashValue) || hashValue.ValueKind != JsonValueKind.String) continue;
                 string path = pathValue.GetString()!; string hash = hashValue.GetString()!;
                 if (!Path.IsPathFullyQualified(path) || path.Any(char.IsControl) || !IsOpenable(path) ||
                     hash.Length != 64 || !hash.All(char.IsAsciiHexDigit) || files.Any(f => f.Path.Equals(path, StringComparison.OrdinalIgnoreCase))) continue;
-                files.Add(new(path, hash, op.ToolName));
+                string title = "";
+                if (op.ToolName == "desktop.window_capture")
+                {
+                    if (!Path.GetExtension(path).Equals(".png", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (data.TryGetProperty("Window", out var window)) title = ImageEvidenceBinding.Field(window, "Title");
+                    if (title.Length > 180 || title.Any(char.IsControl)) title = "";
+                }
+                files.Add(new(path, hash, op.ToolName, title));
                 if (files.Count >= 12) break;
             }
             catch (JsonException) { }

@@ -8,7 +8,7 @@ namespace Nira.Infrastructure;
 /// Atomic, version-checked persistence. The entire tool journal is stored before
 /// dispatch and after observation, preventing silent operation replay on restart.
 /// </summary>
-public sealed class SqliteConversationStore : IConversationStore
+public sealed partial class SqliteConversationStore : IConversationStore, IMemoryContextProvider
 {
     private readonly string _connectionString;
 
@@ -43,6 +43,7 @@ public sealed class SqliteConversationStore : IConversationStore
             );
             """;
         command.ExecuteNonQuery();
+        InitializeMemorySchema(conn);
     }
 
     private SqliteConnection Open()
@@ -148,28 +149,6 @@ public sealed class SqliteConversationStore : IConversationStore
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    public async Task<IReadOnlyList<SavedMemoryNote>> ListMemoryNotesAsync(CancellationToken ct)
-    {
-        var notes = new List<SavedMemoryNote>();
-        await using var conn = Open();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT id, content, source FROM memories ORDER BY created_utc DESC LIMIT 500";
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct))
-            notes.Add(new SavedMemoryNote(reader.GetString(0), WindowsDpapiProtector.Open(reader.GetString(1)), reader.GetString(2)));
-        return notes;
-    }
-
-    public async Task<bool> RemoveMemoryNoteAsync(string id, CancellationToken ct)
-    {
-        if (!Guid.TryParseExact(id, "N", out _)) return false;
-        await using var conn = Open();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "DELETE FROM memories WHERE id=$id";
-        cmd.Parameters.AddWithValue("$id", id);
-        return await cmd.ExecuteNonQueryAsync(ct) == 1;
-    }
-
     public async Task<IReadOnlyList<ConversationState>> LoadThreadAsync(Guid latest, CancellationToken ct)
     {
         var chain = new List<ConversationState>();
@@ -189,11 +168,13 @@ public sealed class SqliteConversationStore : IConversationStore
         return chain;
     }
 
-    public async Task<Guid> CreateFollowupAsync(Guid previous, CancellationToken ct)
+    public async Task<Guid> CreateFollowupAsync(Guid previous, CancellationToken ct, bool startNewAfterPause = false)
     {
         var chain = await LoadThreadAsync(previous, ct);
-        if (chain.Count == 0 || chain[^1].Status != ConversationStatus.Completed)
-            throw new AgentException("Only a completed task can start a new linked chat turn.");
+        if (chain.Count == 0 || (chain[^1].Status != ConversationStatus.Completed &&
+            !(chain[^1].Status == ConversationStatus.Paused &&
+                (startNewAfterPause || ToolRecoveryPolicy.HasUnverifiedEffect(chain[^1])))))
+            throw new AgentException("Only a completed task or an explicitly isolated paused task can start a new linked chat turn.");
         var parent = chain[^1];
         var excerpts = new List<string>();
         foreach (var state in chain.TakeLast(6))
@@ -262,44 +243,7 @@ public sealed class SqliteConversationStore : IConversationStore
         state.Revision = next;
     }
 
-    public async Task<string> StoreMemoryAsync(string content, string source, CancellationToken ct)
-    {
-        string id = Guid.NewGuid().ToString("N");
-        await using var conn = Open();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO memories (id, content, source, created_utc)
-            VALUES ($id, $content, $source, $created)
-            """;
-        cmd.Parameters.AddWithValue("$id", id);
-        cmd.Parameters.AddWithValue("$content", WindowsDpapiProtector.Seal(content));
-        cmd.Parameters.AddWithValue("$source", source);
-        cmd.Parameters.AddWithValue("$created", DateTimeOffset.UtcNow.ToString("O"));
-        await cmd.ExecuteNonQueryAsync(ct);
-        return id;
-    }
 
-    public async Task<IReadOnlyList<(string Id, string Content)>> SearchMemoryAsync(
-        string query, int limit, CancellationToken ct)
-    {
-        // DPAPI ciphertext is never searchable in SQLite. Search a bounded set
-        // of approved memories after decrypting them under this Windows user.
-        await using var conn = Open();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT id, content FROM memories ORDER BY created_utc DESC LIMIT 500";
-        var matches = new List<(string Id, string Content)>();
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct))
-        {
-            ct.ThrowIfCancellationRequested();
-            string value = WindowsDpapiProtector.Open(reader.GetString(1));
-            if (value.Contains(query, StringComparison.OrdinalIgnoreCase))
-                matches.Add((reader.GetString(0), value));
-            if (matches.Count >= Math.Clamp(limit, 1, 20)) break;
-        }
-        return matches;
-    }
 }
 
 public sealed record SavedConversationSummary(Guid Id, string Objective, ConversationStatus Status, DateTimeOffset UpdatedUtc, Guid ThreadId, string ThreadTitle, bool Archived = false);
-public sealed record SavedMemoryNote(string Id, string Content, string Source);

@@ -44,7 +44,7 @@ public static class JsonToolSchema
         if (schema.TryGetProperty("enum", out var options) && options.ValueKind == JsonValueKind.Array &&
             !options.EnumerateArray().Any(o => o.ToString() == value.ToString()))
         {
-            error = $"{path}: value not in enum";
+            error = $"{path}: value not in enum; allowed JSON values: {options.GetRawText()}";
             return false;
         }
         if (value.ValueKind == JsonValueKind.String)
@@ -70,7 +70,7 @@ public static class JsonToolSchema
             {
                 string name = property.GetString()!;
                 if (!value.TryGetProperty(name, out _))
-                { error = $"{path}: missing required property '{name}'"; return false; }
+                { error = $"{path}: missing required property '{name}'; required properties: {required.GetRawText()}"; return false; }
             }
         }
         if (!schema.TryGetProperty("properties", out var props)) return true;
@@ -80,7 +80,7 @@ public static class JsonToolSchema
             {
                 if (schema.TryGetProperty("additionalProperties", out var allowed) &&
                     allowed.ValueKind == JsonValueKind.False)
-                { error = $"{path}: unsupported property '{property.Name}'"; return false; }
+                { error = $"{path}: unsupported property '{property.Name}'; allowed properties: {string.Join(", ", props.EnumerateObject().Select(p => p.Name))}"; return false; }
                 continue;
             }
             if (!Check(child, property.Value, path + "." + property.Name, out error)) return false;
