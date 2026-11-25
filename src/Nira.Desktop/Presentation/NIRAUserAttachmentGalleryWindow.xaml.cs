@@ -16,12 +16,14 @@ public partial class NIRAUserAttachmentGalleryWindow : Window, INotifyPropertyCh
     private readonly IReadOnlyList<NIRAImageStrip.Photo> _photos;
     private int _selectedIndex;
     private bool _selectionSync;
+    private NIRAGifPlayback? _playback;
     public event PropertyChangedEventHandler? PropertyChanged;
     internal NIRAUserAttachmentGalleryWindow(IReadOnlyList<NIRAImageStrip.Photo> photos, int selected)
     {
         _photos = photos;
         _selectedIndex = Math.Clamp(selected, 0, photos.Count - 1);
         InitializeComponent();
+        _playback = new NIRAGifPlayback(ViewerImage);
         ViewerBrand.Source = NIRABackdropBorder.LoadBitmap("Nira-Icon.png");
         _workAreaGuard = new NIRAWorkAreaWindowGuard(this, fitNormalWindow: true);
         Closed += (_, _) => _workAreaGuard.Dispose();
@@ -47,8 +49,14 @@ public partial class NIRAUserAttachmentGalleryWindow : Window, INotifyPropertyCh
         foreach (string name in new[] { nameof(SelectedItem), nameof(CounterText), nameof(CanGoPrevious), nameof(CanGoNext) })
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
         SourceLinkButton.Visibility = SourceUri() is null ? Visibility.Collapsed : Visibility.Visible;
+        _playback?.SetPhoto(Photos[index]);
+        PlaybackButton.Visibility = Photos[index].IsAnimated ? Visibility.Visible : Visibility.Collapsed;
+        UpdatePlaybackButton();
         if (IsLoaded) ThumbnailList.ScrollIntoView(SelectedItem);
     }
+    private void UpdatePlaybackButton() => PlaybackButton.Content = _playback?.IsPlaying == true ? "Pause animation" : "Play animation";
+    private void PlaybackButton_Click(object sender, RoutedEventArgs e)
+    { _playback?.Toggle(); UpdatePlaybackButton(); }
     private Uri? SourceUri() => Uri.TryCreate(Photos[_selectedIndex].Source, UriKind.Absolute, out var uri) &&
         uri.Scheme == Uri.UriSchemeHttps && uri.UserInfo.Length == 0 ? uri : null;
     private void ThumbnailList_SelectionChanged(object sender, SelectionChangedEventArgs e)

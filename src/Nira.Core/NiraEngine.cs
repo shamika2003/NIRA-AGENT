@@ -87,6 +87,7 @@ public sealed class NiraEngine(
         // Keep the user-facing image creation capability visible when installed.
         // Presence is not permission or proof that credentials work.
         Keep("image.generate");
+        Keep("video.search");
         // General entry points only. All other tools remain discoverable by name.
         foreach (string name in new[] { "workspace.info", "filesystem.find", "filesystem.list",
             "productivity.inspect", "filesystem.read_text" }) Keep(name);
@@ -155,6 +156,7 @@ public sealed class NiraEngine(
         Do not default to repetitive giant tables. Short social replies can stay plain.
         Inline color: [color=#RRGGBB]text[/color], including inside headings and table cells.
         Choose readable colors for meaning; keep normal prose neutral, avoid rainbow text.
+        For colored bold text use [color=#RRGGBB]**text**[/color], never cross closing delimiters.
         In a substantial response with distinct concepts, use two or more DIFFERENT explicit
         RGB accents on short meaningful inline phrases, not just headings or a single blue.
         Example: [color=#8651B5]key concept[/color], [color=#087A68]benefit[/color],
@@ -175,7 +177,7 @@ public sealed class NiraEngine(
         list/timeline/checklist/followups (items: string array), tabs (items and panels:
         equal-length string arrays), equation (text: display TeX, JSON-escaped backslashes),
         chart/bar (labels: string array, values: number array; bar values nonnegative),
-        progress (value, maximum, unit). Source/video text is an exact observed HTTPS URL.
+        progress (value, maximum, unit). Source/video text is an exact observed HTTPS URL; video also accepts an exact user-supplied supported watch URL. Use video blocks for requested video references, not a URL dump.
         Icons: brain, info, check, warning, search, code, chart, time, star, link, target,
         file, shield, idea, bolt. Colors are arbitrary six-digit RGB values. Use cards in
         groups for distinct concepts, metrics for real quantities, timelines for sequences,
@@ -212,11 +214,24 @@ public sealed class NiraEngine(
         before asking approval. Do not guess whether the credentials are configured or valid.
         Clarify only genuinely essential missing creative details; otherwise choose reasonable defaults.
         Use a descriptive prompt and appropriate dimensions (256–1920, multiples of eight). One new image per task.
-        The host requests approval for external prompt transmission and possible quota or charges.
+        The host applies the current permission policy for external prompt transmission and possible quota or charges; invoke the capability directly and do not ask separately.
         Do not send private data or unrelated chat history. Never use web images as a substitute for generation.
         Only report generated artwork if a successful saved generation receipt exists. The host displays the artwork;
         do not print its local path, raw image data or Markdown image URL. If unavailable, explain the limitation.
-        This model creates still images only; do not claim that it generated animation or edited a reference image.
+        For an explicitly requested short looping GIF, use image.generate with animation=true,
+        frameDurationMs (100–2000 in multiples of ten), and sprite sheet width/height (512–1920,
+        divisible by sixteen; actual output frame is half each dimension). Describe the motion and
+        four chronological poses in the prompt; the host adds the 2x2 sheet layout and assembles the GIF.
+        This is limited four-frame sprite animation, not a video model or reference image editing.
+        Only claim animation if a successful receipt explicitly says animated=true. For still images omit animation.
+        For requests to FIND videos, select video.search when registered and use a focused public query.
+        Video search returns references, not watched contents. Do not claim to have watched or verified playback.
+        In desktop replies, prefer one ordinary Markdown link [recorded title](exact observed HTTPS watch URL) per line.
+        For multiple videos (including follow-ups asking for more), put the links on separate lines; the native carousel is automatic. Do not wrap video links in JSON or a table.
+        If you use a video rich block, it must be an object with type=video, title=recorded title, text=exact HTTPS URL inside a fenced nira-ui JSON array.
+        For one requested video, provide only the best relevant reference. Do not automatically display all search candidates.
+        A video reference must come from the current search or an exact user-supplied URL. Do not invent IDs, direct media URLs, titles or transcripts.
+        The desktop automatically loads the native player when visible; actual playback is user-initiated. If no supported video is found, explain that honestly.
         Do not substitute general web search for image discovery when the latter is needed.
         Never upload local or private content as an image search query without the user's intent.
         If a critical detail is missing, use nira_ask_user with one useful question.

@@ -83,14 +83,35 @@ public static class NIRAStyledChatText
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
 
+    private static readonly Regex ColorMarkup = new(@"(?<code>`+[^`\r\n]*`+)|(?<open>\[\s*color\s*=\s*[""']?(?<hex>#[0-9a-f]{6})[""']?\s*\])|(?<close>\[\s*/\s*color\s*\])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+    private static readonly Regex CrossingColor = new(@"(?<em>\*{1,3}|_{1,2})(?<tag>\[color=#[0-9a-f]{6}\])(?<value>(?:(?!\[/?color)[^\r\n])*?)\k<em>\[/color\]|(?<tag2>\[color=#[0-9a-f]{6}\])(?<em2>\*{1,3}|_{1,2})(?<value2>(?:(?!\[/?color)[^\r\n])*?)\[/color\]\k<em2>", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+
+    private static string NormalizeColorMarkup(string text)
+    {
+        // Protect literal inline code when repairing model presentation tags.
+        string[] parts = Regex.Split(text, @"(`+[^`\r\n]*`+)", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+        for (int i = 0; i < parts.Length; i += 2)
+        {
+            string value = ColorMarkup.Replace(parts[i], m => m.Groups["open"].Success ? "[color=" + m.Groups["hex"].Value + "]" : m.Groups["close"].Success ? "[/color]" : m.Value);
+            value = CrossingColor.Replace(value, m => m.Groups["tag"].Success
+                ? m.Groups["tag"].Value + m.Groups["em"].Value + m.Groups["value"].Value + m.Groups["em"].Value + "[/color]"
+                : m.Groups["tag2"].Value + m.Groups["em2"].Value + m.Groups["value2"].Value + m.Groups["em2"].Value + "[/color]");
+            parts[i] = value;
+        }
+        return string.Concat(parts);
+    }
+
+    private static string VisibleText(string value) => ColorMarkup.Replace(value, m => m.Groups["code"].Success ? m.Value : "");
+
     internal static void AppendInline(InlineCollection inlines, string text, int depth = 0, bool explicitColor = false, string fallbackColor = "#286BA9")
     {
-        if (depth >= 12) { inlines.Add(new Run(text)); return; }
+        if (depth == 0) text = NormalizeColorMarkup(text);
+        if (depth >= 12) { inlines.Add(new Run(VisibleText(text))); return; }
         int offset = 0;
         foreach (Match match in InlineTokens.Matches(text))
         {
             if (match.Index > offset)
-                inlines.Add(new Run(text[offset..match.Index]));
+                inlines.Add(new Run(VisibleText(text[offset..match.Index])));
 
             if (match.Groups["math"].Success)
             {
@@ -168,7 +189,7 @@ public static class NIRAStyledChatText
             }
             offset = match.Index + match.Length;
         }
-        if (offset < text.Length) inlines.Add(new Run(text[offset..]));
+        if (offset < text.Length) inlines.Add(new Run(VisibleText(text[offset..])));
     }
 
     private static void AddLink(InlineCollection inlines, string label, string address)

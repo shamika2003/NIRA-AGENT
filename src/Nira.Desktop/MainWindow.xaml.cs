@@ -85,6 +85,7 @@ public partial class MainWindow : Window
                 args.Cancel = true;
                 StatusLabel.Text = "Task active. Press Pause, or press Abandon task twice to stop it safely.";
             }
+            else _miniStop?.Invoke();
         };
         VisionActivityText.Text = "VISION: " + VisionLabel.Text;
         if (BackgroundEclipse.Source is null || BackgroundHalo.Source is null || BrandImage.Source is null)
@@ -103,7 +104,7 @@ public partial class MainWindow : Window
             ? Visibility.Collapsed : Visibility.Visible;
         HistoryScroller.MaxHeight = Math.Max(100, MainWorkspace.ActualHeight - 355);
         // Keep the execution header and a real scrollable feed visible even on short windows.
-        LeftControlsScroller.MaxHeight = Math.Max(100, MainWorkspace.ActualHeight - 195);
+        LeftControlsScroller.MaxHeight = Math.Max(100, MainWorkspace.ActualHeight - (MiniPlayerPanel.Visibility == Visibility.Visible ? 370 : 195));
     }
 
     private async void Send_Click(object sender, RoutedEventArgs e) => await SendPromptAsync();
@@ -203,7 +204,7 @@ public partial class MainWindow : Window
             }
             EndJourney();
             var recorded = await _runtime.Conversations.LoadAsync(runningTaskId, default);
-            AddLine("NIRA", outcome.Message, media: recorded is null ? null : NIRAImageStrip.Create(recorded, _runtime.Workspace, this));
+            AddLine("NIRA", outcome.Message, media: recorded is null ? null : NIRAImageStrip.Create(recorded, _runtime.Workspace, this), videoUrls: recorded is null ? null : VideoEvidence.Allowed(recorded), videoTitles: recorded is null ? null : VideoEvidence.Titles(recorded), searchFallback: recorded is null ? null : VideoEvidence.SearchFallback(recorded));
             if (recorded is not null) AddArtifactCards(recorded);
             StatusLabel.Text = NIRAPublicDelivery.Status(outcome.Status);
             _completed = outcome.Status == ConversationStatus.Completed;
@@ -398,6 +399,7 @@ public partial class MainWindow : Window
         _hasTask = false;
         _abandonConfirmed = false;
         _pauseRequested = false;
+        _miniStop?.Invoke();
         ConversationPanel.Children.Clear();
         ActivityPanel.Children.Clear();
         PlanLabel.Text = "No active task";
@@ -438,6 +440,7 @@ public partial class MainWindow : Window
         ClearAttachments();
         _hasTask = true;
         _completed = state.Status is ConversationStatus.Completed or ConversationStatus.Failed;
+        _miniStop?.Invoke();
         ConversationPanel.Children.Clear();
         ActivityPanel.Children.Clear();
         ShowLanding();
@@ -447,6 +450,9 @@ public partial class MainWindow : Window
         foreach (var turn in thread)
         {
             var media = NIRAImageStrip.Create(turn, _runtime.Workspace, this);
+            var videoUrls = VideoEvidence.Allowed(turn);
+            var videoTitles = VideoEvidence.Titles(turn);
+            var searchFallback = VideoEvidence.SearchFallback(turn);
             foreach (ChatEntry entry in turn.Messages)
             {
                 if (entry.Role == "user" && !string.IsNullOrWhiteSpace(entry.Content)) AddLine("You", entry.UserDisplayText ?? entry.Content, entry.AttachmentPaths);
@@ -455,12 +461,12 @@ public partial class MainWindow : Window
                     bool final = entry.Content == turn.LastAnswer;
                     AddLine("NIRA", ImageEvidenceBinding.IsBareRetrievalArguments(turn, entry.Content)
                         ? "I found image references, but did not finish loading the photos. Please ask again to see them."
-                        : entry.Content, media: final ? media : null);
+                        : entry.Content, media: final ? media : null, videoUrls: final ? videoUrls : null, videoTitles: final ? videoTitles : null, searchFallback: final ? searchFallback : null);
                     if (final) media = null;
                 }
             }
-            if (!string.IsNullOrWhiteSpace(turn.PendingQuestion)) AddLine("NIRA", turn.PendingQuestion, media: media);
-            else if (!string.IsNullOrWhiteSpace(turn.LastAnswer) && !turn.Messages.Any(m => m.Role == "assistant" && m.Content == turn.LastAnswer && m.ToolCalls is not { Count: > 0 })) AddLine("NIRA", ImageEvidenceBinding.IsBareRetrievalArguments(turn, turn.LastAnswer) ? "I found image references, but did not finish loading the photos. Please ask again to see them." : turn.LastAnswer, media: media);
+            if (!string.IsNullOrWhiteSpace(turn.PendingQuestion)) AddLine("NIRA", turn.PendingQuestion, media: media, videoUrls: videoUrls, videoTitles: videoTitles);
+            else if (!string.IsNullOrWhiteSpace(turn.LastAnswer) && !turn.Messages.Any(m => m.Role == "assistant" && m.Content == turn.LastAnswer && m.ToolCalls is not { Count: > 0 })) AddLine("NIRA", ImageEvidenceBinding.IsBareRetrievalArguments(turn, turn.LastAnswer) ? "I found image references, but did not finish loading the photos. Please ask again to see them." : turn.LastAnswer, media: media, videoUrls: videoUrls, videoTitles: videoTitles, searchFallback: searchFallback);
             else if (media is not null) ConversationPanel.Children.Add(media);
             AddArtifactCards(turn);
         }
@@ -623,7 +629,7 @@ public partial class MainWindow : Window
         ChatScroller.Visibility = Visibility.Collapsed;
     }
 
-    private void AddLine(string speaker, string message, IReadOnlyList<string>? attachments = null, FrameworkElement? media = null)
+    private void AddLine(string speaker, string message, IReadOnlyList<string>? attachments = null, FrameworkElement? media = null, IReadOnlySet<string>? videoUrls = null, IReadOnlyDictionary<string, string>? videoTitles = null, IReadOnlyList<string>? searchFallback = null)
     {
         LandingPanel.Visibility = Visibility.Collapsed;
         ChatScroller.Visibility = Visibility.Visible;
@@ -671,7 +677,7 @@ public partial class MainWindow : Window
                 content.Children.Add(NIRARichAnswer.Create(message, media, choice =>
                 {
                     if (!_busy) { PromptBox.Text = choice; PromptBox.Focus(); PromptBox.CaretIndex = choice.Length; }
-                }));
+                }, videoUrls, videoTitles, searchFallback));
             else content.Children.Add(body);
             Grid.SetColumn(content,1);grid.Children.Add(content);ConversationPanel.Children.Add(grid);
         }
@@ -807,6 +813,7 @@ public partial class MainWindow : Window
     private async void OpenGallery_Click(object sender, RoutedEventArgs e)
     {
         if (_busy || _runtime.Conversations is not SqliteConversationStore store) return;
+        _miniStop?.Invoke();
         MainWorkspace.Visibility = Visibility.Collapsed;
         GalleryPage.Visibility = Visibility.Visible;
         ChatNavButton.Tag = null;
@@ -991,125 +998,95 @@ public partial class MainWindow : Window
     private async void SetLeftCollapsed(bool collapsed)
     {
         if (_leftCollapsed == collapsed || _leftTransitioning) return;
+        if (collapsed) ReturnOrStopMiniPlayerBeforeSidebarCollapse();
         _leftTransitioning = true;
         try
         {
-            var leaving = collapsed ? LeftSidebarExpandedHost : LeftSidebarCompactHost;
-            var arriving = collapsed ? LeftSidebarCompactHost : LeftSidebarExpandedHost;
+            await TransitionSidebarAsync(LeftSidebarColumn,
+                collapsed ? LeftSidebarExpandedHost : LeftSidebarCompactHost,
+                collapsed ? LeftSidebarCompactHost : LeftSidebarExpandedHost,
+                collapsed ? 52 : 276, -10);
             _leftCollapsed = collapsed;
-            // Keep the expanded panel at its natural width throughout the transition.
-            // The viewport clips it while the column slides, so the text never reflows
-            // into a skinny strip and the rail does not vanish mid-animation.
-            leaving.IsHitTestVisible = false;
-            arriving.IsHitTestVisible = false;
-            arriving.Visibility = Visibility.Visible;
-            System.Windows.Controls.Panel.SetZIndex(leaving, 1);
-            System.Windows.Controls.Panel.SetZIndex(arriving, 0);
-            try
-            {
-                await AnimateLeftSidebarAsync(leaving, arriving, collapsed ? 52 : 276);
-            }
-            finally
-            {
-                leaving.Visibility = Visibility.Collapsed;
-                leaving.Opacity = 1;
-                leaving.IsHitTestVisible = true;
-                arriving.Opacity = 1;
-                arriving.IsHitTestVisible = true;
-                LeftSidebarColumn.Width = new GridLength(collapsed ? 52 : 276);
-                System.Windows.Controls.Panel.SetZIndex(leaving, 0);
-                FitWorkspaceLayout();
-            }
         }
-        finally { _leftTransitioning = false; }
+        finally { _leftTransitioning = false; FitWorkspaceLayout(); }
     }
 
-    private Task AnimateLeftSidebarAsync(FrameworkElement leaving, FrameworkElement arriving, double target)
-    {
-        if (Environment.GetEnvironmentVariable("NIRA_REDUCE_MOTION") == "1" || !SystemParameters.ClientAreaAnimation)
-            return Task.CompletedTask;
-        double start = LeftSidebarColumn.Width.Value;
-        arriving.Opacity = 0;
-        var done = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var watch = Stopwatch.StartNew();
-        var timer = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(16) };
-        double elapsed = 0, lastTick = 0;
-        EventHandler? tick = null;
-        tick = (_, _) =>
-        {
-            double now = watch.Elapsed.TotalMilliseconds;
-            // Under a busy render thread, don't jump from one endpoint to the other.
-            elapsed += Math.Min(40, now - lastTick); lastTick = now;
-            double t = Math.Clamp(elapsed / 320, 0, 1);
-            double eased = t * t * (3 - 2 * t);
-            LeftSidebarColumn.Width = new GridLength(start + (target - start) * eased);
-            leaving.Opacity = 1 - eased;
-            arriving.Opacity = eased;
-            if (t >= 1 || !IsLoaded)
-            { timer.Stop(); timer.Tick -= tick; done.TrySetResult(true); }
-        };
-        timer.Tick += tick;
-        timer.Start();
-        return done.Task;
-    }
     private async void ToggleRightSidebar_Click(object sender, RoutedEventArgs e)
     {
         if (_rightTransitioning) return;
         _rightTransitioning = true;
+        bool collapsed = !_rightCollapsed;
         try
         {
-            _rightCollapsed = !_rightCollapsed;
-            FrameworkElement leaving = _rightCollapsed ? RightSidebarScroll : RightSidebarCompactHost;
-            FrameworkElement arriving = _rightCollapsed ? RightSidebarCompactHost : RightSidebarScroll;
-            await FadeSidebarOutAsync(leaving);
-            leaving.Visibility = Visibility.Collapsed;
-            await AnimateWidthAsync(RightSidebarColumn, _rightCollapsed ? 52 : 292);
-            arriving.Visibility = Visibility.Visible;
-            AnimateSidebarReveal(arriving, 10); FitWorkspaceLayout();
+            await TransitionSidebarAsync(RightSidebarColumn,
+                collapsed ? RightSidebarScroll : RightSidebarCompactHost,
+                collapsed ? RightSidebarCompactHost : RightSidebarScroll,
+                collapsed ? 52 : 292, 10);
+            _rightCollapsed = collapsed;
         }
-        finally { _rightTransitioning = false; }
-    }
-    private static Task FadeSidebarOutAsync(FrameworkElement panel)
-    {
-        if (Environment.GetEnvironmentVariable("NIRA_REDUCE_MOTION") == "1") return Task.CompletedTask;
-        panel.BeginAnimation(OpacityProperty, new DoubleAnimation {
-            To = .30, Duration = TimeSpan.FromMilliseconds(110),
-            EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut }, FillBehavior = FillBehavior.Stop
-        }, HandoffBehavior.SnapshotAndReplace);
-        return Task.Delay(115);
-    }
-    private static void AnimateSidebarReveal(FrameworkElement panel, double fromX)
-    {
-        if (Environment.GetEnvironmentVariable("NIRA_REDUCE_MOTION") == "1") return;
-        panel.BeginAnimation(OpacityProperty, null);
-        panel.Opacity = 1.0;
-        panel.BeginAnimation(OpacityProperty, new DoubleAnimation(0.34, 1.0, TimeSpan.FromMilliseconds(270))
-        {
-            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
-            FillBehavior = FillBehavior.Stop
-        });
-        var translate = new TranslateTransform(0, 0);
-        panel.RenderTransform = translate;
-        translate.BeginAnimation(TranslateTransform.XProperty,
-            new DoubleAnimation(fromX, 0, TimeSpan.FromMilliseconds(270))
-            {
-                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
-                FillBehavior = FillBehavior.Stop
-            });
+        finally { _rightTransitioning = false; FitWorkspaceLayout(); }
     }
 
-    // Original sidebar interpolation pattern; no layout jumps from GridLength animation.
+    // Original NIRA sequence: 110ms fade, 230ms cubic width, 270ms slide/reveal.
+    // Hide both control trees during width interpolation: no squashed/reflowing controls.
+    private static async Task TransitionSidebarAsync(ColumnDefinition column,
+        FrameworkElement leaving, FrameworkElement arriving, double target, double fromX)
+    {
+        bool motion = SystemParameters.ClientAreaAnimation &&
+            Environment.GetEnvironmentVariable("NIRA_REDUCE_MOTION") != "1";
+        leaving.IsHitTestVisible = false;
+        arriving.IsHitTestVisible = false;
+        try
+        {
+            if (motion)
+            {
+                leaving.BeginAnimation(OpacityProperty, new DoubleAnimation(0.30, TimeSpan.FromMilliseconds(110))
+                { EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut }, FillBehavior = FillBehavior.HoldEnd });
+                await Task.Delay(115);
+            }
+            leaving.Visibility = Visibility.Collapsed;
+            leaving.BeginAnimation(OpacityProperty, null);
+            arriving.Visibility = Visibility.Collapsed;
+            if (motion) await AnimateWidthAsync(column, target);
+            else column.Width = new GridLength(target);
+            arriving.Visibility = Visibility.Visible;
+            if (motion)
+            {
+                arriving.BeginAnimation(OpacityProperty, new DoubleAnimation(0.34, 1.0, TimeSpan.FromMilliseconds(270))
+                { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }, FillBehavior = FillBehavior.Stop });
+                var translate = new TranslateTransform();
+                arriving.RenderTransform = translate;
+                translate.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(fromX, 0, TimeSpan.FromMilliseconds(270))
+                { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }, FillBehavior = FillBehavior.Stop });
+                await Task.Delay(275);
+            }
+        }
+        finally
+        {
+            leaving.Visibility = Visibility.Collapsed;
+            leaving.BeginAnimation(OpacityProperty, null);
+            leaving.Opacity = 1;
+            leaving.IsHitTestVisible = true;
+            arriving.Visibility = Visibility.Visible;
+            arriving.BeginAnimation(OpacityProperty, null);
+            arriving.Opacity = 1;
+            arriving.RenderTransform = Transform.Identity;
+            arriving.IsHitTestVisible = true;
+            column.Width = new GridLength(target);
+        }
+    }
+
     private static Task AnimateWidthAsync(ColumnDefinition column, double target)
     {
         double start = column.ActualWidth;
-        if (Environment.GetEnvironmentVariable("NIRA_REDUCE_MOTION") == "1" || Math.Abs(start - target) < .5)
+        if (Math.Abs(start - target) < .5)
         { column.Width = new GridLength(target); return Task.CompletedTask; }
         var done = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var watch = Stopwatch.StartNew();
         var timer = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(16) };
         EventHandler? tick = null;
         tick = (_, _) => {
-            double progress = Math.Clamp(watch.Elapsed.TotalMilliseconds / 230, 0, 1);
+            double progress = Math.Clamp(watch.Elapsed.TotalMilliseconds / 230.0, 0.0, 1.0);
             column.Width = new GridLength(start + (target - start) * (1 - Math.Pow(1 - progress, 3)));
             if (progress >= 1) { timer.Stop(); timer.Tick -= tick; column.Width = new GridLength(target); done.TrySetResult(true); }
         };

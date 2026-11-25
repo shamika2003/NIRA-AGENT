@@ -101,7 +101,9 @@ public partial class SettingsWindow : Window
                     });
                     AddText("Model and endpoint changes still require launch configuration and a restart.");
                     AddText("Image generation", true);
-                    AddText("Cloudflare Workers AI · FLUX.2 Klein 4B. The image prompt is transmitted only after approval. Quotas or usage charges may apply.");
+                    AddText(_runtime.DevelopmentPermissions
+                        ? "Cloudflare Workers AI · FLUX.2 Klein 4B. Development mode sends requested image prompts without a confirmation. Quotas or usage charges may apply."
+                        : "Cloudflare Workers AI · FLUX.2 Klein 4B. The image prompt is transmitted only after approval. Quotas or usage charges may apply.");
                     string imageHome = System.IO.Path.GetDirectoryName(_runtime.DatabasePath)!;
                     var imageStatus = AddText(ImageGenerationProvider.Load(imageHome) is null ? "Image credentials: not configured" : "Image credentials: saved (available now; provider access untested)");
                     AddText("Cloudflare Account ID");
@@ -127,7 +129,11 @@ public partial class SettingsWindow : Window
                 case "Memory": await ShowMemoryAsync(); break;
                 case "Permissions":
                     AddText("Current authorized workspace", true); AddText(_runtime.Workspace);
-                    AddText("Each outside-workspace or dangerous operation requires the runtime's one-time approval. Attachments and saved chats grant no extra authority.");
+                    AddText(_runtime.DevelopmentPermissions ? "Development permissions · ACTIVE" : "Standard permissions · ACTIVE", true);
+                    AddText(_runtime.DevelopmentPermissions
+                        ? "Public searches, ordinary reads, public browsing and requested image/GIF generation run without repeated confirmation. File creation, editing, deletion, private-file uploads, commands and desktop/browser mutations still require approval. Image generation may consume provider quota or incur charges."
+                        : "Each outside-workspace or dangerous operation requires the runtime's one-time approval. Attachments and saved chats grant no extra authority.");
+                    if (_runtime.DevelopmentPermissions) AddText("This policy applies to Debug builds only. Restart with NIRA_DEVELOPMENT_PERMISSIONS=0 to use standard permissions.");
                     AddText("This page is read-only. It cannot issue approvals, change workspace scope or replay previous operations.");
                     break;
             }

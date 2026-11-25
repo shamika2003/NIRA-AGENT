@@ -1003,7 +1003,7 @@
             <Grid Grid.Column="0" ClipToBounds="True" x:Name="LeftSidebarViewport">
             <ContentControl x:Name="LeftSidebarExpandedHost" Width="276" HorizontalAlignment="Left" Style="{StaticResource GlassPanelStrongStyle}">
                 <Grid Margin="16,14,16,14">
-                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                     <ScrollViewer x:Name="LeftControlsScroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <Grid>
                     <Grid.RowDefinitions>
@@ -1114,7 +1114,69 @@
                         </Expander>
                     </StackPanel>
                     </Grid></ScrollViewer>
-                    <Grid Grid.Row="1" Margin="0,12,0,0">
+                    <Border x:Name="MiniPlayerPanel" Grid.Row="1" Visibility="Collapsed"
+                            Margin="0,12,0,5" Padding="8,9"
+                            Background="{DynamicResource NIRAGlassTintBrush}"
+                            BorderBrush="{DynamicResource NIRAGlassBorderBrush}"
+                            BorderThickness="1" CornerRadius="12">
+                        <StackPanel>
+                            <Grid Margin="2,0,2,7">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="NOW PLAYING" FontSize="9.5" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource NIRACyanBrush}"/>
+                                    <TextBlock x:Name="MiniPlayerTitle" FontSize="11" FontWeight="SemiBold"
+                                               TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                                               Margin="0,4,0,0" ToolTip="Media playing from chat"/>
+                                </StackPanel>
+                                <Button Grid.Column="1" Click="MiniPlayerClose_Click"
+                                        Content="✕" ToolTip="Stop playback and close mini-player"
+                                        Height="26" Width="27" FontSize="12" Margin="5,0,0,0"
+                                        Foreground="{DynamicResource NIRASecondaryBrush}"
+                                        Background="Transparent" BorderThickness="0" Cursor="Hand"/>
+                            </Grid>
+                            <Grid x:Name="MiniPlayerViewport" ClipToBounds="True"
+                                  Background="#08142A" MinHeight="124">
+                                <Grid x:Name="MiniPlayerVideoSlot"/>
+                                <!-- The player remains mounted below this overlay,
+                                     so the audio-focused view does not restart it. -->
+                                <Border x:Name="MiniPlayerAudioShade" Visibility="Collapsed"
+                                        IsHitTestVisible="False" Background="#F408142A">
+                                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                                        <TextBlock Text="♫" FontSize="35" TextAlignment="Center"
+                                                   Foreground="{DynamicResource NIRACyanBrush}"/>
+                                        <TextBlock Text="AUDIO FOCUS" FontSize="10" FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource NIRASecondaryBrush}"
+                                                   TextAlignment="Center"/>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                            <Grid Margin="0,8,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Button x:Name="MiniPlayerModeButton" Content="♫ Audio focus"
+                                        Click="MiniPlayerMode_Click" HorizontalAlignment="Left"
+                                        Padding="6,5" FontSize="10" Cursor="Hand"
+                                        Foreground="{DynamicResource NIRATextBrush}"
+                                        Background="{DynamicResource NIRAGlassStrongTintBrush}"
+                                        BorderBrush="{DynamicResource NIRAGlassBorderBrush}"/>
+                                <Button Grid.Column="1" Content="↗ Chat" Click="MiniPlayerRestore_Click"
+                                        Padding="6,5" FontSize="10" Cursor="Hand"
+                                        Foreground="{DynamicResource NIRATextBrush}"
+                                        Background="{DynamicResource NIRAGlassStrongTintBrush}"
+                                        BorderBrush="{DynamicResource NIRAGlassBorderBrush}"/>
+                            </Grid>
+                            <TextBlock x:Name="MiniPlayerNotice" Text="Controls remain in the provider's video frame."
+                                       Margin="2,7,2,0" FontSize="9.5" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource NIRAMutedBrush}"/>
+                        </StackPanel>
+                    </Border>
+                    <Grid Grid.Row="2" Margin="0,12,0,0">
                         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                         <StackPanel x:Name="BranchActivitySection" Margin="0,0,0,4">
                             <TextBlock x:Name="BranchActivityTitleText" Text="ACTIVITY" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource NIRACyanBrush}"/>

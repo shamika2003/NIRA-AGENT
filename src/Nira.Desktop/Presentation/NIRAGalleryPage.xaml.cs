@@ -74,7 +74,7 @@ public partial class NIRAGalleryPage : UserControl
         WebButton.Tag = category == NIRAGalleryCategory.WebFound ? "ACTIVE" : null;
         GeneratedButton.Tag = category == NIRAGalleryCategory.AiGenerated ? "ACTIVE" : null;
         SectionTitle.Text = category switch { NIRAGalleryCategory.Uploaded => "Uploaded images", NIRAGalleryCategory.WebFound => "Found on the web", _ => "AI generated images" };
-        SectionSummary.Text = category switch { NIRAGalleryCategory.Uploaded => "Photos you add to your local library", NIRAGalleryCategory.WebFound => "Photographs NIRA retrieved from the web", _ => "Artwork created by NIRA" };
+        SectionSummary.Text = category switch { NIRAGalleryCategory.Uploaded => "Photos you add to your local library", NIRAGalleryCategory.WebFound => "Photographs NIRA retrieved from the web", _ => "Still artwork and short animations created by NIRA" };
         AddButton.Visibility = category == NIRAGalleryCategory.Uploaded ? Visibility.Visible : Visibility.Collapsed;
         SearchBox.Clear();
         RenderPage();
@@ -125,7 +125,7 @@ public partial class NIRAGalleryPage : UserControl
         {
             NIRAGalleryCategory.Uploaded => "Add photos using the button above. Your originals remain untouched.",
             NIRAGalleryCategory.WebFound => "Retrieved photographs appear here with their original sources. Try another search or page if a preview is missing.",
-            _ => "Ask NIRA in Chat to create an image. Saved artwork appears here after a successful generation."
+            _ => "Ask NIRA in Chat to create an image or a short looping GIF. Saved artwork appears here after a successful generation."
         };
         GalleryScrollViewer.ScrollToTop();
     }

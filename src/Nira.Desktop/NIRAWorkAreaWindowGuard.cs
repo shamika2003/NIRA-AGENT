@@ -19,6 +19,7 @@ internal sealed class NIRAWorkAreaWindowGuard : IDisposable
     private bool _normalWindowFitted;
     private HwndSource? _source;
     private bool _disposed;
+    internal bool AllowFullMonitor { get; set; }
 
     public NIRAWorkAreaWindowGuard(Window window, bool fitNormalWindow = false)
     {
@@ -97,7 +98,7 @@ internal sealed class NIRAWorkAreaWindowGuard : IDisposable
         IntPtr lParam,
         ref bool handled)
     {
-        if (msg == WmGetMinMaxInfo)
+        if (msg == WmGetMinMaxInfo && !AllowFullMonitor)
         {
             ApplyWorkArea(hwnd, lParam);
             handled = true;

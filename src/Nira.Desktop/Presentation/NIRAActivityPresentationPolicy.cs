@@ -15,6 +15,7 @@ public static class NIRAActivityPresentationPolicy
         if (id == "nira.capabilities.discover") return "Finding an available capability";
         if (id == "nira.capabilities.observe") return "Using a read-only capability";
         if (id == "nira.capabilities.execute") return "Running an authorized action";
+        if (id.Contains("video.search", StringComparison.Ordinal)) return "Finding relevant videos";
         if (id.Contains("web.search", StringComparison.Ordinal)) return "Searching the web";
         if (id.Contains("image.search", StringComparison.Ordinal) ||
             id.Contains("image.retrieve", StringComparison.Ordinal)) return "Finding relevant images";

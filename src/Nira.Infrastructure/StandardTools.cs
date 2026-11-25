@@ -45,7 +45,7 @@ public static class NiraStandardTools
             new BrowserSessionSelectOptionTool(browserSessions),
             new BrowserSessionSetCheckedTool(browserSessions),
             new MemorySearchTool(store), new MemoryRememberTool(store),
-            new TavilySearchTool(http), new ImageDiscoveryTool(http), new ImagePreviewTool(resolver),
+            new TavilySearchTool(http), new VideoSearchTool(http), new ImageDiscoveryTool(http), new ImagePreviewTool(resolver),
             ..(imageGenerationResolver is not null
                 ? new IAgentTool[] { new ImageGenerationTool(resolver, http, imageGenerationResolver) }
                 : imageGeneration is null ? Array.Empty<IAgentTool>()

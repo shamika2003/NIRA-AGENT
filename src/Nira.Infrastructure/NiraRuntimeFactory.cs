@@ -10,12 +10,13 @@ public sealed class NiraRuntime : IDisposable
     public IConversationStore Conversations { get; }
     public string Workspace { get; }
     public string DatabasePath { get; }
+    public bool DevelopmentPermissions { get; }
     public NiraModelCredentialStore ModelCredentials { get; }
 
     private NiraRuntime(NiraEngine engine, IConversationStore conversations,
         HttpClient http, string workspace, string database, NiraModelCredentialStore modelCredentials,
-        EdgePublicBrowserSessions browserSessions)
-    { Engine = engine; Conversations = conversations; _http = http; _browserSessions = browserSessions;
+        EdgePublicBrowserSessions browserSessions, bool developmentPermissions)
+    { DevelopmentPermissions = developmentPermissions; Engine = engine; Conversations = conversations; _http = http; _browserSessions = browserSessions;
       Workspace = workspace; DatabasePath = database; ModelCredentials = modelCredentials; }
 
     public static NiraRuntime CreateDefault()
@@ -63,9 +64,15 @@ public sealed class NiraRuntime : IDisposable
         // Default to bounded routing in both CLI and desktop; retain a diagnostic opt-out.
         bool routing = Environment.GetEnvironmentVariable("NIRA_FULL_TOOL_CATALOG") != "1";
         bool adaptive = Environment.GetEnvironmentVariable("NIRA_LEGACY_PREFLIGHT") != "1";
-        var engine = new NiraEngine(client, tools, state, new WorkspaceAuthority(workspace),
+        // Debug builds use the owner-requested low-friction policy. Release builds
+        // cannot enable it via an environment variable or model/tool content.
+        bool developmentPermissions = false;
+#if DEBUG
+        developmentPermissions = Environment.GetEnvironmentVariable("NIRA_DEVELOPMENT_PERMISSIONS") != "0";
+#endif
+        var engine = new NiraEngine(client, tools, state, new WorkspaceAuthority(workspace, developmentPermissions),
             enableCapabilityRouting: routing, enableAdaptivePlanning: adaptive);
-        return new NiraRuntime(engine, state, http, workspace, database, modelCredentials, sessions);
+        return new NiraRuntime(engine, state, http, workspace, database, modelCredentials, sessions, developmentPermissions);
     }
 
     public void Dispose()

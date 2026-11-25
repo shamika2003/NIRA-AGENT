@@ -19,10 +19,73 @@ $projects = @(
     'tests/Nira.Kernel.Tests/Nira.Kernel.Tests.csproj'
 )
 if (-not $SkipDesktop) { $projects += @('src/Nira.Desktop/Nira.Desktop.csproj', 'tests/Nira.Desktop.Tests/Nira.Desktop.Tests.csproj') }
+# NIRA SINGLE-PASS BUILD V1
+
+Write-Host "`n===== STOP BUILD SERVERS =====" -ForegroundColor Cyan
+
+& dotnet build-server shutdown
+
+if ($LASTEXITCODE -ne 0) {
+    throw "Build server shutdown failed."
+}
+
+Write-Host "`n===== CLEAN GENERATED OUTPUTS =====" -ForegroundColor Cyan
+
 foreach ($project in $projects) {
+
+    $directory = Split-Path -Parent (Join-Path $root $project)
+
+    foreach ($folder in @("bin", "obj")) {
+
+        $generated = Join-Path $directory $folder
+
+        if (Test-Path -LiteralPath $generated) {
+
+            if ((Get-Item -LiteralPath $generated).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                throw "Unexpected linked build directory: $generated"
+            }
+
+            Remove-Item -LiteralPath $generated -Recurse -Force
+
+            Write-Host "Cleaned: $generated"
+        }
+    }
+}
+
+Write-Host "`n===== RESTORE DEPENDENCIES =====" -ForegroundColor Cyan
+
+foreach ($project in $projects) {
+
     $projectFile = Join-Path $root $project
-    & dotnet build $projectFile -c Debug -t:Rebuild --nologo
-    if ($LASTEXITCODE -ne 0) { throw "Rebuild failed: $project" }
+
+    & dotnet restore $projectFile --disable-parallel
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Restore failed: $project"
+    }
+}
+
+Write-Host "`n===== SINGLE-PASS COMPILATION =====" -ForegroundColor Cyan
+
+foreach ($project in $projects) {
+
+    $projectFile = Join-Path $root $project
+
+    Write-Host "`nBuilding: $project" -ForegroundColor Cyan
+
+    & dotnet build $projectFile `
+        -c Debug `
+        --no-restore `
+        --nologo `
+        -m:1 `
+        -nr:false `
+        -p:BuildProjectReferences=false `
+        -p:BuildInParallel=false `
+        -p:UseSharedCompilation=false
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Build failed: $project"
+    }
 }
 
 # Do not use 'dotnet run --no-build' here: the original bug ran a stale test

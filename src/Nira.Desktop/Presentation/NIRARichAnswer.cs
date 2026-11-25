@@ -4,18 +4,19 @@ using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using NIRAAgent.Presentation;
+using Nira.Core;
 
 namespace NIRAAgent.UI.Presentation;
 
 /// <summary>Interleaves native components with selectable prose. Model data is never executable markup.</summary>
 public static class NIRARichAnswer
 {
-    public const string Revision = "M6E-IMAGE-2";
+    public const string Revision = "M6F4-MEDIA-STABILITY-1";
     private static readonly Regex Fence = new(@"^\s{0,3}(`{3,}|~{3,})([^\r\n]*)$", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
     private static readonly HashSet<string> Types = new(StringComparer.Ordinal)
     { "heading", "text", "hero", "insight", "source", "video", "card", "metric", "equation", "table", "chart", "bar", "code", "details", "list", "quote", "timeline", "checklist", "progress", "tabs", "followups", "status" };
 
-    public static FrameworkElement Create(string answer, FrameworkElement? media = null, Action<string>? followup = null)
+    public static FrameworkElement Create(string answer, FrameworkElement? media = null, Action<string>? followup = null, IReadOnlySet<string>? videoUrls = null, IReadOnlyDictionary<string, string>? videoTitles = null, IReadOnlyList<string>? searchFallback = null)
     {
         var root = new StackPanel();
         // Original NIRA's photo-first strip belongs above the prose, not in a generic file card.
@@ -30,11 +31,64 @@ public static class NIRARichAnswer
             }
             prose.Clear();
         }
+        var shownVideos = new HashSet<string>(StringComparer.Ordinal);
+        var videos = new List<NIRARichBlock>();
+        var failedVisuals = new List<FrameworkElement>();
+        bool invalidVideoVisual = false;
+        bool AddVideo(NIRAVideoReference reference, string? title)
+        {
+            if (!VideoEvidence.Allows(videoUrls, reference.OriginalUrl)) return false;
+            if (shownVideos.Contains(reference.Key)) return true;
+            if (videos.Count >= 6) return false;
+            if (videoTitles?.TryGetValue(reference.OriginalUrl, out var recordedTitle) == true && !string.IsNullOrWhiteSpace(recordedTitle)) title = recordedTitle;
+            if (string.IsNullOrWhiteSpace(title) || title.Trim().Equals("video", StringComparison.OrdinalIgnoreCase) ||
+                title.Trim().Equals("video (link)", StringComparison.OrdinalIgnoreCase) || NIRAPublicDelivery.ContainsInternal(title))
+                title = reference.Provider + " video";
+            shownVideos.Add(reference.Key);
+            videos.Add(new NIRARichBlock { Type = "video", Title = title.Trim(), Text = reference.OriginalUrl });
+            return true;
+        }
+        // The original NIRA promoted verified links from ordinary answers to a single deck.
+        // Ignore fenced code and inline code; keep all unrelated prose and fact tables.
+        IReadOnlyList<NIRAVideoReference> References(string line) => NIRAVideoReferencePolicy.UserSharedReferences(
+            Regex.Replace(line.Replace('|', ' '), @"`+[^`]*`+", "", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100)), 12);
         string[] lines = answer.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
         for (int i = 0; i < lines.Length; i++)
         {
             Match open = Fence.Match(lines[i]);
-            if (!open.Success) { prose.AppendLine(lines[i]); continue; }
+            if (!open.Success)
+            {
+                string trimmedLine = lines[i].Trim();
+                if (trimmedLine.StartsWith("Host-recorded execution evidence:", StringComparison.OrdinalIgnoreCase) ||
+                    trimmedLine.StartsWith("Recorded observations (tool/provider output):", StringComparison.OrdinalIgnoreCase) ||
+                    trimmedLine.StartsWith("Recorded verification observations:", StringComparison.OrdinalIgnoreCase)) break;
+                if (NIRAPublicDelivery.ContainsInternal(lines[i])) { prose.AppendLine(lines[i]); continue; }
+                // Replace only a video-list table whose every row is grounded. Ordinary data tables,
+                // unsupported links, and over-limit entries remain intact as prose.
+                if (i + 2 < lines.Length && IsVideoListHeader(lines[i]) && IsTableSeparator(lines[i + 1]))
+                {
+                    int end = i + 2;
+                    var table = new List<(NIRAVideoReference Video, string Title)>();
+                    bool valid = true;
+                    int titleColumn = TableCells(lines[i]).FindIndex(cell => cell.Equals("title", StringComparison.OrdinalIgnoreCase) || cell.Equals("video title", StringComparison.OrdinalIgnoreCase));
+                    while (end < lines.Length && lines[end].TrimStart().StartsWith('|'))
+                    {
+                        var refs = References(lines[end]); var cells = TableCells(lines[end]);
+                        if (refs.Count != 1 || !VideoEvidence.Allows(videoUrls, refs[0].OriginalUrl)) valid = false;
+                        else table.Add((refs[0], titleColumn >= 0 && titleColumn < cells.Count ? cells[titleColumn].Trim('*', '_', ' ') : ""));
+                        end++;
+                    }
+                    int additional = table.Select(row => row.Video.Key).Distinct(StringComparer.Ordinal).Count(key => !shownVideos.Contains(key));
+                    if (valid && table.Count > 0 && videos.Count + additional <= 6)
+                    {
+                        foreach (var row in table) AddVideo(row.Video, row.Title);
+                        i = end - 1; continue;
+                    }
+                }
+                if (NIRAVideoReferencePolicy.TryParseStandaloneLine(lines[i], out var video, out var title) && video is not null && AddVideo(video, title)) continue;
+                foreach (var reference in References(lines[i])) AddVideo(reference, null);
+                prose.AppendLine(lines[i]); continue;
+            }
             string fence = open.Groups[1].Value;
             bool rich = open.Groups[2].Value.Trim().Equals("nira-ui", StringComparison.OrdinalIgnoreCase);
             if (rich) Flush(); else prose.AppendLine(lines[i]);
@@ -51,7 +105,23 @@ public static class NIRARichAnswer
             IReadOnlyList<NIRARichBlock> blocks = closed ? Parse(json.ToString()) : [];
             if (blocks.Count == 0)
             {
-                root.Children.Add(NIRAResponseDocument.Create("Some visual content could not be displayed."));
+                // Recover exact observed watch URLs even if the model emitted a wrong
+                // JSON envelope, unexpected field names or incomplete presentation JSON.
+                string raw = json.ToString();
+                bool videoLike = Regex.IsMatch(raw, @"\b(?:video|videos|video[_-]?(?:list|carousel|deck|grid)|youtube|vimeo)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+                bool recovered = false;
+                if (videoLike || searchFallback is { Count: > 0 })
+                {
+                    foreach (var reference in NIRAVideoReferencePolicy.UserSharedReferences(raw.Replace("\\/", "/", StringComparison.Ordinal), 12))
+                        recovered |= AddVideo(reference, null);
+                    invalidVideoVisual = true;
+                }
+                if (!recovered)
+                {
+                    var warning = NIRAResponseDocument.Create(videoLike ? "A video preview could not be prepared from this reply." : "Some visual content could not be displayed.");
+                    root.Children.Add(warning);
+                    if (videoLike || searchFallback is { Count: > 0 }) failedVisuals.Add(warning);
+                }
                 continue;
             }
             for (int j = 0; j < blocks.Count; j++)
@@ -68,12 +138,54 @@ public static class NIRARichAnswer
                         j = end - 1; continue;
                     }
                 }
+                if (block.Type == "video")
+                {
+                    if (NIRAVideoReferencePolicy.TryParse(block.Text, out var reference) && reference is not null && AddVideo(reference, block.Title)) continue;
+                    invalidVideoVisual = true;
+                    // Unsupported or unobserved links remain click-only, never embedded.
+                    root.Children.Add(NIRARichBlockRenderer.Render(block, followUp: followup));
+                    continue;
+                }
+                if (block.Type == "table")
+                    foreach (var row in block.Rows)
+                        foreach (var cell in row)
+                            foreach (var entry in References(cell)) AddVideo(entry, null);
                 root.Children.Add(NIRARichBlockRenderer.Render(block, followUp: followup));
             }
         }
         Flush();
+        // No second inference or search. If the requested presentation failed entirely,
+        // expose the actual recorded search references with a qualified label.
+        if (invalidVideoVisual && videos.Count == 0 && searchFallback is { Count: > 0 })
+        {
+            foreach (string url in searchFallback)
+                if (NIRAVideoReferencePolicy.TryParse(url, out var reference) && reference is not null)
+                    AddVideo(reference, null);
+            if (videos.Count > 0)
+                root.Children.Add(NIRAResponseDocument.Create("Video search results (playback not verified)."));
+        }
+        if (videos.Count > 0)
+            foreach (var warning in failedVisuals) root.Children.Remove(warning);
+        if (videos.Count == 1) root.Children.Add(NIRAVideoPlayer.Render(videos[0]));
+        else if (videos.Count > 1)
+        {
+            var deck = new NIRAVideoDepthDeck();
+            foreach (var block in videos) deck.TryAdd(block);
+            deck.Complete();
+            root.Children.Add(deck.View);
+        }
         if (root.Children.Count == 0) root.Children.Add(NIRAResponseDocument.Create("No readable response was available."));
         return root;
+    }
+
+    private static List<string> TableCells(string line) => line.Trim().Trim('|').Split('|').Select(cell => cell.Trim().Trim('*', '_', ' ')).ToList();
+    private static bool IsTableSeparator(string line) => line.Contains('|') && TableCells(line).All(cell => cell.Trim(':', ' ').Length >= 3 && cell.Trim(':', ' ').All(c => c == '-'));
+    private static bool IsVideoListHeader(string line)
+    {
+        if (!line.TrimStart().StartsWith('|')) return false;
+        var cells = TableCells(line).Select(cell => cell.ToLowerInvariant()).ToArray();
+        return cells.Any(cell => cell is "title" or "video title") && cells.Any(cell => cell is "link" or "url" or "video" or "source") &&
+            cells.All(cell => cell is "#" or "no." or "title" or "video title" or "link" or "url" or "video" or "source" or "description" or "short description");
     }
 
     private static string WithoutImageTables(string text)
@@ -109,13 +221,31 @@ public static class NIRARichAnswer
         try
         {
             using var doc = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = 12 });
-            if (doc.RootElement.ValueKind != JsonValueKind.Array) return [];
-            foreach (var item in doc.RootElement.EnumerateArray().Take(30))
+            JsonElement envelope = doc.RootElement;
+            if (envelope.ValueKind == JsonValueKind.Object && !envelope.TryGetProperty("type", out _))
+            {
+                foreach (string key in new[] { "blocks", "components", "videos" })
+                    if (envelope.TryGetProperty(key, out var array) && array.ValueKind == JsonValueKind.Array)
+                    { envelope = array; break; }
+            }
+            IEnumerable<JsonElement> entries = envelope.ValueKind switch
+            {
+                JsonValueKind.Array => envelope.EnumerateArray().Take(30),
+                JsonValueKind.Object => new[] { envelope },
+                _ => Array.Empty<JsonElement>()
+            };
+            foreach (var item in entries)
             {
                 if (item.ValueKind != JsonValueKind.Object) continue;
                 string type = Str(item, "type", 30).ToLowerInvariant();
                 if (!Types.Contains(type)) continue;
                 string title = Str(item, "title", 180), text = Str(item, "text", 8000);
+                if (type == "video" && !NIRAVideoReferencePolicy.TryParse(text, out _))
+                    foreach (string key in new[] { "url", "videoUrl", "video_url", "watchUrl", "watch_url", "link", "src" })
+                    {
+                        string candidate = Str(item, key, 2048);
+                        if (NIRAVideoReferencePolicy.TryParse(candidate, out _)) { text = candidate; break; }
+                    }
                 var items = Strings(item, "items", 32, 600); var panels = Strings(item, "panels", 6, 5000);
                 var cols = Strings(item, "columns", 8, 150); var labels = Strings(item, "labels", 40, 100);
                 var values = Arr(item, "values", 40).Select(v => Number(v) ?? double.NaN).ToArray();

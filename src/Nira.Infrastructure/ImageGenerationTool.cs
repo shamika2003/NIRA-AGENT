@@ -62,29 +62,37 @@ public sealed class ImageGenerationTool(WorkspacePathResolver paths, HttpClient 
     public const int MaxBytes = 16 * 1024 * 1024;
     private const int MaxResponse = 24 * 1024 * 1024;
     public ToolDescriptor Descriptor { get; } = new("image.generate",
-        "Create one new AI artwork from a text prompt via Cloudflare FLUX.2 Klein 4B. External prompt transmission and possible charges require approval. Returns saved image evidence. Not web search, image editing or motion generation.",
+        "Create one new AI artwork from a text prompt via Cloudflare FLUX.2 Klein 4B. External prompt transmission and possible charges are governed by host authorization. Returns saved image evidence. Optional animation=true creates a four-frame looping GIF from one generated 2x2 sprite sheet. Not video or reference-image editing.",
         ToolRisk.ReadExternal, ToolSchemas.New("""
-        {"type":"object","properties":{"prompt":{"type":"string","minLength":4,"maxLength":2400},"width":{"type":"integer"},"height":{"type":"integer"}},"required":["prompt","width","height"],"additionalProperties":false}
+        {"type":"object","properties":{"prompt":{"type":"string","minLength":4,"maxLength":2400},"width":{"type":"integer"},"height":{"type":"integer"},"animation":{"type":"boolean"},"frameDurationMs":{"type":"integer"}},"required":["prompt","width","height"],"additionalProperties":false}
         """), HasSideEffects: true);
 
-    private static (string Prompt, int Width, int Height) Validate(JsonElement arguments)
+    private static (string Prompt, int Width, int Height, bool Animated, int Delay) Validate(JsonElement arguments)
     {
         string prompt = arguments.GetProperty("prompt").GetString()!.Trim();
         if (prompt.Length is < 4 or > 2400 || prompt.Any(c => char.IsControl(c) && c is not ('\r' or '\n' or '\t')) ||
             !arguments.GetProperty("width").TryGetInt32(out int w) || !arguments.GetProperty("height").TryGetInt32(out int h) ||
             w is < 256 or > 1920 || h is < 256 or > 1920 || w % 8 != 0 || h % 8 != 0)
             throw new ArgumentException("Use a 4–2400 character prompt and dimensions 256–1920 divisible by eight.");
-        return (prompt, w, h);
+        bool animated = arguments.TryGetProperty("animation", out var animation) && animation.GetBoolean();
+        int delay = 300;
+        if (arguments.TryGetProperty("frameDurationMs", out var timing) &&
+            (!animated || !timing.TryGetInt32(out delay) || delay is < 100 or > 2000 || delay % 10 != 0))
+            throw new ArgumentException("Animation delay must be 100–2000 ms in multiples of ten.");
+        if (animated && (w % 16 != 0 || h % 16 != 0 || w < 512 || h < 512))
+            throw new ArgumentException("Animated sprite sheet dimensions must be 512–1920 and divisible by sixteen.");
+        return (prompt, w, h, animated, delay);
     }
     public string GetTarget(JsonElement arguments)
     {
-        _ = Validate(arguments);
-        return "https://api.cloudflare.com — Workers AI image generation (prompt sent externally; quota or charges may apply)";
+        var options = Validate(arguments);
+        return "https://api.cloudflare.com — Workers AI image generation (prompt sent externally; quota or charges may apply)" +
+            (options.Animated ? " — one 2×2 sprite sheet; local four-frame GIF assembly" : "");
     }
 
     public async Task<ToolReceipt> ExecuteAsync(JsonElement arguments, CancellationToken ct)
     {
-        var (prompt, width, height) = Validate(arguments);
+        var (prompt, width, height, animated, delay) = Validate(arguments);
         // Resolve again after consent; saving or clearing credentials takes effect immediately.
         ImageGenerationProvider? provider = CurrentProvider();
         if (provider is null) return ToolReceipt.Fail("IMAGE_CREDENTIALS_MISSING", MissingCredentials);
@@ -95,7 +103,7 @@ public sealed class ImageGenerationTool(WorkspacePathResolver paths, HttpClient 
         try
         {
             using var form = new MultipartFormDataContent();
-            form.Add(new StringContent(prompt, Encoding.UTF8), "prompt");
+            form.Add(new StringContent(animated ? NiraGifComposer.SpritePrompt(prompt) : prompt, Encoding.UTF8), "prompt");
             form.Add(new StringContent(width.ToString(CultureInfo.InvariantCulture)), "width");
             form.Add(new StringContent(height.ToString(CultureInfo.InvariantCulture)), "height");
             using var request = new HttpRequestMessage(HttpMethod.Post, provider.Endpoint) { Content = form };
@@ -114,11 +122,11 @@ public sealed class ImageGenerationTool(WorkspacePathResolver paths, HttpClient 
                 buffer.Write(chunk, 0, count);
             }
             byte[] image = ReadImage(response.Content.Headers.ContentType?.MediaType ?? "", buffer.ToArray());
-            var decoded = await DecodeAsync(image, token);
+            var decoded = await DecodeAsync(image, animated, delay, token);
             token.ThrowIfCancellationRequested();
             string folder = paths.Resolve(CacheFolder);
             Directory.CreateDirectory(folder);
-            string path = paths.Resolve(Path.Combine(folder, Guid.NewGuid().ToString("N") + ".png"));
+            string path = paths.Resolve(Path.Combine(folder, Guid.NewGuid().ToString("N") + (animated ? ".gif" : ".png")));
             partial = path + ".partial";
             await using (var output = new FileStream(partial, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             {
@@ -127,9 +135,9 @@ public sealed class ImageGenerationTool(WorkspacePathResolver paths, HttpClient 
             }
             token.ThrowIfCancellationRequested();
             File.Move(partial, path); partial = null;
-            return ToolReceipt.Ok("AI artwork created and saved locally.", new { path, sha256 = Convert.ToHexString(SHA256.HashData(decoded.Bytes)),
+            return ToolReceipt.Ok(animated ? "Four-frame AI animation created and saved locally." : "AI artwork created and saved locally.", new { path, sha256 = Convert.ToHexString(SHA256.HashData(decoded.Bytes)),
                 model = ImageGenerationProvider.Model, title = prompt.Length > 120 ? prompt[..120] : prompt,
-                width = decoded.Width, height = decoded.Height, bytes = decoded.Bytes.Length, generated = true }, changedState: true);
+                width = decoded.Width, height = decoded.Height, bytes = decoded.Bytes.Length, generated = true, animated, frameCount = animated ? 4 : 1, frameDurationMs = animated ? delay : 0 }, changedState: true);
         }
         catch (Exception ex) when (!ct.IsCancellationRequested && ex is HttpRequestException or IOException or JsonException or FormatException or InvalidOperationException or ArgumentException or NotSupportedException or UnauthorizedAccessException or OperationCanceledException or System.Runtime.InteropServices.COMException)
         { return ToolReceipt.Fail("IMAGE_GENERATION_UNAVAILABLE", "No verified artwork was saved. The request may have consumed quota; do not automatically retry."); }
@@ -160,7 +168,7 @@ public sealed class ImageGenerationTool(WorkspacePathResolver paths, HttpClient 
         return image;
     }
 
-    private static Task<(byte[] Bytes, int Width, int Height)> DecodeAsync(byte[] bytes, CancellationToken ct)
+    private static Task<(byte[] Bytes, int Width, int Height)> DecodeAsync(byte[] bytes, bool animated, int delay, CancellationToken ct)
     {
         var completion = new TaskCompletionSource<(byte[], int, int)>(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
@@ -173,6 +181,12 @@ public sealed class ImageGenerationTool(WorkspacePathResolver paths, HttpClient 
                 var frame = decoder.Frames[0];
                 int w = frame.PixelWidth, h = frame.PixelHeight;
                 if (w is < 1 or > 1920 || h is < 1 or > 1920) throw new IOException("Image dimensions exceed limit.");
+                if (animated)
+                {
+                    byte[] gif = NiraGifComposer.Compose(frame, delay, ct);
+                    completion.TrySetResult((gif, w / 2, h / 2));
+                    return;
+                }
                 var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(frame));
                 using var output = new MemoryStream(); encoder.Save(output);
                 if (output.Length > MaxBytes) throw new IOException("Encoded PNG exceeds limit.");

@@ -24,6 +24,166 @@ internal static class Program
         }
         try
         {
+            NIRAAgent.UI.Presentation.NIRAVideoThumbnailService.DisableNetworkForOfflineAcceptance = true;
+            NIRAAgent.UI.Presentation.NIRAVideoPlayer.DisableNetworkForOfflineAcceptance = true;
+            const string watchUrl = "https://www.youtube.com/watch?v=abcdefghijk";
+            // Valid JPEG loads immediately before the preview is mounted. No CDN access.
+            Check(Nira.Core.NIRAVideoReferencePolicy.TryParse(watchUrl, out var posterReference) && posterReference is not null, "ui-poster-reference");
+            var posterPixels = System.Windows.Media.Imaging.BitmapSource.Create(16, 9, 96, 96, PixelFormats.Bgr24, null, new byte[16 * 9 * 3], 16 * 3);
+            var posterEncoder = new System.Windows.Media.Imaging.JpegBitmapEncoder();
+            posterEncoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(posterPixels));
+            using var posterStream = new System.IO.MemoryStream(); posterEncoder.Save(posterStream);
+            int posterCalls = 0;
+            Func<string, Task<byte[]?>> fakePoster = _ => { posterCalls++; return Task.FromResult<byte[]?>(posterStream.ToArray()); };
+            var posterGrid = new Grid();
+            var attachPoster = typeof(NIRAAgent.UI.Presentation.NIRAVideoThumbnailService).GetMethod("AttachCore", BindingFlags.Static | BindingFlags.NonPublic)!;
+            attachPoster.Invoke(null, [posterGrid, posterReference!, fakePoster]);
+            Check(!posterGrid.IsLoaded && posterCalls == 1 && posterGrid.Children[0] is Image { Source: not null, Opacity: 1 }, "ui-poster-eager-before-mounted");
+            var invalidPoster = new Grid();
+            Func<string, Task<byte[]?>> badPoster = _ => Task.FromResult<byte[]?>(new byte[] { 1, 2, 3 });
+            attachPoster.Invoke(null, [invalidPoster, posterReference!, badPoster]);
+            Check(invalidPoster.Children[0] is Image { Source: null, Opacity: 0 }, "ui-poster-invalid-keeps-fallback");
+
+            var posterType = typeof(NIRAAgent.UI.Presentation.NIRAVideoThumbnailService);
+            var markup = posterType.GetMethod("PosterMarkup", BindingFlags.Static | BindingFlags.NonPublic)!;
+            string[] posterIds = ["abcdefghijk", "bbbbbbbbbbb", "ccccccccccc", "ddddddddddd", "eeeeeeeeeee", "abcdefghijk", "<bad>"];
+            string posterHtml = (string)markup.Invoke(null, [posterIds])!;
+            Check(posterIds.Take(5).All(id => posterHtml.Contains("https://i.ytimg.com/vi/" + id + "/hqdefault.jpg", StringComparison.Ordinal) &&
+                posterHtml.Contains("https://img.youtube.com/vi/" + id + "/hqdefault.jpg", StringComparison.Ordinal)) &&
+                !posterHtml.Contains("<bad>", StringComparison.Ordinal) && posterHtml.Split("<img").Length == 11,
+                "ui-video-all-five-browser-posters-both-hosts");
+            var posterPolicy = posterType.GetMethod("TryPosterId", BindingFlags.Static | BindingFlags.NonPublic)!;
+            bool AllowedPoster(string url) => (bool)posterPolicy.Invoke(null, [url, posterIds.Take(5).ToHashSet(), ""])!;
+            Check(AllowedPoster("https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg") &&
+                !AllowedPoster("https://i.ytimg.com.evil.example/vi/abcdefghijk/hqdefault.jpg") &&
+                !AllowedPoster("https://i.ytimg.com/vi/zzzzzzzzzzz/hqdefault.jpg"), "ui-video-browser-poster-evidence-bound");
+
+            var videoState = new Nira.Core.ConversationState { Messages = [new Nira.Core.ChatEntry("user", watchUrl)] };
+            var allowedVideos = Nira.Core.VideoEvidence.Allowed(videoState);
+            Check(Nira.Core.VideoEvidence.Allows(allowedVideos, watchUrl) &&
+                !Nira.Core.VideoEvidence.Allows(allowedVideos, "https://www.youtube.com/watch?v=bbbbbbbbbbb") &&
+                !Nira.Core.NIRAVideoReferencePolicy.TryParse("https://www.youtube.com.evil.example/watch?v=abcdefghijk", out _), "ui-video-evidence-and-host-policy");
+            var videoAnswer = (StackPanel)NIRAAgent.UI.Presentation.NIRARichAnswer.Create("[Watch demo](" + watchUrl + ")", videoUrls: allowedVideos);
+            Check(videoAnswer.Children.Count == 1 && videoAnswer.Children[0] is Border, "ui-video-native-card-without-network");
+            static IEnumerable<DependencyObject> VisualChildren(DependencyObject element)
+            {
+                yield return element;
+                if (element is ContentControl { Content: DependencyObject content })
+                    foreach (var child in VisualChildren(content)) yield return child;
+                if (element is Decorator { Child: DependencyObject inner })
+                    foreach (var child in VisualChildren(inner)) yield return child;
+                if (element is Panel panel)
+                    foreach (UIElement member in panel.Children)
+                        foreach (var child in VisualChildren(member)) yield return child;
+            }
+            Check(videoAnswer.Children[0] is Border { Tag: "NIRA.VideoPlayer.AutoLoad" } &&
+                !VisualChildren(videoAnswer).OfType<Button>().Any(b => b.Content?.ToString()?.Contains("Play video", StringComparison.OrdinalIgnoreCase) == true),
+                "ui-video-direct-native-player-no-extra-play-button");
+            Check(VisualChildren(videoAnswer).OfType<Button>().Any(b => b.Content?.ToString()?.Contains("Mini", StringComparison.Ordinal) == true) &&
+                VisualChildren(videoAnswer).OfType<Button>().Any(b => b.Content?.ToString()?.Contains("Wide view", StringComparison.Ordinal) == true), "ui-video-restored-media-controls");
+            var visibility = typeof(NIRAAgent.UI.Presentation.NIRAVideoPlayer).GetMethod("IsInViewport", BindingFlags.Static | BindingFlags.NonPublic)!;
+            bool Visible(Rect bounds) => (bool)visibility.Invoke(null, [bounds, new Rect(0, 0, 800, 600)])!;
+            Check(Visible(new Rect(20, 550, 500, 200)) && !Visible(new Rect(20, 600, 500, 200)) &&
+                !Visible(new Rect(20, -201, 500, 200)) && !Visible(new Rect(20, 0, 0, 200)), "ui-video-autoload-visible-viewport-only");
+            // Explicit release is safe even before initialization or mounting.
+            var release = typeof(NIRAAgent.UI.Presentation.NIRAVideoPlayer).GetMethod("Release", BindingFlags.Static | BindingFlags.NonPublic)!;
+            release.Invoke(null, [videoAnswer.Children[0]]);
+            release.Invoke(null, [videoAnswer.Children[0]]);
+            Check(VisualChildren(videoAnswer).OfType<Button>().Any(b => b.Content?.ToString()?.Contains("Reload player", StringComparison.Ordinal) == true && b.Visibility == Visibility.Visible),
+                "ui-video-release-idempotent-and-reload-visible");
+            var noEvidence = (StackPanel)NIRAAgent.UI.Presentation.NIRARichAnswer.Create("[Watch demo](" + watchUrl + ")");
+            Check(noEvidence.Children.Count == 1 && noEvidence.Children[0] is RichTextBox, "ui-video-unobserved-stays-link");
+            var sixUrls = Enumerable.Range(1, 6).Select(i => "https://www.youtube.com/watch?v=abcdefghij" + i).ToArray();
+            var sixSet = new HashSet<string>(sixUrls, StringComparer.Ordinal);
+            var sixTitles = sixUrls.Select((url, index) => (url, title: "Recorded video " + (index + 1))).ToDictionary(pair => pair.url, pair => pair.title, StringComparer.Ordinal);
+            string videoTable = "| # | Video title | Short description | Link |\n|---|---|---|---|\n" +
+                string.Join("\n", sixUrls.Select((url, index) => $"| {index + 1} | **Model title** | Short excerpt | {url} |"));
+            var multiple = (StackPanel)NIRAAgent.UI.Presentation.NIRARichAnswer.Create(videoTable, videoUrls: sixSet, videoTitles: sixTitles);
+            Check(multiple.Children.Count == 1 && multiple.Children[0] is Grid { Tag: "NIRA.VideoDepthDeck" }, "ui-video-six-table-rows-one-original-deck");
+            var mixed = (StackPanel)NIRAAgent.UI.Presentation.NIRARichAnswer.Create("| Value | Link |\n|---|---|\n| 12 | " + sixUrls[0] + " |", videoUrls: sixSet);
+            Check(mixed.Children.Count == 2 && mixed.Children[0] is RichTextBox && mixed.Children[1] is Border, "ui-video-ordinary-table-preserved");
+            var codeOnly = (StackPanel)NIRAAgent.UI.Presentation.NIRARichAnswer.Create("```text\n" + sixUrls[0] + "\n```", videoUrls: sixSet);
+            Check(codeOnly.Children.Count == 1 && codeOnly.Children[0] is RichTextBox, "ui-video-code-not-promoted");
+            var rejected = (StackPanel)NIRAAgent.UI.Presentation.NIRARichAnswer.Create(videoTable, videoUrls: new HashSet<string>());
+            Check(rejected.Children.Count == 1 && rejected.Children[0] is RichTextBox, "ui-video-unobserved-table-not-promoted");
+            var duplicates = (StackPanel)NIRAAgent.UI.Presentation.NIRARichAnswer.Create(sixUrls[0] + "\n\n" + sixUrls[0], videoUrls: sixSet);
+            Check(duplicates.Children.Count == 1 && duplicates.Children[0] is Border, "ui-video-duplicates-single-player");
+            // Test the actual final-answer entry point, not just deck.TryAdd in isolation.
+            string wrappedVideo = "```nira-ui\n{\"type\":\"video\",\"title\":\"Watch\",\"url\":\"" + sixUrls[0] + "\"}\n```";
+            var aliasVideo = (StackPanel)NIRAAgent.UI.Presentation.NIRARichAnswer.Create(wrappedVideo, videoUrls: sixSet, videoTitles: sixTitles);
+            Check(aliasVideo.Children.Count == 1 && aliasVideo.Children[0] is Border, "ui-video-single-object-url-alias");
+            string malformedDeck = "```nira-ui\n{\"type\":\"video-carousel\",\"videos\":[" +
+                string.Join(",", sixUrls.Take(5).Select(url => "\"" + url + "\"")) + "]}\n```";
+            var recoveredDeck = (StackPanel)NIRAAgent.UI.Presentation.NIRARichAnswer.Create(malformedDeck, videoUrls: sixSet, videoTitles: sixTitles);
+            Check(recoveredDeck.Children.Count == 1 && recoveredDeck.Children[0] is Grid { Tag: "NIRA.VideoDepthDeck" }, "ui-video-unknown-carousel-shape-recovered");
+            string noUrlDeck = "Intro\n\n```nira-ui\n{\"type\":\"videos\",\"items\":[\"bad visual\"]}\n```\n\nEnding";
+            var fallbackDeck = (StackPanel)NIRAAgent.UI.Presentation.NIRARichAnswer.Create(noUrlDeck, videoUrls: sixSet, videoTitles: sixTitles, searchFallback: sixUrls.Take(5).ToArray());
+            Check(fallbackDeck.Children.OfType<Grid>().Any(g => Equals(g.Tag, "NIRA.VideoDepthDeck")) &&
+                !fallbackDeck.Children.OfType<RichTextBox>().Any(box => Text(box).Contains("Some visual content", StringComparison.Ordinal) || Text(box).Contains("A video preview could not", StringComparison.Ordinal)), "ui-video-failed-visual-uses-recorded-search");
+            var unobservedDeck = (StackPanel)NIRAAgent.UI.Presentation.NIRARichAnswer.Create(malformedDeck, videoUrls: new HashSet<string>());
+            Check(!unobservedDeck.Children.OfType<Grid>().Any(), "ui-video-malformed-unobserved-not-embedded");
+            var sixInline = (StackPanel)NIRAAgent.UI.Presentation.NIRARichAnswer.Create(string.Join(" ", sixUrls), videoUrls: sixSet);
+            Check(sixInline.Children.OfType<Grid>().Any(g => Equals(g.Tag, "NIRA.VideoDepthDeck")), "ui-video-six-inline-references");
+            var resizeDeck = new NIRAAgent.UI.Presentation.NIRAVideoDepthDeck();
+            foreach (string url in sixUrls.Take(5))
+                Check(resizeDeck.TryAdd(new NIRAAgent.Presentation.NIRARichBlock { Type = "video", Title = url, Text = url }), "ui-video-resize-add-" + url[^1]);
+            resizeDeck.Complete();
+            var playerField = resizeDeck.GetType().GetField("_player", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var resize = resizeDeck.GetType().GetMethod("TryResizeMountedPlayer", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var mountedPlayer = (StackPanel)playerField.GetValue(resizeDeck)!;
+            var originalCard = mountedPlayer.Children[0];
+            double oldWidth = mountedPlayer.Width;
+            bool resized = (bool)resize.Invoke(resizeDeck, [520.0])!;
+            Check(resized && ReferenceEquals(mountedPlayer, playerField.GetValue(resizeDeck)) &&
+                ReferenceEquals(originalCard, mountedPlayer.Children[0]) && mountedPlayer.Width < oldWidth &&
+                resizeDeck.ActiveIndex == 0, "ui-video-resize-preserves-provider-card-and-selection");
+            var deck = new NIRAAgent.UI.Presentation.NIRAVideoDepthDeck();
+            foreach (string url in sixUrls)
+                Check(deck.TryAdd(new NIRAAgent.Presentation.NIRARichBlock { Type = "video", Title = sixTitles[url], Text = url }), "ui-video-deck-add-" + url[^1]);
+            deck.Complete();
+            string? savedMotion = Environment.GetEnvironmentVariable("NIRA_REDUCE_MOTION");
+            try
+            {
+                Environment.SetEnvironmentVariable("NIRA_REDUCE_MOTION", "1");
+                deck.SelectVideo(5);
+                Check(deck.Count == 6 && deck.ActiveIndex == 5, "ui-video-sixth-card-accessible");
+                deck.SelectVideo(0);
+                Check(deck.ActiveIndex == 0, "ui-video-deck-can-return-to-first");
+            }
+            finally { Environment.SetEnvironmentVariable("NIRA_REDUCE_MOTION", savedMotion); }
+            // Verify actual full-frame GIF decoding, including cell order and distinct pixels.
+            using (var sheetStream = new System.IO.MemoryStream(Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAgAAAAIAAgMAAACJFjxpAAAADFBMVEX/AAAA/wAAAP///wDWAo97AAABKElEQVR42u3RwQkAMAwCwKQ7ZslO2SF8hML5Vw7sCjNh/9RyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPqGA+MCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACA3wEPqPIFUwqT7/oAAAAASUVORK5CYII=")))
+            {
+                var sheet = System.Windows.Media.Imaging.BitmapDecoder.Create(sheetStream,
+                    System.Windows.Media.Imaging.BitmapCreateOptions.PreservePixelFormat,
+                    System.Windows.Media.Imaging.BitmapCacheOption.OnLoad).Frames[0];
+                byte[] encodedGif = Nira.Infrastructure.NiraGifComposer.Compose(sheet, 250, default);
+                using var gifStream = new System.IO.MemoryStream(encodedGif);
+                var gif = new System.Windows.Media.Imaging.GifBitmapDecoder(gifStream,
+                    System.Windows.Media.Imaging.BitmapCreateOptions.PreservePixelFormat,
+                    System.Windows.Media.Imaging.BitmapCacheOption.OnLoad);
+                var pixels = new List<string>();
+                foreach (var frame in gif.Frames)
+                {
+                    var rgb = new System.Windows.Media.Imaging.FormatConvertedBitmap(frame, PixelFormats.Bgr24, null, 0);
+                    byte[] pixel = new byte[3]; rgb.CopyPixels(new Int32Rect(64, 64, 1, 1), pixel, 3, 0);
+                    pixels.Add(Convert.ToHexString(pixel));
+                }
+                Check(gif.Frames.Count == 4 && gif.Frames.All(frame => frame.PixelWidth == 256 && frame.PixelHeight == 256) &&
+                    pixels.SequenceEqual(new[] { "0000FF", "00FF00", "FF0000", "00FFFF" }), "ui-gif-four-frames-and-cell-order");
+            }
+            string? oldMotion = Environment.GetEnvironmentVariable("NIRA_REDUCE_MOTION");
+            try
+            {
+                Environment.SetEnvironmentVariable("NIRA_REDUCE_MOTION", "1");
+                var transition = typeof(Nira.Desktop.MainWindow).GetMethod("TransitionSidebarAsync", BindingFlags.Static | BindingFlags.NonPublic)!;
+                var column = new ColumnDefinition { Width = new GridLength(276) };
+                var leaving = new Border(); var arriving = new Border { Visibility = Visibility.Collapsed };
+                ((Task)transition.Invoke(null, [column, leaving, arriving, 52.0, -10.0])!).GetAwaiter().GetResult();
+                Check(column.Width.Value == 52 && leaving.Visibility == Visibility.Collapsed && arriving.Visibility == Visibility.Visible &&
+                    leaving.IsHitTestVisible && arriving.IsHitTestVisible && arriving.Opacity == 1, "ui-sidebar-reduced-motion-final-state");
+            }
+            finally { Environment.SetEnvironmentVariable("NIRA_REDUCE_MOTION", oldMotion); }
             var heading = Render("# Heading\n\n## C#\n\n### Subheading");
             var sizes = heading.Document.Blocks.OfType<Paragraph>().Select(p => p.FontSize).ToArray();
             Check(sizes.SequenceEqual(new double[] {24,20,17}) && Text(heading).Contains("C#", StringComparison.Ordinal), "ui-heading-hierarchy");
@@ -56,6 +216,12 @@ internal static class Program
             var colorSpans = colors.Document.Blocks.OfType<Paragraph>().SelectMany(x => x.Inlines.OfType<Span>()).ToArray();
             Check(colorSpans.Length == 2 && colorSpans[0].Foreground is SolidColorBrush red && colorSpans[1].Foreground is SolidColorBrush green && red.Color != green.Color &&
                 !Text(colors).Contains("[color=", StringComparison.Ordinal), "ui-model-selected-color");
+            var repaired = Render("- **[color=#8651B5]What is a black hole?**[/color]\n- [color = #087A68]**Weird physics[/color]**\n- [color=#A34E22]Orphan");
+            var repairedSpans = repaired.Document.Blocks.OfType<Paragraph>().Take(2).Select(p => p.Inlines.OfType<Span>().Single()).ToArray();
+            Check(repairedSpans.Length == 2 && repairedSpans[0].Foreground is SolidColorBrush firstAccent &&
+                repairedSpans[1].Foreground is SolidColorBrush secondAccent && firstAccent.Color != secondAccent.Color &&
+                repairedSpans.All(s => s.Inlines.OfType<Span>().Any(b => b.FontWeight == FontWeights.Bold)) &&
+                !Text(repaired).Contains("[color", StringComparison.OrdinalIgnoreCase) && !Text(repaired).Contains("[/color]", StringComparison.OrdinalIgnoreCase), "ui-color-crossed-delimiters-repaired");
             var lightColor = ((SolidColorBrush)colorSpans[0].Foreground).Color;
             NIRAThemeManager.ApplyTheme(NIRAThemeMode.Eclipse, persist: false);
             var darkColors = Render("## [color=#A02020]Risk[/color]");

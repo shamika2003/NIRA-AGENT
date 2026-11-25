@@ -27,6 +27,10 @@ var cases = new (string Name, Func<Task> Test)[] {
     ("m5b1-example-with-real-citation", M5bExampleWithCitation),
     ("m5b1-non-envelope-url-still-flagged", M5bNonEnvelopeUrl),
     ("m5c-identity-and-research-policy", M5cIdentityResearchPolicy),
+    ("m6f-dev-permissions-allow-media-protect-mutations", M6fDevelopmentPermissions),
+    ("m6f-video-search-filters-and-binds-evidence", M6fVideoSearch),
+    ("m6e3-animation-one-request-and-persistent", M6e3Animation),
+    ("m6e3-animation-validation-and-denial", M6e3AnimationDenied),
     ("m6e-generated-artwork-approved-once-and-persistent", M6eGenerationSuccess),
     ("m6e-generation-denied-no-provider-call", M6eGenerationDenied),
     ("m6e-malformed-generation-not-saved", M6eGenerationInvalid),
@@ -1574,6 +1578,53 @@ static Task WorkspaceRelativeOverride()
     return Task.CompletedTask;
 }
 
+static async Task M6e3Animation()
+{
+    using var setup = new TestContext();
+    const string encoded = "iVBORw0KGgoAAAANSUhEUgAAAgAAAAIAAgMAAACJFjxpAAAADFBMVEX/AAAA/wAAAP///wDWAo97AAABKElEQVR42u3RwQkAMAwCwKQ7ZslO2SF8hML5Vw7sCjNh/9RyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPqGA+MCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACA3wEPqPIFUwqT7/oAAAAASUVORK5CYII=";
+    using var handler = new FakeApiHandler(JsonSerializer.Serialize(new { success = true, result = new { image = encoded } }));
+    using var http = new HttpClient(handler);
+    var provider = new ImageGenerationProvider(new string('a', 32), new string('T', 32));
+    var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http, imageGeneration: provider);
+    var args = new { prompt = "A rotating colored square", width = 512, height = 512, animation = true, frameDurationMs = 250 };
+    var model = new FakeModel([new ModelReply(null, [Call("gif1", "image.generate", args)]),
+        new ModelReply(null, [Call("gif2", "image.generate", args)]), new ModelReply("Here is your animation.", [])]);
+    var approvals = new FakeApprovals(true);
+    var engine = new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace));
+    Guid id = Guid.NewGuid();
+    var result = await engine.RunAsync(id, "Create a looping GIF", approvals);
+    Assert(result.Status == ConversationStatus.Completed && handler.Calls == 1 && approvals.Calls == 1 &&
+        handler.RequestBody is { } request && request.Contains("2 by 2 animation sprite sheet", StringComparison.Ordinal),
+        "GIF must be generated with one approved sprite request.");
+    var entries = await new SqliteConversationStore(setup.Database).ListGalleryAsync(default);
+    Assert(entries.Count == 1 && entries[0].IsGenerated && entries[0].IsAnimated && entries[0].FrameDurationMs == 250 &&
+        entries[0].Path.EndsWith(".gif", StringComparison.OrdinalIgnoreCase), "Animation gallery evidence not retained.");
+    byte[] gif = File.ReadAllBytes(entries[0].Path);
+    Assert(gif.AsSpan().StartsWith("GIF89a"u8) && gif[6] == 0 && gif[7] == 1 && gif[8] == 0 && gif[9] == 1 &&
+        gif[^1] == 0x3b && Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(gif)) == entries[0].Sha256 &&
+        System.Text.Encoding.ASCII.GetString(gif).Contains("NETSCAPE2.0", StringComparison.Ordinal), "Saved animation structure or hash invalid.");
+}
+
+static async Task M6e3AnimationDenied()
+{
+    using var setup = new TestContext();
+    using var handler = new FakeApiHandler("{}");
+    using var http = new HttpClient(handler);
+    var provider = new ImageGenerationProvider(new string('a', 32), new string('T', 32));
+    var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http, imageGeneration: provider);
+    var tool = new ImageGenerationTool(new WorkspacePathResolver(setup.Workspace), http, provider);
+    bool rejected = false;
+    try { _ = tool.GetTarget(JsonSerializer.SerializeToElement(new { prompt = "Blue sky", width = 512, height = 512, animation = true, frameDurationMs = 15 })); }
+    catch (ArgumentException) { rejected = true; }
+    Assert(rejected, "Invalid GIF delay must fail before approval.");
+    var model = new FakeModel([new ModelReply(null, [Call("gif1", "image.generate", new { prompt = "Blue sky", width = 512, height = 512, animation = true })])]);
+    var approvals = new FakeApprovals(false);
+    var result = await new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace))
+        .RunAsync(Guid.NewGuid(), "Create a GIF", approvals);
+    Assert(result.Status == ConversationStatus.Paused && approvals.Calls == 1 && handler.Calls == 0 &&
+        !Directory.Exists(Path.Combine(setup.Workspace, ImageGenerationTool.CacheFolder)), "Denied animation must have no effects.");
+}
+
 static async Task M6eGenerationSuccess()
 {
     using var setup = new TestContext();
@@ -1864,6 +1915,80 @@ static async Task M6aCommonsDiscovery()
     Assert(candidate.GetProperty("SourceUrl").GetString() == "https://commons.wikimedia.org/wiki/File:Example.jpg" &&
         candidate.GetProperty("License").GetString() == "CC BY-SA 4.0" &&
         candidate.GetProperty("Author").GetString()!.Trim() == "Example photographer", "Commons attribution metadata lost.");
+}
+
+static async Task M6fDevelopmentPermissions()
+{
+    using var setup = new TestContext();
+    using var handler = new FakeApiHandler("{\"batchcomplete\":true}");
+    using var http = new HttpClient(handler);
+    var provider = new ImageGenerationProvider(new string('a', 32), new string('T', 32));
+    var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http, imageGeneration: provider);
+    var dev = new WorkspaceAuthority(setup.Workspace, developmentMode: true);
+    var strict = new WorkspaceAuthority(setup.Workspace);
+    foreach (string name in new[] { "web.search", "video.search", "image.search", "image.retrieve", "image.generate" })
+    {
+        var descriptor = registry.Descriptors.Single(t => t.Name == name);
+        Assert(dev.IsPreapproved(descriptor, "https://example.com") && !strict.IsPreapproved(descriptor, "https://example.com"), "Media consent must be scoped to development mode: " + name);
+    }
+    foreach (var descriptor in registry.Descriptors.Where(t => t.Risk is ToolRisk.Dangerous or ToolRisk.WriteWorkspace or ToolRisk.WriteOutsideWorkspace))
+        Assert(!dev.IsPreapproved(descriptor, Path.Combine(setup.Workspace, "protected.txt")), "Development mode must not grant mutation: " + descriptor.Name);
+    var upload = new ToolDescriptor("vision.analyze", "Private image transfer", ToolRisk.ReadExternal, JsonToolSchema.Schema("{}"));
+    Assert(!dev.IsPreapproved(upload, "https://example.com"), "Private image upload must still ask.");
+    Assert(!dev.IsPreapproved(upload with { Name = "future.external" }, "https://example.com"), "Unknown network capabilities must still ask.");
+    var model = new FakeModel([new ModelReply(null, [Call("img1", "image.search", new { query = "example", provider = "commons" })]), new ModelReply("No results found.", [])]);
+    var broker = new FakeApprovals(false);
+    var result = await new NiraEngine(model, registry, setup.Store, dev).RunAsync(Guid.NewGuid(), "Find example images", broker);
+    Assert(result.Status == ConversationStatus.Completed && handler.Calls == 1 && broker.Calls == 0, "Development media search must not show approval.");
+    using var videoHandler = new FakeApiHandler("""{"results":[{"url":"https://www.youtube.com/watch?v=abcdefghijk","title":"Video"}]}""");
+    using var videoHttp = new HttpClient(videoHandler);
+    var videoModel = new FakeModel([new ModelReply(null, [Call("video1", "video.search", new { query = "example video" })]), new ModelReply("Here is a video.", [])]);
+    result = await new NiraEngine(videoModel, new ToolRegistry([new VideoSearchTool(videoHttp, () => "test-key")]), setup.Store, dev)
+        .RunAsync(Guid.NewGuid(), "Find a video", broker);
+    Assert(result.Status == ConversationStatus.Completed && videoHandler.Calls == 1 && broker.Calls == 0, "Video search must run without confirmation in development mode.");
+    using var generationHandler = new FakeApiHandler("""{"success":true,"result":{"image":"PGh0bWw+PC9odG1sPg=="}}""");
+    using var generationHttp = new HttpClient(generationHandler);
+    var generationTool = new ImageGenerationTool(new WorkspacePathResolver(setup.Workspace), generationHttp, provider);
+    var generationModel = new FakeModel([new ModelReply(null, [Call("gen1", "image.generate", new { prompt = "Blue sky", width = 256, height = 256 })])]);
+    result = await new NiraEngine(generationModel, new ToolRegistry([generationTool]), setup.Store, dev)
+        .RunAsync(Guid.NewGuid(), "Create blue sky artwork", broker);
+    Assert(result.Status == ConversationStatus.Paused && generationHandler.Calls == 1 && broker.Calls == 0 &&
+        !Directory.Exists(Path.Combine(setup.Workspace, ImageGenerationTool.CacheFolder)), "Generation dispatch needs no confirmation; invalid data still must not save or retry.");
+    var writer = new FakeModel([new ModelReply(null, [Call("write1", "filesystem.write_text", new { path = "protected.txt", content = "Blocked" })])]);
+    result = await new NiraEngine(writer, registry, setup.Store, dev).RunAsync(Guid.NewGuid(), "Create a file", broker);
+    Assert(result.Status == ConversationStatus.Paused && broker.Calls == 1 && !File.Exists(Path.Combine(setup.Workspace, "protected.txt")), "Workspace writes still need approval in development mode.");
+}
+
+static async Task M6fVideoSearch()
+{
+    const string url = "https://www.youtube.com/watch?v=abcdefghijk";
+    using var handler = new FakeApiHandler("""
+        {"results":[{"url":"https://www.youtube.com/watch?v=abcdefghijk","title":"Video"},
+         {"url":"https://youtu.be/abcdefghijk","title":"Duplicate"},
+         {"url":"https://www.youtube.com.evil.example/watch?v=abcdefghijk"},
+         {"url":"https://www.youtube.com/channel/abcdefghijk"},
+         {"url":"https://vimeo.com/12345678","title":"Other"}]}
+        """);
+    using var http = new HttpClient(handler);
+    var args = JsonSerializer.SerializeToElement(new { query = "demo" });
+    var tool = new VideoSearchTool(http, () => "test-key");
+    var result = await tool.ExecuteAsync(args, default);
+    Assert(result.Success && result.Data.GetProperty("results").GetArrayLength() == 2 && handler.Calls == 1, "Only supported deduplicated references expected.");
+    Assert(handler.AuthorizationHeader == "Bearer test-key" && !result.Data.GetRawText().Contains("test-key", StringComparison.Ordinal), "Credential must remain outside receipts.");
+    using var request = JsonDocument.Parse(handler.RequestBody!);
+    Assert(request.RootElement.GetProperty("include_domains").GetArrayLength() == 3, "Video-specific provider filter missing.");
+    var state = new ConversationState { Operations = [new AgentOperation { ToolName = "video.search", Status = OperationStatus.Succeeded, ResultJson = JsonSerializer.Serialize(result) }] };
+    var allowed = VideoEvidence.Allowed(state);
+    state.Messages.Add(new ChatEntry("user", "Find a video about this."));
+    Assert(VideoEvidence.SearchFallback(state).Count == 1, "Single-video fallback must not expose all candidates.");
+    state.Messages.Add(new ChatEntry("user", "Find five interesting videos."));
+    Assert(VideoEvidence.SearchFallback(state).Count == 2, "Fallback cannot invent missing requested results.");
+    Assert(VideoEvidence.Allows(allowed, url) && !VideoEvidence.Allows(allowed, "https://youtu.be/abcdefghijk"), "Only exact observed references may embed.");
+    Assert(VideoEvidence.Titles(state)[url] == "Video" && VideoEvidence.Titles(state)["https://vimeo.com/12345678"] == "Other", "Player titles must come from the recorded search results.");
+    state.Operations[0].Status = OperationStatus.Failed;
+    Assert(VideoEvidence.Allowed(state).Count == 0 && VideoEvidence.SearchFallback(state).Count == 0, "Failed search cannot authorize an embed or recovery deck.");
+    var missing = new VideoSearchTool(http, () => null);
+    Assert(missing.UnavailableReason() is not null && !(await missing.ExecuteAsync(args, default)).Success && handler.Calls == 1, "Missing credentials must not send request.");
 }
 
 static async Task M6aTavilyDiscovery()
