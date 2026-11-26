@@ -14,7 +14,7 @@ public static class NiraStandardTools
         IPublicBrowserSessions? browserSessions = null, IDesktopAutomationBackend? desktopBackend = null,
         VisionProvider? vision = null, ImageGenerationProvider? imageGeneration = null,
         Func<ImageGenerationProvider?>? imageGenerationResolver = null,
-        IApplicationDesktopBackend? applicationBackend = null)
+        IApplicationDesktopBackend? applicationBackend = null, IAgentTool? proceduralRecall = null)
     {
         Directory.CreateDirectory(root);
         var resolver = new WorkspacePathResolver(root);
@@ -52,6 +52,7 @@ public static class NiraStandardTools
             new BrowserSessionSemanticActionTool(browserSessions),
             new BrowserSessionSelectOptionTool(browserSessions),
             new BrowserSessionSetCheckedTool(browserSessions),
+            ..(proceduralRecall is null ? Array.Empty<IAgentTool>() : new IAgentTool[] { proceduralRecall }),
             new MemorySearchTool(store), new MemoryRememberTool(store), new MemoryManageTool(store), new MemoryHistorySearchTool(store),
             new TavilySearchTool(http), new VideoSearchTool(http), new ImageDiscoveryTool(http), new ImagePreviewTool(resolver),
             ..(imageGenerationResolver is not null
@@ -64,7 +65,14 @@ public static class NiraStandardTools
             "image.generate", "video.search", "web.search", "system.inspect",
             "memory.search", "workspace.info", "filesystem.find", "filesystem.read_text", "filesystem.list",
             "productivity.inspect", "desktop.application_find", "desktop.windows_list"
-        ]);
+        ], relatedCapabilities: new Dictionary<string, string[]>(StringComparer.Ordinal)
+        {
+            // Registered evidence/workflow relationships, not user-task classifiers.
+            ["web.search"] = ["browser.inspect_public", "image.search", "image.retrieve"],
+            ["browser.inspect_public"] = ["web.search", "image.search", "image.retrieve"],
+            ["image.search"] = ["image.retrieve", "web.search", "browser.inspect_public"],
+            ["image.retrieve"] = ["image.search", "web.search", "browser.inspect_public"]
+        });
     }
 }
 

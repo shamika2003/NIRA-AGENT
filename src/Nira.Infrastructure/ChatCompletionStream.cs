@@ -20,6 +20,7 @@ internal static class ChatCompletionStream
         var visible = new StringBuilder();
         var calls = new SortedDictionary<int, CallParts>();
         string? finish = null;
+        ModelTokenUsage? usage = null;
         int total = 0;
         var data = new StringBuilder();
         while (await reader.ReadLineAsync(ct).ConfigureAwait(false) is { } line)
@@ -37,6 +38,7 @@ internal static class ChatCompletionStream
             if (packet == "[DONE]") break;
             using var doc = JsonDocument.Parse(packet);
             var root = doc.RootElement;
+            usage = OpenAiCompatibleModel.ReadUsage(root) ?? usage;
             if (root.TryGetProperty("error", out _)) throw new AgentException("Model stream returned an error.");
             if (!root.TryGetProperty("choices", out var choices) || choices.ValueKind != JsonValueKind.Array)
                 throw new AgentException("Invalid model stream event.");
@@ -45,12 +47,12 @@ internal static class ChatCompletionStream
             if (finish is not null) throw new AgentException("Model stream emitted content after its terminal choice.");
             if (choice.TryGetProperty("delta", out var delta) && delta.ValueKind == JsonValueKind.Object)
             {
-                if (delta.TryGetProperty("content", out var text) && text.ValueKind == JsonValueKind.String && text.GetString() is { Length: > 0 } part)
+                if (OpenAiCompatibleModel.ExtractVisibleText(delta) is { Length: > 0 } part)
                 {
                     visible.Append(part);
                     if (calls.Count == 0) preview(part);
                 }
-                if (delta.TryGetProperty("tool_calls", out var toolCalls) && toolCalls.ValueKind == JsonValueKind.Array)
+                if (delta.TryGetProperty("tool_calls", out var toolCalls) && toolCalls.ValueKind == JsonValueKind.Array && toolCalls.GetArrayLength() > 0)
                 {
                     if (calls.Count == 0) preview(null);
                     foreach (var call in toolCalls.EnumerateArray())
@@ -86,6 +88,6 @@ internal static class ChatCompletionStream
             result.Add(new ModelToolCall(parts.Id, parts.Name.ToString(), args));
         }
         if (finish == "tool_calls" && result.Count == 0) throw new AgentException("Missing streamed tool calls.");
-        return new ModelReply(visible.Length == 0 ? null : visible.ToString(), result);
+        return new ModelReply(visible.Length == 0 ? null : visible.ToString(), result) { Usage = usage };
     }
 }

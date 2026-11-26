@@ -45,6 +45,8 @@ public partial class MainWindow : Window
     private TextBlock? _journeyStatus;
     private RichTextBox? _journeyPreview;
     private readonly NIRALivePreview _livePreview = new();
+    private bool _previewRenderQueued;
+    private int _previewEpoch;
     private readonly List<string> _selectedAttachments = [];
     private readonly Dictionary<Guid, List<DeveloperChatExport.ActivityEntry>> _debugActivity = new();
 
@@ -123,37 +125,26 @@ public partial class MainWindow : Window
         if (_busy) return;
         string text = PromptBox.Text.Trim();
         if (string.IsNullOrWhiteSpace(text) && _selectedAttachments.Count == 0) return;
-        bool pausedTask = false;
-        if (_hasTask && !_completed)
+        if (_hasTask || _completed)
         {
-            SetBusy(true);
-            try
-            {
-                var current = await _runtime.Conversations.LoadAsync(_conversationId, default);
-                pausedTask = current is { Status: ConversationStatus.Paused };
-            }
-            catch (Exception error) { Debug.WriteLine(error); AddLine("System", "Unable to check current task state."); return; }
-            finally { SetBusy(false); }
-        }
-        if (_completed || pausedTask)
-        {
-            // Completed or paused work remains immutable on a new message. Resume/Retry is explicit. Link a new isolated task to the
-            // current chat instead of clearing its transcript or reusing old receipts.
             SetBusy(true);
             try
             {
                 if (_runtime.Conversations is not SqliteConversationStore store)
                     throw new InvalidOperationException("Chat thread storage unavailable.");
                 var saved = await store.LoadAsync(_conversationId, default);
-                if (saved?.Status != ConversationStatus.Completed &&
-                    saved is not { Status: ConversationStatus.Paused })
-                { StatusLabel.Text = "This task cannot continue. Start a new conversation."; return; }
-                _conversationId = await store.CreateFollowupAsync(_conversationId, default, startNewAfterPause: pausedTask);
-                _completed = false;
-                _hasTask = false;
-                UpdateConversationLabel();
+                // Only an actual pending clarification belongs to the existing task.
+                // A new message is never an implicit retry of interrupted work.
+                if (saved is not null && saved.Objective.Length > 0 &&
+                    saved.Status != ConversationStatus.AwaitingUser)
+                {
+                    _conversationId = await store.CreateFollowupAsync(_conversationId, default, startNewAfterPause: true);
+                    _completed = false;
+                    _hasTask = false;
+                    UpdateConversationLabel();
+                }
             }
-            catch (Exception error) { Debug.WriteLine(error); AddLine("System", "Unable to continue this chat."); return; }
+            catch (Exception error) { Debug.WriteLine(error); AddLine("System", "Unable to continue this chat. Start a new conversation or explicitly retry the saved task."); return; }
             finally { SetBusy(false); }
         }
         string[] attachments = _selectedAttachments.ToArray();
@@ -194,8 +185,8 @@ public partial class MainWindow : Window
             AgentRunResult outcome;
             try
             {
-                outcome = await _runtime.Engine.RunAsync(
-                    runningTaskId, text, _approvals, progress, cancellation.Token, attachments);
+                outcome = await Task.Run(() => _runtime.Engine.RunAsync(
+                    runningTaskId, text, _approvals, progress, cancellation.Token, attachments), cancellation.Token);
             }
             catch (ModelAuthenticationException auth)
             {
@@ -212,8 +203,8 @@ public partial class MainWindow : Window
                 _runtime.ModelCredentials.Save(key);
                 // The first attempt already persisted the user's message.
                 // Resume it without appending the message a second time.
-                outcome = await _runtime.Engine.RunAsync(
-                    runningTaskId, null, _approvals, progress, cancellation.Token);
+                outcome = await Task.Run(() => _runtime.Engine.RunAsync(
+                    runningTaskId, null, _approvals, progress, cancellation.Token), cancellation.Token);
             }
             EndJourney();
             var recorded = await _runtime.Conversations.LoadAsync(runningTaskId, default);
@@ -720,15 +711,50 @@ public partial class MainWindow : Window
         if (progress.Kind == "preview-delta")
         {
             if (_journeyPanel is null || !_livePreview.Append(progress.Summary)) return;
-            bool follow = ChatScroller.ScrollableHeight - ChatScroller.VerticalOffset < 80;
-            if (_journeyPreview is null)
+            if (!_previewRenderQueued)
             {
-                _journeyPreview = (RichTextBox)NIRAResponseDocument.Create(_livePreview.Text);
-                _journeyPanel.Children.Insert(0, _journeyPreview);
+                _previewRenderQueued = true;
+                int epoch = _previewEpoch;
+                Dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(() =>
+                {
+                    if (epoch != _previewEpoch) return;
+                    _previewRenderQueued = false;
+                    if (_journeyPanel is null) return;
+                    bool follow = ChatScroller.ScrollableHeight - ChatScroller.VerticalOffset < 80;
+                    string text = _livePreview.Text;
+                    if (text.Length == 0)
+                    {
+                        if (_journeyPreview is not null) _journeyPanel.Children.Remove(_journeyPreview);
+                        _journeyPreview = null;
+                        return;
+                    }
+                    if (_journeyPreview is null)
+                    {
+                        _journeyPreview = (RichTextBox)NIRAResponseDocument.Create(text);
+                        _journeyPanel.Children.Insert(0, _journeyPreview);
+#if DEBUG
+                        if (_debugActivity.TryGetValue(_conversationId, out var previewEvents) && previewEvents.Count < 1000)
+                            previewEvents.Add(new(DateTimeOffset.UtcNow, "preview-visible", "Live response preview mounted", null));
+#endif
+                    }
+                    else NIRAResponseDocument.Update(_journeyPreview, text);
+                    if (_journeyDots is not null) _journeyDots.Visibility = Visibility.Collapsed;
+                    if (_journeyStatus is not null) _journeyStatus.Text = "Writing response…";
+                    if (follow) ScrollChatToEnd();
+                }));
             }
-            else NIRAResponseDocument.Update(_journeyPreview, _livePreview.Text);
-            if (_journeyStatus is not null) _journeyStatus.Text = "Writing response…";
-            if (follow) ScrollChatToEnd();
+            return;
+        }
+        if (progress.Kind is "model-context" or "model-usage")
+        {
+#if DEBUG
+            if (!_debugActivity.TryGetValue(_conversationId, out var metricsEvents))
+            {
+                if (_debugActivity.Count >= 100) _debugActivity.Remove(_debugActivity.Keys.First());
+                _debugActivity[_conversationId] = metricsEvents = [];
+            }
+            if (metricsEvents.Count < 1000) metricsEvents.Add(new(DateTimeOffset.UtcNow, progress.Kind, progress.Summary, progress.ToolId));
+#endif
             return;
         }
         if (progress.Kind is "permission" or "tool" or "reasoning" or "routing" or "paused" or "error" or "failed") ResetLivePreview();
@@ -792,7 +818,10 @@ public partial class MainWindow : Window
 
     private void ResetLivePreview()
     {
+        _previewEpoch++;
+        _previewRenderQueued = false;
         _livePreview.Reset();
+        if (_journeyDots is not null) _journeyDots.Visibility = Visibility.Visible;
         if (_journeyPreview is not null) _journeyPanel?.Children.Remove(_journeyPreview);
         _journeyPreview = null;
         if (_journeyStatus is not null) _journeyStatus.Text = "Preparing response";

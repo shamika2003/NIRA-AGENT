@@ -92,6 +92,90 @@ internal static class Program
             memoryNotes.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Check(Equals(memoryNotes.Tag, "ACTIVE") && memoryPreferences.Tag is null &&
                 memoryTitle.Text == "Saved memories", "ui-memory-notes-navigation");
+            // Exercise real preference rendering and saving, including the page's
+            // inherited disabled state during refresh. No model/provider is needed.
+            string memoryUiRoot = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "nira-memory-ui-" + Guid.NewGuid().ToString("N"));
+            System.IO.Directory.CreateDirectory(memoryUiRoot);
+            var previousContext = System.Threading.SynchronizationContext.Current;
+            var memoryDispatcher = System.Windows.Threading.Dispatcher.CurrentDispatcher;
+            System.Threading.SynchronizationContext.SetSynchronizationContext(new System.Windows.Threading.DispatcherSynchronizationContext(memoryDispatcher));
+            try
+            {
+                var memoryStore = new Nira.Infrastructure.SqliteConversationStore(System.IO.Path.Combine(memoryUiRoot, "memory.db"));
+                var preferencesPage = new NIRAAgent.UI.Presentation.NIRAMemoryPage();
+                var preferencesCard = (Grid)preferencesPage.FindName("PageCard")!;
+                var preferencesBody = (StackPanel)preferencesPage.FindName("PageBody")!;
+                var preferencesStatus = (TextBlock)preferencesPage.FindName("StatusText")!;
+                var preferencesNav = (Button)preferencesPage.FindName("PreferencesButton")!;
+                void WaitForMemoryUi(Func<bool> ready)
+                {
+                    if (ready()) return;
+                    var frame = new System.Windows.Threading.DispatcherFrame();
+                    var clock = System.Diagnostics.Stopwatch.StartNew();
+                    var timer = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Background, memoryDispatcher)
+                        { Interval = TimeSpan.FromMilliseconds(10) };
+                    timer.Tick += (_, _) => { if (ready() || clock.Elapsed >= TimeSpan.FromSeconds(10)) frame.Continue = false; };
+                    timer.Start();
+                    try { System.Windows.Threading.Dispatcher.PushFrame(frame); }
+                    finally { timer.Stop(); }
+                    if (!ready()) throw new InvalidOperationException("Memory UI refresh timed out.");
+                }
+                var initializeMemory = preferencesPage.GetType().GetMethod("InitializeAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                var initialization = (Task)initializeMemory.Invoke(preferencesPage, [memoryStore])!;
+                WaitForMemoryUi(() => initialization.IsCompleted);
+                initialization.GetAwaiter().GetResult();
+                preferencesNav.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                WaitForMemoryUi(() => preferencesCard.IsEnabled);
+                Check(preferencesStatus.Text == "Ready", "ui-memory-preferences-load");
+                var options = preferencesBody.Children.OfType<CheckBox>().ToArray();
+                Check(options.Length == 3 && options.All(option => option.IsChecked == false) && !options[2].IsEnabled,
+                    "ui-memory-default-opt-out-and-prerequisites");
+                options[0].IsChecked = true;
+                options[1].IsChecked = true;
+                options[2].IsChecked = true;
+                preferencesBody.Children.OfType<Button>().Single(b => Equals(b.Content, "Save memory preferences"))
+                    .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                WaitForMemoryUi(() => preferencesCard.IsEnabled);
+                options = preferencesBody.Children.OfType<CheckBox>().ToArray();
+                Check(preferencesStatus.Text == "Memory updated" && options.Length == 3 && options.All(option => option.IsChecked == true) && options[2].IsEnabled,
+                    "ui-memory-auto-save-checked-after-save-and-refresh");
+                // Verify the actual database after the real save and refresh.
+                var storedPreferences = memoryStore.GetMemorySettingsAsync(default);
+                WaitForMemoryUi(() => storedPreferences.IsCompleted);
+                Check(storedPreferences.GetAwaiter().GetResult() == new Nira.Core.MemoryRecallSettings(true, true, true),
+                    "ui-memory-auto-save-preferences-persisted");
+                // Use the production busy-state transition, not a detached ancestor
+                // whose ScrollViewer template may not have created a visual parent.
+                var setMemoryLoading = preferencesPage.GetType().GetMethod("SetLoading", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                setMemoryLoading.Invoke(preferencesPage, [true]);
+                Check(!preferencesCard.IsEnabled && !preferencesBody.IsEnabled &&
+                    !options[2].IsEnabled && options[2].IsChecked == true,
+                    "ui-memory-temporary-disable-preserves-checked-value");
+                setMemoryLoading.Invoke(preferencesPage, [false]);
+                Check(preferencesCard.IsEnabled && preferencesBody.IsEnabled && options[2].IsEnabled && options[2].IsChecked == true,
+                    "ui-memory-temporary-disable-restores-controls");
+                options[1].IsChecked = false;
+                Check(options[2].IsChecked == false && !options[2].IsEnabled, "ui-memory-learning-opt-out-clears-auto-save");
+                options[1].IsChecked = true;
+                Check(options[2].IsEnabled && options[2].IsChecked == false, "ui-memory-reenable-requires-auto-save-choice");
+                // Unsaved UI changes must not affect a fresh page or its database.
+                var reopenedPage = new NIRAAgent.UI.Presentation.NIRAMemoryPage();
+                var reopenedInit = (Task)initializeMemory.Invoke(reopenedPage, [new Nira.Infrastructure.SqliteConversationStore(System.IO.Path.Combine(memoryUiRoot, "memory.db"))])!;
+                WaitForMemoryUi(() => reopenedInit.IsCompleted);
+                reopenedInit.GetAwaiter().GetResult();
+                ((Button)reopenedPage.FindName("PreferencesButton")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                var reopenedCard = (Grid)reopenedPage.FindName("PageCard")!;
+                WaitForMemoryUi(() => reopenedCard.IsEnabled);
+                var reopenedOptions = ((StackPanel)reopenedPage.FindName("PageBody")!).Children.OfType<CheckBox>().ToArray();
+                Check(reopenedOptions.Length == 3 && reopenedOptions.All(option => option.IsChecked == true) && reopenedOptions[2].IsEnabled,
+                    "ui-memory-auto-save-restored-on-new-page");
+            }
+            finally
+            {
+                System.Threading.SynchronizationContext.SetSynchronizationContext(previousContext);
+                Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+                System.IO.Directory.Delete(memoryUiRoot, recursive: true);
+            }
             const string watchUrl = "https://www.youtube.com/watch?v=abcdefghijk";
             // Valid JPEG loads immediately before the preview is mounted. No CDN access.
             Check(Nira.Core.NIRAVideoReferencePolicy.TryParse(watchUrl, out var posterReference) && posterReference is not null, "ui-poster-reference");
@@ -484,6 +568,13 @@ internal static class Program
             Check(!live.Append("The image.re") && !live.Append("trieve operation is running.\n\n") && live.Text.Length == 0, "ui-live-preview-split-internal-name-blocked");
             live.Reset();
             Check(live.Append("[color=#8651B5]Concept[/color] is useful.\n\n"), "ui-live-preview-explicit-color");
+            live.Reset();
+            Check(live.Append("This explanation contains enough ordinary words to be visible before the paragraph has ended and more content is coming") &&
+                live.Text.StartsWith("This explanation", StringComparison.Ordinal) && !live.Text.EndsWith("coming", StringComparison.Ordinal), "ui-live-preview-before-paragraph-end");
+            Check(live.Append(".\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\n") && !live.Text.Contains('|'), "ui-live-preview-structured-table-deferred");
+            Check(live.Append("Next paragraph can stream after a table without exposing markup.\n\n") && live.Text.Contains("Next paragraph", StringComparison.Ordinal), "ui-live-preview-resumes-after-table");
+            Check(!live.Append("```nira-ui\n[{\"type\":\"card\"}]\n\n") && !live.Append("```\n\n") &&
+                live.Append("Later prose remains visible.\n\n") && live.Text.Contains("Later prose", StringComparison.Ordinal) && !live.Text.Contains("nira-ui", StringComparison.Ordinal), "ui-live-preview-resumes-after-structured-fence");
             // Original masonry panel: unlike fixed WrapPanel rows, the third tile uses
             // the shortest column; changing viewport width reflows the same children.
             var masonry = new NIRAAgent.UI.Presentation.NIRAMasonryPanel();

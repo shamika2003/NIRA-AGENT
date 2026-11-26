@@ -4,10 +4,12 @@ namespace Nira.Infrastructure;
 /// No application-specific behavior, clipboard changes, shortcuts, or automatic retyping.</summary>
 public static class DesktopVerifiedTextInput
 {
+    public const int MaximumCharacters = 500;
+
     public static DesktopAction Write(string text, Func<bool> canSend, Func<string?> read,
         Func<string, bool> sendUnit, Action wait, CancellationToken ct)
     {
-        if (text.Length is < 1 or > 200 || text.Any(char.IsControl) || !ValidUtf16(text))
+        if (text.Length is < 1 or > MaximumCharacters || text.Any(char.IsControl) || !ValidUtf16(text))
             return new DesktopAction(false, false, "Unsupported text; no input sent.", "TEXT_CHARACTERS_UNSUPPORTED");
         bool dispatched = false;
         int? count = null;
@@ -32,10 +34,12 @@ public static class DesktopVerifiedTextInput
             dispatched = true;
             if (!sendUnit(unit)) return Stop("incomplete", "Windows did not confirm the complete keyboard event sequence.");
             bool matched = false;
-            for (int attempt = 0; attempt < 20; attempt++)
+            // Fast accessibility providers can confirm immediately. Slower providers
+            // retain all 20 paced retries and the independent final observation.
+            for (int attempt = 0; attempt <= 20; attempt++)
             {
                 if (ct.IsCancellationRequested || !canSend()) return Stop("interrupted", "Input conditions changed after dispatch.");
-                wait();
+                if (attempt > 0) wait();
                 string? observed = read();
                 if (observed is null) continue;
                 string actual = observed.TrimEnd('\r', '\n');

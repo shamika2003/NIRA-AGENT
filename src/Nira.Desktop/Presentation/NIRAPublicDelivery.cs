@@ -90,6 +90,8 @@ public static class NIRAPublicDelivery
     public static string? Activity(AgentProgress progress) => progress.Kind switch
     {
         "reasoning" => null,
+        "skill-recall" => "Relevant learned procedures available",
+        "skill-learning" => progress.Summary,
         "permission" => "Waiting for your approval",
         "tool" => ActionTitle(progress.ToolId),
         "observed" or "succeeded" => "Result received",
@@ -107,6 +109,7 @@ public static class NIRAPublicDelivery
         "memory.manage" => "Change saved memory",
         "memory.search_history" => "Read relevant private conversation history",
         "memory.search" => "Search saved memories",
+        "skill.recall" => "Recall a learned procedure",
         "image.retrieve" => "Loading images",
         "image.generate" => "Creating your artwork",
         "system.inspect" => "Checking computer information",

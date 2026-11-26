@@ -2,6 +2,7 @@ using System.Globalization;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using ClosedXML.Excel;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
@@ -539,10 +540,10 @@ public sealed class ProductivityCreateWorkbookTool(WorkspacePathResolver resolve
         Task.Run(() => ProductivityDocuments.CreateWorkbook(GetTarget(args), args.GetProperty("sheets")), ct);
 }
 
-public sealed class ProductivityCreateDocumentTool(WorkspacePathResolver resolver) : IAgentTool
+public sealed class ProductivityCreateDocumentTool(WorkspacePathResolver resolver) : IAgentTool, IToolArgumentNormalizer
 {
     public ToolDescriptor Descriptor { get; } = new("productivity.create_document",
-        "Create a NEW Word .docx document with model-selected title, headings, paragraphs and tables. Never overwrite existing files; independently reopen and hash the saved deliverable.",
+        "Create a NEW Word .docx document with title and content blocks. Each block uses kind (heading, paragraph, table); headings/paragraphs use text, tables use rows including any header row. Never overwrite existing files; independently reopen and hash the saved deliverable.",
         ToolRisk.WriteWorkspace, JsonToolSchema.Schema("""
         {"type":"object","properties":{
           "path":{"type":"string","minLength":1,"maxLength":4096},
@@ -554,6 +555,50 @@ public sealed class ProductivityCreateDocumentTool(WorkspacePathResolver resolve
             "required":["kind"],"additionalProperties":false}}},
          "required":["path","title","blocks"],"additionalProperties":false}
         """), HasSideEffects: true);
+    // Accept only unambiguous structural aliases. Text, cell order, path and title
+    // are unchanged. Unknown fields still fail the original canonical schema.
+    public JsonElement NormalizeArguments(JsonElement arguments)
+    {
+        if (arguments.ValueKind != JsonValueKind.Object ||
+            !arguments.TryGetProperty("blocks", out var blocks) || blocks.ValueKind != JsonValueKind.Array)
+            return arguments;
+        if (blocks.GetArrayLength() > 300) throw new ArgumentException("Use at most 300 document blocks.");
+        if (arguments.EnumerateObject().GroupBy(p => p.Name, StringComparer.Ordinal).Any(g => g.Count() != 1))
+            throw new ArgumentException("Duplicate document argument fields are ambiguous.");
+        bool changed = false;
+        var canonical = new JsonArray();
+        foreach (var block in blocks.EnumerateArray())
+        {
+            if (block.ValueKind != JsonValueKind.Object) throw new ArgumentException("Every document block must be an object.");
+            if (block.EnumerateObject().GroupBy(p => p.Name, StringComparer.Ordinal).Any(g => g.Count() != 1))
+                throw new ArgumentException("Duplicate document block fields are ambiguous.");
+            var node = JsonNode.Parse(block.GetRawText())!.AsObject();
+            if (block.TryGetProperty("type", out var type))
+            {
+                if (block.TryGetProperty("kind", out _) || type.ValueKind != JsonValueKind.String)
+                    throw new ArgumentException("Use exactly one document block kind (kind or type).");
+                node.Remove("type");
+                node["kind"] = type.GetString();
+                changed = true;
+            }
+            if (block.TryGetProperty("header", out var header))
+            {
+                if (node["kind"] is not JsonValue kind || !kind.TryGetValue<string>(out var label) || label != "table" ||
+                    header.ValueKind != JsonValueKind.Array || header.GetArrayLength() is < 1 or > 20 ||
+                    header.EnumerateArray().Any(cell => cell.ValueKind != JsonValueKind.String || (cell.GetString()?.Length ?? 0) > 4000) ||
+                    node["rows"] is not JsonArray rows || rows.Count >= 500)
+                    throw new ArgumentException("A separate table header must be a nonempty row of text cells with a rows array.");
+                rows.Insert(0, JsonNode.Parse(header.GetRawText()));
+                node.Remove("header");
+                changed = true;
+            }
+            canonical.Add(node);
+        }
+        if (!changed) return arguments;
+        var result = JsonNode.Parse(arguments.GetRawText())!.AsObject();
+        result["blocks"] = canonical;
+        return JsonSerializer.SerializeToElement(result);
+    }
     public string GetTarget(JsonElement args) => resolver.Resolve(args.GetProperty("path").GetString());
     public Task<ToolReceipt> ExecuteAsync(JsonElement args, CancellationToken ct) =>
         Task.Run(() => ProductivityDocuments.CreateDocument(GetTarget(args),

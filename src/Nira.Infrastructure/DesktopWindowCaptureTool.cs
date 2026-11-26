@@ -23,7 +23,7 @@ public sealed class DesktopWindowCaptureTool(WorkspacePathResolver paths, IDeskt
 {
     public const int MaximumBytes = 12 * 1024 * 1024;
     public ToolDescriptor Descriptor { get; } = new("desktop.window_capture",
-        "Capture one exact observed application window as a local PNG (may contain private visible content). " +
+        "Capture a screenshot of one exact observed application window as a local PNG (may contain private visible content). " +
         "Requires exact observed windowId and title (not an invented description) and explicit approval. Returns a local PNG for chat preview, OCR or separately approved vision. " +
         "May fail for minimized, protected or unsupported windows. No whole-screen capture or upload.",
         ToolRisk.Dangerous, JsonToolSchema.Schema("""

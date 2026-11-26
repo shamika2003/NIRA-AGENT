@@ -11,7 +11,7 @@ namespace NIRAAgent.UI.Presentation;
 /// <summary>Interleaves native components with selectable prose. Model data is never executable markup.</summary>
 public static class NIRARichAnswer
 {
-    public const string Revision = "M8C-CONTEXTUAL-LEARNING-1";
+    public const string Revision = "M9A-ROUTING-REPAIR-12";
     private static readonly Regex Fence = new(@"^\s{0,3}(`{3,}|~{3,})([^\r\n]*)$", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
     private static readonly HashSet<string> Types = new(StringComparer.Ordinal)
     { "heading", "text", "hero", "insight", "source", "video", "card", "metric", "equation", "table", "chart", "bar", "code", "details", "list", "quote", "timeline", "checklist", "progress", "tabs", "followups", "status", "calculator", "form", "column", "pie", "diagram" };

@@ -47,11 +47,86 @@ public static class ImageEvidenceBinding
         {
             using var doc = JsonDocument.Parse(candidate);
             var root = doc.RootElement;
-            return root.ValueKind == JsonValueKind.Object && root.EnumerateObject().Count() == 1 &&
-                root.TryGetProperty("urls", out var urls) && urls.ValueKind == JsonValueKind.Array &&
-                urls.EnumerateArray().All(u => u.ValueKind == JsonValueKind.String);
+            return TrySelection(root, out _, out _);
         }
         catch (JsonException) { return false; }
+    }
+
+    // Candidate IDs are references to observed metadata, not URLs or authorization.
+    // Resolve before approval, never strip query strings or guess new addresses.
+    public static string? BindRetrieval(ConversationState state, JsonElement arguments, out JsonElement bound, out string error)
+    {
+        bound = arguments;
+        error = "Select exact candidateIds or URLs from successful image discovery in this task.";
+        if (!TrySelection(arguments, out bool byId, out var selection))
+        {
+            error = "Supply one nonempty selection array (candidateIds or urls); the unused alternative may be omitted or empty. Never mix two nonempty arrays or unknown fields. No download occurred.";
+            return "IMAGE_NOT_OBSERVED";
+        }
+        var candidates = Candidates(state).ToArray();
+        static string[] Addresses(JsonElement c) => new[] { Field(c, "ThumbnailUrl"), Field(c, "MediaUrl") }
+            .Where(url => url.Length > 0).Distinct(StringComparer.Ordinal).ToArray();
+        var attempted = new HashSet<string>(StringComparer.Ordinal);
+        var retrieved = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var op in state.Operations.Where(o => o.ToolName == "image.retrieve" &&
+                     o.Status is OperationStatus.Succeeded or OperationStatus.Failed))
+        {
+            try
+            {
+                using var args = JsonDocument.Parse(op.ArgumentsJson);
+                if (args.RootElement.TryGetProperty("urls", out var urls) && urls.ValueKind == JsonValueKind.Array)
+                    foreach (var url in urls.EnumerateArray())
+                        if (url.ValueKind == JsonValueKind.String) attempted.Add(url.GetString()!);
+                if (op.Status != OperationStatus.Succeeded || op.ResultJson is null) continue;
+                using var result = JsonDocument.Parse(op.ResultJson);
+                if (result.RootElement.GetProperty("Success").ValueKind != JsonValueKind.True ||
+                    !result.RootElement.GetProperty("Data").TryGetProperty("previews", out var previews) ||
+                    previews.ValueKind != JsonValueKind.Array) continue;
+                foreach (var preview in previews.EnumerateArray())
+                    if (Field(preview, "path").Length > 0 && Field(preview, "sha256") is { Length: 64 } hash && hash.All(Uri.IsHexDigit))
+                        retrieved.Add(Field(preview, "url"));
+            }
+            catch (Exception ex) when (ex is JsonException or InvalidOperationException or KeyNotFoundException) { }
+        }
+        var pending = new List<string>();
+        foreach (var item in selection.EnumerateArray())
+        {
+            string value = item.GetString()!;
+            var matches = candidates.Where(c => byId ? Field(c, "CandidateId") == value : Addresses(c).Contains(value, StringComparer.Ordinal)).ToArray();
+            if (matches.Length == 0 || (byId && matches.Length != 1)) return "IMAGE_NOT_OBSERVED";
+            // Do not fetch another rendition of a candidate already retrieved.
+            if (matches.SelectMany(Addresses).Any(retrieved.Contains)) continue;
+            string? next = byId ? Addresses(matches[0]).FirstOrDefault(url => !attempted.Contains(url)) :
+                attempted.Contains(value) ? null : value;
+            if (next is not null && !pending.Contains(next, StringComparer.Ordinal)) pending.Add(next);
+        }
+        if (pending.Count == 0)
+        {
+            error = "These candidates or URLs have already been retrieved or attempted. Use the existing successful previews; select a different observed candidate if needed, or report the unavailable images. Do not repeat the same request.";
+            return "IMAGE_ALREADY_ATTEMPTED";
+        }
+        bound = JsonSerializer.SerializeToElement(new { urls = pending });
+        if (!Allows(state, bound)) return "IMAGE_NOT_OBSERVED";
+        error = "";
+        return null;
+    }
+
+    private static bool TrySelection(JsonElement arguments, out bool byId, out JsonElement selection)
+    {
+        byId = false; selection = default;
+        if (arguments.ValueKind != JsonValueKind.Object) return false;
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var field in arguments.EnumerateObject())
+        {
+            if (field.Name is not ("candidateIds" or "urls") || !seen.Add(field.Name) ||
+                field.Value.ValueKind != JsonValueKind.Array || field.Value.GetArrayLength() > 6 ||
+                field.Value.EnumerateArray().Any(x => x.ValueKind != JsonValueKind.String)) return false;
+            if (field.Value.GetArrayLength() == 0) continue;
+            if (selection.ValueKind != JsonValueKind.Undefined) return false;
+            selection = field.Value;
+            byId = field.Name == "candidateIds";
+        }
+        return selection.ValueKind == JsonValueKind.Array;
     }
 
     public static bool Allows(ConversationState state, JsonElement arguments)

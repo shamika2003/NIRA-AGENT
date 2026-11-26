@@ -3,6 +3,65 @@ using Nira.Core;
 using Nira.Infrastructure;
 
 var cases = new (string Name, Func<Task> Test)[] {
+    ("m9a12-unbound-plan-preserves-discovery-routing", M9UnboundPlanRoutingRepair),
+    ("m9a12-read-only-alias-inactive-and-denial", M9ReadOnlyAliasRoutingRepair),
+    ("m9a12-initial-related-research-routing", M9InitialRelatedResearchRepair),
+    ("m9a11-image-empty-alternative-preserves-evidence", M9ImageEmptyAlternative),
+    ("m9a11-browser-text-only-is-opt-in", M9BrowserTextOnly),
+    ("m9a11-lossless-wire-tool-json", M9CompactToolWire),
+    ("m9a10-complete-recent-followup-context", M9CompleteFollowupContext),
+    ("m9a10-image-candidate-binding-and-retry-avoidance", M9ImageCandidateBinding),
+    ("m9a10-image-candidate-routing-and-approval", M9ImageCandidateRouting),
+    ("m9a9-document-aliases-verified-and-approved", M9DocumentCompatibility),
+    ("m9a9-document-invalid-aliases-and-denial", M9DocumentCompatibilitySafety),
+    ("m9a9-cross-family-research-image-routing", M9RelatedResearchRouting),
+    ("m9a8-implicit-numeric-label-and-bare-expectation-verified-capture", M9ImplicitNumericSequenceAndCapture),
+    ("m9a8-implicit-expectation-literal-and-wrong-value-safety", M9ImplicitNumericSafety),
+    ("m9a7-typed-numeric-shorthand-verified-capture", M9TypedNumericSequenceAndCapture),
+    ("m9a7-legacy-numeric-expectation-preflight", M9LegacyNumericPreflight),
+    ("m9a7-typed-numeric-and-selector-safety", M9TypedNumericSafety),
+    ("m9a6-observed-name-sequence-binds-canonical-approval", M9EfficiencyNameBinding),
+    ("m9a6-ambiguous-selector-rejected-before-dispatch", M9EfficiencyAmbiguousSelector),
+    ("m9a6-editor-occupancy-opt-in", M9EfficiencyEditorOccupancy),
+    ("m9a6-immediate-verified-input-no-fixed-character-delay", M9EfficiencyFastInput),
+    ("m9a6-duplicate-read-is-not-progress", M9EfficiencyRepeatedRead),
+    ("m9a6-wire-serialization-preserves-decoded-content", M9EfficiencyWire),
+    ("m9a5-interrupted-task-new-message-isolation", M9InterruptedIsolation),
+    ("m9a5-provider-interruption-checkpoint", M9ProviderInterruption),
+    ("m9a5-verified-longer-editor-input", M9LongEditorInput),
+    ("m9a5-observed-control-method-preflight", M9ObservedMethodPreflight),
+    ("m9a4-compact-observation-keeps-exact-durable-evidence", M9StabilityCompact),
+    ("m9a4-sequence-corrects-all-invalid-fields-without-dispatch", M9StabilitySequenceFeedback),
+    ("m9a4-task-scoped-http-metrics", M9StabilityMetrics),
+    ("m9a4-stream-usage-does-not-affect-visible-content", M9StabilityStreamUsage),
+    ("m9-procedure-learn-persist-reuse-and-opt-out", M9LearnAndReuse),
+    ("m9-procedure-reject-unverified-or-invented-evidence", M9RejectInvalidEvidence),
+    ("m9-procedure-never-grants-authorization", M9SkillCannotAuthorize),
+    ("m9-procedure-version-deduplication-and-deletion", M9Versioning),
+    ("m8d3-memory-source-scope-denies-unrequested-investigation", M8d3ScopeDenied),
+    ("m8d3-memory-source-scope-allows-explicit-investigation", M8d3ScopeAllowed),
+    ("m8d3-memory-source-scope-invalid-decision-fails-closed", M8d3ScopeInvalid),
+    ("m8d3-memory-evolution-preserves-version-and-recall", M8d3VersionedLearning),
+    ("m8d3-memory-evolution-complementary-and-duplicate", M8d3ComplementaryLearning),
+    ("m8d3-memory-evolution-protects-manual-and-rejected-changes", M8d3ProtectedLearning),
+    ("m8d3-memory-evolution-rechecks-stale-snapshot", M8d3StaleLearning),
+    ("m8d3-single-clarification-field-is-not-form", M8d3SingleField),
+    ("m8d2-stream-real-delivery-before-final-response", M8d2StreamBeforeFinal),
+    ("m8d2-stream-content-parts-empty-tool-array", M8d2StreamParts),
+    ("m8d2-empty-clarification-fields-single-question", M8d2EmptyFields),
+    ("m8d2-memory-associations-and-format-dedup", M8d2Associations),
+    ("m8d2-memory-generic-alias-cannot-displace-subject", M8d2GenericAlias),
+    ("m8d2-semantic-phrase-partial-domain-match", M8d2PartialDomain),
+    ("m8d1-semantic-recall-query-only-and-fresh-task", M8d1SemanticRecall),
+    ("m8d1-no-extra-inference-on-opt-out-empty-or-local-hit", M8d1RecallFastPath),
+    ("m8d1-reject-invalid-expansion-and-unrelated-anchors", M8d1RecallIsolation),
+    ("m8d1-recheck-deletion-and-consent-after-inference", M8d1RecallFreshness),
+    ("m8d1-native-decision-is-not-an-executable-tool", M8d1NativeDecision),
+    ("m8c3-automatic-learning-durable-and-conflict-safe", M8c3AutomaticLearning),
+    ("m8c3-automatic-learning-consent-migration", M8c3AutomaticLearningMigration),
+    ("m8c2-automatic-mutation-intent-veto", M8c2IntentVeto),
+    ("m8c2-learning-native-decision-and-fresh-recall", M8c2LearningNative),
+    ("m8c2-learning-skips-malformed-memory-attempt", M8c2LearningSkippedAttempt),
     ("m8c-learning-compares-approved-notes-only-with-recall-consent", M8cLearningContext),
     ("m8c-learning-format-dedup-and-acceptance-race", M8cLearningDedup),
     ("m8c-explicit-memory-actions-not-relearned", M8cLearningSkipsExplicitActions),
@@ -43,6 +102,11 @@ var cases = new (string Name, Func<Task> Test)[] {
     ("m7c-ordered-controls-require-observation", OrderedControlsUnobserved),
     ("m7c-ordered-controls-stop-on-stale", OrderedControlsStale),
     ("m7c-ordered-controls-mismatch-blocks-retry", OrderedControlsMismatch),
+    ("m9a3-ordered-actions-no-extra-inference", OrderedControlsNoExtraInference),
+    ("m9a-ordered-display-numeric-grouping", OrderedDisplayNumericGrouping),
+    ("m9a3-bare-numeric-readback-and-completion", OrderedControlsBareNumericCompletion),
+    ("m9a3-verified-sequence-then-capture", OrderedControlsThenCapture),
+    ("m9a3-local-capability-ranking", M9LocalCapabilityRanking),
     ("m7c-paused-task-explicit-isolation", PausedTaskIsolation),
     ("m7c-nonempty-editor-safe-recovery", NonemptyEditorRecovery),
     ("m7c-verified-input-paced-readback", VerifiedInputPaced),
@@ -605,6 +669,7 @@ var cases = new (string Name, Func<Task> Test)[] {
     ("m3f-bounded-live-catalog", M3fBoundedCatalog),
     ("m3f-model-selects-and-executes", M3fSelectExecute),
     ("m3f-hidden-tool-refused", M3fHiddenRefused),
+    ("m9a-inactive-schema-recovery", M9InactiveSchemaRecovery),
     ("m3f-selection-not-approval", M3fApproval),
     ("m3f-invalid-selection-refused", M3fInvalid),
     ("m3f-mixed-selection-no-dispatch", M3fMixed),
@@ -1486,6 +1551,21 @@ static async Task M3fHiddenRefused()
         "A hidden call is rejected before operation creation; only later active invocation can execute.");
 }
 
+static async Task M9InactiveSchemaRecovery()
+{
+    using var setup = new TestContext();
+    Guid id = Guid.NewGuid();
+    var model = new FakeModel(new ModelReply[] {
+        new(null, [Call("hidden", "filesystem.write_text", new { path = "discarded.txt", content = "not authorized by schema exposure" })]),
+        new(null, [Call("fresh", "filesystem.write_text", new { path = "intended.txt", content = "fresh request" })]),
+        new("Created intended.txt", []) });
+    var result = await setup.Engine(model, routing: true).RunAsync(id, "Create intended.txt", new FakeApprovals(false));
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Completed && saved.Operations.Count == 1 &&
+        !model.ToolSnapshots[0].Any(t => t.Name == "filesystem.write_text") && model.ToolSnapshots[1].Any(t => t.Name == "filesystem.write_text") &&
+        !File.Exists(Path.Combine(setup.Workspace, "discarded.txt")) && File.Exists(Path.Combine(setup.Workspace, "intended.txt")),
+        "Inactive invocation can expose its schema but cannot create receipts or execute its arguments.");
+}
 static async Task M3fApproval()
 {
     using var setup = new TestContext();
@@ -1805,7 +1885,7 @@ static async Task M8bDevelopmentMemoryManagement()
     var broker = new FakeApprovals(false);
     var updateModel = new FakeModel([ModelCall("memory.search", "{\"query\":\"Studio equipment\"}"),
         ModelCall("memory.manage", JsonSerializer.Serialize(new { action = "replace", id = saved.Id, expectedContent = original, replacement = revised })),
-        new ModelReply("I updated my saved note.", [])]);
+        new ModelReply("{\"allow\":true}", []), new ModelReply("I updated my saved note.", [])]);
     var update = await new NiraEngine(updateModel, registry, setup.Store, dev).RunAsync(Guid.NewGuid(),
         "Update your memory: my studio now uses a wireless keyboard.", broker);
     Assert(update.Status == ConversationStatus.Completed && broker.Calls == 0 &&
@@ -1813,7 +1893,7 @@ static async Task M8bDevelopmentMemoryManagement()
         "Development correction requires no separate prompt but must change the actual note.");
     var deleteModel = new FakeModel([ModelCall("memory.search", "{\"query\":\"Studio equipment\"}"),
         ModelCall("memory.manage", JsonSerializer.Serialize(new { action = "delete", id = saved.Id, expectedContent = revised })),
-        new ModelReply("I removed the saved note.", [])]);
+        new ModelReply("{\"allow\":true}", []), new ModelReply("I removed the saved note.", [])]);
     var deleted = await new NiraEngine(deleteModel, registry, setup.Store, dev).RunAsync(Guid.NewGuid(),
         "Forget the saved note about my studio equipment.", broker);
     Assert(deleted.Status == ConversationStatus.Completed && broker.Calls == 0 &&
@@ -1984,6 +2064,133 @@ static async Task M8MemoryToolEvidence()
         remember.MissingEvidence(state, JsonToolSchema.Schema("{\"note\":\"Prefers LCD\",\"topic\":\"screen preference\",\"sourceExcerpt\":\"I prefer LCD.\"}")) is not null, "Exact user provenance, not a model-fabricated quote.");
 }
 
+static async Task M8c2IntentVeto()
+{
+    using var setup = new TestContext();
+    const string project = "The user's Cedar project uses Kotlin and SQLite.";
+    const string preference = "The user prefers SQLite for prototypes.";
+    var original = await setup.Store.WriteMemoryAsync(project, "explicit-memory-user", new MemoryDetails("project", "Cedar"), default);
+    var saved = await setup.Store.WriteMemoryAsync(preference, "explicit-memory-user", new MemoryDetails("preference", "Prototype database"), default);
+    string WrongArgs() => JsonSerializer.Serialize(new { action = "delete", id = original.Id, expectedContent = project, replacement = "", sourceExcerpt = project });
+    string CorrectArgs() => JsonSerializer.Serialize(new { action = "delete", id = saved.Id, expectedContent = preference, replacement = "", sourceExcerpt = preference });
+    var model = new FakeModel([
+        ModelCall("memory.search", "{\"query\":\"SQLite\"}"), ModelCall("memory.manage", WrongArgs()),
+        new ModelReply("{\"allow\":false}", []), ModelCall("memory.manage", WrongArgs()),
+        ModelCall("memory.manage", CorrectArgs()), new ModelReply("{\"allow\":true}", []),
+        new ModelReply("I removed only the saved preference.", [])]);
+    var registry = new ToolRegistry([new MemorySearchTool(setup.Store), new MemoryManageTool(setup.Store)]);
+    var broker = new FakeApprovals(false);
+    Guid id = Guid.NewGuid();
+    var result = await new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace, developmentMode: true))
+        .RunAsync(id, "Forget my general preference for a prototype database, but keep my project facts.", broker);
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Completed && broker.Calls == 0 &&
+        (await setup.Store.ListMemoryNotesAsync(default)).Single().Id == original.Id,
+        "Unrelated note survives; only the in-scope preference is removed without a development popup.");
+    Assert(state.Operations.Count(o => o.ErrorCode == "INTENT_SCOPE_UNVERIFIED") == 2 &&
+        state.Operations.Count(o => o.ToolName == "memory.manage" && o.Status == OperationStatus.Succeeded) == 1 &&
+        model.ToolSnapshots.Count(tools => tools.Count == 0) == 2, "Wrong target is not dispatched and repeated proposal does not spend another review.");
+}
+
+static async Task M8c3AutomaticLearning()
+{
+    using var setup = new TestContext();
+    await setup.Store.SetMemorySettingsAsync(new MemoryRecallSettings(true, true, true), default);
+    const string original = "I prefer paper maps for hiking.";
+    const string changed = "I prefer digital maps for hiking.";
+    const string other = "I use a mechanical keyboard.";
+    string Decision(string note, string topic, string evidence) => JsonSerializer.Serialize(new[] {
+        new { note, kind = "preference", topic, tags = Array.Empty<string>(), sourceExcerpt = evidence } });
+    var model = new FakeModel([
+        new ModelReply(Decision(original, "Hiking maps", original), []),
+        new ModelReply(Decision("I prefer paper  maps for hiking.", "Hiking maps", original), []),
+        new ModelReply(Decision(changed, "Hiking maps", changed), []),
+        new ModelReply(Decision(other, "Keyboard hardware", "Invented evidence"), [])]);
+    var learning = new MemoryLearningService(setup.Store, model);
+    Guid first = Guid.Empty;
+    foreach (string input in new[] { original, original, changed, other })
+    {
+        Guid id = Guid.NewGuid();
+        if (first == Guid.Empty) first = id;
+        await setup.Store.SaveAsync(new ConversationState { Id = id, Status = ConversationStatus.Completed,
+            Messages = [new ChatEntry("user", input)] }, default);
+        await learning.ObserveCompletedAsync(id, default);
+    }
+    var reopened = new SqliteConversationStore(setup.Database);
+    var saved = (await reopened.ListMemoryNotesAsync(default)).Single();
+    Assert(saved.Content == original && saved.Source == "automatic-learning" && saved.Metadata?.SourceConversationId == first,
+        "Automatic mode durably saves grounded new facts, not duplicates, potential conflicts or fabricated evidence.");
+    Assert((await reopened.ListMemoryCandidatesAsync(default)).Count == 0, "Automatic mode does not require a suggestion approval.");
+    Assert((await reopened.RecallAsync("hiking maps", default)).Items.Single().Content == original, "New memory is available after reopening the store.");
+    await reopened.SetMemorySettingsAsync(new MemoryRecallSettings(true, false, true), default);
+    Assert(!(await reopened.GetMemorySettingsAsync(default)).AutoSaveLearning, "Turning learning off also disables automatic saving.");
+    Guid disabled = Guid.NewGuid();
+    await reopened.SaveAsync(new ConversationState { Id = disabled, Status = ConversationStatus.Completed,
+        Messages = [new ChatEntry("user", other)] }, default);
+    await new MemoryLearningService(reopened, model).ObserveCompletedAsync(disabled, default);
+    Assert(model.PromptSnapshots.Count == 4 && (await reopened.ListMemoryNotesAsync(default)).Count == 1,
+        "Disabled learning performs no additional inference or write.");
+}
+
+static async Task M8c3AutomaticLearningMigration()
+{
+    using var setup = new TestContext();
+    await setup.Store.SetMemorySettingsAsync(new MemoryRecallSettings(true, true), default);
+    string id = await setup.Store.StoreMemoryAsync("Previously approved note", "explicit-memory-user", default);
+    await using (var conn = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=" + setup.Database))
+    {
+        await conn.OpenAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "ALTER TABLE memory_preferences DROP COLUMN auto_save_learning";
+        await cmd.ExecuteNonQueryAsync();
+    }
+    var reopened = new SqliteConversationStore(setup.Database);
+    Assert(await reopened.GetMemorySettingsAsync(default) == new MemoryRecallSettings(true, true, false),
+        "Existing suggestion-mode consent is not silently expanded to automatic saving.");
+    Assert((await reopened.ListMemoryNotesAsync(default)).Single().Id == id, "Existing note preserved by the additive migration.");
+    await reopened.SetMemorySettingsAsync(new MemoryRecallSettings(true, true, true), default);
+    Assert(await new SqliteConversationStore(setup.Database).GetMemorySettingsAsync(default) == new MemoryRecallSettings(true, true, true),
+        "One-time automatic learning consent survives restart.");
+}
+
+static async Task M8c2LearningNative()
+{
+    using var setup = new TestContext();
+    const string input = "I prefer offline documentation for embedded work.";
+    const string note = "The user prefers offline documentation for embedded work.";
+    Guid id = Guid.NewGuid();
+    await setup.Store.SetMemorySettingsAsync(new MemoryRecallSettings(true, true), default);
+    await setup.Store.SaveAsync(new ConversationState { Id = id, Status = ConversationStatus.Completed,
+        Messages = [new ChatEntry("user", input)] }, default);
+    string decision = JsonSerializer.Serialize(new { candidates = new[] { new { note, kind = "preference", topic = "Embedded documentation", tags = new[] { "offline reference", "embedded" }, sourceExcerpt = input } } });
+    var model = new PlanningTestModel(ModelCall("nira_review_learning", decision), new FakeModel([]));
+    var learning = new MemoryLearningService(setup.Store, model);
+    await learning.ObserveCompletedAsync(id, default);
+    Assert(model.PlanCalls == 1 && model.DecisionTool?.Name == "nira_review_learning", "A single non-executing structured learning decision is requested.");
+    var pending = (await setup.Store.ListMemoryCandidatesAsync(default)).Single();
+    Assert((await setup.Store.RecallAsync("embedded documentation", default)).Items.Count == 0, "Pending suggestions cannot be recalled.");
+    Assert(await setup.Store.ReviewMemoryCandidateAsync(pending.Id, true, default), "User accepted learning candidate.");
+    var fresh = new FakeModel([new ModelReply("You prefer offline documentation for embedded work.", [])]);
+    await new NiraEngine(fresh, new ToolRegistry([]), setup.Store, new WorkspaceAuthority(setup.Workspace), memoryContext: setup.Store)
+        .RunAsync(Guid.NewGuid(), "What documentation do I prefer for embedded work?", new FakeApprovals(false));
+    Assert(fresh.PromptSnapshots.Single().Any(m => m.Role == "system" && m.Content?.Contains(note, StringComparison.Ordinal) == true),
+        "Independent conversation receives approved durable memory, not the earlier conversation.");
+}
+
+static async Task M8c2LearningSkippedAttempt()
+{
+    using var setup = new TestContext();
+    await setup.Store.SetMemorySettingsAsync(new MemoryRecallSettings(true, true), default);
+    var model = new FakeModel([]);
+    var task = new ConversationState { Status = ConversationStatus.Completed, Messages = [
+        new ChatEntry("user", "Forget my saved preference."),
+        new ChatEntry("assistant", ToolCalls: [new ModelToolCall("invalid", "memory.manage", "{}")])] };
+    await setup.Store.SaveAsync(task, default);
+    await new MemoryLearningService(setup.Store, model).ObserveCompletedAsync(task.Id, default);
+    Assert(model.PromptSnapshots.Count == 0 && (await setup.Store.ListMemoryCandidatesAsync(default)).Count == 0,
+        "Rejected schema-level mutation attempts cannot feed the learning review.");
+}
+
 static async Task M8cLearningContext()
 {
     using var setup = new TestContext();
@@ -2050,6 +2257,380 @@ static async Task M8cLearningSkipsExplicitActions()
     }
     Assert(model.PromptSnapshots.Count == 0 && (await setup.Store.ListMemoryCandidatesAsync(default)).Count == 0,
         "Explicit memory operations do not trigger redundant learning or reintroduce removed facts from the same task.");
+}
+
+static ModelReply M9ProcedureProposal(int secondIndex = 1) => new(JsonSerializer.Serialize(new {
+    learn = true, name = "Inspect and verify a file", purpose = "Inspect a file and verify its hash", inputs = "Current file reference",
+    preconditions = "Resolve the current file and authorize access", verification = "Check the fresh hash receipt",
+    steps = new[] { new { index = 0, guidance = "Inspect the current file" }, new { index = secondIndex, guidance = "Verify the current file" } }
+}), []);
+
+static AgentOperation M9Observation(IAgentTool tool, string value, bool success = true) => new() {
+    ToolName = tool.Descriptor.Name, CapabilityContract = CapabilityContractFingerprint.Compute(tool.Descriptor),
+    Status = success ? OperationStatus.Succeeded : OperationStatus.Failed,
+    ArgumentsJson = JsonSerializer.Serialize(new { target = value }),
+    ResultJson = JsonSerializer.Serialize(success ? ToolReceipt.Ok("Observed", new { privateValue = value }) : ToolReceipt.Fail("FAIL", "Failed"))
+};
+
+static async Task M9LearnAndReuse()
+{
+    using var setup = new TestContext();
+    var first = new GenericRecoveryTool("test.inspect", false, _ => ToolReceipt.Ok("Inspected"));
+    var second = new GenericRecoveryTool("test.verify", false, _ => ToolReceipt.Ok("Verified"));
+    ProceduralSkillService? service = null;
+    var recall = new SkillRecallTool((id, ct) => service!.RetrieveAsync(id, ct));
+    var registry = new ToolRegistry([first, second, recall]);
+    var review = new FakeModel([M9ProcedureProposal()]);
+    service = new ProceduralSkillService(setup.Store, review, registry);
+    var state = new ConversationState { Status = ConversationStatus.Completed, Objective = "Private test objective",
+        Operations = [M9Observation(first, "PRIVATE_SOURCE_SENTINEL"), M9Observation(second, "PRIVATE_SOURCE_SENTINEL")] };
+    state.Operations.Insert(1, new AgentOperation { ToolName = "test.change", Status = OperationStatus.Rejected, ErrorCode = "INTENT_SCOPE_UNVERIFIED" });
+    await setup.Store.SaveAsync(state, default);
+    await service.ObserveAsync(state.Id, default, null);
+    Assert(review.PromptSnapshots.Count == 0, "Disabled learning must not review tasks.");
+    await setup.Store.SetSkillLearningAsync(true, default);
+    await service.ObserveAsync(state.Id, default, null);
+    await service.ObserveAsync(state.Id, default, null);
+    Assert(review.PromptSnapshots.Count == 1 && review.ToolSnapshots.Single().Count == 0, "One non-executing review per source task.");
+    Assert(!JsonSerializer.Serialize(review.PromptSnapshots).Contains("PRIVATE_SOURCE_SENTINEL", StringComparison.Ordinal) &&
+        !JsonSerializer.Serialize(review.PromptSnapshots).Contains("Private test objective", StringComparison.Ordinal), "Raw source data must not enter procedure learning.");
+    var reopened = new SqliteConversationStore(setup.Database);
+    var procedure = (await reopened.ListProceduresAsync(default)).Single();
+    Assert(procedure.EvidenceIds.SequenceEqual(state.Operations.Where(o => o.Status == OperationStatus.Succeeded).Select(o => o.Id)) && procedure.Version == 1, "Persist exact host evidence and version.");
+    Assert((await service.RecallAsync("Inspect and verify a file", default))?.Contains(procedure.Id, StringComparison.Ordinal) == true, "Relevant new request discovers procedure.");
+    var model = new FakeModel([new ModelReply(null, [Call("recall", "skill.recall", new { id = procedure.Id })]),
+        new ModelReply(null, [Call("inspect", first.Descriptor.Name, new { target = "NEW_VALUE" })]),
+        new ModelReply(null, [Call("verify", second.Descriptor.Name, new { target = "NEW_VALUE" })]),
+        new ModelReply("Inspected and verified the new file.", [])]);
+    var engine = new NiraEngine(model, registry, reopened, new WorkspaceAuthority(setup.Workspace, true), proceduralSkills: service);
+    Guid reuse = Guid.NewGuid();
+    var answer = await engine.RunAsync(reuse, "Inspect and verify a file", new FakeApprovals(true));
+    Assert(answer.Status == ConversationStatus.Completed && first.Calls == 1 && second.Calls == 1, "Skill guidance must use normal executor.");
+    var reused = await reopened.LoadAsync(reuse, default);
+    Assert(reused is not null && reused.Operations.Where(o => o.ToolName != "skill.recall").All(o => o.ArgumentsJson.Contains("NEW_VALUE", StringComparison.Ordinal)), "Fresh arguments, not replay.");
+    Assert((await reopened.ListProceduresAsync(default)).Single().Matches == 1, "Record one matching reuse sequence.");
+    await service.ObserveAsync(reuse, default, null);
+    Assert((await reopened.ListProceduresAsync(default)).Single().Matches == 1, "Reuse counters are idempotent.");
+    await reopened.SetSkillLearningAsync(false, default);
+    Assert(await service.RecallAsync("Inspect and verify a file", default) is null && !(await service.RetrieveAsync(procedure.Id, default)).Success, "Opt-out disables recall.");
+    await reopened.DeleteProcedureAsync(procedure.Id, default);
+    Assert((await reopened.ListProceduresAsync(default)).Count == 0, "Delete learned procedure.");
+}
+
+static async Task M9RejectInvalidEvidence()
+{
+    using var setup = new TestContext();
+    await setup.Store.SetSkillLearningAsync(true, default);
+    var first = new GenericRecoveryTool("test.inspect", false, _ => ToolReceipt.Ok("Inspected"));
+    var second = new GenericRecoveryTool("test.verify", false, _ => ToolReceipt.Ok("Verified"));
+    var registry = new ToolRegistry([first, second]);
+    var review = new FakeModel([M9ProcedureProposal(9)]);
+    var service = new ProceduralSkillService(setup.Store, review, registry);
+    var failed = new ConversationState { Status = ConversationStatus.Completed,
+        Operations = [M9Observation(first, "a"), M9Observation(second, "b", false)] };
+    await setup.Store.SaveAsync(failed, default); await service.ObserveAsync(failed.Id, default, null);
+    Assert(review.PromptSnapshots.Count == 0, "Failed operations cannot seed a skill.");
+    var stale = new ConversationState { Status = ConversationStatus.Completed,
+        Operations = [M9Observation(first, "a"), M9Observation(second, "b")] };
+    stale.Operations[0].CapabilityContract = null;
+    await setup.Store.SaveAsync(stale, default); await service.ObserveAsync(stale.Id, default, null);
+    Assert(review.PromptSnapshots.Count == 0, "Legacy unbound evidence cannot seed a skill.");
+    var valid = new ConversationState { Status = ConversationStatus.Completed,
+        Operations = [M9Observation(first, "a"), M9Observation(second, "b")] };
+    await setup.Store.SaveAsync(valid, default); await service.ObserveAsync(valid.Id, default, null);
+    Assert(review.PromptSnapshots.Count == 1 && (await setup.Store.ListProceduresAsync(default)).Count == 0, "Reject model-invented operation index.");
+}
+
+static async Task M9Versioning()
+{
+    using var setup = new TestContext();
+    await setup.Store.SetSkillLearningAsync(true, default);
+    var first = new GenericRecoveryTool("test.inspect", false, _ => ToolReceipt.Ok("Inspected"));
+    var second = new GenericRecoveryTool("test.verify", false, _ => ToolReceipt.Ok("Verified"));
+    var review = new FakeModel([M9ProcedureProposal(), M9ProcedureProposal()]);
+    var service = new ProceduralSkillService(setup.Store, review, new ToolRegistry([first, second]));
+    for (int i = 0; i < 2; i++)
+    {
+        var source = new ConversationState { Status = ConversationStatus.Completed,
+            Operations = [M9Observation(first, i.ToString()), M9Observation(second, i.ToString())] };
+        await setup.Store.SaveAsync(source, default); await service.ObserveAsync(source.Id, default, null);
+    }
+    var p = (await setup.Store.ListProceduresAsync(default)).Single();
+    Assert(p.Version == 1 && review.PromptSnapshots.Count == 1, "Same sequence and contract must not create duplicate versions or duplicate inference.");
+    var updated = p with { Steps = [p.Steps[0] with { Contract = "changed-contract" }, p.Steps[1]] };
+    Assert(await setup.Store.SaveProcedureAsync(updated, default), "Changed dependency creates new version.");
+    var latest = (await setup.Store.ListProceduresAsync(default)).Single();
+    Assert(latest.Id == p.Id && latest.Version == 2 && !(await service.RetrieveAsync(p.Id, default)).Success, "Old version cannot bypass contract validation.");
+    await setup.Store.DeleteProcedureAsync(p.Id, default);
+    Assert((await setup.Store.ListProceduresAsync(default)).Count == 0, "Remove all procedure versions.");
+}
+
+static async Task M9SkillCannotAuthorize()
+{
+    using var setup = new TestContext();
+    await setup.Store.SetSkillLearningAsync(true, default);
+    var first = new GenericRecoveryTool("test.inspect", false, _ => ToolReceipt.Ok("Inspected"));
+    var write = new GenericRecoveryTool("test.change", true, _ => ToolReceipt.Ok("Changed", changedState: true));
+    ProceduralSkillService? service = null;
+    var recall = new SkillRecallTool((id, ct) => service!.RetrieveAsync(id, ct));
+    var registry = new ToolRegistry([first, write, recall]);
+    service = new ProceduralSkillService(setup.Store, new FakeModel([M9ProcedureProposal()]), registry);
+    var source = new ConversationState { Status = ConversationStatus.Completed,
+        Operations = [M9Observation(first, "a"), M9Observation(write, "a")] };
+    await setup.Store.SaveAsync(source, default); await service.ObserveAsync(source.Id, default, null);
+    var p = (await setup.Store.ListProceduresAsync(default)).Single();
+    var model = new FakeModel([new ModelReply(null, [Call("recall", "skill.recall", new { id = p.Id })]),
+        new ModelReply(null, [Call("write", write.Descriptor.Name, new { target = "different" })])]);
+    var approvals = new FakeApprovals(false);
+    var engine = new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace, true), proceduralSkills: service);
+    var result = await engine.RunAsync(Guid.NewGuid(), "Inspect and verify a file", approvals);
+    Assert(result.Status == ConversationStatus.Paused && approvals.Calls == 1 && write.Calls == 0, "Learned skill cannot grant write authorization.");
+    var incompatible = new ProceduralSkillService(setup.Store, new FakeModel([]), new ToolRegistry([first]));
+    Assert(!(await incompatible.RetrieveAsync(p.Id, default)).Success, "Missing dependency blocks retrieval.");
+}
+
+static async Task M8d3ScopeDenied() => await M8d3ScopeCase("{\"expand\":false}", false);
+static async Task M8d3ScopeAllowed() => await M8d3ScopeCase("{\"expand\":true}", true);
+static async Task M8d3ScopeInvalid() => await M8d3ScopeCase("{\"expand\":true,\"unexpected\":true}", false);
+
+static async Task M8d3ScopeCase(string decision, bool allowed)
+{
+    using var setup = new TestContext();
+    // No saved notes means no semantic expansion inference before the search.
+    const string marker = "unrelated-file-content";
+    File.WriteAllText(Path.Combine(setup.Workspace, "fixture.txt"), marker);
+    var model = new FakeModel([
+        ModelCall("memory.search", "{\"query\":\"Example subject\"}"),
+        ModelCall("filesystem.read_text", "{\"path\":\"fixture.txt\"}"),
+        new ModelReply(decision, []), new ModelReply(allowed ? marker : "I do not have that saved information.", [])]);
+    var registry = new ToolRegistry([new MemorySearchTool(setup.Store), new FileReadTool(new WorkspacePathResolver(setup.Workspace))]);
+    var engine = new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace),
+        memoryContext: new SemanticMemoryContextProvider(setup.Store, model));
+    Guid id = Guid.NewGuid();
+    var result = await engine.RunAsync(id, allowed ? "Recall the subject and inspect fixture.txt if necessary." : "What did I tell you about my example subject?", new FakeApprovals(false));
+    var saved = await setup.Store.LoadAsync(id, default);
+    Assert(result.Status == ConversationStatus.Completed && saved is not null, "Complete with actual available evidence.");
+    Assert(saved!.Operations.Count(op => op.ToolName == "filesystem.read_text") == (allowed ? 1 : 0), "Unrequested investigation cannot dispatch; explicitly supported source expansion can.");
+    Assert(model.PromptSnapshots.Count == 4 && model.ToolSnapshots[2].Count == 0, "One non-executing scope review only when switching source.");
+    if (!allowed) Assert(model.ToolSnapshots[3].Count == 0 && !model.PromptSnapshots[3].Any(m => m.Content?.Contains(marker, StringComparison.Ordinal) == true), "Final response cannot read unrelated data.");
+}
+
+static string M8d3Proposal(string note, string topic, string evidence, string relation, params string[] ids) =>
+    JsonSerializer.Serialize(new[] { new { note, kind = "preference", topic, tags = Array.Empty<string>(), sourceExcerpt = evidence, relation, relatedIds = ids } });
+
+static async Task<Guid> M8d3Learn(SqliteConversationStore store, IChatModel model, string message)
+{
+    Guid id = Guid.NewGuid();
+    await store.SaveAsync(new ConversationState { Id = id, Status = ConversationStatus.Completed, Messages = [new ChatEntry("user", message)] }, default);
+    await new MemoryLearningService(store, model).ObserveCompletedAsync(id, default);
+    return id;
+}
+
+static async Task M8d3VersionedLearning()
+{
+    using var setup = new TestContext();
+    await setup.Store.SetMemorySettingsAsync(new MemoryRecallSettings(true, true, true), default);
+    const string old = "The user prefers printed hiking maps.", topic = "Hiking maps";
+    const string evidence = "For hiking maps, I now prefer digital instead of printed maps.";
+    const string updated = "The user prefers digital hiking maps.";
+    var note = await setup.Store.WriteMemoryAsync(old, "automatic-learning", new MemoryDetails("preference", topic, SourceExcerpt: "I prefer printed hiking maps."), default);
+    var model = new FakeModel([new ModelReply(M8d3Proposal(updated, topic, evidence, "supersedes", note.Id), []), new ModelReply("{\"approved\":true}", [])]);
+    Guid task = await M8d3Learn(setup.Store, model, evidence);
+    var reopened = new SqliteConversationStore(setup.Database);
+    var current = (await reopened.ListMemoryNotesAsync(default)).Single();
+    Assert(current.Id == note.Id && current.Content == updated && current.Metadata?.SourceConversationId == task, "Versioned change retains durable identity and new provenance.");
+    var versions = await reopened.ListMemoryVersionsAsync(note.Id, default);
+    Assert(versions.Count == 1 && versions[0].Prior.Content == old && versions[0].Prior.Metadata?.SourceExcerpt == "I prefer printed hiking maps.", "Prior provenance survives encrypted history.");
+    Assert((await reopened.RecallAsync(topic, default)).Items.Single().Content == updated, "Superseded version cannot enter recall.");
+    Assert(model.PromptSnapshots.Count == 2 && model.ToolSnapshots.All(tools => tools.Count == 0), "One proposal and one independent non-executing review.");
+    Assert(await reopened.RemoveMemoryNoteAsync(note.Id, default) && (await reopened.ListMemoryVersionsAsync(note.Id, default)).Count == 0, "Deleting a note also removes its automatic versions.");
+}
+
+static async Task M8d3ComplementaryLearning()
+{
+    using var setup = new TestContext();
+    await setup.Store.SetMemorySettingsAsync(new MemoryRecallSettings(true, true, true), default);
+    const string topic = "Hiking maps", prior = "The user prefers printed hiking maps.", evidence = "I prefer hiking maps with contour lines.";
+    const string complement = "The user prefers hiking maps with contour lines.";
+    var note = await setup.Store.WriteMemoryAsync(prior, "explicit-memory-user", new MemoryDetails("preference", topic), default);
+    var model = new FakeModel([new ModelReply(M8d3Proposal(complement, topic, evidence, "complementary", note.Id), []), new ModelReply("{\"approved\":true}", []), new ModelReply("[]", [])]);
+    await M8d3Learn(setup.Store, model, evidence);
+    await M8d3Learn(setup.Store, model, "For hiking I like maps that show contour lines.");
+    var notes = await setup.Store.ListMemoryNotesAsync(default);
+    Assert(notes.Count == 2 && notes.Any(n => n.Id == note.Id && n.Content == prior) && notes.Any(n => n.Content == complement), "Distinct related knowledge is added without modifying manual notes or duplicating equivalent facts.");
+    Assert((await setup.Store.ListMemoryVersionsAsync(note.Id, default)).Count == 0, "Complementary learning never creates a replacement version.");
+}
+
+static async Task M8d3ProtectedLearning()
+{
+    using var setup = new TestContext();
+    await setup.Store.SetMemorySettingsAsync(new MemoryRecallSettings(true, true, true), default);
+    const string topic = "Hiking maps", prior = "The user prefers printed hiking maps.", evidence = "For hiking maps I now prefer digital instead.";
+    const string updated = "The user prefers digital hiking maps.";
+    var note = await setup.Store.WriteMemoryAsync(prior, "explicit-memory-user", new MemoryDetails("preference", topic), default);
+    var model = new FakeModel([new ModelReply(M8d3Proposal(updated, topic, evidence, "supersedes", note.Id), [])]);
+    await M8d3Learn(setup.Store, model, evidence);
+    Assert((await setup.Store.ListMemoryNotesAsync(default)).Single().Content == prior && model.PromptSnapshots.Count == 1, "Manual notes cannot be automatically rewritten even when proposed.");
+    await setup.Store.RemoveMemoryNoteAsync(note.Id, default);
+    var automatic = await setup.Store.WriteMemoryAsync(prior, "automatic-learning", new MemoryDetails("preference", topic), default);
+    var rejected = new FakeModel([new ModelReply(M8d3Proposal(updated, topic, evidence, "supersedes", automatic.Id), []), new ModelReply("{\"approved\":false}", [])]);
+    await M8d3Learn(setup.Store, rejected, evidence);
+    Assert((await setup.Store.ListMemoryNotesAsync(default)).Single().Content == prior && (await setup.Store.ListMemoryVersionsAsync(automatic.Id, default)).Count == 0, "Independent veto leaves existing automatic note untouched.");
+}
+
+static async Task M8d3StaleLearning()
+{
+    using var setup = new TestContext();
+    await setup.Store.SetMemorySettingsAsync(new MemoryRecallSettings(true, true, true), default);
+    const string topic = "Hiking maps", prior = "The user prefers printed hiking maps.", evidence = "For hiking maps I now prefer digital instead.";
+    var note = await setup.Store.WriteMemoryAsync(prior, "automatic-learning", new MemoryDetails("preference", topic), default);
+    int calls = 0;
+    var model = new FakeModel(_ => {
+        if (++calls == 1) return new ModelReply(M8d3Proposal("The user prefers digital hiking maps.", topic, evidence, "supersedes", note.Id), []);
+        Assert(setup.Store.ChangeMemoryNoteAsync(note.Id, prior, "The user prefers a compass.", "explicit-memory-user", new MemoryDetails("preference", topic), default).GetAwaiter().GetResult(), "Simulate user editing during review.");
+        return new ModelReply("{\"approved\":true}", []);
+    });
+    await M8d3Learn(setup.Store, model, evidence);
+    Assert((await setup.Store.ListMemoryNotesAsync(default)).Single().Content == "The user prefers a compass." && (await setup.Store.ListMemoryVersionsAsync(note.Id, default)).Count == 0, "Stale review cannot replace concurrent manual correction.");
+}
+
+static async Task M8d3SingleField()
+{
+    using var setup = new TestContext();
+    var model = new FakeModel([ModelCall("nira_ask_user", "{\"question\":\"Which format?\",\"fields\":[\"Format\"]}")]);
+    var result = await setup.Engine(model).RunAsync(Guid.NewGuid(), "Ask which output format I want.", new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.AwaitingUser && result.Message == "Which format?", "Single optional field uses normal single question rather than a rejected form.");
+}
+
+static async Task M8d2Associations()
+{
+    using var setup = new TestContext();
+    await setup.Store.SetMemorySettingsAsync(new MemoryRecallSettings(true, false), default);
+    const string a = "The Acorn workspace uses a relational store.";
+    const string b = "The Acorn workspace builds with Gradle.";
+    var first = await setup.Store.WriteMemoryAsync(a, "explicit-settings-user", new MemoryDetails("project", "Acorn workspace"), default);
+    var duplicate = await setup.Store.WriteMemoryAsync("The Acorn workspace uses a  relational store.", "explicit-settings-user", new MemoryDetails("project", "Acorn workspace"), default);
+    Assert(!duplicate.Changed && duplicate.Id == first.Id, "Whitespace-only duplicates keep the original durable note.");
+    await setup.Store.WriteMemoryAsync(b, "explicit-settings-user", new MemoryDetails("project", "Acorn workspace"), default);
+    await setup.Store.WriteMemoryAsync("The Beech workspace uses a separate store.", "explicit-settings-user", new MemoryDetails("project", "Beech workspace"), default);
+    var result = await setup.Store.RecallAsync("relational store", default);
+    Assert(result.Items.Count == 2 && result.Items.Any(n => n.Content == a) && result.Items.Any(n => n.Content == b),
+        "Recall includes complementary facts from the exact same subject, not another workspace.");
+    Assert((await setup.Store.ListMemoryNotesAsync(default)).Count == 3, "No consolidation deletes or rewrites original notes.");
+}
+
+static async Task M8d2GenericAlias()
+{
+    using var setup = new TestContext();
+    await setup.Store.WriteMemoryAsync("Acorn project uses a relational database.", "explicit-settings-user", new MemoryDetails("project", "Acorn project"), default);
+    Assert((await setup.Store.FindMemoryAsync("Beech", ["project"], 5, default)).Count == 0,
+        "Generic fallback must not substitute a different project for a named subject.");
+    Assert((await setup.Store.FindMemoryAsync("Acorn", ["project"], 5, default)).Count == 1,
+        "Specific subject still matches.");
+}
+
+static async Task M8d2PartialDomain()
+{
+    using var setup = new TestContext();
+    await setup.Store.SetMemorySettingsAsync(new MemoryRecallSettings(true, false), default);
+    const string note = "The user prefers printed electronics manuals.";
+    await setup.Store.WriteMemoryAsync(note, "explicit-settings-user", new MemoryDetails("preference", "Electronics manuals"), default);
+    await setup.Store.WriteMemoryAsync("The user likes historical novels.", "explicit-settings-user", new MemoryDetails("preference", "Novels"), default);
+    var model = new FakeModel([new ModelReply("""{"anchor":"","phrases":["electronics manuals documentation"]}""", [])]);
+    var context = await new SemanticMemoryContextProvider(setup.Store, model).RecallAsync("How do I learn circuit design?", default);
+    Assert(context.Items.Single().Content == note && context.SelectionMethod == "semantic", "Bounded domain overlap does not require the exact model-generated wording.");
+}
+
+static async Task M8d1SemanticRecall()
+{
+    using var setup = new TestContext();
+    await setup.Store.SetMemorySettingsAsync(new MemoryRecallSettings(true, false), default);
+    const string note = "The user prefers visual diagrams for complex software architecture.";
+    const string unrelated = "The user likes pottery on weekends.";
+    await setup.Store.WriteMemoryAsync(note, "explicit-memory-user", new MemoryDetails("preference", "Software architecture"), default);
+    await setup.Store.WriteMemoryAsync(unrelated, "explicit-memory-user", new MemoryDetails("preference", "Pottery"), default);
+    const string query = "Explain how distributed services communicate.";
+    var model = new FakeModel([new ModelReply("{\"anchor\":\"\",\"phrases\":[\"software architecture diagrams\"]}", []), new ModelReply("Here is an explanation.", [])]);
+    var context = new SemanticMemoryContextProvider(setup.Store, model);
+    var result = await new NiraEngine(model, new ToolRegistry([]), setup.Store, new WorkspaceAuthority(setup.Workspace), memoryContext: context)
+        .RunAsync(Guid.NewGuid(), query, new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.Completed && model.PromptSnapshots.Count == 2, "One expansion and one normal answer.");
+    Assert(model.ToolSnapshots[0].Count == 0 && model.PromptSnapshots[0].Count == 2 &&
+        model.PromptSnapshots[0][1].Content?.Contains(query, StringComparison.Ordinal) == true &&
+        !model.PromptSnapshots[0].Any(m => m.Content?.Contains(note, StringComparison.Ordinal) == true || m.Content?.Contains(unrelated, StringComparison.Ordinal) == true),
+        "Only current query, never saved notes, enters expansion.");
+    Assert(model.PromptSnapshots[1].Any(m => m.Role == "system" && m.Content?.Contains(note, StringComparison.Ordinal) == true) &&
+        !model.PromptSnapshots[1].Any(m => m.Content?.Contains(unrelated, StringComparison.Ordinal) == true), "Only locally matched note enters final inference.");
+    Assert((await setup.Store.ListMemoryNotesAsync(default)).Count == 2, "Recall does not mutate notes.");
+}
+
+static async Task M8d1RecallFastPath()
+{
+    using var setup = new TestContext();
+    var model = new FakeModel([]);
+    var context = new SemanticMemoryContextProvider(setup.Store, model);
+    Assert((await context.RecallAsync("Orchid", default)).Items.Count == 0, "Opt-out.");
+    await setup.Store.SetMemorySettingsAsync(new MemoryRecallSettings(true, false), default);
+    Assert((await context.RecallAsync("Orchid", default)).Items.Count == 0, "Empty store.");
+    await setup.Store.WriteMemoryAsync("Orchid uses a message queue.", "explicit-memory-user", new MemoryDetails("project", "Orchid"), default);
+    var match = await context.RecallAsync("Orchid", default);
+    Assert(match.Items.Count == 1 && match.SelectionMethod == "local" && model.PromptSnapshots.Count == 0, "Existing exact matches do not spend an extra model call.");
+}
+
+static async Task M8d1RecallIsolation()
+{
+    using var setup = new TestContext();
+    await setup.Store.SetMemorySettingsAsync(new MemoryRecallSettings(true, false), default);
+    await setup.Store.WriteMemoryAsync("Orchid uses a relational database.", "explicit-memory-user", new MemoryDetails("project", "Orchid"), default);
+    const string query = "What storage does Quasar use?";
+    var model = new FakeModel([
+        new ModelReply("{\"anchor\":\"Quasar\",\"phrases\":[\"Quasar relational database\"]}", []),
+        new ModelReply("{\"anchor\":\"Orchid\",\"phrases\":[\"Orchid relational database\"]}", []),
+        new ModelReply("{\"anchor\":\"Quasar\",\"phrases\":[\"relational database\"]}", []),
+        new ModelReply("{\"anchor\":\"\",\"phrases\":[\"project details\"]}", []),
+        new ModelReply("{\"anchor\":\"\",\"phrases\":[\"relational database\"],\"extra\":true}", []),
+        new ModelReply("{\"anchor\":\"\",\"phrases\":[\"relational database\"]}", []),
+        ModelCall("memory.manage", "{}"), new ModelReply("not json", [])]);
+    var context = new SemanticMemoryContextProvider(setup.Store, model);
+    for (int i = 0; i < 8; i++)
+        Assert((await context.RecallAsync(query, default)).Items.Count == 0, "Invalid or unrelated expansion must not recall a note.");
+    Assert(model.PromptSnapshots.Count == 8 && (await setup.Store.ListMemoryNotesAsync(default)).Count == 1, "One decision per miss; no mutation.");
+}
+
+static async Task M8d1NativeDecision()
+{
+    using var setup = new TestContext();
+    await setup.Store.SetMemorySettingsAsync(new MemoryRecallSettings(true, false), default);
+    const string note = "The user prefers printed manuals for electronics.";
+    await setup.Store.WriteMemoryAsync(note, "explicit-memory-user", new MemoryDetails("preference", "Electronics references"), default);
+    var execution = new FakeModel([]);
+    var model = new PlanningTestModel(ModelCall("nira_expand_memory_query", "{\"anchor\":\"\",\"phrases\":[\"printed manuals\"]}"), execution);
+    var context = await new SemanticMemoryContextProvider(setup.Store, model).RecallAsync("How can I learn circuit design?", default);
+    Assert(context.SelectionMethod == "semantic" && context.Items.Single().Content == note && model.PlanCalls == 1 &&
+        model.DecisionTool?.Name == "nira_expand_memory_query" && execution.PromptSnapshots.Count == 0,
+        "Native non-executing decision selects real stored memory; no execution model call or mutation.");
+}
+
+static async Task M8d1RecallFreshness()
+{
+    using var setup = new TestContext();
+    await setup.Store.SetMemorySettingsAsync(new MemoryRecallSettings(true, false), default);
+    const string note = "The user prefers physical trail maps.";
+    var saved = await setup.Store.WriteMemoryAsync(note, "explicit-memory-user", new MemoryDetails("preference", "Trail maps"), default);
+    const string decision = "{\"anchor\":\"\",\"phrases\":[\"physical trail maps\"]}";
+    var model = new FakeModel(_ => {
+        Assert(setup.Store.ChangeMemoryNoteAsync(saved.Id, note, null, "explicit-memory-user", null, default).GetAwaiter().GetResult(), "Delete during expansion.");
+        return new ModelReply(decision, []);
+    });
+    Assert((await new SemanticMemoryContextProvider(setup.Store, model).RecallAsync("How should I navigate outdoors?", default)).Items.Count == 0,
+        "Deleted note cannot be recalled from the old snapshot.");
+    await setup.Store.WriteMemoryAsync(note, "explicit-memory-user", new MemoryDetails("preference", "Trail maps"), default);
+    var optedOut = new FakeModel(_ => {
+        setup.Store.SetMemorySettingsAsync(new MemoryRecallSettings(false, false), default).GetAwaiter().GetResult();
+        return new ModelReply(decision, []);
+    });
+    var result = await new SemanticMemoryContextProvider(setup.Store, optedOut).RecallAsync("How should I navigate outdoors?", default);
+    Assert(!result.Settings.RecallEnabled && result.Items.Count == 0, "Recall opt-out is rechecked before delivery.");
 }
 
 static async Task M8cRecallAliases()
@@ -2300,6 +2881,53 @@ static async Task M4b3Visible()
         handler.StreamRequested, "Streaming must preserve visible deltas only, with one request.");
 }
 
+static async Task M8d2EmptyFields()
+{
+    using var setup = new TestContext();
+    var model = new FakeModel([ModelCall("nira_ask_user", """{"question":"Which destination?","fields":[]}""")]);
+    var result = await setup.Engine(model).RunAsync(Guid.NewGuid(), "Help choose a destination.", new FakeApprovals(false));
+    Assert(result.Status == ConversationStatus.AwaitingUser && result.Message.Contains("Which destination?", StringComparison.Ordinal) &&
+        model.PromptSnapshots.Count == 1, "An empty optional field list is an ordinary single question, not a protocol failure.");
+}
+
+static async Task M8d2StreamBeforeFinal()
+{
+    string first = M4b3Sse("""{"choices":[{"delta":{"content":"Early visible words"},"finish_reason":null}]}""");
+    string last = M4b3Sse("""{"choices":[{"delta":{"content":" and final words"},"finish_reason":null}]}""",
+        """{"choices":[{"delta":{},"finish_reason":"stop"}]}""", "[DONE]");
+    using var body = new M8d2GatedStream(first, last);
+    using var http = new HttpClient(new M8d2GatedHandler(body));
+    var model = new OpenAiCompatibleModel(http, new Uri("https://example.invalid/v1/"), "mock", () => null);
+    var early = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    var completion = model.CompleteStreamingAsync([new ChatEntry("user", "Explain")], [], delta =>
+    {
+        if (delta == "Early visible words") early.TrySetResult(true);
+    }, deadline.Token);
+    try
+    {
+        await early.Task.WaitAsync(deadline.Token);
+        Assert(!completion.IsCompleted, "Visible delta reaches consumer while provider still withholds final response.");
+    }
+    finally { body.Release(); }
+    var reply = await completion;
+    Assert(reply.Content == "Early visible words and final words" && reply.DeliveryMode == "event-stream", "Final response is complete and authoritative.");
+}
+
+static async Task M8d2StreamParts()
+{
+    using var handler = new M4b3StreamHandler(M4b3Sse(
+        """{"choices":[{"delta":{"content":[{"type":"text","text":"First "}],"tool_calls":[]},"finish_reason":null}]}""",
+        """{"choices":[{"delta":{"content":"second","reasoning_content":"PRIVATE","tool_calls":[]},"finish_reason":null}]}""",
+        """{"choices":[{"delta":{},"finish_reason":"stop"}]}""", "[DONE]"));
+    using var http = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(http, new Uri("https://example.invalid/v1/"), "mock", () => null);
+    var preview = new List<string?>();
+    var reply = await model.CompleteStreamingAsync([new ChatEntry("user", "Explain")], [], preview.Add, default);
+    Assert(reply.Content == "First second" && reply.DeliveryMode == "event-stream" &&
+        preview.SequenceEqual(new string?[] { null, "First ", "second" }), "Empty tool arrays cannot erase real visible content; private fields stay hidden.");
+}
+
 static async Task M4b3Tool()
 {
     using var handler = new M4b3StreamHandler(M4b3Sse(
@@ -2334,7 +2962,7 @@ static async Task M4b3JsonFallback()
     var model = new OpenAiCompatibleModel(http, new Uri("https://example.invalid/v1/"), "mock", () => null);
     var preview = new List<string?>();
     var reply = await model.CompleteStreamingAsync([new ChatEntry("user", "Hello")], [], preview.Add, default);
-    Assert(reply.Content == "Ordinary response" && preview.SequenceEqual(new string?[] { null }) && handler.Calls == 1,
+    Assert(reply.Content == "Ordinary response" && reply.DeliveryMode == "json" && preview.SequenceEqual(new string?[] { null }) && handler.Calls == 1,
         "JSON response fallback must not fake deltas or make another request.");
 }
 
@@ -9007,6 +9635,640 @@ static string OrderedControlArgs() => JsonSerializer.Serialize(new {
     }, observeAutomationId = "display", expectedName = "Final result"
 });
 
+static async Task M9DocumentCompatibility()
+{
+    using var setup = new TestContext(); using var http = new HttpClient();
+    var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http);
+    const string proposal = """
+        {"path":"report.docx","title":"Observations","blocks":[
+          {"type":"heading","level":2,"text":"Summary"},
+          {"type":"paragraph","text":"Preserve café, α and exact line\nbreaks."},
+          {"type":"table","header":["Item","Value"],"rows":[["A","001"],["B","-2.50"]]},
+          {"kind":"paragraph","text":"Source: https://example.org/reference"}]}
+        """;
+    Assert(registry.Validate("productivity.create_document", proposal, out var normalized, out _), "Document aliases must resolve to the existing canonical schema.");
+    Assert(normalized.GetProperty("blocks")[2].GetProperty("rows").GetArrayLength() == 3 &&
+        normalized.GetProperty("blocks")[2].GetProperty("rows")[0][0].GetString() == "Item" &&
+        normalized.GetProperty("blocks")[2].GetProperty("rows")[1][1].GetString() == "001",
+        "Preserve exact header and cell order; do not coerce strings to numbers.");
+    var model = new FakeModel([ModelCall("productivity.create_document", proposal), new ModelReply("Created report.", [])]);
+    var approvals = new FakeApprovals(true); Guid id = Guid.NewGuid();
+    var result = await new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace, developmentMode: true),
+        enableCapabilityRouting: true, enableAdaptivePlanning: true, enableLocalSchemaRanking: true)
+        .RunAsync(id, "Create a Word document with the report and its table.", approvals);
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    var operation = saved.Operations.Single();
+    var artifact = RecordedFileArtifacts.From(saved).Single();
+    Assert(result.Status == ConversationStatus.Completed && model.PromptSnapshots.Count == 2 && approvals.Calls == 1 &&
+        operation.Status == OperationStatus.Succeeded && approvals.Requests.Single().ArgumentsJson == operation.ArgumentsJson &&
+        await RecordedFileArtifacts.MatchesAsync(artifact, setup.Workspace),
+        "Compatible document creation must approve canonical content, execute once and independently verify the artifact.");
+    using var doc = System.IO.Compression.ZipFile.OpenRead(artifact.Path);
+    using var reader = new StreamReader(doc.GetEntry("word/document.xml")!.Open());
+    var xml = System.Xml.Linq.XDocument.Parse(await reader.ReadToEndAsync());
+    System.Xml.Linq.XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    var rows = xml.Descendants(w + "tr").Select(r => r.Elements(w + "tc").Select(c => string.Concat(c.Descendants(w + "t").Select(t => t.Value))).ToArray()).ToArray();
+    Assert(rows.Length == 3 && rows[0].SequenceEqual(new[] { "Item", "Value" }) && rows[1].SequenceEqual(new[] { "A", "001" }) &&
+        rows[2].SequenceEqual(new[] { "B", "-2.50" }), "The actual OpenXML document must include the exact table header and all original rows.");
+}
+
+static async Task M9DocumentCompatibilitySafety()
+{
+    using var setup = new TestContext(); using var http = new HttpClient();
+    var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http);
+    foreach (string block in new[] {
+        """{"kind":"paragraph","type":"heading","text":"ambiguous"}""",
+        """{"type":"paragraph","text":"x","header":["not a table"]}""",
+        """{"type":"table","header":[1],"rows":[["x"]]}""",
+        """{"type":"table","header":["x"]}""",
+        """{"type":"paragraph","text":"x","overwrite":true}""",
+        """{"type":"paragraph","type":"heading","text":"x"}""" })
+    {
+        string args = "{\"path\":\"out.docx\",\"title\":\"Title\",\"blocks\":[" + block + "]}";
+        Assert(!registry.Validate("productivity.create_document", args, out _, out _), "Reject ambiguous, malformed or unsupported document aliases before dispatch.");
+    }
+    string canonical = """{"path":"out.docx","title":"Title","blocks":[{"kind":"table","rows":[["Header"],["Value"]]}]}""";
+    Assert(registry.Validate("productivity.create_document", canonical, out var existing, out _) && existing.GetRawText() == canonical,
+        "Existing canonical document contract must stay unchanged.");
+    const string proposal = """{"path":"out.docx","title":"Title","blocks":[{"type":"paragraph","text":"Protected write"}]}""";
+    var approvals = new FakeApprovals(false);
+    var model = new FakeModel([ModelCall("productivity.create_document", proposal)]);
+    var result = await new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace, developmentMode: true))
+        .RunAsync(Guid.NewGuid(), "Create a document", approvals);
+    Assert(result.Status == ConversationStatus.Paused && approvals.Calls == 1 && !File.Exists(Path.Combine(setup.Workspace, "out.docx")),
+        "Normalization never grants permission or writes after denial.");
+}
+
+static async Task M9CompleteFollowupContext()
+{
+    using var setup = new TestContext();
+    string answer = "Opening section. " + new string('x', 6700) + " Closing section.";
+    var parent = new ConversationState { Status = ConversationStatus.Completed, Objective = "Explain a topic",
+        LastAnswer = answer, Messages = [new ChatEntry("user", "Explain a topic"), new ChatEntry("tool", "PRIVATE_TOOL_DATA", "call")] };
+    await setup.Store.SaveAsync(parent, default);
+    Guid child = await setup.Store.CreateFollowupAsync(parent.Id, default);
+    var saved = (await setup.Store.LoadAsync(child, default))!;
+    Assert(saved.PreviousChatContext?.Contains(answer, StringComparison.Ordinal) == true &&
+        saved.PreviousChatContext?.Contains("Explain a topic", StringComparison.Ordinal) == true &&
+        saved.PreviousChatContext?.Contains("PRIVATE_TOOL_DATA", StringComparison.Ordinal) == false && saved.Operations.Count == 0,
+        "Recent complete answer and request must survive follow-up without inheriting receipts.");
+    var model = new FakeModel(messages => {
+        Assert(messages.Any(m => m.Role == "system" && m.Content?.Contains(answer, StringComparison.Ordinal) == true),
+            "Engine must not truncate the stored recent exchange a second time.");
+        return new ModelReply("Acknowledged.", []);
+    });
+    await setup.Engine(model, adaptive: true).RunAsync(child, "Create a document for this", new FakeApprovals(false));
+    parent.LastAnswer = "Opening section. " + new string('x', 14000) + " Closing section.";
+    await setup.Store.SaveAsync(parent, default);
+    var longChild = (await setup.Store.LoadAsync(await setup.Store.CreateFollowupAsync(parent.Id, default), default))!;
+    Assert(longChild.PreviousChatContext is { } context && context.Length <= ConversationState.PreviousChatContextLimit &&
+        context.Contains("Opening section.", StringComparison.Ordinal) && context.Contains("Closing section.", StringComparison.Ordinal) &&
+        context.Contains("omitted by context limit", StringComparison.Ordinal),
+        "Exceptionally long history stays bounded and explicitly incomplete.");
+}
+
+static Task M9ImageEmptyAlternative()
+{
+    const string url = "https://images.example.org/photo.png?variant=preview";
+    var state = new ConversationState();
+    state.Operations.Add(new AgentOperation { ToolName = "image.search", Status = OperationStatus.Succeeded,
+        ResultJson = JsonSerializer.Serialize(ToolReceipt.Ok("Observed", new { candidates = new[] {
+            new { CandidateId = "observed-id", MediaUrl = url, ThumbnailUrl = url } } })) });
+    JsonElement Args(string json) => JsonDocument.Parse(json).RootElement.Clone();
+    Assert(ImageEvidenceBinding.BindRetrieval(state, Args("""{"candidateIds":["observed-id"],"urls":[]}"""), out var byId, out _) is null &&
+        byId.GetProperty("urls")[0].GetString() == url, "An empty alternative cannot invalidate genuine observed IDs.");
+    Assert(ImageEvidenceBinding.BindRetrieval(state, JsonSerializer.SerializeToElement(new { candidateIds = Array.Empty<string>(), urls = new[] { url } }), out var byUrl, out _) is null &&
+        byUrl.GetRawText() == byId.GetRawText(), "Legacy URL selection with empty ID list binds identically.");
+    foreach (string bad in new[] {
+        """{"candidateIds":[],"urls":[]}""", """{"candidateIds":["observed-id"],"urls":["https://images.example.org/photo.png?variant=preview"]}""",
+        """{"candidateIds":["unknown"],"urls":[]}""", """{"candidateIds":["observed-id"],"urls":null}""",
+        """{"candidateIds":["observed-id"],"candidateIds":[],"urls":[]}""", """{"candidateIds":["observed-id"],"extra":[]}""" })
+        Assert(ImageEvidenceBinding.BindRetrieval(state, Args(bad), out _, out _) == "IMAGE_NOT_OBSERVED", "Ambiguous or unobserved selection never dispatches.");
+    Assert(ImageEvidenceBinding.IsBareRetrievalArguments(state, """{"candidateIds":["observed-id"],"urls":[]}"""),
+        "Bare JSON remains a protocol error, never an executed action.");
+    return Task.CompletedTask;
+}
+
+static async Task M9BrowserTextOnly()
+{
+    using var setup = new TestContext();
+    var reader = new FakeBrowserReader();
+    var tool = new PublicBrowserInspectionTool(reader);
+    var text = JsonSerializer.SerializeToElement(new { url = "https://www.example.com/", textOnly = true });
+    var full = JsonSerializer.SerializeToElement(new { url = "https://www.example.com/" });
+    Assert(JsonToolSchema.Validate(tool.Descriptor.Parameters, text, out _) && JsonToolSchema.Validate(tool.Descriptor.Parameters, full, out _),
+        "Both modes retain the registered schema.");
+    var denied = await new NiraEngine(new FakeModel([new ModelReply(null, [Call("deny", "browser.inspect_public", new { url = "https://www.example.com/", textOnly = true })])]),
+        new ToolRegistry([tool]), setup.Store, new WorkspaceAuthority(setup.Workspace)).RunAsync(Guid.NewGuid(), "Read this public page", new FakeApprovals(false));
+    Assert(denied.Status == ConversationStatus.Paused && reader.Calls == 0 && reader.TextCalls == 0,
+        "Text-only mode cannot bypass network approval.");
+    var first = await tool.ExecuteAsync(text, default);
+    Assert(first.Success && reader.TextCalls == 1 && reader.Calls == 0 && first.Data.GetProperty("VisibleText").GetString() == "Example body" &&
+        first.Data.GetProperty("Links").GetArrayLength() == 0 && first.Data.GetProperty("Elements").GetArrayLength() == 0 &&
+        first.Data.GetProperty("inspectionMode").GetString() == "text_only", "Text-only path does not fabricate control or link evidence.");
+    var second = await tool.ExecuteAsync(full, default);
+    Assert(second.Success && reader.Calls == 1 && second.Data.GetProperty("Links").GetArrayLength() == 1,
+        "Existing full inspection remains the default and retains links.");
+    reader.FinalUrl = "https://other.example.net/";
+    Assert((await tool.ExecuteAsync(text, default)).ErrorCode == "BROWSER_REDIRECT_BLOCKED", "Text-only path keeps origin verification.");
+}
+
+static async Task M9CompactToolWire()
+{
+    using var handler = new FakeApiHandler("""{"choices":[{"message":{"content":"Done."}}]}""");
+    using var http = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(http, new Uri("https://example.invalid/v1/"), "mock", () => null);
+    string content = JsonSerializer.Serialize(new { Success = true, Data = new { text = string.Concat(Enumerable.Repeat("<item> \"quoted\" & é ", 30)), number = 1.25, path = "C:\\folder\\file.txt" } });
+    // Tool receipt JSON is inert data; exact values, call IDs, user text and model arguments are unchanged.
+    var call = new ModelToolCall("call-1", "sample.read", """{"target":"a"}""");
+    ChatEntry[] messages = [new("user", content), new("assistant", ToolCalls: [call]), new("tool", content, call.Id)];
+    await model.CompleteAsync(messages, [], default);
+    using var body = JsonDocument.Parse(handler.RequestBody!);
+    var wire = body.RootElement.GetProperty("messages");
+    string compact = wire[2].GetProperty("content").GetString()!;
+    using var original = JsonDocument.Parse(content); using var projected = JsonDocument.Parse(compact);
+    Assert(JsonElement.DeepEquals(original.RootElement, projected.RootElement) && compact.Length < content.Length &&
+        wire[0].GetProperty("content").GetString() == content && wire[2].GetProperty("tool_call_id").GetString() == call.Id &&
+        wire[1].GetProperty("tool_calls")[0].GetProperty("function").GetProperty("arguments").GetString() == call.ArgumentsJson &&
+        messages[2].Content == content, "Only the model-facing tool JSON serialization is compacted losslessly.");
+}
+
+static Task M9ImageCandidateBinding()
+{
+    const string first = "https://images.example.org/a.jpg?variant=original";
+    const string thumb = "https://images.example.org/a-small.jpg?variant=preview";
+    const string second = "https://images.example.org/b.jpg";
+    var state = new ConversationState();
+    state.Operations.Add(new AgentOperation { ToolName = "image.search", Status = OperationStatus.Succeeded,
+        ResultJson = JsonSerializer.Serialize(ToolReceipt.Ok("Observed", new { candidates = new[] {
+            new { CandidateId = "a", MediaUrl = first, ThumbnailUrl = thumb },
+            new { CandidateId = "b", MediaUrl = second, ThumbnailUrl = "" } } })) });
+    JsonElement Select(params string[] ids) => JsonSerializer.SerializeToElement(new { candidateIds = ids });
+    Assert(ImageEvidenceBinding.BindRetrieval(state, Select("a", "b"), out var bound, out _) is null &&
+        bound.GetProperty("urls").EnumerateArray().Select(x => x.GetString()).SequenceEqual(new[] { thumb, second }),
+        "Observed candidates must bind to their exact preferred URLs.");
+    Assert(ImageEvidenceBinding.BindRetrieval(state, Select("unobserved"), out _, out _) == "IMAGE_NOT_OBSERVED" &&
+        ImageEvidenceBinding.BindRetrieval(state, JsonSerializer.SerializeToElement(new { urls = new[] { "https://images.example.org/a.jpg" } }), out _, out _) == "IMAGE_NOT_OBSERVED",
+        "An unknown ID or changed URL must not authorize a fetch.");
+    state.Operations.Add(new AgentOperation { ToolName = "image.retrieve", Status = OperationStatus.Succeeded,
+        ArgumentsJson = bound.GetRawText(), ResultJson = JsonSerializer.Serialize(ToolReceipt.Ok("Partial", new {
+            previews = new[] { new { url = second, path = "preview.png", sha256 = new string('A', 64) } }, failed = 1 })) });
+    Assert(ImageEvidenceBinding.BindRetrieval(state, Select("a", "b"), out bound, out _) is null &&
+        bound.GetProperty("urls").GetArrayLength() == 1 && bound.GetProperty("urls")[0].GetString() == first,
+        "Only the unattempted alternate rendition may be selected; the successful candidate is not repeated.");
+    state.Operations.Add(new AgentOperation { ToolName = "image.retrieve", Status = OperationStatus.Failed, ArgumentsJson = bound.GetRawText() });
+    Assert(ImageEvidenceBinding.BindRetrieval(state, Select("a", "b"), out _, out _) == "IMAGE_ALREADY_ATTEMPTED",
+        "No further dispatch when all observed renditions were attempted or retrieved.");
+    Assert(ImageEvidenceBinding.BindRetrieval(state, JsonSerializer.SerializeToElement(new { urls = new[] { second } }), out _, out _) == "IMAGE_ALREADY_ATTEMPTED",
+        "Legacy exact URLs must also avoid repeated retrieval.");
+    return Task.CompletedTask;
+}
+
+static async Task M9UnboundPlanRoutingRepair()
+{
+    using var setup = new TestContext();
+    using var http = new HttpClient();
+    var candidate = new ApplicationCandidate(@"C:\Windows\calc.exe", new string('A', 64), "fixture");
+    var backend = new M7cFakeApplicationBackend(candidate);
+    var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http, applicationBackend: backend);
+    // Replay the five proposals from the failed diagnostic, then correct the discovery schema.
+    var model = new FakeModel(new ModelReply[] {
+        ModelCall("nira_plan", """{"steps":[{"action":"Find Calculator executable","description":"Use desktop.application_find to locate calc.exe"},{"action":"Launch Calculator","description":"Launch the observed executable path for Calculator"},{"action":"List windows","description":"Get the Calculator window identifier"},{"action":"Inspect Calculator window","description":"Retrieve accessibility metadata for buttons"},{"action":"Invoke calculation sequence","description":"Press 1,2,8,*,2,4,= using desktop.control_sequence"},{"action":"Capture screenshot","description":"Capture the Calculator window showing result"}]}"""),
+        ModelCall("nira_plan", """{"steps":[{"action":"Find Calculator executable","description":"Locate the Windows Calculator executable (calc.exe) using desktop.application_find","successCriterion":"Calculator executable path is returned"},{"action":"Launch Calculator","description":"Launch the found Calculator executable with desktop.application_launch","successCriterion":"Calculator process starts (receipt)"},{"action":"List windows","description":"List top‑level windows to obtain the Calculator window ID and title","successCriterion":"Calculator window appears in list"},{"action":"Inspect Calculator window","description":"Inspect the Calculator window to get accessibility IDs for number and operation buttons","successCriterion":"Button IDs for digits 1,2,8,*,2,4,= are obtained"},{"action":"Invoke calculation sequence","description":"Use desktop.control_sequence to press 1,2,8,*,2,4,= in order","successCriterion":"Calculator displays the result 3072"},{"action":"Capture screenshot","description":"Capture a screenshot of the Calculator window showing the result","successCriterion":"Screenshot image receipt is returned"}]}"""),
+        ModelCall("nira_plan", """{"steps":[{"description":"Locate the Windows Calculator executable (calc.exe) using desktop.application_find","kind":"action","successCriterion":"Calculator executable path is returned","toolName":"desktop.application_find"},{"description":"Launch the found Calculator executable with desktop.application_launch","kind":"action","successCriterion":"Calculator process starts (receipt)","toolName":"desktop.application_launch"},{"description":"List top-level windows to obtain the Calculator window ID and title","kind":"action","successCriterion":"Calculator window appears in list","toolName":"desktop.windows_list"},{"description":"Inspect the Calculator window to get accessibility IDs for number and operation buttons","kind":"action","successCriterion":"Button IDs for digits 1,2,8,*,2,4,= are obtained","toolName":"desktop.window_inspect"},{"description":"Press 1,2,8,*,2,4,= using desktop.control_sequence","kind":"action","successCriterion":"Calculator displays the result 3072","toolName":"desktop.control_sequence"},{"description":"Capture a screenshot of the Calculator window showing the result","kind":"action","successCriterion":"Screenshot image receipt is returned","toolName":"desktop.window_capture"}]}"""),
+        ModelCall("nira_plan", """{"steps":[{"description":"Locate the Windows Calculator executable (calc.exe) using desktop.application_find","kind":"observation","successCriterion":"Calculator executable path is returned"},{"description":"Launch the found Calculator executable with desktop.application_launch","kind":"action","successCriterion":"Calculator process starts (receipt)"},{"description":"List top‑level windows to obtain the Calculator window ID and title","kind":"observation","successCriterion":"Calculator window appears in list"},{"description":"Inspect the Calculator window to get accessibility IDs for the needed buttons","kind":"observation","successCriterion":"Button IDs for digits 1,2,8,*,2,4,= are obtained"},{"description":"Press 1,2,8,*,2,4,= using desktop.control_sequence","kind":"action","successCriterion":"Calculator displays the result 3072"},{"description":"Capture a screenshot of the Calculator window showing the result","kind":"observation","successCriterion":"Screenshot image receipt is returned"}]}"""),
+        ModelCall("desktop.application_find", """{"applicationQueries":["calc.exe"]}"""),
+        ModelCall("desktop.application_find", """{"executable":"calc.exe"}"""),
+        new ModelReply(null, [Call("launch", "desktop.application_launch", new { executablePath = candidate.ExecutablePath, fingerprint = candidate.Fingerprint })])
+    });
+    var approvals = new FakeApprovals(false); Guid id = Guid.NewGuid();
+    var result = await new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace, developmentMode: true),
+        enableCapabilityRouting: true, enableAdaptivePlanning: true, enableLocalSchemaRanking: true)
+        .RunAsync(id, "Open Calculator, calculate 128 multiplied by 24 using its controls, verify the result and show me a screenshot.", approvals);
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(model.ToolSnapshots.Count == 7 && model.ToolSnapshots.Take(6).All(ts => ts.Any(d => d.Name == "desktop.application_find")) &&
+        state.Plan.Count == 6 && state.Operations.Any(o => o.ToolName == "desktop.application_find" && o.Status == OperationStatus.Succeeded) &&
+        result.Status == ConversationStatus.Paused && backend.LaunchCalls == 0 && approvals.Calls == 1,
+        "Unbound accepted plan must not erase ranked discovery; corrected schema can execute before the no-progress limit, and denied launch still cannot execute.");
+}
+
+static async Task M9ReadOnlyAliasRoutingRepair()
+{
+    using var setup = new TestContext();
+    var read = new GenericRecoveryTool("fixture.read", false, _ => ToolReceipt.Ok("Observed fixture", new { value = 7 }));
+    var fillers = Enumerable.Range(0, 8).Select(i => new GenericRecoveryTool("other.read" + i, false,
+        _ => ToolReceipt.Ok("Unused", new { value = 0 }))).ToArray();
+    var registry = new ToolRegistry(fillers.Cast<IAgentTool>().Append(read), fillers.Select(t => t.Descriptor.Name));
+    var model = new FakeModel(new ModelReply[] {
+        ModelCall("fixture_read", """{"target":"sample"}"""),
+        ModelCall("fixture_read", """{"target":"sample"}""")
+    });
+    var approvals = new FakeApprovals(false); Guid id = Guid.NewGuid();
+    var result = await new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace),
+        enableCapabilityRouting: true, enableAdaptivePlanning: true).RunAsync(id, "Inspect the fixture", approvals);
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Paused && model.ToolSnapshots.Count == 2 &&
+        !model.ToolSnapshots[0].Any(d => d.Name == "fixture.read") && model.ToolSnapshots[1].Any(d => d.Name == "fixture.read") &&
+        approvals.Calls == 1 && approvals.Requests.Single().ToolName == "fixture.read" && read.Calls == 0 &&
+        state.Operations.Count == 1 && state.Operations.Single().ToolName == "fixture.read" &&
+        state.Messages.Any(m => m.ToolCalls?.Any(c => c.Name == "fixture_read") == true),
+        "Unique read-only alias stages inactive schema first; canonical approval is mandatory and original provider transcript remains intact.");
+
+    var active = new ToolRegistry(fillers.Cast<IAgentTool>().Append(read), new[] { "fixture.read" }.Concat(fillers.Select(t => t.Descriptor.Name)));
+    var approvedModel = new FakeModel(new ModelReply[] {
+        ModelCall("fixture_read", """{"target":"sample"}"""), new ModelReply("Observed the fixture.", [])
+    });
+    var granted = new FakeApprovals(true); Guid approvedId = Guid.NewGuid();
+    var approvedResult = await new NiraEngine(approvedModel, active, setup.Store, new WorkspaceAuthority(setup.Workspace),
+        enableCapabilityRouting: true, enableAdaptivePlanning: true).RunAsync(approvedId, "Inspect the fixture", granted);
+    var approvedState = (await setup.Store.LoadAsync(approvedId, default))!;
+    Assert(approvedResult.Status == ConversationStatus.Completed && approvedModel.ToolSnapshots.Count == 2 && read.Calls == 1 &&
+        granted.Calls == 1 && approvedState.Operations.Single().ToolName == "fixture.read" &&
+        approvedState.Operations.Single().Status == OperationStatus.Succeeded,
+        "An active unique read-only alias executes once through ordinary authorization and canonical evidence recording.");
+}
+
+static async Task M9InitialRelatedResearchRepair()
+{
+    using var setup = new TestContext();
+    using var http = new HttpClient();
+    var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http);
+    var model = new FakeModel([new ModelReply("Fixture answer.", [])]);
+    await new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace),
+        enableCapabilityRouting: true, enableAdaptivePlanning: true, enableLocalSchemaRanking: true)
+        .RunAsync(Guid.NewGuid(), "Research how lithium-ion batteries work and explain their advantages and limitations using reliable sources.", new FakeApprovals(false));
+    Assert(model.ToolSnapshots.Count == 1 && model.ToolSnapshots[0].Any(d => d.Name == "web.search") && model.ToolSnapshots[0].Count <= 14,
+        "Initial ranked research schemas must leave room for existing catalog relationships before unrelated defaults.");
+}
+
+static async Task M9ImageCandidateRouting()
+{
+    using var setup = new TestContext();
+    using var handler = new FakeApiHandler("""{"query":{"pages":[{"title":"File:Example.jpg","imageinfo":[{"mime":"image/jpeg","url":"https://upload.wikimedia.org/example.jpg","descriptionurl":"https://commons.wikimedia.org/wiki/File:Example.jpg"}]}]}}""");
+    using var http = new HttpClient(handler);
+    var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http);
+    var model = new FakeModel(messages => {
+        var search = messages.LastOrDefault(m => m.Role == "tool" && m.Content?.Contains("CandidateId", StringComparison.Ordinal) == true);
+        if (search is null) return new ModelReply(null, [Call("discover", "image.search", new { query = "example photograph", provider = "commons" })]);
+        using var doc = JsonDocument.Parse(search.Content!);
+        string id = doc.RootElement.GetProperty("Data").GetProperty("candidates")[0].GetProperty("CandidateId").GetString()!;
+        return new ModelReply(null, [Call("retrieve", "image.retrieve", new { candidateIds = new[] { id }, urls = Array.Empty<string>() })]);
+    });
+    var approvals = new ScriptedApprovals([true, false]);
+    var result = await new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace),
+        enableCapabilityRouting: true, enableLocalSchemaRanking: true).RunAsync(Guid.NewGuid(), "Show me real photographs of an invention with their sources.", approvals);
+    Assert(result.Status == ConversationStatus.Paused && model.ToolSnapshots.Count == 2 &&
+        model.ToolSnapshots[0].Any(t => t.Name == "image.search") && model.ToolSnapshots[1].Any(t => t.Name == "image.retrieve") &&
+        handler.Calls == 1 && approvals.Calls == 2 && !Directory.Exists(Path.Combine(setup.Workspace, ImagePreviewTool.CacheFolder)),
+        "Image discovery and retrieval should be routed without selection calls; denial must prevent media fetching.");
+}
+
+static async Task M9RelatedResearchRouting()
+{
+    using var setup = new TestContext();
+    using var searchHandler = new FakeApiHandler("""{"results":[{"title":"Reference","url":"https://example.org/article","content":"Observed excerpt"}]}""");
+    using var imagesHandler = new FakeApiHandler("""{"query":{"pages":[{"title":"File:Reference.jpg","imageinfo":[{"mime":"image/jpeg","url":"https://upload.wikimedia.org/reference.jpg","descriptionurl":"https://commons.wikimedia.org/wiki/File:Reference.jpg"}]}]}}""");
+    using var searchHttp = new HttpClient(searchHandler); using var imagesHttp = new HttpClient(imagesHandler);
+    var catalog = NiraStandardTools.Create(setup.Workspace, setup.Store, searchHttp);
+    var tools = catalog.Descriptors.Select(d => {
+        if (d.Name == "web.search") return (IAgentTool)new TavilySearchTool(searchHttp, () => "fixture-key");
+        if (d.Name == "image.search") return (IAgentTool)new ImageDiscoveryTool(imagesHttp);
+        Assert(catalog.TryGet(d.Name, out var tool), "Registered catalog entry exists.");
+        return tool!;
+    }).ToArray();
+    var relations = catalog.Descriptors.ToDictionary(d => d.Name, d => catalog.RelatedCapabilities(d.Name).ToArray(), StringComparer.Ordinal);
+    var registry = new ToolRegistry(tools, catalog.DefaultDescriptors.Select(d => d.Name), relations);
+    Assert(registry.RelatedCapabilities("web.search").Contains("browser.inspect_public") &&
+        registry.RelatedCapabilities("image.search").Contains("image.retrieve") &&
+        registry.RelatedCapabilities("desktop.control_sequence").Count == 0, "Catalog relationships are explicit and leave desktop actions unchanged.");
+    var model = new FakeModel([
+        ModelCall("web.search", """{"query":"public reference"}"""),
+        ModelCall("image.search", """{"query":"reference photograph","provider":"commons"}"""),
+        ModelCall("image.retrieve", """{"urls":["https://upload.wikimedia.org/reference.jpg"]}""")]);
+    var approvals = new ScriptedApprovals([true, true, false]);
+    var result = await new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace), enableCapabilityRouting: true, enableAdaptivePlanning: true)
+        .RunAsync(Guid.NewGuid(), "Research and show a reference photograph", approvals);
+    Assert(result.Status == ConversationStatus.Paused && model.ToolSnapshots.Count == 3 &&
+        model.ToolSnapshots[1].Any(d => d.Name == "browser.inspect_public") &&
+        model.ToolSnapshots[1].Any(d => d.Name == "image.search") && model.ToolSnapshots[1].Any(d => d.Name == "image.retrieve") &&
+        model.ToolSnapshots[2].Any(d => d.Name == "image.retrieve") && model.ToolSnapshots.All(ts => ts.Count <= 14) &&
+        searchHandler.Calls == 1 && imagesHandler.Calls == 1 && approvals.Calls == 3 &&
+        !Directory.Exists(Path.Combine(setup.Workspace, ImagePreviewTool.CacheFolder)),
+        "Research must expose actual related schemas without a selection round or an unauthorized download.");
+}
+
+static async Task M9ImplicitNumericSequenceAndCapture()
+{
+    foreach (string expected in new[] { "Total: 3192 USD", "3192" })
+    {
+        using var setup = new TestContext(); using var http = new HttpClient();
+        var backend = new SequenceDesktopBackend { InitialDisplay = "Total: 0 USD", FinalDisplay = "Total: 3,192 USD" };
+        var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http, desktopBackend: backend);
+        string proposal = JsonSerializer.Serialize(new { windowId = "win-seq-0001", steps = new[] { "First", "Second" },
+            observeAutomationId = "display", expectedName = expected });
+        var model = new FakeModel([ModelCall("desktop.window_inspect", """{"windowId":"win-seq-0001"}"""),
+            ModelCall("desktop.control_sequence", proposal),
+            ModelCall("desktop.window_capture", """{"windowId":"win-seq-0001","title":"Test window"}"""),
+            new ModelReply("Verified and captured.", [])]);
+        var approvals = new FakeApprovals(true); Guid id = Guid.NewGuid();
+        var result = await new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace, developmentMode: true),
+            enableAdaptivePlanning: true).RunAsync(id, "Perform the observed actions, verify the outcome and capture the window.", approvals);
+        var state = (await setup.Store.LoadAsync(id, default))!;
+        var operation = state.Operations.Single(o => o.ToolName == "desktop.control_sequence");
+        using var args = JsonDocument.Parse(operation.ArgumentsJson);
+        using var receipt = JsonDocument.Parse(operation.ResultJson!);
+        Assert(result.Status == ConversationStatus.Completed && model.PromptSnapshots.Count == 4 && approvals.Calls == 2 &&
+            backend.Invocations.Count == 2 && backend.CaptureCalls == 1 && RecordedFileArtifacts.From(state).Count == 1,
+            "Legacy implicit numeric result must complete through capture without a repair round or extra review.");
+        Assert(args.RootElement.GetProperty("expectedName").GetString() == "Total: 3192 USD" &&
+            args.RootElement.GetProperty("comparisonMode").GetString() == "numeric_grouping" &&
+            approvals.Requests.Any(r => r.ArgumentsJson == operation.ArgumentsJson) &&
+            receipt.RootElement.GetProperty("Data").GetProperty("Verified").GetBoolean(),
+            "Same observed label and comparison contract must be canonicalized before approval and recorded.");
+    }
+}
+
+static async Task M9ImplicitNumericSafety()
+{
+    const string initial = "Total: 0 USD";
+    var legacy = JsonToolSchema.Schema("""{"expectedName":"Total: 3192 USD"}""");
+    Assert(DesktopDisplayExpectation.BindImplicitName(legacy, initial, out var bound) is null,
+        "Legacy omission must bind successfully.");
+    Assert(DesktopDisplayExpectation.TryRead(bound, out string expected, out string mode, out _) && mode == "numeric_grouping",
+        "Legacy omission must resolve to a bound grouping comparison.");
+    foreach (string wrong in new[] { "Total: 3,193 USD", "Total: -3,192 USD", "Total: 3,19,2 USD", "Error: 3,192 USD", "Total: 3,192 EUR", "Total: 3,192 USD (2)", "Total: −3,192 USD", "Total: 3,192.0 USD" })
+        Assert(!DesktopDisplayExpectation.Matches(wrong, expected, mode, initial), "Implicit grouping must reject changed numeric digits, signs, labels or precision: " + wrong);
+    foreach (string literal in new[] { "Total: 3192 USD", "Record X3192", "Order 000123" })
+    {
+        var text = JsonSerializer.SerializeToElement(new { expectedText = literal });
+        Assert(DesktopDisplayExpectation.BindImplicitName(text, initial, out var unchanged) is null && unchanged.Equals(text) &&
+            DesktopDisplayExpectation.TryRead(unchanged, out _, out string literalMode, out _) && literalMode == "exact",
+            "An explicitly literal expectation never changes comparison mode.");
+    }
+    Assert(!DesktopDisplayExpectation.Matches("Total: 3,192 USD", "Total: 3192 USD", "exact", initial), "Explicit literal comparison remains exact.");
+    foreach (string json in new[] { """{"expectedText":"x","expectedNumber":1}""", """{"expectedText":"x","expectedName":"x"}""", """{"expectedText":"x","comparisonMode":"numeric_grouping"}""" })
+        Assert(!DesktopDisplayExpectation.TryRead(JsonToolSchema.Schema(json), out _, out _, out _), "Reject conflicting literal expectation fields.");
+    var backend = new SequenceDesktopBackend { InitialDisplay = initial, FinalDisplay = "Total: 3,192 USD" };
+    var tool = new DesktopControlSequenceTool(backend);
+    string args = OrderedControlArgs().Replace("Final result", "Total: 3192 USD", StringComparison.Ordinal);
+    var unbound = await tool.ExecuteAsync(JsonToolSchema.Schema(args), default);
+    Assert(!unbound.Success && backend.Invocations.Count == 0, "Unbound implicit legacy numeric expectations cannot be dispatched directly by the adapter.");
+    string literalArgs = args.Replace("expectedName", "expectedText", StringComparison.Ordinal);
+    var mismatch = await tool.ExecuteAsync(JsonToolSchema.Schema(literalArgs), default);
+    Assert(backend.Invocations.Count == 2 && mismatch.Recovery == ToolRecovery.UnverifiedEffect &&
+        !mismatch.Data.GetProperty("Verified").GetBoolean(), "Literal mismatch remains a safe stop; no replay or false success.");
+}
+
+static async Task M9TypedNumericSequenceAndCapture()
+{
+    using var setup = new TestContext(); using var http = new HttpClient();
+    var backend = new SequenceDesktopBackend { InitialDisplay = "Balance: 0 USD", FinalDisplay = "Balance: 12,345.60 USD" };
+    var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http, desktopBackend: backend);
+    const string proposal = """{"windowId":"win-seq-0001","steps":["First","Second"],"observeAutomationId":"display","expectedNumber":12345.6}""";
+    var model = new FakeModel([ModelCall("desktop.window_inspect", """{"windowId":"win-seq-0001"}"""),
+        ModelCall("desktop.control_sequence", proposal),
+        ModelCall("desktop.window_capture", """{"windowId":"win-seq-0001","title":"Test window"}"""),
+        new ModelReply("Verified and captured.", [])]);
+    var approvals = new FakeApprovals(true); Guid id = Guid.NewGuid();
+    var result = await new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace, developmentMode: true),
+        enableAdaptivePlanning: true).RunAsync(id, "Perform ordered actions, verify the numeric outcome, and capture the window.", approvals);
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    var operation = state.Operations.Single(o => o.ToolName == "desktop.control_sequence");
+    using var args = JsonDocument.Parse(operation.ArgumentsJson);
+    using var receipt = JsonDocument.Parse(operation.ResultJson!);
+    Assert(result.Status == ConversationStatus.Completed && model.PromptSnapshots.Count == 4 &&
+        backend.Invocations.SequenceEqual(new[] { "ctrl-first-01", "ctrl-second-02" }) && backend.CaptureCalls == 1 &&
+        RecordedFileArtifacts.From(state).Count == 1 && approvals.Calls == 2,
+        "Typed numeric shorthand must complete and capture without correction or review inference.");
+    Assert(args.RootElement.GetProperty("steps")[0].GetProperty("controlId").GetString() == "ctrl-first-01" &&
+        approvals.Requests.Any(r => r.ArgumentsJson == operation.ArgumentsJson) &&
+        receipt.RootElement.GetProperty("Data").GetProperty("Verified").GetBoolean(), "Canonical controls must be approved and observed value verified.");
+}
+
+static async Task M9LegacyNumericPreflight()
+{
+    foreach (string expected in new[] { "12345", "Balance: 12345 USD" })
+    {
+        using var setup = new TestContext(); var backend = new SequenceDesktopBackend { InitialDisplay = "Balance: 0 USD", FinalDisplay = "Balance: 12,345 USD" };
+        string proposal = JsonSerializer.Serialize(new { windowId = "win-seq-0001", steps = new[] { "First", "Second" },
+            observeAutomationId = "display", expectedName = expected, comparisonMode = "exact" });
+        var model = new FakeModel([ModelCall("desktop.window_inspect", """{"windowId":"win-seq-0001"}"""),
+            ModelCall("desktop.control_sequence", proposal), new ModelReply("Invalid expectation.", [])]);
+        var approvals = new FakeApprovals(true); Guid id = Guid.NewGuid();
+        await setup.Engine(model, backend).RunAsync(id, "Perform ordered actions", approvals);
+        var state = (await setup.Store.LoadAsync(id, default))!;
+        Assert(backend.Invocations.Count == 0 && approvals.Calls == 1 && state.Operations.Count == 1 &&
+            state.Messages.Any(m => m.Content?.Contains("legacy exact mode", StringComparison.Ordinal) == true),
+            "An ambiguous legacy numeric expectation must be rejected before action approval or dispatch.");
+    }
+}
+
+static async Task M9TypedNumericSafety()
+{
+    const string initial = "Balance: 0 USD";
+    Assert(DesktopDisplayExpectation.Matches("Balance: 12,345.600 USD", "12345.6", "numeric_value", initial), "Exact decimal equivalence.");
+    foreach (string wrong in new[] { "Balance: -12,345.6 USD", "Balance: 12,345.61 USD", "Balance: 12,34.56 USD", "Balance: 12,345.6 EUR", "Error: 12,345.6 USD", "12345.6", "Balance: 12,345.6 USD (2)" })
+        Assert(!DesktopDisplayExpectation.Matches(wrong, "12345.6", "numeric_value", initial), "Reject wrong value, label, ambiguous or malformed output: " + wrong);
+    Assert(!DesktopDisplayExpectation.Matches("Balance: 12,345.6 USD", "Balance: 12345.6 USD", "exact", initial), "Literal exact mode never becomes numeric.");
+    var backend = new SequenceDesktopBackend { InitialDisplay = initial };
+    var tool = new DesktopControlSequenceTool(backend);
+    foreach (string suffix in new[] { "", ",\"expectedNumber\":1,\"expectedName\":\"one\"", ",\"expectedNumber\":\"wrong\"", ",\"expectedNumber\":1,\"comparisonMode\":\"exact\"" })
+    {
+        string args = OrderedControlArgs().Replace(",\"expectedName\":\"Final result\"", suffix, StringComparison.Ordinal);
+        var result = await tool.ExecuteAsync(JsonToolSchema.Schema(args), default);
+        Assert(!result.Success && backend.Invocations.Count == 0, "Invalid or conflicting expectations never dispatch.");
+    }
+    Assert(!JsonToolSchema.Validate(tool.Descriptor.Parameters, JsonToolSchema.Schema("""{"windowId":"win-seq-0001","steps":["First",42],"observeAutomationId":"display","expectedNumber":1}"""), out _), "Union schema rejects unknown step shapes.");
+    using var setup = new TestContext(); var ambiguous = new SequenceDesktopBackend { DuplicateFirstName = true };
+    var model = new FakeModel([ModelCall("desktop.window_inspect", """{"windowId":"win-seq-0001"}"""),
+        ModelCall("desktop.control_sequence", """{"windowId":"win-seq-0001","steps":["First","Second"],"observeAutomationId":"display","expectedName":"Final result"}"""),
+        new ModelReply("Ambiguous target.", [])]);
+    var approvals = new FakeApprovals(true);
+    await setup.Engine(model, ambiguous).RunAsync(Guid.NewGuid(), "Perform observed ordered actions", approvals);
+    Assert(ambiguous.Invocations.Count == 0 && approvals.Calls == 1, "String shorthand must reject duplicate names before approval.");
+}
+
+static async Task M9EfficiencyNameBinding()
+{
+    using var setup = new TestContext(); var backend = new SequenceDesktopBackend();
+    string proposal = """{"windowId":"win-seq-0001","steps":[{"name":"First"},{"name":"Second"}],"observeAutomationId":"display","expectedName":"Final result"}""";
+    var model = new FakeModel([ModelCall("desktop.window_inspect", """{"windowId":"win-seq-0001"}"""),
+        ModelCall("desktop.control_sequence", proposal), new ModelReply("Verified.", [])]);
+    var approvals = new FakeApprovals(true); Guid id = Guid.NewGuid();
+    var result = await setup.Engine(model, backend).RunAsync(id, "Perform the observed ordered actions", approvals);
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    var op = saved.Operations.Single(o => o.ToolName == "desktop.control_sequence");
+    using var args = JsonDocument.Parse(op.ArgumentsJson);
+    Assert(result.Status == ConversationStatus.Completed && backend.Invocations.SequenceEqual(new[] { "ctrl-first-01", "ctrl-second-02" }) &&
+        approvals.Calls == 2 && model.PromptSnapshots.Count == 3, "Name binding uses the same validated adapter and does not add inference.");
+    Assert(args.RootElement.GetProperty("steps")[0].GetProperty("controlId").GetString() == "ctrl-first-01" &&
+        approvals.Requests.Last().ArgumentsJson == op.ArgumentsJson, "Exact resolved IDs must be recorded and shown in approval before dispatch.");
+}
+
+static async Task M9EfficiencyAmbiguousSelector()
+{
+    using var setup = new TestContext(); var backend = new SequenceDesktopBackend { DuplicateFirstName = true };
+    var model = new FakeModel([ModelCall("desktop.window_inspect", """{"windowId":"win-seq-0001"}"""),
+        ModelCall("desktop.control_invoke", """{"windowId":"win-seq-0001","controlId":"name://First"}"""),
+        new ModelReply("No unique target.", [])]);
+    Guid id = Guid.NewGuid(); var approval = new FakeApprovals(true);
+    await setup.Engine(model, backend).RunAsync(id, "Invoke the first observed control", approval);
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(approval.Calls == 1 && backend.Invocations.Count == 0 && saved.Operations.Count == 1 &&
+        saved.Messages.Any(m => m.Content?.Contains("DESKTOP_SELECTOR_NOT_OBSERVED", StringComparison.Ordinal) == true),
+        "Ambiguous name must never become an approval or dispatch.");
+}
+
+static async Task M9EfficiencyEditorOccupancy()
+{
+    var backend = new SequenceDesktopBackend { NonemptyFirst = true };
+    var tool = new DesktopInspectTool(backend);
+    using var plain = JsonDocument.Parse("""{"windowId":"win-seq-0001"}""");
+    using var requested = JsonDocument.Parse("""{"windowId":"win-seq-0001","checkEditorEmpty":true}""");
+    var before = await tool.ExecuteAsync(plain.RootElement, default);
+    var after = await tool.ExecuteAsync(requested.RootElement, default);
+    Assert(!before.Data.TryGetProperty("EditorEmptyByControlId", out _) &&
+        after.Data.GetProperty("EditorEmptyByControlId").GetProperty("ctrl-editor-01").ValueKind == JsonValueKind.False &&
+        backend.OccupancyChecks == 1 && backend.Typed is null && backend.Invocations.Count == 0,
+        "Only explicitly requested occupancy metadata is returned, with no text or mutation.");
+}
+
+static Task M9EfficiencyFastInput()
+{
+    string value = ""; int waits = 0; int sends = 0;
+    var result = DesktopVerifiedTextInput.Write("A😀B", () => true, () => value,
+        unit => { value += unit; sends++; return true; }, () => waits++, default);
+    Assert(result.Verified == true && value == "A😀B" && sends == 3 && waits == 2,
+        "Immediate readback avoids per-character delay; final independent observations still wait.");
+    return Task.CompletedTask;
+}
+
+static async Task M9EfficiencyRepeatedRead()
+{
+    using var setup = new TestContext();
+    var observation = new GenericRecoveryTool("sample.observe", false, _ => ToolReceipt.Ok("Unchanged", new { value = 1 }));
+    int rounds = 0;
+    var model = new FakeModel(_ => new ModelReply(null, [new ModelToolCall("observe-" + ++rounds, "sample.observe", """{"target":"same"}""")]));
+    var engine = new NiraEngine(model, new ToolRegistry([observation]), setup.Store, new WorkspaceAuthority(setup.Workspace, true));
+    Guid id = Guid.NewGuid();
+    var result = await engine.RunAsync(id, "Find the changed state", new FakeApprovals(true));
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Paused && saved.RetryBlockCode == "NO_PROGRESS" && rounds == 7 &&
+        observation.Calls == 7 && saved.Operations.Count == 7, "Repeated identical reads cannot reset progress indefinitely; retain every real receipt.");
+}
+
+static async Task M9EfficiencyWire()
+{
+    using var handler = new FakeApiHandler("""{"choices":[{"message":{"content":"Hello."}}]}""");
+    using var http = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(http, new Uri("https://example.invalid/v1/"), "mock", () => null);
+    const string content = """{"name":"<editor>","text":"é"}""";
+    await model.CompleteAsync([new ChatEntry("user", content)], [], default);
+    using var body = JsonDocument.Parse(handler.RequestBody!);
+    Assert(body.RootElement.GetProperty("messages")[0].GetProperty("content").GetString() == content &&
+        handler.RequestBody!.Length < JsonSerializer.Serialize(new { model = "mock", messages = new[] { new { role = "user", content } }, stream = false }).Length,
+        "Transport removes unnecessary escaping without altering decoded content or tool protocol.");
+}
+
+static async Task M9StabilityCompact()
+{
+    using var setup = new TestContext(); var backend = new SequenceDesktopBackend { AdditionalControls = 56 };
+    var model = new FakeModel(new[] {
+        ModelCall("desktop.window_inspect", "{\"windowId\":\"win-seq-0001\"}"),
+        ModelCall("desktop.control_sequence", OrderedControlArgs()), new ModelReply("Verified result.", []) });
+    Guid id = Guid.NewGuid(); var approval = new FakeApprovals(true);
+    var result = await setup.Engine(model, backend).RunAsync(id, "Perform and verify the ordered actions", approval);
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Completed && approval.Calls == 2 && backend.Invocations.Count == 2,
+        "Compaction cannot change approvals or verified action execution.");
+    using var original = JsonDocument.Parse(state.Messages.First(m => m.Role == "tool").Content!);
+    using var compact = JsonDocument.Parse(model.PromptSnapshots[1].First(m => m.Role == "tool").Content!);
+    var a = original.RootElement.GetProperty("Data"); var b = compact.RootElement.GetProperty("Data");
+    var columns = b.GetProperty("ControlColumns").EnumerateArray().Select(x => x.GetString()!).ToArray();
+    var rows = b.GetProperty("ControlRows"); var controls = a.GetProperty("Controls");
+    Assert(rows.GetArrayLength() == controls.GetArrayLength() && rows.GetArrayLength() == 60 && columns.Length == 9,
+        "All 60 observed controls and 9 original fields must remain available.");
+    for (int i = 0; i < controls.GetArrayLength(); i++)
+        for (int j = 0; j < columns.Length; j++)
+            Assert(controls[i].GetProperty(columns[j]).GetRawText() == rows[i][j].GetRawText(), "Exact control field must survive projection.");
+    Assert(a.GetProperty("Window").GetRawText() == b.GetProperty("Window").GetRawText() &&
+        original.RootElement.GetProperty("receiptId").GetString() == compact.RootElement.GetProperty("receiptId").GetString() &&
+        compact.RootElement.GetRawText().Length < original.RootElement.GetRawText().Length * 0.8,
+        "Preserve target, receipt identity and reduce the observation payload.");
+    using var receipt = JsonDocument.Parse(state.Operations.First().ResultJson!);
+    Assert(receipt.RootElement.GetProperty("Data").GetProperty("Controls").GetArrayLength() == 60,
+        "Original durable operation evidence cannot be replaced by the model-facing projection.");
+}
+
+static async Task M9StabilitySequenceFeedback()
+{
+    using var setup = new TestContext(); var backend = new SequenceDesktopBackend();
+    string invalid = OrderedControlArgs().Replace("\"name\":\"First\"", "\"name\":\"Wrong label\"", StringComparison.Ordinal)
+        .Replace("\"observeAutomationId\":\"display\"", "\"observeAutomationId\":\"ctrl-display-01\"", StringComparison.Ordinal);
+    var model = new FakeModel(new[] {
+        ModelCall("desktop.window_inspect", "{\"windowId\":\"win-seq-0001\"}"),
+        ModelCall("desktop.control_sequence", invalid), ModelCall("desktop.control_sequence", OrderedControlArgs()),
+        new ModelReply("Verified result.", []) });
+    var approval = new FakeApprovals(true); Guid id = Guid.NewGuid();
+    var result = await setup.Engine(model, backend).RunAsync(id, "Perform the two actions", approval);
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    var error = state.Messages.Where(m => m.Role == "tool").Select(m => m.Content ?? "")
+        .Single(x => x.Contains("DESKTOP_SEQUENCE_NOT_OBSERVED", StringComparison.Ordinal));
+    Assert(error.Contains("observeAutomationId is not ControlId", StringComparison.Ordinal) &&
+        error.Contains("steps[0].name", StringComparison.Ordinal) && error.Contains("First", StringComparison.Ordinal) &&
+        error.Contains("display", StringComparison.Ordinal), "One rejection must identify all invalid fields from genuine evidence.");
+    Assert(result.Status == ConversationStatus.Completed && approval.Calls == 2 && backend.Invocations.Count == 2 &&
+        state.Operations.Count == 2 && model.PromptSnapshots.Count == 4,
+        "The malformed proposal must never dispatch or request approval; a corrected one uses the existing observation.");
+}
+
+static async Task M9StabilityMetrics()
+{
+    using var setup = new TestContext();
+    using var handler = new FakeApiHandler("""{"choices":[{"message":{"content":"Hello."}}],"usage":{"prompt_tokens":120,"completion_tokens":8}}""");
+    using var http = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(http, new Uri("https://example.invalid/v1/"), "mock", () => null);
+    var progress = new M9MetricsProgress();
+    var result = await setup.Engine(model, adaptive: true).RunAsync(Guid.NewGuid(), "Hello", new FakeApprovals(false), progress);
+    Assert(result.Status == ConversationStatus.Completed && handler.Calls == 1, "Telemetry cannot add an inference.");
+    string usage = progress.Events.Single(e => e.Kind == "model-usage").Summary;
+    Assert(usage.Contains("HTTP requests: 1;", StringComparison.Ordinal) &&
+        usage.Contains("provider usage available for 1/1", StringComparison.Ordinal) &&
+        usage.Contains("reported input tokens: 120; reported output tokens: 8", StringComparison.Ordinal) &&
+        usage.Contains("logical model calls: 1; model elapsed ms (sum, including retries): ", StringComparison.Ordinal) &&
+        usage.Contains("request UTF-8 bytes: " + System.Text.Encoding.UTF8.GetByteCount(handler.RequestBody!), StringComparison.Ordinal),
+        "Scope counts actual serialized HTTP attempts and provider-reported tokens only.");
+    var outside = new M9MetricsProgress();
+    using (model.BeginRequestScope(outside))
+    {
+        await model.CompleteAsync([new ChatEntry("user", "One")], [], default);
+        await model.CompleteAsync([new ChatEntry("user", "Two")], [], default);
+    }
+    Assert(outside.Events.Single().Summary.Contains("HTTP requests: 2;", StringComparison.Ordinal) &&
+        outside.Events.Single().Summary.Contains("reported input tokens: 240; reported output tokens: 16", StringComparison.Ordinal),
+        "A separate scope must count both calls without inheriting the previous task's usage.");
+}
+
+static async Task M9StabilityStreamUsage()
+{
+    using var handler = new M4b3StreamHandler(M4b3Sse(
+        """{"choices":[{"delta":{"content":"Visible"},"finish_reason":null}]}""",
+        """{"choices":[{"delta":{},"finish_reason":"stop"}]}""",
+        """{"choices":[],"usage":{"prompt_tokens":44,"completion_tokens":6}}""", "[DONE]"));
+    using var http = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(http, new Uri("https://example.invalid/v1/"), "mock", () => null);
+    var preview = new List<string?>(); var progress = new M9MetricsProgress();
+    using (model.BeginRequestScope(progress))
+    {
+        var reply = await model.CompleteStreamingAsync([new ChatEntry("user", "Hello")], [], preview.Add, default);
+        Assert(reply.Content == "Visible" && reply.DeliveryMode == "event-stream" &&
+            reply.Usage == new ModelTokenUsage(44, 6) && preview.SequenceEqual(new string?[] { null, "Visible" }),
+            "A usage-only packet must never become text or change stream completion.");
+    }
+    Assert(progress.Events.Single().Summary.Contains("reported input tokens: 44; reported output tokens: 6", StringComparison.Ordinal),
+        "Stream usage is counted when present.");
+}
+
 static async Task OrderedControlsVerified()
 {
     using var setup = new TestContext();
@@ -9059,6 +10321,157 @@ static async Task OrderedControlsMismatch()
         state.RetryBlockCode == ToolRecoveryPolicy.UnverifiedEffectCode && backend.Invocations.Count == 2,
         "A mismatch must block automatic replay and preserve the actual display observation.");
 }
+static async Task OrderedControlsNoExtraInference()
+{
+    using var setup = new TestContext(); var backend = new SequenceDesktopBackend();
+    var model = new FakeModel(new[] {
+        ModelCall("desktop.window_inspect", "{\"windowId\":\"win-seq-0001\"}"),
+        ModelCall("desktop.control_sequence", OrderedControlArgs()),
+        new ModelReply("Observed final result.", []) });
+    var approval = new FakeApprovals(true);
+    var result = await setup.Engine(model, backend).RunAsync(Guid.NewGuid(), "Perform the two ordered actions and verify", approval);
+    Assert(result.Status == ConversationStatus.Completed && approval.Calls == 2 && backend.Invocations.Count == 2 &&
+        model.PromptSnapshots.Count == 3, "An observed, user-approved sequence must execute and deliver without an extra model review.");
+}
+static async Task OrderedControlsBareNumericCompletion()
+{
+    using var setup = new TestContext();
+    var backend = new SequenceDesktopBackend { InitialDisplay = "Display is 0", FinalDisplay = "Display is 1,472" };
+    string args = OrderedControlArgs().Replace("Final result", "1472", StringComparison.Ordinal)
+        .Replace("\"expectedName\":", "\"comparisonMode\":\"numeric_grouping\",\"expectedName\":", StringComparison.Ordinal);
+    var model = new FakeModel(new[] {
+        ModelCall("desktop.window_inspect", "{\"windowId\":\"win-seq-0001\"}"),
+        ModelCall("desktop.control_sequence", args), new ModelReply("Verified result.", []) });
+    Guid id = Guid.NewGuid(); var result = await setup.Engine(model, backend).RunAsync(id, "Perform the observed actions and verify the numeric outcome", new FakeApprovals(true));
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Completed && model.PromptSnapshots.Count == 3 && backend.Invocations.Count == 2 &&
+        state.Operations.Last().ResultJson!.Contains("\"Verified\":true", StringComparison.Ordinal),
+        "A bare numeric expectation must verify a labelled grouped value and permit the ordinary next step.");
+    foreach (string invalid in new[] { "Display is 1,473", "Display is -1,472", "Error 1,472", "Display is 1,472 (2)", "Display is 14,72" })
+        Assert(!DesktopControlSequenceTool.DisplayMatches(invalid, "1472", "numeric_grouping", backend.InitialDisplay), "Reject a wrong value or changed label: " + invalid);
+    Assert(!DesktopControlSequenceTool.DisplayMatches(backend.FinalDisplay, "1472", "numeric_grouping"), "Bare expected values cannot match arbitrary labels without a pre-action observation.");
+    Assert(!DesktopControlSequenceTool.DisplayMatches(backend.FinalDisplay, "1472", "exact", backend.InitialDisplay), "Exact mode cannot ignore labels.");
+}
+static async Task OrderedControlsThenCapture()
+{
+    using var setup = new TestContext(); using var http = new HttpClient();
+    var backend = new SequenceDesktopBackend { InitialDisplay = "Display is 0", FinalDisplay = "Display is 1,472" };
+    var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http, desktopBackend: backend);
+    string args = OrderedControlArgs().Replace("Final result", "1472", StringComparison.Ordinal)
+        .Replace("\"expectedName\":", "\"comparisonMode\":\"numeric_grouping\",\"expectedName\":", StringComparison.Ordinal);
+    var model = new FakeModel(new[] {
+        ModelCall("desktop.window_inspect", "{\"windowId\":\"win-seq-0001\"}"),
+        ModelCall("desktop.control_sequence", args),
+        ModelCall("desktop.window_capture", "{\"windowId\":\"win-seq-0001\",\"title\":\"Test window\"}"),
+        new ModelReply("Verified numeric outcome and captured the window.", []) });
+    var approval = new FakeApprovals(true); Guid id = Guid.NewGuid();
+    var result = await new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace, developmentMode: true),
+        enableAdaptivePlanning: true).RunAsync(id, "Perform the two observed actions, verify the number and capture the window.", approval);
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    var artifacts = RecordedFileArtifacts.From(state);
+    Assert(result.Status == ConversationStatus.Completed && model.PromptSnapshots.Count == 4 && approval.Calls == 2 &&
+        backend.Invocations.Count == 2 && backend.CaptureCalls == 1 && artifacts.Count == 1 &&
+        await RecordedFileArtifacts.MatchesAsync(artifacts.Single(), setup.Workspace),
+        "Verified actions must continue to the separately approved real artifact stage and finish without a separate reviewer inference.");
+}
+static async Task M9LocalCapabilityRanking()
+{
+    using var setup = new TestContext();
+    using var http = new HttpClient();
+    var tools = NiraStandardTools.Create(setup.Workspace, setup.Store, http);
+    var ranked = tools.RankInitialCapabilities("Open an installed desktop application, inspect its accessible controls and invoke the ordered buttons.");
+    Assert(ranked.Count <= 6 && ranked.Contains("desktop.application_find") && ranked.Contains("desktop.window_inspect"), "Relevant registered schemas are found locally without hardcoded application names.");
+    var captureRank = tools.RankInitialCapabilities("Operate the desktop controls, verify the displayed result and capture a screenshot.");
+    Assert(captureRank.Contains("desktop.application_find") && captureRank.Contains("desktop.window_capture"), "Multi-step related schema retrieval covers discovery and capture.");
+    Assert(tools.RankInitialCapabilities("Hello").Count == 0, "Unmatched conversation retains the existing starter catalog.");
+    var model = new FakeModel(new[] { new ModelReply("No action requested in this fixture.", []) });
+    await new NiraEngine(model, tools, setup.Store, new WorkspaceAuthority(setup.Workspace), enableCapabilityRouting: true,
+        enableAdaptivePlanning: true, enableLocalSchemaRanking: true).RunAsync(Guid.NewGuid(),
+        "Open an installed desktop application, inspect its accessible controls and invoke the ordered buttons.", new FakeApprovals(false));
+    Assert(model.ToolSnapshots.Count == 1 && model.ToolSnapshots[0].Count <= 14 && model.ToolSnapshots[0].Any(d => d.Name == "desktop.application_find"),
+        "Initial schema selection requires no additional inference and respects the existing bounded catalog.");
+}
+static async Task OrderedDisplayNumericGrouping()
+{
+    Assert(DesktopControlSequenceTool.DisplayMatches("Total: 12,345.67 USD", "Total: 12345.67 USD", "numeric_grouping"), "Equivalent grouping allowed.");
+    Assert(!DesktopControlSequenceTool.DisplayMatches("Total: 12,345.67 USD", "Total: 12345.67 USD", "exact"), "Exact text remains exact.");
+    foreach (string invalid in new[] { "Total: 12,346.67 USD", "Total: 1,23,45.67 USD", "Total: -12,345.67 USD", "Total: 12,345.67 EUR", "Total: 12,345.76 USD", "Total: 12,345.67 USD (2)" })
+        Assert(!DesktopControlSequenceTool.DisplayMatches(invalid, "Total: 12345.67 USD", "numeric_grouping"), "Do not accept different or malformed display: " + invalid);
+    Assert(!DesktopControlSequenceTool.DisplayMatches("Ref X1,234", "Ref X1234", "numeric_grouping"), "Do not normalize embedded identifiers.");
+    var backend = new SequenceDesktopBackend { FinalDisplay = "Total: 12,345.67 USD" };
+    using var args = JsonDocument.Parse(OrderedControlArgs().Replace("Final result", "Total: 12345.67 USD", StringComparison.Ordinal).Replace("\"expectedName\":", "\"comparisonMode\":\"numeric_grouping\",\"expectedName\":", StringComparison.Ordinal));
+    var receipt = await new DesktopControlSequenceTool(backend).ExecuteAsync(args.RootElement, default);
+    Assert(receipt.Data.GetProperty("Verified").GetBoolean() && receipt.Data.GetProperty("ObservedName").GetString() == backend.FinalDisplay && receipt.Recovery == ToolRecovery.None,
+        "Formatted read-back verifies the actual live value without rewriting the receipt.");
+}
+static async Task M9InterruptedIsolation()
+{
+    using var setup = new TestContext();
+    var original = new ConversationState { Status = ConversationStatus.Running, Objective = "Original work",
+        Messages = [new ChatEntry("user", "Original work")],
+        Operations = [new AgentOperation { ToolName = "desktop.control_invoke", Status = OperationStatus.Succeeded }] };
+    await setup.Store.SaveAsync(original, default);
+    var model = new FakeModel(_ => new ModelReply("Unexpected invocation", []));
+    await setup.Engine(model).RunAsync(original.Id, "Different work", new FakeApprovals(false));
+    var saved = (await setup.Store.LoadAsync(original.Id, default))!;
+    Assert(model.PromptSnapshots.Count == 0 && saved.Messages.Count == 1 && saved.Operations.Count == 1,
+        "New message must not execute inside an interrupted task.");
+    Guid next = await setup.Store.CreateFollowupAsync(original.Id, default, startNewAfterPause: true);
+    var child = (await setup.Store.LoadAsync(next, default))!;
+    Assert(child.PreviousTaskId == original.Id && child.Messages.Count == 0 && child.Operations.Count == 0 &&
+        child.PreviousChatContext?.Contains("Original work", StringComparison.Ordinal) != true,
+        "An isolated new task cannot receive interrupted instructions or operation receipts.");
+    Assert((await setup.Store.LoadAsync(original.Id, default))!.Operations.Count == 1, "Original journal preserved.");
+}
+
+static async Task M9ProviderInterruption()
+{
+    using var setup = new TestContext();
+    var model = new FakeModel(_ => throw new AgentException("Model stream ended without a complete response; no partial tool was dispatched."));
+    Guid id = Guid.NewGuid();
+    var result = await setup.Engine(model, adaptive: true).RunAsync(id, "Explain a concept", new FakeApprovals(false));
+    var saved = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Paused && saved.Status == ConversationStatus.Paused &&
+        saved.Operations.Count == 0 && model.PromptSnapshots.Count == 1 && saved.Messages.Count == 1,
+        "Provider failure preserves one checkpoint without replay or extra inference.");
+    Assert(saved.LastAnswer is not null && saved.LastAnswer.Contains("incomplete model stream", StringComparison.Ordinal),
+        "Known interruption category and answer must survive reopening the saved task.");
+    var next = await setup.Engine(new FakeModel(_ => new ModelReply("Recovered answer", [])), adaptive: true)
+        .RunAsync(id, null, new FakeApprovals(false));
+    Assert(next.Status == ConversationStatus.Completed, "Explicit retry of the same objective is available.");
+}
+
+static async Task M9ObservedMethodPreflight()
+{
+    using var setup = new TestContext();
+    var backend = new FakeDesktopBackend();
+    var model = new FakeModel(new[] {
+        ModelCall("desktop.window_inspect", "{\"windowId\":\"win-demo-0001\"}"),
+        ModelCall("desktop.control_set_text", "{\"windowId\":\"win-demo-0001\",\"controlId\":\"ctrl-doc-01\",\"text\":\"Hello\"}"),
+        ModelCall("desktop.control_type_text", "{\"windowId\":\"win-demo-0001\",\"controlId\":\"ctrl-doc-01\",\"text\":\"Hello\",\"requireEmpty\":true}"),
+        new ModelReply("Verified text.", []) });
+    Guid id = Guid.NewGuid(); var approval = new FakeApprovals(true);
+    var outcome = await setup.Engine(model, backend).RunAsync(id, "Type Hello in a blank editor", approval);
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(outcome.Status == ConversationStatus.Completed && approval.Calls == 2 && backend.TypeTextCalls == 1 &&
+        state.Operations.Count == 2 && state.Messages.Any(m => m.Role == "tool" && m.Content?.Contains("DESKTOP_CONTROL_UNSUPPORTED", StringComparison.Ordinal) == true),
+        "Known unsupported method is rejected before approval or dispatch; supported method retains its own approval.");
+}
+
+static Task M9LongEditorInput()
+{
+    string text = new('a', DesktopVerifiedTextInput.MaximumCharacters);
+    string current = "";
+    var result = DesktopVerifiedTextInput.Write(text, () => true, () => current,
+        unit => { current += unit; return true; }, () => { }, default);
+    Assert(result.Verified == true && current == text, "Longer text uses the same exact read-back algorithm.");
+    var tool = new DesktopTypeTextTool(new SequenceDesktopBackend());
+    var schema = tool.Descriptor.Parameters;
+    Assert(schema.GetProperty("properties").GetProperty("text").GetProperty("maxLength").GetInt32() == DesktopVerifiedTextInput.MaximumCharacters,
+        "Schema and host text bound agree.");
+    return Task.CompletedTask;
+}
+
 static async Task PausedTaskIsolation()
 {
     using var setup = new TestContext(); var prior = new ConversationState { Status = ConversationStatus.Paused,
@@ -11394,10 +12807,15 @@ internal sealed class GenericRecoveryTool(string name, bool effect, Func<JsonEle
     { Calls++; return Task.FromResult(execute(arguments)); }
 }
 
-internal sealed class SequenceDesktopBackend : IDesktopAutomationBackend
+internal sealed class SequenceDesktopBackend : IDesktopAutomationBackend, IDesktopWindowCaptureBackend
 {
+    public int AdditionalControls;
     public List<string> Invocations { get; } = [];
     public bool StaleAfterFirst, WrongDisplay, NonemptyFirst;
+    public bool DuplicateFirstName;
+    public int OccupancyChecks;
+    public string InitialDisplay = "Initial result";
+    public string FinalDisplay = "Final result";
     public string? Typed;
     private static DesktopWindow Item => new("win-seq-0001", "Test window", "test", 3001, true, false);
     public IReadOnlyList<DesktopWindow> ListWindows() => [Item];
@@ -11405,11 +12823,30 @@ internal sealed class SequenceDesktopBackend : IDesktopAutomationBackend
     {
         var controls = new List<DesktopControl> {
             new("ctrl-first-01", "First", "ControlType.Button", "first", true, false, true, false),
-            new("ctrl-display-01", Invocations.Count == 2 && !WrongDisplay ? "Final result" : "Initial result", "ControlType.Text", "display", true, false, false, false),
+            new("ctrl-display-01", Invocations.Count == 2 && !WrongDisplay ? FinalDisplay : InitialDisplay, "ControlType.Text", "display", true, false, false, false),
             new(Invocations.Count == 0 ? "ctrl-editor-01" : "ctrl-editor-02", "Editor", "ControlType.Document", "editor", true, false, false, false, true)
         };
         if (!StaleAfterFirst || Invocations.Count == 0) controls.Add(new("ctrl-second-02", "Second", "ControlType.Button", "second", true, false, true, false));
+        if (DuplicateFirstName) controls.Add(new("ctrl-other-first", "First", "ControlType.Button", "other", true, false, true, false));
+        for (int i = 0; i < AdditionalControls; i++)
+            controls.Add(new DesktopControl("ctrl-extra-" + i, "Additional label " + i, "ControlType.Text", "extra-" + i, true, false, false, false));
         return new DesktopInspection(Item, controls, false);
+    }
+    public DesktopInspection Inspect(string windowId, bool checkEditorEmpty)
+    {
+        var result = Inspect(windowId);
+        if (!checkEditorEmpty) return result;
+        OccupancyChecks++;
+        return result with { EditorEmptyByControlId = result.Controls.Where(c => c.CanTypeText)
+            .ToDictionary(c => c.ControlId, c => (bool?)!NonemptyFirst, StringComparer.Ordinal) };
+    }
+    public int CaptureCalls { get; private set; }
+    public DesktopWindowCapture Capture(string windowId, string title)
+    {
+        if (windowId != Item.WindowId || title != Item.Title || Invocations.Count != 2)
+            throw new DesktopAutomationException("CAPTURE_STALE", "Expected completed action sequence and exact window.");
+        CaptureCalls++;
+        return new DesktopWindowCapture(Item, CaptureTestBackend.FixturePng(), 3, 2);
     }
     public DesktopAction Invoke(string windowId, string controlId)
     { Invocations.Add(controlId); return new DesktopAction(true, true, "Dispatched", Verified: false); }
@@ -11623,9 +13060,11 @@ internal sealed class TestContext : IDisposable
 internal sealed class FakeApprovals(bool approved) : IApprovalBroker
 {
     public int Calls { get; private set; }
+    public List<ApprovalRequest> Requests { get; } = [];
     public Task<bool> RequestApprovalAsync(ApprovalRequest request, CancellationToken ct)
     {
         Calls++;
+        Requests.Add(request);
         return Task.FromResult(approved);
     }
 }
@@ -11645,6 +13084,12 @@ internal sealed class ScriptedApprovals(IEnumerable<bool> outcomes) : IApprovalB
 internal sealed class M5bDesktopProgress : IStreamingProgress
 {
     public void Report(AgentProgress value) { }
+}
+
+internal sealed class M9MetricsProgress : IProgress<AgentProgress>
+{
+    public List<AgentProgress> Events { get; } = [];
+    public void Report(AgentProgress value) => Events.Add(value);
 }
 
 internal sealed class FakeModel : IChatModel
@@ -11712,6 +13157,56 @@ internal sealed class ModelRejectionHandler(string responseBody) : HttpMessageHa
         Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.BadRequest) {
             Content = new StringContent(responseBody, System.Text.Encoding.UTF8, "application/json")
         });
+}
+
+// The second network segment remains unavailable until the test explicitly releases it.
+internal sealed class M8d2GatedStream(string first, string last) : Stream
+{
+    private readonly byte[] _first = System.Text.Encoding.UTF8.GetBytes(first);
+    private readonly byte[] _last = System.Text.Encoding.UTF8.GetBytes(last);
+    private readonly TaskCompletionSource<bool> _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _position;
+    public void Release() => _gate.TrySetResult(true);
+    public override bool CanRead => true;
+    public override bool CanSeek => false;
+    public override bool CanWrite => false;
+    public override long Length => throw new NotSupportedException();
+    public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+    public override void Flush() => throw new NotSupportedException();
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
+    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    public override int Read(byte[] buffer, int offset, int count) => ReadAsync(buffer.AsMemory(offset, count)).AsTask().GetAwaiter().GetResult();
+    public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+        ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+    public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_position < _first.Length)
+        {
+            int count = Math.Min(buffer.Length, _first.Length - _position);
+            _first.AsMemory(_position, count).CopyTo(buffer);
+            _position += count;
+            return count;
+        }
+        await _gate.Task.WaitAsync(cancellationToken);
+        int index = _position - _first.Length;
+        int remaining = Math.Min(buffer.Length, _last.Length - index);
+        if (remaining <= 0) return 0;
+        _last.AsMemory(index, remaining).CopyTo(buffer);
+        _position += remaining;
+        return remaining;
+    }
+}
+
+internal sealed class M8d2GatedHandler(Stream body) : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var content = new StreamContent(body);
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/event-stream");
+        return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = content });
+    }
 }
 
 internal sealed class M4b3StreamHandler(string body) : HttpMessageHandler
@@ -12000,6 +13495,13 @@ internal sealed class ModelAuthHttpHandler(System.Net.HttpStatusCode code) : Htt
 internal sealed class FakeBrowserReader : IBrowserPageReader
 {
     public int Calls { get; private set; }
+    public int TextCalls { get; private set; }
+    public Task<BrowserSnapshot> ReadTextAsync(Uri target, CancellationToken ct)
+    {
+        TextCalls++;
+        return Task.FromResult(new BrowserSnapshot(target.AbsoluteUri, FinalUrl, "Example Page", 200,
+            "Example body", false, [], []));
+    }
     public string FinalUrl { get; set; } = "https://www.example.com/";
     public Task<BrowserSnapshot> ReadAsync(Uri target, CancellationToken ct)
     {
@@ -12463,8 +13965,9 @@ internal sealed class CaptureTestBackend : IDesktopAutomationBackend, IDesktopWi
         CaptureCalls++;
         if (Stale || windowId != Item.WindowId || title != Item.Title)
             throw new DesktopAutomationException("CAPTURE_STALE", "Window changed before capture.");
-        return new DesktopWindowCapture(Item, Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAHElEQVR4nGMU0bDZwqXh8+0Go4iGDQMDAwMDAwAyxAPz8ep/7QAAAABJRU5ErkJggg=="), 3, 2);
+        return new DesktopWindowCapture(Item, FixturePng(), 3, 2);
     }
+    internal static byte[] FixturePng() => Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAHElEQVR4nGMU0bDZwqXh8+0Go4iGDQMDAwMDAwAyxAPz8ep/7QAAAABJRU5ErkJggg==");
     public DesktopInspection Inspect(string windowId) => new(Item, [], false);
     public DesktopAction Activate(string windowId) => throw new NotSupportedException();
     public DesktopAction Invoke(string windowId, string controlId) => throw new NotSupportedException();

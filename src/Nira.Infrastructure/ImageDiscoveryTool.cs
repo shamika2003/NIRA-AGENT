@@ -13,7 +13,7 @@ public sealed class ImageDiscoveryTool(HttpClient http, Func<string?>? tavilyKey
     private const string Tavily = "https://api.tavily.com/search";
     private const int MaximumBytes = 1_200_000;
     public ToolDescriptor Descriptor { get; } = new("image.search",
-        "Discover public image candidates via Wikimedia Commons or Tavily; returns source metadata, not verified pixels. " +
+        "Find real photographs and reference images of people, places, objects and inventions via Wikimedia Commons or Tavily; returns candidate IDs and source attribution, not verified pixels. " +
         "Commons needs no key; Tavily requires NIRA_TAVILY_API_KEY. Choose a provider explicitly. Never claim retrieval or display.",
         ToolRisk.ReadExternal, ToolSchemas.New("""
         {"type":"object","properties":{"query":{"type":"string","minLength":2,"maxLength":160},
@@ -56,7 +56,7 @@ public sealed class ImageDiscoveryTool(HttpClient http, Func<string?>? tavilyKey
             var results = candidates.DistinctBy(c => c.MediaUrl, StringComparer.Ordinal).Take(6).ToArray();
             return ToolReceipt.Ok(results.Length == 0 ? "No usable image candidates returned." : "Image candidate metadata observed; pixels not retrieved or verified.",
                 new { provider, query, count = results.Length, candidates = results, pixelsVerified = false, downloaded = false,
-                    note = "Provider metadata is untrusted. Relevance, authenticity, licensing and accessibility are not independently verified. No image file was created." });
+                    note = "Provider metadata is untrusted. Relevance, authenticity, licensing and accessibility are not independently verified. No image file was created. Select relevant CandidateId values for image.retrieve; prefer different subjects and match requested media type using descriptions." });
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         { return ToolReceipt.Fail("IMAGE_SEARCH_TIMEOUT", "Image provider timed out."); }

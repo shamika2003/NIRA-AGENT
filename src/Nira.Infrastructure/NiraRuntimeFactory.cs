@@ -59,8 +59,11 @@ public sealed class NiraRuntime : IDisposable
                 Environment.GetEnvironmentVariable("NIRA_VISION_API_KEY") ??
                 (string.Equals(visionBase.AbsoluteUri, endpoint.AbsoluteUri, StringComparison.Ordinal) ? modelCredentials.Resolve() : null));
         }
+        ProceduralSkillService? procedures = null;
+        var skillRecall = new SkillRecallTool((id, ct) => procedures!.RetrieveAsync(id, ct));
         var tools = NiraStandardTools.Create(workspace, state, http, sessions, vision: vision,
-            imageGenerationResolver: () => ImageGenerationProvider.Load(appRoot));
+            imageGenerationResolver: () => ImageGenerationProvider.Load(appRoot), proceduralRecall: skillRecall);
+        procedures = new ProceduralSkillService(state, client, tools);
         // Default to bounded routing in both CLI and desktop; retain a diagnostic opt-out.
         bool routing = Environment.GetEnvironmentVariable("NIRA_FULL_TOOL_CATALOG") != "1";
         bool adaptive = Environment.GetEnvironmentVariable("NIRA_LEGACY_PREFLIGHT") != "1";
@@ -71,8 +74,8 @@ public sealed class NiraRuntime : IDisposable
         developmentPermissions = Environment.GetEnvironmentVariable("NIRA_DEVELOPMENT_PERMISSIONS") != "0";
 #endif
         var engine = new NiraEngine(client, tools, state, new WorkspaceAuthority(workspace, developmentPermissions),
-            enableCapabilityRouting: routing, enableAdaptivePlanning: adaptive, memoryContext: state,
-            memoryLearning: new MemoryLearningService(state, client));
+            enableCapabilityRouting: routing, enableAdaptivePlanning: adaptive, memoryContext: new SemanticMemoryContextProvider(state, client),
+            memoryLearning: new MemoryLearningService(state, client), proceduralSkills: procedures, enableLocalSchemaRanking: true);
         return new NiraRuntime(engine, state, http, workspace, database, modelCredentials, sessions, developmentPermissions);
     }
 

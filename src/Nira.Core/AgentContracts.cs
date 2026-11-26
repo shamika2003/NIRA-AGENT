@@ -72,7 +72,14 @@ public sealed record ChatEntry(
     IReadOnlyList<string>? AttachmentPaths = null,
     string? UserDisplayText = null);
 
-public sealed record ModelReply(string? Content, IReadOnlyList<ModelToolCall> ToolCalls);
+public sealed record ModelTokenUsage(long Input, long Output);
+
+public sealed record ModelReply(string? Content, IReadOnlyList<ModelToolCall> ToolCalls)
+{
+    public ModelTokenUsage? Usage { get; init; }
+    // Actual transport outcome, not a model-supplied claim or a simulated stream.
+    public string? DeliveryMode { get; init; }
+}
 
 /// <summary>Optional model capability for a bounded, non-executing workflow decision pass.</summary>
 /// <remarks>The planner can only propose a plan; it cannot authorize or execute tools.</remarks>
@@ -87,6 +94,7 @@ public sealed class AgentOperation
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string ToolName { get; set; } = "";
     public string ArgumentsJson { get; set; } = "{}";
+    public string? CapabilityContract { get; set; }
     public OperationStatus Status { get; set; }
     public string? ResultJson { get; set; }
     public string? ErrorCode { get; set; }
@@ -109,6 +117,7 @@ public sealed class PlanStep
 
 public sealed class ConversationState
 {
+    public const int PreviousChatContextLimit = 12000;
     public Guid Id { get; set; } = Guid.NewGuid();
     public long Revision { get; set; }
     public ConversationStatus Status { get; set; } = ConversationStatus.New;
@@ -172,6 +181,12 @@ public interface IApprovalBroker
     Task<bool> RequestApprovalAsync(ApprovalRequest request, CancellationToken ct);
 }
 
+// Optional task-scoped transport telemetry; it never changes model requests or authorizes work.
+public interface IModelRequestTelemetry
+{
+    IDisposable BeginRequestScope(IProgress<AgentProgress>? progress);
+}
+
 public interface IChatModel
 {
     Task<ModelReply> CompleteAsync(IReadOnlyList<ChatEntry> messages,
@@ -201,11 +216,25 @@ public interface IAgentTool
     Task<ToolReceipt> ExecuteAsync(JsonElement arguments, CancellationToken ct);
 }
 
+// Optional lossless, tool-owned argument compatibility. No execution or authority.
+// The registry validates the canonical result; approval and journaling use that same result.
+public interface IToolArgumentNormalizer
+{
+    JsonElement NormalizeArguments(JsonElement arguments);
+}
+
 // Optional tool-owned evidence constraint. The host checks it before approval and dispatch.
 // Evidence is the current task journal, never a claim from the model or prior chat.
 public interface IToolEvidenceRequirement
 {
     string? MissingEvidence(ConversationState state, JsonElement arguments);
+}
+
+// Optional non-executing intent veto for preapproved mutations. A successful review
+// is not authorization: the existing host policy and exact evidence still apply.
+public interface IToolIntentReview
+{
+    Task<string?> ReviewIntentAsync(ConversationState state, JsonElement arguments, IChatModel model, CancellationToken ct);
 }
 
 // Optional local readiness check; never grants permission or dispatches an action.

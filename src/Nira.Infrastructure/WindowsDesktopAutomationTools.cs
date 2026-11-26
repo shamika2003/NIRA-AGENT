@@ -18,7 +18,11 @@ public sealed record DesktopControl(string ControlId, string Name, string Kind,
     string AutomationId, bool Enabled, bool Offscreen, bool CanInvoke, bool CanSetText,
     bool CanTypeText = false);
 public sealed record DesktopInspection(DesktopWindow Window,
-    IReadOnlyList<DesktopControl> Controls, bool Truncated);
+    IReadOnlyList<DesktopControl> Controls, bool Truncated)
+{
+    // Null unless explicitly requested. Values reveal occupancy only, never editor contents.
+    public IReadOnlyDictionary<string, bool?>? EditorEmptyByControlId { get; init; }
+}
 public sealed record DesktopAction(bool Success, bool Dispatched, string Summary,
     string? ErrorCode = null, bool? Verified = null,
     int? ObservedCharacters = null, string? VerificationStatus = null);
@@ -37,6 +41,7 @@ public interface IDesktopAutomationBackend
 {
     IReadOnlyList<DesktopWindow> ListWindows();
     DesktopInspection Inspect(string windowId);
+    DesktopInspection Inspect(string windowId, bool checkEditorEmpty) => Inspect(windowId);
     DesktopAction Activate(string windowId);
     DesktopAction Invoke(string windowId, string controlId);
     DesktopAction SetText(string windowId, string controlId, string text);
@@ -123,18 +128,24 @@ public sealed class DesktopInspectTool(IDesktopAutomationBackend desktop) : IAge
 {
     public ToolDescriptor Descriptor { get; } = new("desktop.window_inspect",
         "Inspect bounded accessibility metadata in an observed window. Reveals control names " +
-        "and supported actions but never reads edit-field values or passwords. Re-list if stale.",
+        "and supported actions. For blank-editor tasks request checkEditorEmpty=true to return only local empty/nonempty/unknown status for eligible non-password TextPattern editors, never their contents. Re-list if stale.",
         ToolRisk.ReadLocal, JsonToolSchema.Schema("""
-        {"type":"object","properties":{"windowId":{"type":"string","minLength":8,"maxLength":100}},
+        {"type":"object","properties":{"windowId":{"type":"string","minLength":8,"maxLength":100},"checkEditorEmpty":{"type":"boolean"}},
          "required":["windowId"],"additionalProperties":false}
         """));
-    public string GetTarget(JsonElement args) => DesktopToolInput.Target(args, "inspect");
+    public string GetTarget(JsonElement args) => DesktopToolInput.Target(args, "inspect") +
+        (args.TryGetProperty("checkEditorEmpty", out var check) && check.ValueKind == JsonValueKind.True ? "?editor-occupancy-only=true" : "");
     public async Task<ToolReceipt> ExecuteAsync(JsonElement args, CancellationToken ct)
     {
         try
         {
+            bool checkEditorEmpty = args.TryGetProperty("checkEditorEmpty", out var check) && check.ValueKind == JsonValueKind.True;
             DesktopInspection result = await Task.Run(() => desktop.Inspect(
-                DesktopToolInput.Window(args)), ct);
+                DesktopToolInput.Window(args), checkEditorEmpty), ct);
+            if (checkEditorEmpty)
+                return ToolReceipt.Ok("Inspected accessible desktop controls and requested editor occupancy", new {
+                    result.Window, result.Controls, result.Truncated, count = result.Controls.Count,
+                    EditorEmptyByControlId = result.EditorEmptyByControlId ?? new Dictionary<string, bool?>() });
             return ToolReceipt.Ok("Inspected accessible desktop controls", new {
                 result.Window, result.Controls, result.Truncated, count = result.Controls.Count });
         }
@@ -162,8 +173,8 @@ public sealed class DesktopInvokeTool(IDesktopAutomationBackend desktop) : IAgen
         "Invoke ONE observed, enabled, visible accessibility button in the exact approved " +
         "window using UI Automation InvokePattern, without keyboard/mouse injection. " +
         "The target may be in the background because CLI approval prompts steal focus. " +
-        "Requires separate host approval; app outcome may be unverified. " +
-        "Never operates security prompts or NIRA's own windows.",
+        "Requires separate host approval; app outcome may be unverified. controlId may be an exact observed ID or unique name://Name or automation://AutomationId, bound by the host before approval. " +
+        "For multiple known ordered actions on a stable layout use desktop.control_sequence instead of separate calls. Never operates security prompts or NIRA's own windows.",
         ToolRisk.Dangerous, JsonToolSchema.Schema("""
         {"type":"object","properties":{
           "windowId":{"type":"string","minLength":8,"maxLength":100},
@@ -181,6 +192,7 @@ public sealed class DesktopSetTextTool(IDesktopAutomationBackend desktop) : IAge
     public ToolDescriptor Descriptor { get; } = new("desktop.control_set_text",
         "Set text in ONE observed, enabled, visible, writable non-password Edit field of the " +
         "exact approved window via UI Automation ValuePattern, not global keystrokes. " +
+        "controlId accepts an exact observed ID, name://Name or automation://AutomationId (unique supported control only; host resolves before approval). " +
         "May target a background window because CLI approval prompts steal focus. " +
         "Replaces the field's entire existing value; requires separate host approval. " +
         "Never retrieves prior values.",
@@ -213,12 +225,12 @@ public sealed class DesktopTypeTextTool(IDesktopAutomationBackend desktop) : IAg
         "After approval, NIRA itself activates the exact observed window; " +
         "the user does not need to switch applications. Refuses wrong " +
         "window, stale or non-keyboard-focusable controls, or a non-empty editor. " +
-        "Does not save documents or use shortcuts.",
+        "Use requireEmpty=true, and only a control observed with CanTypeText=true. controlId may be an exact ID or unique observed name://Name or automation://AutomationId, resolved by the host before approval. Does not save documents or use shortcuts.",
         ToolRisk.Dangerous, JsonToolSchema.Schema("""
         {"type":"object","properties":{
           "windowId":{"type":"string","minLength":8,"maxLength":100},
           "controlId":{"type":"string","minLength":8,"maxLength":100},
-          "text":{"type":"string","minLength":1,"maxLength":200},
+          "text":{"type":"string","minLength":1,"maxLength":500},
           "requireEmpty":{"type":"boolean"}},
          "required":["windowId","controlId","text","requireEmpty"],"additionalProperties":false}
         """), HasSideEffects: true);
@@ -263,11 +275,35 @@ public sealed partial class WindowsDesktopAutomationBackend : IDesktopAutomation
 
     public IReadOnlyList<DesktopWindow> ListWindows() => Enumerate().Select(x => x.Info).ToArray();
 
-    public DesktopInspection Inspect(string windowId)
+    public DesktopInspection Inspect(string windowId) => Inspect(windowId, false);
+
+    public DesktopInspection Inspect(string windowId, bool checkEditorEmpty)
     {
         var window = ResolveWindow(windowId);
         var controls = ScanControls(window.Handle, windowId, out bool truncated);
-        return new DesktopInspection(window.Info, controls.Select(c => c.Info).ToArray(), truncated);
+        var inspection = new DesktopInspection(window.Info, controls.Select(c => c.Info).ToArray(), truncated);
+        if (!checkEditorEmpty) return inspection;
+        var states = new Dictionary<string, bool?>(StringComparer.Ordinal);
+        foreach (var control in controls.Where(c => c.Info.CanTypeText && c.Info.Enabled && !c.Info.Offscreen))
+        {
+            bool? empty = null;
+            try
+            {
+                var current = control.Element.Current;
+                if (!current.IsPassword && current.IsEnabled && !current.IsOffscreen &&
+                    control.Element.TryGetCurrentPattern(TextPattern.Pattern, out object? raw) && raw is TextPattern pattern)
+                {
+                    // Read only a bounded prefix locally. A provider may append a terminal line break.
+                    // A saturated prefix consisting of line breaks does not establish emptiness.
+                    string prefix = pattern.DocumentRange.GetText(16);
+                    empty = prefix.Trim('\r', '\n').Length != 0 ? false : prefix.Length < 16 ? true : null;
+                }
+            }
+            catch (Exception error) when (error is COMException or ElementNotAvailableException or InvalidOperationException)
+            { /* Unknown is not empty. */ }
+            states[control.Info.ControlId] = empty;
+        }
+        return inspection with { EditorEmptyByControlId = states };
     }
 
     public DesktopAction Activate(string windowId)

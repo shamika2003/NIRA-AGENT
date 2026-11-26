@@ -17,11 +17,15 @@ public static class ToolRecoveryPolicy
     {
         // A later successful mutation is evidence of an alternative action, not
         // proof that it satisfied the user's goal; the model must assess that.
-        int rejected = state.Operations.FindLastIndex(op => op.Recovery == ToolRecovery.Reobserve);
+        int rejected = state.Operations.FindLastIndex(op => op.Recovery == ToolRecovery.Reobserve ||
+            (op.Status == OperationStatus.Rejected && op.ErrorCode == "ACTION_INTENT_UNVERIFIED"));
         if (rejected < 0) return null;
         foreach (var op in state.Operations.Skip(rejected + 1))
         {
             if (op.Status != OperationStatus.Succeeded || op.ResultJson is null) continue;
+            // A rejected compound proposal cannot be cleared by an unrelated later mutation.
+            if (state.Operations[rejected].ErrorCode == "ACTION_INTENT_UNVERIFIED" &&
+                op.ToolName != state.Operations[rejected].ToolName) continue;
             try
             {
                 using var receipt = JsonDocument.Parse(op.ResultJson);

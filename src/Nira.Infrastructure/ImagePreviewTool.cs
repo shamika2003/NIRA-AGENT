@@ -14,9 +14,11 @@ public sealed class ImagePreviewTool(WorkspacePathResolver paths) : IAgentTool
     public const int MaxBytes = 8 * 1024 * 1024;
     public const string CacheFolder = ".nira-image-cache";
     public ToolDescriptor Descriptor { get; } = new("image.retrieve",
-        "Retrieve and display up to six image previews using exact ThumbnailUrl (preferred) or MediaUrl from this task's successful image.search results. Requires network approval. Not authenticity or license verification.",
+        "Retrieve and display up to six observed photographs or image previews. Prefer one nonempty candidateIds array from successful image.search (omit urls or leave it empty): the host resolves exact observed URLs, prefers thumbnails and skips already attempted or retrieved URLs. Legacy exact urls remain supported. Requires network approval. Not authenticity or license verification.",
         ToolRisk.ReadExternal, ToolSchemas.New("""
-        {"type":"object","properties":{"urls":{"type":"array","items":{"type":"string","minLength":12,"maxLength":2048}}},"required":["urls"],"additionalProperties":false}
+        {"type":"object","properties":{"urls":{"type":"array","items":{"type":"string","minLength":12,"maxLength":2048}},
+         "candidateIds":{"type":"array","items":{"type":"string","minLength":1,"maxLength":128}}},
+         "anyOf":[{"required":["urls"]},{"required":["candidateIds"]}],"additionalProperties":false}
         """));
     private static string[] Urls(JsonElement args)
     {
@@ -43,8 +45,10 @@ public sealed class ImagePreviewTool(WorkspacePathResolver paths) : IAgentTool
         _ = GetTarget(arguments);
         using var handler = new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false, UseProxy = false, ConnectCallback = ConnectAsync };
         using var http = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
-        var previews = new List<object>(); int failed = 0;
-        foreach (string url in Urls(arguments))
+        var previews = new List<object>(); var failures = new List<object>();
+        // Two independent, already approved reads at a time. Keep memory/decoder pressure
+        // bounded on desktop PCs and return results in proposal order, not completion order.
+        async Task<(object? Preview, object? Failure)> RetrieveOneAsync(string url)
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromSeconds(12));
@@ -53,8 +57,11 @@ public sealed class ImagePreviewTool(WorkspacePathResolver paths) : IAgentTool
                 using var request = new HttpRequestMessage(HttpMethod.Get, PublicBrowserUrlPolicy.Parse(url));
                 request.Headers.UserAgent.ParseAdd("NIRA/1.0 (ELVARA desktop image preview)");
                 using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
-                if (!response.IsSuccessStatusCode || response.Content.Headers.ContentLength > MaxBytes ||
-                    response.Content.Headers.ContentType?.MediaType is not ("image/jpeg" or "image/png" or "image/gif")) { failed++; continue; }
+                if (!response.IsSuccessStatusCode)
+                { return (null, new { url, reason = "HTTP " + (int)response.StatusCode }); }
+                if (response.Content.Headers.ContentLength > MaxBytes ||
+                    response.Content.Headers.ContentType?.MediaType is not ("image/jpeg" or "image/png" or "image/gif"))
+                { return (null, new { url, reason = "Unsupported media type or preview size limit" }); }
                 await using var stream = await response.Content.ReadAsStreamAsync(timeout.Token);
                 using var buffer = new MemoryStream(); byte[] chunk = new byte[16384]; int n;
                 while ((n = await stream.ReadAsync(chunk.AsMemory(), timeout.Token)) != 0)
@@ -76,13 +83,24 @@ public sealed class ImagePreviewTool(WorkspacePathResolver paths) : IAgentTool
                     File.Move(temp, path);
                 }
                 finally { if (File.Exists(temp)) File.Delete(temp); }
-                previews.Add(new { url, path, sha256 = Convert.ToHexString(SHA256.HashData(preview)) });
+                return (new { url, path, sha256 = Convert.ToHexString(SHA256.HashData(preview)) }, null);
             }
             catch (Exception ex) when (!ct.IsCancellationRequested && ex is HttpRequestException or IOException or InvalidOperationException or ArgumentException or NotSupportedException or UnauthorizedAccessException or OperationCanceledException or System.Runtime.InteropServices.COMException)
-            { failed++; }
+            { return (null, new { url, reason = ex is OperationCanceledException ? "Preview timed out" : ex.GetType().Name }); }
         }
-        return previews.Count == 0 ? ToolReceipt.Fail("IMAGE_PREVIEW_UNAVAILABLE", "No image preview could be opened. Source links may still be useful.") :
-            ToolReceipt.Ok($"{previews.Count} image preview(s) retrieved; {failed} unavailable. Content identity and rights not independently verified.", new { previews, failed, visualIdentityVerified = false });
+        foreach (string[] batch in Urls(arguments).Chunk(2))
+        {
+            ct.ThrowIfCancellationRequested();
+            var results = await Task.WhenAll(batch.Select(RetrieveOneAsync));
+            foreach (var result in results)
+            {
+                if (result.Preview is not null) previews.Add(result.Preview);
+                if (result.Failure is not null) failures.Add(result.Failure);
+            }
+        }
+        var data = new { previews, failed = failures.Count, failures, visualIdentityVerified = false };
+        return previews.Count == 0 ? ToolReceipt.Fail("IMAGE_PREVIEW_UNAVAILABLE", "No image preview could be opened. Do not retry the same URLs; select different observed candidates or report the limitation.", data) :
+            ToolReceipt.Ok($"{previews.Count} image preview(s) retrieved; {failures.Count} unavailable. Content identity and rights not independently verified.", data);
     }
 
     private static Task<byte[]> DecodeAsync(byte[] bytes, CancellationToken ct)

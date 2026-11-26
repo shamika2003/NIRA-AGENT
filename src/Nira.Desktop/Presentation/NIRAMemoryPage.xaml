@@ -63,6 +63,7 @@
                     <TextBlock Text="What NIRA remembers and learns." FontSize="11" TextWrapping="Wrap" Foreground="{DynamicResource NIRASecondaryBrush}" Margin="0,0,0,24"/>
                     <Button x:Name="NotesButton" Content="Saved memories" Click="Notes_Click" Tag="ACTIVE" Style="{StaticResource MemoryNavStyle}"/>
                     <Button x:Name="SuggestionsButton" Content="Learning suggestions" Click="Suggestions_Click" Style="{StaticResource MemoryNavStyle}"/>
+                    <Button x:Name="SkillsButton" Content="Learned skills" Click="Skills_Click" Style="{StaticResource MemoryNavStyle}"/>
                     <Button x:Name="PreferencesButton" Content="Memory preferences" Click="Preferences_Click" Style="{StaticResource MemoryNavStyle}"/>
                 </StackPanel>
                 <StackPanel DockPanel.Dock="Bottom" VerticalAlignment="Bottom">

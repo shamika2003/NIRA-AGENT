@@ -23,6 +23,12 @@ public static class JsonToolSchema
             error = $"{path}: schema must be an object";
             return false;
         }
+        if (schema.TryGetProperty("anyOf", out var alternatives))
+        {
+            if (alternatives.ValueKind != JsonValueKind.Array || alternatives.GetArrayLength() == 0 ||
+                !alternatives.EnumerateArray().Any(alternative => Check(alternative, value, path, out _)))
+            { error = $"{path}: value does not match any allowed schema alternative"; return false; }
+        }
         string? type = schema.TryGetProperty("type", out var kind) ? kind.GetString() : null;
         bool validType = type switch
         {

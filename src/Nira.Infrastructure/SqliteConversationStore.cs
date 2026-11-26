@@ -11,6 +11,10 @@ namespace Nira.Infrastructure;
 public sealed partial class SqliteConversationStore : IConversationStore, IMemoryContextProvider
 {
     private readonly string _connectionString;
+    // Encrypted local JSON, not HTML. Avoid redundant escaping of nested tool receipts
+    // and generated documents. Existing rows use the same JSON format and remain readable.
+    private static readonly JsonSerializerOptions ConversationJson = new()
+    { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     public SqliteConversationStore(string databasePath)
     {
@@ -44,6 +48,7 @@ public sealed partial class SqliteConversationStore : IConversationStore, IMemor
             """;
         command.ExecuteNonQuery();
         InitializeMemorySchema(conn);
+        InitializeProcedureSchema(conn);
     }
 
     private SqliteConnection Open()
@@ -172,19 +177,52 @@ public sealed partial class SqliteConversationStore : IConversationStore, IMemor
     {
         var chain = await LoadThreadAsync(previous, ct);
         if (chain.Count == 0 || (chain[^1].Status != ConversationStatus.Completed &&
-            !(chain[^1].Status == ConversationStatus.Paused &&
-                (startNewAfterPause || ToolRecoveryPolicy.HasUnverifiedEffect(chain[^1])))))
-            throw new AgentException("Only a completed task or an explicitly isolated paused task can start a new linked chat turn.");
+            !(startNewAfterPause && chain[^1].Status is (ConversationStatus.Paused or ConversationStatus.Running or
+                ConversationStatus.Failed or ConversationStatus.NeedsReconciliation or ConversationStatus.AwaitingApproval)) &&
+            !(chain[^1].Status == ConversationStatus.Paused && ToolRecoveryPolicy.HasUnverifiedEffect(chain[^1]))))
+            throw new AgentException("Only a completed task or explicitly isolated interrupted task can start a new linked chat turn.");
         var parent = chain[^1];
         var excerpts = new List<string>();
-        foreach (var state in chain.TakeLast(6))
+        int remaining = ConversationState.PreviousChatContextLimit;
+        foreach (var state in chain.TakeLast(6).Reverse())
         {
-            foreach (var user in state.Messages.Where(m => m.Role == "user" && !string.IsNullOrWhiteSpace(m.Content)))
-                excerpts.Add("User: " + user.Content);
-            if (!string.IsNullOrWhiteSpace(state.LastAnswer)) excerpts.Add("NIRA: " + state.LastAnswer);
+            // Preserve whole recent exchanges before adding older history. A prior
+            // task never supplies current authorization or operation receipts.
+            var turn = new List<string>();
+            if (state.Status != ConversationStatus.Completed)
+            {
+                if (!string.IsNullOrWhiteSpace(state.LastAnswer))
+                    turn.Add("Previous unfinished task outcome (not a request): " + state.LastAnswer);
+            }
+            else
+            {
+                foreach (var user in state.Messages.Where(m => m.Role == "user" && !string.IsNullOrWhiteSpace(m.Content)))
+                    turn.Add("User: " + user.Content);
+                if (!string.IsNullOrWhiteSpace(state.LastAnswer)) turn.Add("NIRA: " + state.LastAnswer);
+            }
+            string exchange = string.Join("\n\n", turn);
+            if (exchange.Length == 0) continue;
+            if (exchange.Length > remaining)
+            {
+                if (excerpts.Count == 0)
+                {
+                    // Explicitly mark exceptionally long answers as incomplete; keep
+                    // both the initial request/answer opening and its conclusion.
+                    const string omitted = "\n\n[Middle of previous exchange omitted by context limit; not a complete transcript.]\n\n";
+                    int head = (remaining - omitted.Length) / 2;
+                    int tail = remaining - omitted.Length - head;
+                    if (char.IsHighSurrogate(exchange[head - 1])) head--;
+                    if (char.IsLowSurrogate(exchange[^tail])) tail--;
+                    excerpts.Add(exchange[..head] + omitted + exchange[^tail..]);
+                }
+                break;
+            }
+            excerpts.Add(exchange);
+            remaining -= exchange.Length + 2;
+            if (remaining <= 0) break;
         }
+        excerpts.Reverse();
         string context = string.Join("\n\n", excerpts);
-        if (context.Length > 6000) context = context[^6000..];
         var child = new ConversationState {
             ChatThreadId = parent.ChatThreadId ?? parent.Id, PreviousTaskId = parent.Id,
             ChatThreadTitle = parent.ChatThreadTitle ?? parent.Objective, PreviousChatContext = context
@@ -235,7 +273,7 @@ public sealed partial class SqliteConversationStore : IConversationStore, IMemor
         }
         cmd.Parameters.AddWithValue("$id", state.Id.ToString("D"));
         cmd.Parameters.AddWithValue("$next", next);
-        cmd.Parameters.AddWithValue("$payload", WindowsDpapiProtector.Seal(JsonSerializer.Serialize(state)));
+        cmd.Parameters.AddWithValue("$payload", WindowsDpapiProtector.Seal(JsonSerializer.Serialize(state, ConversationJson)));
         cmd.Parameters.AddWithValue("$updated", state.UpdatedUtc.ToString("O"));
         if (await cmd.ExecuteNonQueryAsync(ct) != 1)
             throw new AgentException("Conversation version conflict. Reload before continuing.");

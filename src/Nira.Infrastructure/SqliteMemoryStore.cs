@@ -42,15 +42,32 @@ public sealed partial class SqliteConversationStore
             CREATE TABLE IF NOT EXISTS memory_preferences (
                 singleton INTEGER PRIMARY KEY CHECK(singleton=1),
                 recall_enabled INTEGER NOT NULL,
-                suggest_learning INTEGER NOT NULL
+                suggest_learning INTEGER NOT NULL,
+                auto_save_learning INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS memory_reviewed_tasks (task_id TEXT PRIMARY KEY NOT NULL);
+            CREATE TABLE IF NOT EXISTS memory_versions (
+                id TEXT PRIMARY KEY NOT NULL, note_id TEXT NOT NULL,
+                payload TEXT NOT NULL, replaced_utc TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_memory_versions_note ON memory_versions(note_id, replaced_utc);
+            CREATE TRIGGER IF NOT EXISTS memory_versions_remove AFTER DELETE ON memories
+            BEGIN DELETE FROM memory_versions WHERE note_id=OLD.id; END;
             CREATE TABLE IF NOT EXISTS memory_candidates (
                 id TEXT PRIMARY KEY NOT NULL, task_id TEXT NOT NULL, payload TEXT NOT NULL,
                 created_utc TEXT NOT NULL
             );
             """;
         cmd.ExecuteNonQuery();
+        cmd.CommandText = "PRAGMA table_info(memory_preferences)";
+        bool hasAutoSave = false;
+        using (var reader = cmd.ExecuteReader())
+            while (reader.Read()) if (reader.GetString(1) == "auto_save_learning") hasAutoSave = true;
+        if (!hasAutoSave)
+        {
+            cmd.CommandText = "ALTER TABLE memory_preferences ADD COLUMN auto_save_learning INTEGER NOT NULL DEFAULT 0";
+            cmd.ExecuteNonQuery();
+        }
         tx.Commit();
     }
 
@@ -58,9 +75,9 @@ public sealed partial class SqliteConversationStore
     {
         await using var conn = Open();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT recall_enabled, suggest_learning FROM memory_preferences WHERE singleton=1";
+        cmd.CommandText = "SELECT recall_enabled, suggest_learning, auto_save_learning FROM memory_preferences WHERE singleton=1";
         await using var reader = await cmd.ExecuteReaderAsync(ct);
-        return await reader.ReadAsync(ct) ? new MemoryRecallSettings(reader.GetInt64(0) != 0, reader.GetInt64(1) != 0) : new();
+        return await reader.ReadAsync(ct) ? new MemoryRecallSettings(reader.GetInt64(0) != 0, reader.GetInt64(1) != 0, reader.GetInt64(2) != 0) : new();
     }
 
     public async Task SetMemorySettingsAsync(MemoryRecallSettings settings, CancellationToken ct)
@@ -68,11 +85,12 @@ public sealed partial class SqliteConversationStore
         await using var conn = Open();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO memory_preferences(singleton,recall_enabled,suggest_learning) VALUES(1,$recall,$learn)
-            ON CONFLICT(singleton) DO UPDATE SET recall_enabled=excluded.recall_enabled, suggest_learning=excluded.suggest_learning
+            INSERT INTO memory_preferences(singleton,recall_enabled,suggest_learning,auto_save_learning) VALUES(1,$recall,$learn,$auto)
+            ON CONFLICT(singleton) DO UPDATE SET recall_enabled=excluded.recall_enabled, suggest_learning=excluded.suggest_learning, auto_save_learning=excluded.auto_save_learning
             """;
         cmd.Parameters.AddWithValue("$recall", settings.RecallEnabled ? 1 : 0);
         cmd.Parameters.AddWithValue("$learn", settings.SuggestLearning ? 1 : 0);
+        cmd.Parameters.AddWithValue("$auto", settings.SuggestLearning && settings.RecallEnabled && settings.AutoSaveLearning ? 1 : 0);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
@@ -144,7 +162,7 @@ public sealed partial class SqliteConversationStore
             while (await reader.ReadAsync(ct))
             {
                 ct.ThrowIfCancellationRequested();
-                if (string.Equals(WindowsDpapiProtector.Open(reader.GetString(1)).Trim(), text, StringComparison.Ordinal))
+                if (string.Equals(MemoryRanking.LearningIdentity(WindowsDpapiProtector.Open(reader.GetString(1))), MemoryRanking.LearningIdentity(text), StringComparison.Ordinal))
                 { existing = reader.GetString(0); break; }
                 // Only agent-proposed new notes use this review gate. Direct manual
                 // creation and explicitly accepted learning suggestions keep their existing behavior.
@@ -241,25 +259,62 @@ public sealed partial class SqliteConversationStore
     public async Task<IReadOnlyList<(string Id, string Content)>> SearchMemoryAsync(string query, int limit, CancellationToken ct) =>
         (await FindMemoryAsync(query, [], limit, ct)).Select(n => (n.Id, n.Content)).ToArray();
 
-    public async Task<MemoryRecallContext> RecallAsync(string query, CancellationToken ct)
+    public Task<MemoryRecallContext> RecallAsync(string query, CancellationToken ct) =>
+        RecallWithModelAsync(query, null, ct);
+
+    internal async Task<MemoryRecallContext> RecallWithModelAsync(string query, IChatModel? model, CancellationToken ct)
     {
         try
         {
             var settings = await GetMemorySettingsAsync(ct);
             if (!settings.RecallEnabled || string.IsNullOrWhiteSpace(query)) return new(settings, []);
-            var notes = await FindMemoryAsync(query[..Math.Min(query.Length, 1500)], [], 6, ct, automatic: true);
+            string boundedQuery = query[..Math.Min(query.Length, 1500)];
+            var available = (await ReadNotesAsync(MemorySearchLimit, ct)).OrderByDescending(n => n.UpdatedUtc, StringComparer.Ordinal).ToArray();
+            var notes = MemoryRanking.Rank(available, Searchable, boundedQuery, [], 6, automatic: true, subject: n => n.Topic);
+            bool semantic = false;
+            if (notes.Count == 0 && available.Length > 0 && model is not null)
+            {
+                var expansion = await MemorySemanticRecall.ExpandAsync(model, boundedQuery, ct);
+                if (expansion is not null)
+                {
+                    // Re-read after the external inference: a deleted or edited note
+                    // must not be resurrected by an in-flight search decision.
+                    var currentSettings = await GetMemorySettingsAsync(ct);
+                    if (!currentSettings.RecallEnabled) return new(currentSettings, []);
+                    available = (await ReadNotesAsync(MemorySearchLimit, ct)).OrderByDescending(n => n.UpdatedUtc, StringComparer.Ordinal).ToArray();
+                    // Unanchored expansions may discover broadly applicable preferences
+                    // and lessons, but must not select an unrelated project's facts.
+                    // An anchor must occur in the actual topic/content, not merely tags.
+                    var eligible = available.Where(n => expansion.Anchor.Length == 0
+                        ? n.Kind is "preference" or "lesson"
+                        : MemoryRanking.MatchesAnchor(n.Topic + " " + n.Content, expansion.Anchor));
+                    notes = MemoryRanking.RankExpanded(eligible, Searchable, expansion.Phrases, expansion.Anchor, 6);
+                    semantic = notes.Count > 0;
+                }
+            }
+            // Associate only an identical, non-generic topic and kind, not a shared tag.
+            // Read-time consolidation preserves every stored record and provenance.
+            static bool HasSubject(SavedMemoryNote note) =>
+                MemoryRanking.MatchesAnchor(note.Topic, note.Topic) &&
+                (note.Kind is "preference" or "lesson" || MemoryRanking.MatchesAnchor(note.Content, note.Topic));
+            var topics = notes.Where(HasSubject)
+                .Select(n => (n.Kind, Topic: MemoryRanking.LearningIdentity(n.Topic).ToUpperInvariant())).ToHashSet();
+            var associated = available.Where(n => HasSubject(n) && topics.Contains((n.Kind, MemoryRanking.LearningIdentity(n.Topic).ToUpperInvariant())));
             var result = new List<MemoryRecallItem>();
             int budget = RecallCharacterBudget;
-            foreach (var note in notes)
+            foreach (var note in notes.Concat(associated).DistinctBy(n => MemoryRanking.LearningIdentity(n.Content)).Take(6))
             {
                 // Never truncate a fact into an incomplete claim. Skip records exceeding remaining budget.
-                var item = new MemoryRecallItem(note.Content, note.Kind, note.Topic, note.Source, note.UpdatedUtc);
+                var item = new MemoryRecallItem(note.Content, note.Kind, note.Topic, note.Source, note.UpdatedUtc) { Id = note.Id };
                 int cost = JsonSerializer.Serialize(item).Length + 2;
                 if (cost > budget) continue;
                 budget -= cost;
                 result.Add(item);
             }
-            return new(settings, result);
+            // A slow recall must not bypass a change to the user's recall consent.
+            var latestSettings = await GetMemorySettingsAsync(ct);
+            if (!latestSettings.RecallEnabled) return new(latestSettings, []);
+            return new(latestSettings, result) { SelectionMethod = semantic && result.Count > 0 ? "semantic" : "local" };
         }
         catch (Exception ex) when (ex is SqliteException or CryptographicException or JsonException or FormatException or ArgumentException or System.Text.RegularExpressions.RegexMatchTimeoutException)
         {

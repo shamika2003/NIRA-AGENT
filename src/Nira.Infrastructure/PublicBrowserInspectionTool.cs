@@ -20,11 +20,11 @@ public sealed class PublicBrowserInspectionTool(IBrowserPageReader? reader = nul
         "browser.inspect_public",
         "Visit a public HTTPS page in a fresh Microsoft Edge browser context and report its " +
         "observed title, text, links and visible control metadata. No clicks, form submissions, downloads, login " +
-        "sessions or saved cookies. Each visit requires host approval. Does not grant " +
+        "sessions or saved cookies. For research or reading, set textOnly=true to skip link/control enumeration; omit it for interactive inspection or link discovery. Each visit requires host approval. Does not grant " +
         "access to localhost, intranet or private IPs. Other origins are blocked.",
         ToolRisk.ReadExternal,
         JsonToolSchema.Schema("""
-        {"type":"object","properties":{"url":{"type":"string","minLength":12,"maxLength":2048}},
+        {"type":"object","properties":{"url":{"type":"string","minLength":12,"maxLength":2048},"textOnly":{"type":"boolean","description":"Read page title and visible text only; no links or control metadata."}},
          "required":["url"],"additionalProperties":false}
         """));
 
@@ -36,11 +36,17 @@ public sealed class PublicBrowserInspectionTool(IBrowserPageReader? reader = nul
         Uri uri = PublicBrowserUrlPolicy.Parse(arguments.GetProperty("url").GetString() ?? "");
         try
         {
-            BrowserSnapshot observed = await _reader.ReadAsync(uri, ct);
+            bool textOnly = arguments.TryGetProperty("textOnly", out var mode) && mode.ValueKind == JsonValueKind.True;
+            BrowserSnapshot observed = textOnly ? await _reader.ReadTextAsync(uri, ct) : await _reader.ReadAsync(uri, ct);
             if (!PublicBrowserUrlPolicy.AllowsSameHostGet(observed.FinalUrl, uri.Host, "GET"))
                 return ToolReceipt.Fail("BROWSER_REDIRECT_BLOCKED",
                     "The observed final page was not the approved public HTTPS host.");
-            return ToolReceipt.Ok("Public browser page inspected", observed);
+            return textOnly
+                ? ToolReceipt.Ok("Public browser text inspected (links and controls not collected)", new {
+                    observed.RequestedUrl, observed.FinalUrl, observed.Title, observed.HttpStatus,
+                    observed.VisibleText, observed.TextTruncated, Links = Array.Empty<BrowserLink>(),
+                    Elements = Array.Empty<BrowserElement>(), inspectionMode = "text_only" })
+                : ToolReceipt.Ok("Public browser page inspected", observed);
         }
         catch (Exception error) when (error is PlaywrightException or SocketException or
             TimeoutException or IOException or InvalidOperationException)
@@ -69,6 +75,9 @@ public sealed record BrowserElement(string Tag, string Role, string Label, strin
 public interface IBrowserPageReader
 {
     Task<BrowserSnapshot> ReadAsync(Uri target, CancellationToken ct);
+    // Older injected readers remain compatible. The production reader avoids the enumeration itself.
+    async Task<BrowserSnapshot> ReadTextAsync(Uri target, CancellationToken ct) =>
+        (await ReadAsync(target, ct)) with { Links = [], Elements = [] };
 }
 
 /// <summary>
@@ -143,7 +152,10 @@ public static class PublicBrowserUrlPolicy
 
 internal sealed class EdgePublicPageReader : IBrowserPageReader
 {
-    public async Task<BrowserSnapshot> ReadAsync(Uri target, CancellationToken ct)
+    public Task<BrowserSnapshot> ReadAsync(Uri target, CancellationToken ct) => ReadCoreAsync(target, false, ct);
+    public Task<BrowserSnapshot> ReadTextAsync(Uri target, CancellationToken ct) => ReadCoreAsync(target, true, ct);
+
+    private static async Task<BrowserSnapshot> ReadCoreAsync(Uri target, bool textOnly, CancellationToken ct)
     {
         // This is best-effort public-network filtering, not DNS pinning or a sandbox.
         IPAddress[] dns = await Dns.GetHostAddressesAsync(target.DnsSafeHost, ct);
@@ -181,7 +193,7 @@ internal sealed class EdgePublicPageReader : IBrowserPageReader
             }).WaitAsync(ct);
             if (!PublicBrowserUrlPolicy.AllowsSameHostGet(page.Url, target.Host, "GET"))
                 throw new InvalidOperationException("Navigation escaped the approved hostname.");
-            return await SnapshotAsync(page, target, initial?.Status, ct);
+            return await SnapshotAsync(page, target, initial?.Status, ct, textOnly: textOnly);
         }
         finally { await context.CloseAsync(); }
     }
@@ -253,7 +265,7 @@ internal sealed class EdgePublicPageReader : IBrowserPageReader
     // Shared, bounded DOM capture for one-shot reads and reused browser contexts.
     internal static async Task<BrowserSnapshot> SnapshotAsync(
         IPage page, Uri target, int? status, CancellationToken ct,
-        int controlOffset = 0, int controlLimit = 24)
+        int controlOffset = 0, int controlLimit = 24, bool textOnly = false)
     {
             string title = await page.TitleAsync().WaitAsync(ct);
             string visible;
@@ -261,6 +273,9 @@ internal sealed class EdgePublicPageReader : IBrowserPageReader
             catch (PlaywrightException) { visible = ""; }
             bool truncated = visible.Length > 10000;
             if (truncated) visible = visible[..10000];
+            if (textOnly)
+                return new BrowserSnapshot(target.AbsoluteUri, page.Url,
+                    title[..Math.Min(title.Length, 300)], status, visible, truncated, [], []);
             var links = new List<BrowserLink>();
             ILocator anchor = page.Locator("a[href]");
             int count = Math.Min(await anchor.CountAsync().WaitAsync(ct), 72);

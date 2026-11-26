@@ -55,11 +55,45 @@ internal static partial class MemoryRanking
         return a.Count > 0 && b.Count > 0 && (a.IsSubsetOf(b) || b.IsSubsetOf(a));
     }
 
+    // Model-generated search phrases are hints, never facts or authorization.
+    // A semantic fallback requires bounded multi-term overlap; a named subject must
+    // also be present as whole tokens. Generic context alone cannot select a note.
+    internal static bool MatchesAnchor(string text, string anchor)
+    {
+        var terms = Terms(anchor);
+        terms.ExceptWith(GenericContextWords);
+        return terms.Count > 0 && terms.IsSubsetOf(Terms(text));
+    }
+
+    internal static IReadOnlyList<T> RankExpanded<T>(IEnumerable<T> values, Func<T, string> searchable,
+        IReadOnlyList<string> phrases, string anchor, int limit)
+    {
+        var anchors = Terms(anchor);
+        anchors.ExceptWith(GenericContextWords);
+        if (anchor.Length > 0 && anchors.Count == 0) return [];
+        var groups = phrases.Select(Terms).Select(group => {
+            group.ExceptWith(GenericContextWords);
+            return group;
+        }).Where(group => group.Count >= 2 && anchors.IsSubsetOf(group)).ToArray();
+        if (groups.Length == 0) return [];
+        return values.Select(value => (Value: value, Tokens: Terms(searchable(value))))
+            .Where(item => anchors.IsSubsetOf(item.Tokens))
+            .Select(item => (item.Value, Score: groups.Where(group => group.Count(item.Tokens.Contains) >= 2 &&
+                    group.Count(item.Tokens.Contains) * 2 >= group.Count)
+                .Select(group => group.Count(item.Tokens.Contains)).DefaultIfEmpty(0).Max()))
+            .Where(item => item.Score > 0).OrderByDescending(item => item.Score)
+            .Take(Math.Clamp(limit, 1, 6)).Select(item => item.Value).ToArray();
+    }
+
     internal static IReadOnlyList<T> Rank<T>(IEnumerable<T> values, Func<T, string> searchable,
         string query, IReadOnlyList<string> alternatives, int limit, bool automatic = false, Func<T, string>? subject = null, bool preserveInputOrder = false)
     {
         var phrases = new[] { query }.Concat(alternatives).Select(x => x.Trim()).Where(x => x.Length > 0).Take(9).ToArray();
         var groups = phrases.Select(Terms).Where(g => g.Count > 0).ToArray();
+        // A generic alternative is not a meaningful alias for a specific query.
+        bool specificQuery = Terms(query).Any(term => !GenericContextWords.Contains(term));
+        if (specificQuery)
+            groups = groups.Where(g => g.Any(term => !GenericContextWords.Contains(term))).ToArray();
         var queryTerms = groups.SelectMany(g => g).ToHashSet(StringComparer.Ordinal);
         if (queryTerms.Count == 0) return [];
         var candidates = values.Select(value => (Value: value, Text: searchable(value)))
@@ -85,7 +119,7 @@ internal static partial class MemoryRanking
             bool hasSpecificMatch = matched.Any(t => !GenericContextWords.Contains(t));
             bool eligible = matched.Length > 0 && (automatic
                 ? hasSpecificMatch && (exact || (groupMatch && matched.Length >= 2) || uniqueSubjectAnchor)
-                : exact || groupMatch || distinctiveMatch || subjectMatch);
+                : (!specificQuery || hasSpecificMatch) && (exact || groupMatch || distinctiveMatch || subjectMatch));
             if (subjectMatch) score += 2;
             return (item.Value, Score: eligible ? score : 0);
         });

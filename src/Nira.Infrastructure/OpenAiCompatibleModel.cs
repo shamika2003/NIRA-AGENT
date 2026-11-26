@@ -11,8 +11,70 @@ namespace Nira.Infrastructure;
 /// Ollama's /v1/chat/completions subset; credentials supplied at runtime only.
 /// </summary>
 public sealed class OpenAiCompatibleModel(
-    HttpClient http, Uri baseUri, string model, Func<string?> getKey) : IChatModel, IWorkflowPlanningModel, IStreamingChatModel
+    HttpClient http, Uri baseUri, string model, Func<string?> getKey) : IChatModel, IWorkflowPlanningModel, IStreamingChatModel, IModelRequestTelemetry
 {
+    private readonly AsyncLocal<RequestScope?> _requestScope = new();
+    // This JSON is sent directly to an API, never embedded in HTML. Avoid six-byte
+    // escapes for nested JSON quotes/Unicode while preserving the exact decoded payload.
+    private static readonly JsonSerializerOptions WireJson = new()
+    { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+    public IDisposable BeginRequestScope(IProgress<AgentProgress>? progress)
+    {
+        var scope = new RequestScope(_requestScope, progress);
+        _requestScope.Value = scope;
+        return scope;
+    }
+
+    private sealed class RequestScope : IDisposable
+    {
+        private readonly AsyncLocal<RequestScope?> _slot;
+        private readonly IProgress<AgentProgress>? _progress;
+        private readonly RequestScope? _previous;
+        internal RequestScope(AsyncLocal<RequestScope?> slot, IProgress<AgentProgress>? progress)
+        {
+            _slot = slot;
+            _progress = progress;
+            _previous = slot.Value;
+        }
+        private long _requests, _bytes, _withUsage, _input, _output, _logicalCalls, _logicalMilliseconds;
+        private bool _disposed;
+        internal void Sent(int bytes)
+        {
+            Interlocked.Increment(ref _requests);
+            Interlocked.Add(ref _bytes, bytes);
+        }
+        internal void Received(ModelTokenUsage? usage)
+        {
+            if (usage is null) return;
+            Interlocked.Increment(ref _withUsage);
+            Interlocked.Add(ref _input, usage.Input);
+            Interlocked.Add(ref _output, usage.Output);
+        }
+        internal void Finished(long milliseconds)
+        {
+            Interlocked.Increment(ref _logicalCalls);
+            Interlocked.Add(ref _logicalMilliseconds, milliseconds);
+        }
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _slot.Value = _previous;
+            _progress?.Report(new AgentProgress("model-usage", $"HTTP requests: {_requests}; request UTF-8 bytes: {_bytes}; provider usage available for {_withUsage}/{_requests}; reported input tokens: {_input}; reported output tokens: {_output}; logical model calls: {_logicalCalls}; model elapsed ms (sum, including retries): {_logicalMilliseconds}"));
+        }
+    }
+
+    internal static ModelTokenUsage? ReadUsage(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("usage", out var usage) ||
+            usage.ValueKind != JsonValueKind.Object || !usage.TryGetProperty("prompt_tokens", out var input) ||
+            input.ValueKind != JsonValueKind.Number || !input.TryGetInt64(out long i) || i is < 0 or > 1000000000 ||
+            !usage.TryGetProperty("completion_tokens", out var output) || output.ValueKind != JsonValueKind.Number ||
+            !output.TryGetInt64(out long o) || o is < 0 or > 1000000000) return null;
+        return new ModelTokenUsage(i, o);
+    }
+
     // Once a provider demonstrates a tight context budget, avoid submitting
     // the same oversized transcript on every subsequent model round.
     private volatile bool _preferCompactInference;
@@ -31,13 +93,33 @@ public sealed class OpenAiCompatibleModel(
         IReadOnlyList<ToolDescriptor> tools, Action<string?> preview, CancellationToken ct) =>
         CompleteCoreAsync(messages, tools, preview, ct);
 
-    private Task<ModelReply> CompleteCoreAsync(IReadOnlyList<ChatEntry> messages,
+    private async Task<ModelReply> CompleteCoreAsync(IReadOnlyList<ChatEntry> messages,
         IReadOnlyList<ToolDescriptor> tools, Action<string?>? preview, CancellationToken ct)
     {
-        if (_preferCompactInference && ModelContextRecovery.TryReduce(messages, tools,
-            out IReadOnlyList<ChatEntry> shorter, out IReadOnlyList<ToolDescriptor> narrowed))
-            return SendWithContextRecoveryAsync(shorter, narrowed, allowRecovery: false, ct, preview);
-        return SendWithContextRecoveryAsync(messages, tools, allowRecovery: true, ct, preview);
+        var scope = _requestScope.Value;
+        long start = System.Diagnostics.Stopwatch.GetTimestamp();
+        try
+        {
+            if (_preferCompactInference && ModelContextRecovery.TryReduce(messages, tools,
+                out IReadOnlyList<ChatEntry> shorter, out IReadOnlyList<ToolDescriptor> narrowed))
+                return await SendWithContextRecoveryAsync(shorter, narrowed, allowRecovery: false, ct, preview);
+            return await SendWithContextRecoveryAsync(messages, tools, allowRecovery: true, ct, preview);
+        }
+        finally { scope?.Finished((long)System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds); }
+    }
+
+    private static string WireContent(ChatEntry entry)
+    {
+        string content = entry.Content ?? "";
+        if (entry.Role != "tool" || content.Length is < 128 or > 500000) return content;
+        try
+        {
+            using var document = JsonDocument.Parse(content);
+            if (document.RootElement.ValueKind != JsonValueKind.Object) return content;
+            string compact = JsonSerializer.Serialize(document.RootElement, WireJson);
+            return compact.Length < content.Length ? compact : content;
+        }
+        catch (JsonException) { return content; }
     }
 
     private async Task<ModelReply> SendWithContextRecoveryAsync(
@@ -55,7 +137,7 @@ public sealed class OpenAiCompatibleModel(
                 item.ToolCalls is { Count: > 0 } && string.IsNullOrEmpty(item.Content);
             var row = new Dictionary<string, object?> {
                 ["role"] = item.Role,
-                ["content"] = toolOnlyAssistant ? null : item.Content ?? "" };
+                ["content"] = toolOnlyAssistant ? null : WireContent(item) };
             if (item.Role == "tool") row["tool_call_id"] = item.ToolCallId;
             if (item.Role == "assistant" && item.ToolCalls is { Count: > 0 })
                 row["tool_calls"] = item.ToolCalls.Select(call => new {
@@ -79,13 +161,19 @@ public sealed class OpenAiCompatibleModel(
             payload["tools"] = functions;
             payload["tool_choice"] = "auto";
         }
-        string json = JsonSerializer.Serialize(payload);
+        string json = JsonSerializer.Serialize(payload, WireJson);
         using var request = new HttpRequestMessage(HttpMethod.Post,
             new Uri(baseUri, "chat/completions"));
         request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+        if (preview is not null)
+        {
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json", 0.5));
+        }
         string? key = getKey();
         if (!string.IsNullOrWhiteSpace(key))
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+        _requestScope.Value?.Sent(Encoding.UTF8.GetByteCount(json));
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
         if (response.StatusCode == HttpStatusCode.Unauthorized)
             throw new ModelAuthenticationException(
@@ -120,7 +208,7 @@ public sealed class OpenAiCompatibleModel(
         ModelReply result;
         if (preview is not null && string.Equals(response.Content.Headers.ContentType?.MediaType,
                 "text/event-stream", StringComparison.OrdinalIgnoreCase))
-            result = await ChatCompletionStream.ReadAsync(response.Content, preview, ct);
+            result = (await ChatCompletionStream.ReadAsync(response.Content, preview, ct)) with { DeliveryMode = "event-stream" };
         else
         {
             byte[] bytes = await response.Content.ReadAsByteArrayAsync(ct);
@@ -156,8 +244,9 @@ public sealed class OpenAiCompatibleModel(
                     calls.Add(new ModelToolCall(id, name, argumentJson));
                 }
             }
-            result = new ModelReply(content, calls);
+            result = new ModelReply(content, calls) { DeliveryMode = "json", Usage = ReadUsage(root) };
         }
+        _requestScope.Value?.Received(result.Usage);
         string? visible = result.Content;
         // A provider can silently exhaust its output budget or return no
         // visible content with HTTP 200. The exact cause is not known here.
@@ -218,7 +307,7 @@ public sealed class OpenAiCompatibleModel(
 
     // Some OpenAI-compatible providers return text as an array of content parts.
     // Keep reasoning fields private; only an actual visible content part is an answer.
-    private static string? ExtractVisibleText(JsonElement message)
+    internal static string? ExtractVisibleText(JsonElement message)
     {
         if (!message.TryGetProperty("content", out JsonElement content)) return null;
         if (content.ValueKind == JsonValueKind.String) return content.GetString();

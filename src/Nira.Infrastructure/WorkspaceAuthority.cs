@@ -23,6 +23,8 @@ public sealed class WorkspaceAuthority(string workspaceRoot, bool developmentMod
 
     public bool IsPreapproved(ToolDescriptor tool, string target)
     {
+        // Recall itself is read-only and separately gated by the saved opt-in.
+        if (tool.Name == "skill.recall" && target == "procedural-memory" && tool.Risk == ToolRisk.ReadLocal && !tool.HasSideEffects) return true;
         if (developmentMode)
         {
             // The owner grants standing consent for local saved-note management in

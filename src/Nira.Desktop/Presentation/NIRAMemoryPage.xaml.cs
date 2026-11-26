@@ -9,7 +9,7 @@ namespace NIRAAgent.UI.Presentation;
 /// <summary>Embedded local memory workspace; opening it never calls the reasoning provider.</summary>
 public partial class NIRAMemoryPage : UserControl
 {
-    private enum MemorySection { Notes, Suggestions, Preferences }
+    private enum MemorySection { Notes, Suggestions, Preferences, Skills }
     private MemorySection _section = MemorySection.Notes;
     private SqliteConversationStore? _store;
     private bool _loading;
@@ -25,6 +25,7 @@ public partial class NIRAMemoryPage : UserControl
     private async void Notes_Click(object sender, RoutedEventArgs e) => await SelectAsync(MemorySection.Notes);
     private async void Suggestions_Click(object sender, RoutedEventArgs e) => await SelectAsync(MemorySection.Suggestions);
     private async void Preferences_Click(object sender, RoutedEventArgs e) => await SelectAsync(MemorySection.Preferences);
+    private async void Skills_Click(object sender, RoutedEventArgs e) => await SelectAsync(MemorySection.Skills);
     private async void Refresh_Click(object sender, RoutedEventArgs e) => await RefreshAsync();
 
     private async Task SelectAsync(MemorySection section)
@@ -34,10 +35,12 @@ public partial class NIRAMemoryPage : UserControl
         NotesButton.Tag = section == MemorySection.Notes ? "ACTIVE" : null;
         SuggestionsButton.Tag = section == MemorySection.Suggestions ? "ACTIVE" : null;
         PreferencesButton.Tag = section == MemorySection.Preferences ? "ACTIVE" : null;
+        SkillsButton.Tag = section == MemorySection.Skills ? "ACTIVE" : null;
         (SectionTitle.Text, SectionSummary.Text) = section switch
         {
             MemorySection.Notes => ("Saved memories", "Review and manage the notes NIRA can recall."),
-            MemorySection.Suggestions => ("Learning suggestions", "Review what NIRA proposes to remember before accepting it."),
+            MemorySection.Suggestions => ("Learning suggestions", "Review pending suggestions from manual learning mode."),
+            MemorySection.Skills => ("Learned skills", "Reusable procedures NIRA has learned from completed operations."),
             _ => ("Memory preferences", "Control automatic recall and learning for future conversations.")
         };
         ContentScroll.ScrollToTop();
@@ -48,7 +51,10 @@ public partial class NIRAMemoryPage : UserControl
     {
         _loading = loading;
         PageCard.IsEnabled = !loading;
-        NotesButton.IsEnabled = SuggestionsButton.IsEnabled = PreferencesButton.IsEnabled = !loading;
+        // The scroll content may not yet have a visual parent during rendering.
+        // Disable its own root as well; never use effective IsEnabled as consent.
+        PageBody.IsEnabled = !loading;
+        NotesButton.IsEnabled = SuggestionsButton.IsEnabled = PreferencesButton.IsEnabled = SkillsButton.IsEnabled = !loading;
     }
 
     private async Task RefreshAsync(string success = "Ready")
@@ -68,6 +74,10 @@ public partial class NIRAMemoryPage : UserControl
                     var pending = await Task.Run(() => store.ListMemoryCandidatesAsync(default));
                     var saved = await Task.Run(() => store.ListMemoryNotesAsync(default));
                     RenderSuggestions(store, pending, saved);
+                    break;
+                case MemorySection.Skills:
+                    RenderSkills(store, await Task.Run(() => store.GetSkillLearningAsync(default)),
+                        await Task.Run(() => store.ListProceduresAsync(default)));
                     break;
                 default:
                     RenderPreferences(store, await Task.Run(() => store.GetMemorySettingsAsync(default)));
@@ -99,10 +109,42 @@ public partial class NIRAMemoryPage : UserControl
         button.Click += (_, _) => { try { action(); } catch (Exception error) { StatusText.Text = error.Message; } };
         PageBody.Children.Add(button); return button;
     }
+    private void RenderSkills(SqliteConversationStore store, bool enabled, IReadOnlyList<LearnedProcedure> procedures)
+    {
+        AddText("Procedural learning", true);
+        var option = new CheckBox { Content = "Automatically learn and recall reusable procedures", IsChecked = enabled,
+            Margin = new Thickness(0, 0, 0, 12) };
+        option.SetResourceReference(Control.ForegroundProperty, "NIRATextBrush");
+        PageBody.Children.Add(option);
+        AddText("When enabled, NIRA reviews completed operation sequences with the configured reasoning model. Only capability names and schemas, not actual arguments, file contents or results, are sent for this review. Saved procedures are local and encrypted. Reuse always requires fresh evidence and normal authorization.");
+        AddButton("Save skill preference", () => {
+            bool requested = option.IsChecked == true;
+            _ = ChangeMemoryAsync(() => store.SetSkillLearningAsync(requested, default));
+        });
+        AddText($"Learned procedures ({procedures.Count})", true);
+        if (procedures.Count == 0) { AddText("No learned procedures yet. Complete a useful multi-capability task with learning enabled."); return; }
+        var list = new ListBox { ItemsSource = procedures, DisplayMemberPath = nameof(LearnedProcedure.Name),
+            MaxHeight = 260, MinHeight = 80, Margin = new Thickness(0, 0, 0, 10) };
+        PageBody.Children.Add(list);
+        var details = AddText("Select a procedure to inspect its inputs, steps and evidence.");
+        list.SelectionChanged += (_, _) => details.Text = list.SelectedItem is LearnedProcedure p
+            ? $"Version {p.Version} · Matching reuse sequences: {p.Matches} · Deviations: {p.Deviations}\n{p.Purpose}\nInputs: {p.Inputs}\nPreconditions: {p.Preconditions}\n" +
+                string.Join("\n", p.Steps.Select((s, i) => $"{i + 1}. {s.Tool}: {s.Guidance}")) +
+                $"\nVerification: {p.Verification}\nSource task: {p.SourceTask}\nObserved operation IDs: {string.Join(", ", p.EvidenceIds)}"
+            : "Select a procedure to inspect its inputs, steps and evidence.";
+        AddText("Sequence matches are not proof that every user objective was achieved. Older incompatible contracts are not offered for reuse.");
+        AddButton("Remove selected procedure", () => {
+            if (list.SelectedItem is not LearnedProcedure p) return;
+            if (MessageBox.Show("Remove this procedure and all its versions? Original conversation evidence is retained.", "NIRA",
+                MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+                _ = ChangeMemoryAsync(() => store.DeleteProcedureAsync(p.Id, default));
+        });
+    }
+
     private void RenderPreferences(SqliteConversationStore store, MemoryRecallSettings settings)
     {
         AddText("Memory and learning", true);
-        AddText("Saved memories are separate from chat history. Only approved notes are used for automatic recall. Do not store passwords or secret keys.");
+        AddText("Saved memories are separate from chat history. Only saved notes are used for automatic recall. Do not store passwords or secret keys.");
         CheckBox AddOption(string label, bool enabled)
         {
             var option = new CheckBox { Content = label, IsChecked = enabled, Margin = new Thickness(0, 0, 0, 12) };
@@ -111,10 +153,28 @@ public partial class NIRAMemoryPage : UserControl
             return option;
         }
         var recall = AddOption("Automatically recall relevant saved notes", settings.RecallEnabled);
-        var learning = AddOption("Suggest memories after completed tasks", settings.SuggestLearning);
-        AddText("Recall sends only selected matching notes to your configured reasoning model. Learning reviews recent user text from a completed task with the same model in a separate bounded request. When both options are enabled, relevant approved notes are included for comparison to avoid repeated suggestions. Pending suggestions stay local and are not recalled until you accept them. Both options are off by default.");
-        AddButton("Save memory preferences", () => _ = ChangeMemoryAsync(async () =>
-            await store.SetMemorySettingsAsync(new MemoryRecallSettings(recall.IsChecked == true, learning.IsChecked == true), default)));
+        var learning = AddOption("Learn from completed tasks", settings.SuggestLearning);
+        var auto = AddOption("Automatically save new memories without individual approval", settings.AutoSaveLearning);
+        void RefreshAutoOption()
+        {
+            // IsEnabled is inherited/coerced by WPF. The page is temporarily
+            // disabled during loading, which must not clear a persisted choice.
+            bool prerequisitesMet = recall.IsChecked == true && learning.IsChecked == true;
+            auto.IsEnabled = prerequisitesMet;
+            if (!prerequisitesMet) auto.IsChecked = false;
+        }
+        recall.Checked += (_, _) => RefreshAutoOption();
+        recall.Unchecked += (_, _) => RefreshAutoOption();
+        learning.Checked += (_, _) => RefreshAutoOption();
+        learning.Unchecked += (_, _) => RefreshAutoOption();
+        RefreshAutoOption();
+        AddText("Recall sends selected matching notes to your configured reasoning model. If local matching finds nothing, NIRA may ask that model to suggest search phrases using only the current message, then match saved notes locally. Learning reviews recent user text in a separate bounded request. With recall and learning enabled, automatic saving can retain new grounded facts without per-note approval. Complementary facts may be added; explicitly changed automatic memories may be revised after comparison, retaining previous versions locally. Ambiguous conflicts and manually saved memories are not automatically overwritten. Without automatic saving, learning remains review-only. Previously pending suggestions remain pending; they are not silently promoted. You can disable learning or edit and remove saved notes at any time.");
+        AddButton("Save memory preferences", () => {
+            // Snapshot the user's choices before the page enters its busy state.
+            var requested = new MemoryRecallSettings(recall.IsChecked == true,
+                learning.IsChecked == true, auto.IsChecked == true);
+            _ = ChangeMemoryAsync(() => store.SetMemorySettingsAsync(requested, default));
+        });
 
     }
 
@@ -158,7 +218,7 @@ public partial class NIRAMemoryPage : UserControl
 
     private void RenderNotes(SqliteConversationStore store, IReadOnlyList<SavedMemoryNote> notes)
     {
-        AddText($"Approved notes ({notes.Count})", true);
+        AddText($"Saved notes ({notes.Count})", true);
         AddText("Search by note text, category, topic or tag.");
         var filter = new TextBox { MaxLength = 200, Margin = new Thickness(0, 0, 0, 8), ToolTip = "Filter by text, category, topic or tag" };
         PageBody.Children.Add(filter);
@@ -180,6 +240,12 @@ public partial class NIRAMemoryPage : UserControl
             }
             else { selected.Text = "Select a saved note to inspect or correct it."; input.Clear(); }
         };
+        var versions = AddText("");
+        list.SelectionChanged += (_, _) => versions.Text = "";
+        AddButton("Show previous automatic versions", () => {
+            if (list.SelectedItem is SavedMemoryNote note)
+                _ = ShowVersionsAsync(store, list, versions, note);
+        });
         AddButton("New blank note", () => { list.SelectedItem = null; input.Clear(); input.Focus(); });
         AddButton("Save as new note", () => _ = ChangeMemoryAsync(async () => {
             await store.StoreMemoryAsync(input.Text, "explicit-memory-user", default);
@@ -193,13 +259,25 @@ public partial class NIRAMemoryPage : UserControl
                 });
         });
         AddButton("Remove selected note", () => {
-            if (list.SelectedItem is SavedMemoryNote note && Window.GetWindow(this) is { } owner && MessageBox.Show(owner, "Remove this saved note? Original chats and audit records will remain.", "NIRA", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+            if (list.SelectedItem is SavedMemoryNote note && Window.GetWindow(this) is { } owner && MessageBox.Show(owner, "Remove this saved note and its previous automatic versions? Original chats and audit records will remain.", "NIRA", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
                 _ = ChangeMemoryAsync(async () => {
                     if (!await store.ChangeMemoryNoteAsync(note.Id, note.Content, null, "explicit-memory-user", null, default))
                         throw new InvalidOperationException("Note changed or no longer exists.");
                 });
         });
-        AddText("Up to 2,000 recent approved notes are shown and searched. Deleting a note does not erase original conversations, model-provider history or earlier audit records. Explicit private history searches require separate approval.");
+        AddText("Up to 2,000 recent saved notes are shown and searched. Deleting a note does not erase original conversations, model-provider history or earlier audit records. Explicit private history searches require separate approval.");
+    }
+
+    private static async Task ShowVersionsAsync(SqliteConversationStore store, ListBox list, TextBlock output, SavedMemoryNote note)
+    {
+        try
+        {
+            var versions = await store.ListMemoryVersionsAsync(note.Id, default);
+            if (list.SelectedItem is not SavedMemoryNote current || current.Id != note.Id) return;
+            output.Text = versions.Count == 0 ? "No previous automatic versions." : string.Join("\n\n", versions.Select(v =>
+                $"Replaced: {v.ReplacedUtc}\n{v.Prior.Content}\nEvidence: {v.Prior.Metadata?.SourceExcerpt ?? "Not recorded"}"));
+        }
+        catch (Exception error) when (error is not OperationCanceledException) { output.Text = "Previous versions could not be read."; }
     }
 
     private async Task ChangeMemoryAsync(Func<Task> change)
