@@ -11,7 +11,7 @@ namespace NIRAAgent.UI.Presentation;
 /// <summary>Interleaves native components with selectable prose. Model data is never executable markup.</summary>
 public static class NIRARichAnswer
 {
-    public const string Revision = "M9A-ROUTING-REPAIR-12";
+    public const string Revision = "M9A-CONTRACT-STABILITY-15";
     private static readonly Regex Fence = new(@"^\s{0,3}(`{3,}|~{3,})([^\r\n]*)$", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
     private static readonly HashSet<string> Types = new(StringComparer.Ordinal)
     { "heading", "text", "hero", "insight", "source", "video", "card", "metric", "equation", "table", "chart", "bar", "code", "details", "list", "quote", "timeline", "checklist", "progress", "tabs", "followups", "status", "calculator", "form", "column", "pie", "diagram" };
@@ -208,8 +208,13 @@ public static class NIRARichAnswer
             { i++; while (i + 1 < lines.Length && lines[i + 1].TrimStart().StartsWith('|')) i++; continue; }
             // The receipt-backed strip is already visible. Remove standalone Markdown
             // embeds so the model cannot add a second unverified media reference.
-            if (Regex.IsMatch(lines[i], @"^\s*!\[[^\]\r\n]*\]\([^\r\n]+\)\s*$", RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(100))) continue;
-            output.AppendLine(lines[i]);
+            if (Regex.IsMatch(lines[i], @"^\s*!\[[^\]\r\n]*\](?:\([^\r\n]+\))?\s*$", RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(100))) continue;
+            // Preserve the descriptive cells of a table while removing redundant
+            // receipt-backed Markdown embeds, including paths containing parentheses.
+            string line = lines[i];
+            if (line.TrimStart().StartsWith('|'))
+                line = Regex.Replace(line, @"!\[([^\]\r\n]*)\]\((?:[^()\r\n]|\([^()\r\n]*\))*\)", "$1", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+            output.AppendLine(line);
         }
         return output.ToString().Trim();
     }

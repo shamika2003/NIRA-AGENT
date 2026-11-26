@@ -77,6 +77,10 @@ internal static class Program
             string expectedCleanup = "Result\n```text\n" + localEmbed + "\n```\nDone";
             Check(string.Equals(normalizedCleanup, expectedCleanup, StringComparison.Ordinal),
                 "ui-receipt-image-removes-redundant-local-markdown-preserves-code");
+            string photoTable = (string)imageCleanup.Invoke(null, ["![Screenshot without a path]\n| Object | Preview |\n|---|---|\n| Camera | " + localEmbed + " |\nDone"])!;
+            Check(!photoTable.Contains("![", StringComparison.Ordinal) && !photoTable.Contains("window-capture.png", StringComparison.Ordinal) &&
+                photoTable.Contains("Camera", StringComparison.Ordinal) && photoTable.Contains("Done", StringComparison.Ordinal),
+                "ui-receipt-image-cleans-table-embeds-and-pathless-placeholder-without-losing-description");
             FrameworkElement memoryPage = new NIRAAgent.UI.Presentation.NIRAMemoryPage();
             var memoryNotes = (Button)memoryPage.FindName("NotesButton")!;
             var memorySuggestions = (Button)memoryPage.FindName("SuggestionsButton")!;

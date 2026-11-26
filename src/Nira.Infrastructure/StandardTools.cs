@@ -68,7 +68,7 @@ public static class NiraStandardTools
         ], relatedCapabilities: new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
             // Registered evidence/workflow relationships, not user-task classifiers.
-            ["web.search"] = ["browser.inspect_public", "image.search", "image.retrieve"],
+            ["web.search"] = ["image.search", "browser.inspect_public", "image.retrieve"],
             ["browser.inspect_public"] = ["web.search", "image.search", "image.retrieve"],
             ["image.search"] = ["image.retrieve", "web.search", "browser.inspect_public"],
             ["image.retrieve"] = ["image.search", "web.search", "browser.inspect_public"]

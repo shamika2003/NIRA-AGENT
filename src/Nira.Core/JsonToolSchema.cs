@@ -11,8 +11,34 @@ public static class JsonToolSchema
 {
     public static bool Validate(JsonElement schema, JsonElement value, out string error)
     {
-        error = "";
+        if (value.ValueKind == JsonValueKind.Undefined)
+        { error = "$: invalid JSON arguments"; return false; }
+        if (!HasUniqueProperties(value, "$", out error)) return false;
         return Check(schema, value, "$", out error);
+    }
+
+    // Check before any compatibility normalizer can collapse ambiguous duplicate keys.
+    // The same rule applies recursively to internal tool decisions and ordinary arguments.
+    internal static bool HasUniqueProperties(JsonElement value, string path, out string error)
+    {
+        error = "";
+        if (value.ValueKind == JsonValueKind.Object)
+        {
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var property in value.EnumerateObject())
+            {
+                if (!names.Add(property.Name))
+                { error = $"{path}: duplicate property '{property.Name}'"; return false; }
+                if (!HasUniqueProperties(property.Value, path + "." + property.Name, out error)) return false;
+            }
+        }
+        else if (value.ValueKind == JsonValueKind.Array)
+        {
+            int index = 0;
+            foreach (var item in value.EnumerateArray())
+                if (!HasUniqueProperties(item, path + "[" + index++ + "]", out error)) return false;
+        }
+        return true;
     }
 
     private static bool Check(JsonElement schema, JsonElement value, string path, out string error)

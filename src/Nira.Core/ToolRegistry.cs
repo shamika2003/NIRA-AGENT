@@ -96,10 +96,15 @@ public sealed class ToolRegistry
         arguments = default;
         if (!TryGet(name, out var tool) || tool is null)
         { error = "Tool not registered: " + name; return false; }
-        try { arguments = JsonDocument.Parse(argumentJson).RootElement.Clone(); }
+        try
+        {
+            using var document = JsonDocument.Parse(argumentJson);
+            arguments = document.RootElement.Clone();
+        }
         catch (JsonException e) { error = "Invalid JSON arguments: " + e.Message; return false; }
         if (tool is IToolArgumentNormalizer normalizer)
         {
+            if (!JsonToolSchema.HasUniqueProperties(arguments, "$", out error)) return false;
             try { arguments = normalizer.NormalizeArguments(arguments); }
             catch (ArgumentException e) { error = e.Message; return false; }
         }

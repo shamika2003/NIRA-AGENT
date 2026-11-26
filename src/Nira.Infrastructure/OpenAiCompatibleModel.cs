@@ -98,6 +98,7 @@ public sealed class OpenAiCompatibleModel(
     {
         var scope = _requestScope.Value;
         long start = System.Diagnostics.Stopwatch.GetTimestamp();
+        ct.ThrowIfCancellationRequested();
         try
         {
             if (_preferCompactInference && ModelContextRecovery.TryReduce(messages, tools,
@@ -105,6 +106,8 @@ public sealed class OpenAiCompatibleModel(
                 return await SendWithContextRecoveryAsync(shorter, narrowed, allowRecovery: false, ct, preview);
             return await SendWithContextRecoveryAsync(messages, tools, allowRecovery: true, ct, preview);
         }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        { throw new AgentException("Model request timed out."); }
         finally { scope?.Finished((long)System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds); }
     }
 
@@ -173,8 +176,13 @@ public sealed class OpenAiCompatibleModel(
         string? key = getKey();
         if (!string.IsNullOrWhiteSpace(key))
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+        // HttpClient's ResponseHeadersRead timeout ends at the headers. Bound
+        // the whole HTTP attempt, including error/body/stream reads. A context
+        // recovery attempt retains its own deadline and the original caller token.
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        if (http.Timeout != Timeout.InfiniteTimeSpan) deadline.CancelAfter(http.Timeout);
         _requestScope.Value?.Sent(Encoding.UTF8.GetByteCount(json));
-        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
         if (response.StatusCode == HttpStatusCode.Unauthorized)
             throw new ModelAuthenticationException(
                 "The model endpoint rejected its API credential (HTTP 401). " +
@@ -184,7 +192,7 @@ public sealed class OpenAiCompatibleModel(
             // A 400 may be due to the provider's context window, tool transcript,
             // or schema validation. Never echo raw provider errors: they can
             // contain user content, file paths, tokens, or request fragments.
-            string category = await SafeProviderErrorCategoryAsync(response.Content, ct);
+            string category = await SafeProviderErrorCategoryAsync(response.Content, deadline.Token);
             // An HTTP 400 with explicit context-limit evidence is a failed MODEL
             // request, not a dispatched action. One smaller model-only retry is
             // safe. This never changes saved state, call IDs, or approval rules.
@@ -206,45 +214,69 @@ public sealed class OpenAiCompatibleModel(
                 "inspect the checkpoint before :retry.");
         }
         ModelReply result;
-        if (preview is not null && string.Equals(response.Content.Headers.ContentType?.MediaType,
-                "text/event-stream", StringComparison.OrdinalIgnoreCase))
-            result = (await ChatCompletionStream.ReadAsync(response.Content, preview, ct)) with { DeliveryMode = "event-stream" };
-        else
+        try
         {
-            byte[] bytes = await response.Content.ReadAsByteArrayAsync(ct);
-            if (bytes.Length > 4 * 1024 * 1024)
-                throw new AgentException("Model response exceeded the 4 MiB transport limit.");
-            using var document = JsonDocument.Parse(bytes);
-            JsonElement root = document.RootElement;
-            if (!root.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
-                throw new AgentException("Model response had no choices.");
-            JsonElement message = choices[0].GetProperty("message");
-            string? content = ExtractVisibleText(message);
-            var calls = new List<ModelToolCall>();
-            var seenCallIds = new HashSet<string>(StringComparer.Ordinal);
-            if (message.TryGetProperty("tool_calls", out var toolCalls) &&
-                toolCalls.ValueKind == JsonValueKind.Array)
+            if (preview is not null && string.Equals(response.Content.Headers.ContentType?.MediaType,
+                    "text/event-stream", StringComparison.OrdinalIgnoreCase))
+                result = (await ChatCompletionStream.ReadAsync(response.Content, preview, deadline.Token)) with { DeliveryMode = "event-stream" };
+            else
             {
-                foreach (JsonElement call in toolCalls.EnumerateArray())
+                byte[] bytes = await ReadBoundedBodyAsync(response.Content, deadline.Token);
+                using var document = JsonDocument.Parse(bytes);
+                JsonElement root = document.RootElement;
+                if (!root.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
+                    throw new AgentException("Model response had no choices.");
+                JsonElement choice = choices[0];
+                JsonElement message = choice.GetProperty("message");
+                string? content = ExtractVisibleText(message);
+                var calls = new List<ModelToolCall>();
+                var seenCallIds = new HashSet<string>(StringComparer.Ordinal);
+                if (message.TryGetProperty("tool_calls", out var toolCalls) &&
+                    toolCalls.ValueKind is not (JsonValueKind.Array or JsonValueKind.Null))
+                    throw new AgentException("Malformed model response structure.");
+                if (toolCalls.ValueKind == JsonValueKind.Array)
                 {
-                    // Preserve the call ID supplied by the model provider exactly.
-                    // Rewriting it before echoing tool results can confuse adapters.
-                    string? receivedId = call.TryGetProperty("id", out var callId) &&
-                        callId.ValueKind == JsonValueKind.String ? callId.GetString() : null;
-                    string id = string.IsNullOrWhiteSpace(receivedId)
-                        ? "nira-" + Guid.NewGuid().ToString("N") : receivedId;
-                    if (!seenCallIds.Add(id))
-                        throw new AgentException("Model provider returned duplicate tool-call IDs. " +
-                            "No tool from the malformed response was dispatched.");
-                    JsonElement function = call.GetProperty("function");
-                    string name = function.GetProperty("name").GetString() ?? "";
-                    JsonElement arguments = function.GetProperty("arguments");
-                    string argumentJson = arguments.ValueKind == JsonValueKind.String
-                        ? arguments.GetString() ?? "{}" : arguments.GetRawText();
-                    calls.Add(new ModelToolCall(id, name, argumentJson));
+                    // Some compatible providers omit finish_reason. Keep that compatibility,
+                    // but never dispatch an explicitly truncated or filtered tool response.
+                    if (toolCalls.GetArrayLength() > 0 && choice.TryGetProperty("finish_reason", out var reason) &&
+                        reason.ValueKind == JsonValueKind.String && reason.GetString() is not ("stop" or "tool_calls"))
+                        throw new AgentException("Incomplete model tool response.");
+                    foreach (JsonElement call in toolCalls.EnumerateArray())
+                    {
+                        // Preserve the call ID supplied by the model provider exactly.
+                        // Rewriting it before echoing tool results can confuse adapters.
+                        string? receivedId = call.TryGetProperty("id", out var callId) &&
+                            callId.ValueKind == JsonValueKind.String ? callId.GetString() : null;
+                        string id = string.IsNullOrWhiteSpace(receivedId)
+                            ? "nira-" + Guid.NewGuid().ToString("N") : receivedId;
+                        if (!seenCallIds.Add(id))
+                            throw new AgentException("Model provider returned duplicate tool-call IDs. " +
+                                "No tool from the malformed response was dispatched.");
+                        JsonElement function = call.GetProperty("function");
+                        string name = function.GetProperty("name").GetString() ?? "";
+                        JsonElement arguments = function.GetProperty("arguments");
+                        string argumentJson = arguments.ValueKind == JsonValueKind.String
+                            ? arguments.GetString() ?? "{}" : arguments.GetRawText();
+                        calls.Add(new ModelToolCall(id, name, argumentJson));
+                    }
                 }
+                result = new ModelReply(content, calls) { DeliveryMode = "json", Usage = ReadUsage(root) };
             }
-            result = new ModelReply(content, calls) { DeliveryMode = "json", Usage = ReadUsage(root) };
+        }
+        catch (AgentException ex) when (allowRecovery && preview is not null &&
+            ex.Message == "Model stream returned an error." && !ct.IsCancellationRequested)
+        {
+            // Only an incomplete inference is repeated, never any tool action. The
+            // engine has not received a reply from this attempt. Keep streaming and
+            // reuse the existing one-recovery budget; previous receipts stay intact.
+            response.Dispose();
+            return await SendWithContextRecoveryAsync(messages, tools, allowRecovery: false, ct, preview);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or KeyNotFoundException or FormatException or OverflowException)
+        {
+            // Invalid shapes and numeric fields are provider protocol failures, not
+            // unexpected engine faults. Do not leak arbitrary response content.
+            throw new AgentException("Malformed model response structure.");
         }
         _requestScope.Value?.Received(result.Usage);
         string? visible = result.Content;
@@ -263,6 +295,24 @@ public sealed class OpenAiCompatibleModel(
         }
         return result;
     }
+    private static async Task<byte[]> ReadBoundedBodyAsync(HttpContent content, CancellationToken ct)
+    {
+        const int maximum = 4 * 1024 * 1024;
+        if (content.Headers.ContentLength > maximum)
+            throw new AgentException("Model response exceeded the 4 MiB transport limit.");
+        await using var stream = await content.ReadAsStreamAsync(ct);
+        using var buffer = new MemoryStream();
+        byte[] chunk = new byte[8192];
+        int read;
+        while ((read = await stream.ReadAsync(chunk.AsMemory(), ct)) != 0)
+        {
+            if (buffer.Length + read > maximum)
+                throw new AgentException("Model response exceeded the 4 MiB transport limit.");
+            buffer.Write(chunk, 0, read);
+        }
+        return buffer.ToArray();
+    }
+
     // Classify (do not display) at most the first 12 KiB of a failed response.
     // This deliberately never returns the provider's message, error object,
     // authorization header, request payload, or arbitrary untrusted text.

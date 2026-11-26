@@ -68,6 +68,8 @@ public static class ProductivityRevisions
                         string formula = (formulaValue.GetString() ?? "").Trim().TrimStart('=');
                         if (!SafeFormula(formula))
                             return ToolReceipt.Fail("CELL_FORMULA", "Invalid or external-reference formula refused.");
+                        if (ProductivityDocuments.DirectSelfReference(formula, worksheet.Name, cell.Address.RowNumber, cell.Address.ColumnNumber))
+                            return ToolReceipt.Fail("CELL_FORMULA_CIRCULAR", $"Formula in {worksheet.Name}!{cell.Address} directly references its own cell. No revised workbook was published.");
                         cell.FormulaA1 = formula;
                     }
                     else
@@ -158,19 +160,24 @@ public static class ProductivityRevisions
                             !RequiredText(operation, "expectedText", out string expectedText))
                             return ToolReceipt.Fail("DOCUMENT_REVISION", "Replacement needs a 1-based paragraphIndex and expectedText.");
                         W.Paragraph? paragraph = body.Elements<W.Paragraph>().Skip(index - 1).FirstOrDefault();
-                        if (paragraph is null || paragraph.InnerText != expectedText)
+                        if (paragraph is null || ProductivityDocuments.ParagraphText(paragraph) != ProductivityDocuments.NormalizeLineEndings(expectedText))
                             return ToolReceipt.Fail("STALE_PARAGRAPH", "The selected paragraph no longer matches expected text.");
                         if (kind == "replaceParagraph")
                         {
                             if (!RequiredText(operation, "text", out string replacement) || replacement.Length > 12000)
                                 return ToolReceipt.Fail("DOCUMENT_REVISION", "Replacement text must be <=12000 characters.");
-                            W.Text[] allText = paragraph.Descendants<W.Text>().ToArray();
-                            if (allText.Length != 1 || paragraph.Descendants<W.Run>().Count() != 1 ||
-                                paragraph.Descendants<W.FieldChar>().Any() ||
-                                paragraph.Descendants<W.Hyperlink>().Any())
-                                return ToolReceipt.Fail("COMPLEX_PARAGRAPH", "Replacing a multi-run/field paragraph could remove formatting; refused.");
-                            allText[0].Text = replacement;
-                            allText[0].Space = SpaceProcessingModeValues.Preserve;
+                            W.Run[] runs = paragraph.Descendants<W.Run>().ToArray();
+                            if (runs.Length != 1 || paragraph.Descendants<W.FieldChar>().Any() ||
+                                paragraph.Descendants<W.Hyperlink>().Any() ||
+                                runs[0].Parent != paragraph ||
+                                runs[0].ChildElements.Any(element => element is not (W.RunProperties or W.Text or W.TabChar or W.CarriageReturn or W.Break) ||
+                                    element is W.Break lineBreak && (lineBreak.Type is not null && lineBreak.Type.Value != W.BreakValues.TextWrapping || lineBreak.Clear is not null)))
+                                return ToolReceipt.Fail("COMPLEX_PARAGRAPH", "Replacing a multi-run/field or non-text paragraph could remove formatting; refused.");
+                            // Keep the run properties and replace only its plain-text content.
+                            W.Run existingRun = runs[0];
+                            foreach (var child in existingRun.ChildElements.Where(element => element is not W.RunProperties).ToArray())
+                                child.Remove();
+                            ProductivityDocuments.AppendPlainText(existingRun, replacement);
                         }
                         else
                         {
@@ -189,7 +196,7 @@ public static class ProductivityRevisions
                         var run = new W.Run();
                         if (kind == "appendHeading")
                             run.Append(new W.RunProperties(new W.Bold(), new W.FontSize { Val = "28" }));
-                        run.Append(new W.Text(content) { Space = SpaceProcessingModeValues.Preserve });
+                        ProductivityDocuments.AppendPlainText(run, content);
                         paragraph.Append(run);
                         AppendBeforeSection(body, paragraph);
                     }
@@ -307,7 +314,7 @@ public static class ProductivityRevisions
         return document.MainDocumentPart?.Document?.Body is not null;
     }
 
-    private static bool SafeFormula(string value) => value.Length is > 0 and <= 1000 &&
+    internal static bool SafeFormula(string value) => value.Length is > 0 and <= 1000 &&
         !value.Contains('[') && !value.Contains(']') && !value.Contains('|') &&
         !value.Contains("http", StringComparison.OrdinalIgnoreCase) &&
         !value.Contains("WEBSERVICE(", StringComparison.OrdinalIgnoreCase) &&
@@ -358,7 +365,7 @@ public static class ProductivityRevisions
                 if (text.Length > 2000) return false;
                 var run = new W.Run();
                 if (rowNumber == 1) run.Append(new W.RunProperties(new W.Bold()));
-                run.Append(new W.Text(text) { Space = SpaceProcessingModeValues.Preserve });
+                ProductivityDocuments.AppendPlainText(run, text);
                 tableRow.Append(new W.TableCell(new W.Paragraph(run)));
             }
             candidate.Append(tableRow);

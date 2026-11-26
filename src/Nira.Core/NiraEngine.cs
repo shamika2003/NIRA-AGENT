@@ -36,7 +36,7 @@ public sealed class NiraEngine(
         tools instead of repeatedly repairing an unnecessary plan.
         Do not turn hypothetical alternatives, conditional branches, or discovery of
         already-known facts into mandatory steps. Never plan all possible file formats.
-        Use exact observed paths or workspace-relative paths; do not reconstruct paths.
+        Use exact observed paths or workspace-relative paths; do not reconstruct paths. A new output can use a relative filename directly; do not call workspace.info just to discover a destination for a tool that accepts a relative path.
         Where independent registered operations are already active and their arguments
         are known, request them together in one tool_calls response. Do not batch
         dependent actions or actions whose target or arguments depend on earlier results.
@@ -91,12 +91,22 @@ public sealed class NiraEngine(
         foreach (PlanStep step in state.Plan.Where(p => p.Status != "completed")) Keep(step.ToolName);
         // A plan with no tool bindings is not an observation and must not erase
         // the relevant schemas before the first actual operation.
-        if (enableLocalSchemaRanking && requested.Count == 0 && state.Operations.Count == 0)
+        if (enableLocalSchemaRanking && state.Operations.Count == 0)
         {
             var latest = state.Messages.LastOrDefault(m => m.Role == "user");
             string query = latest?.UserDisplayText ?? latest?.Content ?? state.Objective;
             var ranked = registry.RankInitialCapabilities(query);
             foreach (string name in ranked) Keep(name);
+            // Retain the initial task shortlist when one missing schema is staged.
+            // A selection is not an observation and must not evict unrelated needed schemas.
+            if (ranked.Count == 0 && requested.Count == 0 && state.Plan.Count == 0)
+            {
+                // Preserve the bounded starter catalog, reserving one discovery slot
+                // for an explicitly declared related capability, when available.
+                foreach (var descriptor in registry.DefaultDescriptors.Take(MaximumActiveCapabilities - 1)) Keep(descriptor.Name);
+                foreach (var descriptor in selected.ToArray())
+                    foreach (string related in registry.RelatedCapabilities(descriptor.Name)) Keep(related);
+            }
             // Before falling back to unrelated starter tools, use remaining slots
             // for explicitly declared relationships of the locally ranked tools.
             foreach (string name in ranked)
@@ -202,7 +212,7 @@ public sealed class NiraEngine(
         start with one focused query per distinct issue. Prefer actual official release pages over tangential
         benchmarks, snippets or repeated query variants. When a browser page fails, try a different relevant
         observed source or report the gap; do not keep retrying the same URL without a reason. Never cite
-        internal IDs, pseudo-citation tokens or search rank; cite clickable observed URLs in normal Markdown.
+        internal IDs, pseudo-citation tokens or search rank; cite clickable observed URLs in normal Markdown. Batch independent searches or independent inspections when their inputs are already known. Stop when the requested scope is adequately supported; do not collect additional sources solely to repeat existing facts.
         Keep externally reported product specifications separate from locally observed configuration.
         Do not invent workload limits, performance measurements or specific benchmarks as local facts.
         On unsettled scientific, philosophical or technical questions, distinguish definitions, evidence,
@@ -303,7 +313,7 @@ public sealed class NiraEngine(
         inspected the image. A generation receipt establishes creation, not visual correctness. Include a
         concise textual explanation of the important facts. For precise data, schematics, or exact
         labels use native diagrams, tables or text; never substitute an unreliable generated image.
-        Use one appropriate visual, not a redundant native and generated version. If generation is
+        Use complementary visuals only when each explains something different; never duplicate a native diagram with a generated version. If generation is
         unavailable, explain the limitation and give a useful textual explanation.
         progress (value, maximum, unit). Source/video text is an exact observed HTTPS URL; video also accepts an exact user-supplied supported watch URL. Use video blocks for requested video references, not a URL dump.
         Icons: brain, info, check, warning, search, code, chart, time, star, link, target,
@@ -315,8 +325,7 @@ public sealed class NiraEngine(
         operation succeeded, to request approvals, or to invent sources/files. Do not expose
         the JSON, syntax, tool names, receipt IDs or presentation mechanics in your prose.
         Explain capabilities in ordinary language rather than naming internal functions. Avoid repeating the same facts in a large table and a chart.
-        For images use the actual authorized image retrieval workflow, not image URL tables.
-        Retrieved photos appear as native photos; discuss them normally and cite sources.
+        For images use the actual authorized image retrieval workflow. Retrieved photos appear as native photos; discuss them normally and cite exact observed source URLs. Never emit Markdown image embeds (including pathless placeholders), raw local paths, or tables of preview paths; the desktop displays actual successful image receipts.
         """;
 
     private const string SystemInstructions = """
@@ -334,8 +343,8 @@ public sealed class NiraEngine(
         For image.search the provider must be exactly "commons" or "tavily" (not "wikimedia").
         If the needed image schema is active, call it directly. If not active, select only the needed registered schemas; successful discovery exposes related retrieval. Emit native
         tool_calls for each, never bare retrieval arguments as a conversational answer.
-        For substantial explanations of real people, places, historical events, physical objects or other visual subjects, consider authentic reference photographs when they materially improve understanding. The model chooses relevant subjects from the request and evidence; do not add decorative images to ordinary chat or override a text-only request. Use the registered image discovery and retrieval workflow, not generated substitutes for real photographs.
-        For requested web images, discover candidates with image.search, then select relevant CandidateId values using image.retrieve (one nonempty candidateIds array; omit urls or leave it empty). The host resolves exact observed URLs and tracks attempts. Use metadata to distinguish photographs from paintings, illustrations and modern reconstructions; do not present them as interchangeable. A search alone is metadata, not an image. Batch relevant selections; after partial retrieval use the successful results and choose other relevant candidates only if needed. Never repeatedly request the same unavailable URL or alter its query string. Cite source pages only for the actual retrieved images when describing displayed previews. Attribute licensing to provider metadata, not independent verification. Do not retrieve if the user explicitly wants links only. Do not claim authenticity, rights verification, or display without evidence.
+        For explanations where a real subject's appearance, spatial structure, components, or physical stages materially aid comprehension, use authentic reference images by default when available and allowed, even without an explicit image request. Decide before composing a long final answer; a table or textual description is not a substitute for a useful spatial reference. Do not force an image when text or a native diagram communicates the subject adequately. If appearance, structure or different stages matter, prefer a small set of distinct relevant reference images (typically two to four when they add different information); discover and retrieve them in batches. Use native diagrams for simple processes and relationships, authentic photographs for real subjects, and generated illustrations only for suitable illustrative goals. Do not add images to ordinary chat, duplicate visuals, or override text-only requests. Do not interrupt an authorized task or start a separate research pass merely for decoration. Never substitute generated pictures for real photographs.
+        For requested or materially useful reference images, discover candidates with image.search, then select relevant CandidateId values using image.retrieve (one nonempty candidateIds array; omit urls or leave it empty). The host resolves exact observed URLs and tracks attempts. Use metadata to distinguish photographs from paintings, illustrations and modern reconstructions; do not present them as interchangeable. A search alone is metadata, not an image. Batch relevant selections; after partial retrieval use the successful results and choose other relevant candidates only if needed. Never repeatedly request the same unavailable URL or alter its query string. Cite source pages only for the actual retrieved images when describing displayed previews. Attribute licensing to provider metadata, not independent verification. Do not retrieve if the user explicitly wants links only. Do not claim authenticity, rights verification, or display without evidence.
         For document conversion or follow-up creation, retain the requested preceding content, source citations and material sections unless the user asks for a summary or revision. Use one plain-text paragraph block per paragraph or list item, separate heading and table blocks, and avoid raw Markdown emphasis markers in Office text fields. Do not silently add or revise factual claims. If the historical context is marked incomplete, acknowledge missing content rather than claiming a complete conversion.
         For requests to CREATE new artwork (not to find real photos), choose image.generate when registered.
         In desktop visual explanations the same capability may create a complex illustrative diagram
@@ -442,7 +451,7 @@ public sealed class NiraEngine(
         executable basenames, then desktop.application_launch using the exact observed path and fingerprint.
         Launch is a separately approved action; it proves only process creation, not an open window or completed task.
         Use desktop.windows_list and desktop.window_inspect after launch when the requested outcome requires UI.
-        If a suitable existing window is already present, reuse it instead of opening another instance.
+        If a suitable existing window is already present, reuse it instead of opening another instance. After a successful launch, observe the window list and inspect a matching window rather than launching the same executable again. If an existing editor needs a blank document, use the latest observed supported new-document control; a new process is not evidence of a blank editor.
         Respect the user's requested initial and final state. Observe rather than assume that an
         application launch created a fresh document or reset a view. Preserve unrelated existing content.
         For visual desktop questions capture an exact observed window with desktop.window_capture when registered.
@@ -456,12 +465,11 @@ public sealed class NiraEngine(
         when each name uniquely identifies a supported visible button in that inspection. For ambiguous
         names use objects with the exact name and controlId.
         The host resolves unique names to canonical IDs before approval; for ambiguity supply exact IDs.
-        Include an observed display AutomationId and expected result. Build the ordered labels from the
+        Include a nonempty, exact AutomationId from the observed result/display control (not a window title, Name, or ControlId), and exactly one expectation field. Read the ControlColumns/ControlRows together when the inventory is compact. Before sending the sequence, confirm the display is unique and the expectation is present. Build the ordered labels from the
         CURRENT objective and cross-check the sequence. For individual control actions, controlId may
         be the exact ControlId or an exact unique observed selector name://Name or automation://AutomationId.
         These selectors are not fuzzy searches and never change the target or grant authority.
-        For numeric outcomes supply expectedNumber only (a plain number). For literal text or identifiers
-        supply expectedText only (the complete exact accessible name). Omit legacy expectedName and comparisonMode.
+        For numeric outcomes supply expectedNumber only (a plain number), even when the observed accessible Name includes a label, commas, or units. Do not construct an expectedText label for a computed quantity. For literal text or identifiers supply expectedText (the complete exact accessible name); set literalFormattingRequired=true only if the current request actually requires the exact formatting of a numeric-looking label. Omit legacy expectedName and comparisonMode in new proposals.
         Legacy implicit expectedName is bound locally to the observed label for numeric grouping compatibility.
         The host validates the observed target, expectation and ordered controls before exact action approval.
         Before proposing, check every input, operation and order against the current objective and starting state.
@@ -477,7 +485,7 @@ public sealed class NiraEngine(
         not relaunch loops or unsupported menu items. A changed document title can invalidate the window ID;
         list windows again after a title-changing action, then inspect the new target. Use requireEmpty=true
         and preserve existing documents. Exact input and read-back remain mandatory. Do not capture a
-        screenshot after verified text entry unless the user requests one or it is necessary for their objective.
+        screenshot after verified text entry unless the user requests one or it is necessary for their objective. For requested captures after a title-changing action, refresh the window list first; never reuse the old title-bound identifier.
         Respect the active text-length schema; report limitations rather than silently shortening text.
         Do not use a terminal or arbitrary command to bypass application discovery or desktop approval.
         After the user approves desktop.control_type_text, NIRA's host activates the
@@ -488,6 +496,7 @@ public sealed class NiraEngine(
         propose the tool call and let the host request the necessary authorization.
         A conversational 'YES' is not tool authorization.
         Do not abandon the original objective when the user answers that question.
+        For saved-memory questions, use relevant recalled notes directly when they already establish the answer; search again only to resolve a missing or ambiguous fact. For Office creation, use the actual schema: workbook rows are arrays of primitive values or explicit formula objects, not generic typed cell wrappers. For totals use supported local spreadsheet formulas where useful; use explicit ranges covering data only, never include the output cell or other subtotal cells in a grand total of raw data. Do not promise automatic expansion unless the actual range or table supports it. A saved expression is not proof of a correct calculated value. Word heading, paragraph and table blocks are native document structure: use plain text, not Markdown emphasis, lists or pipe-table syntax inside paragraphs. Represent each actual table as a table block, use separate paragraphs for list items and examples, and do not repeat the title as the first heading.
         All file/network/system operations must use registered tools; never imply that prose
         alone performed an action. A failed tool call is evidence to examine and recover from.
         When a tool reports Recovery=Reobserve, the requested action did not dispatch. Inspect the
@@ -1133,27 +1142,7 @@ public sealed class NiraEngine(
             }
             catch (Exception error) when (error is AgentException or System.Net.Http.HttpRequestException or JsonException or System.IO.IOException)
             {
-                // No reply from this inference has been admitted to the executor. Do not
-                // automatically repeat an earlier action or merge a subsequent objective.
-                state.Status = ConversationStatus.Paused;
-                progress?.Report(new AgentProgress("preview-reset", ""));
-                // Only known transport categories are displayed; arbitrary provider text is private.
-                string category = error is AgentException && error.Message.StartsWith("Model provider HTTP ", StringComparison.Ordinal)
-                    ? error.Message.Split('(')[0].Trim() : error.Message switch
-                    {
-                        "Model stream ended without a complete response; no partial tool was dispatched." => "incomplete model stream",
-                        "Model stream returned an error." => "provider stream error",
-                        "Invalid model stream event." => "invalid stream event",
-                        "Incomplete or duplicate streamed tool identity." => "invalid streamed tool identity",
-                        "Invalid streamed tool arguments." => "invalid streamed tool arguments",
-                        _ => error.GetType().Name
-                    };
-                state.LastAnswer = AttachRecordedEvidence(state,
-                    "The reasoning provider interrupted this task (" + category + "). Prior operations remain recorded; " +
-                    "completion was not verified. Retry explicitly to continue, or send a separate request.");
-                await store.SaveAsync(state, ct);
-                progress?.Report(new AgentProgress("model-interrupted", "Inference failed: " + category + "; checkpoint preserved"));
-                return Result(state, state.LastAnswer);
+                return await PauseModelInterruptionAsync(state, error, progress, ct);
             }
             // A prose questionnaire is a presentation/clarification mismatch, not a completed task.
             // Review it once using ONLY the non-executing clarification descriptor. No other
@@ -1235,6 +1224,10 @@ public sealed class NiraEngine(
                             (error is AgentException or System.Net.Http.HttpRequestException))
                         {
                             return await PauseFocusedReviewAsync(state, progress, ct);
+                        }
+                        catch (Exception error) when (error is AgentException or System.Net.Http.HttpRequestException or JsonException or System.IO.IOException)
+                        {
+                            return await PauseModelInterruptionAsync(state, error, progress, ct);
                         }
                         if (fallback.ToolCalls.Count == 0 &&
                             !string.IsNullOrWhiteSpace(fallback.Content))
@@ -1356,6 +1349,21 @@ public sealed class NiraEngine(
             // Persist the assistant call before tool execution, preserving the provider transcript.
             state.Messages.Add(new ChatEntry("assistant", reply.Content, ToolCalls: reply.ToolCalls));
             await store.SaveAsync(state, ct);
+            // Reject an oversized batch atomically before any member can dispatch.
+            // Keep a protocol reply for every call so explicit retry retains a valid transcript.
+            if (reply.ToolCalls.Count > MaximumToolCalls - toolCount)
+            {
+                foreach (var excess in reply.ToolCalls)
+                    state.Messages.Add(new ChatEntry("tool", JsonSerializer.Serialize(new {
+                        success = false, errorCode = "TOOL_CALL_LIMIT", message = "Batch exceeds the remaining execution budget; nothing in this batch dispatched."
+                    }), excess.Id));
+                state.Status = ConversationStatus.Paused;
+                state.LastAnswer = AttachRecordedEvidence(state,
+                    "Task paused because the proposed batch exceeds its remaining tool-call budget. Earlier work is preserved; no member of this batch executed.");
+                await store.SaveAsync(state, ct);
+                progress?.Report(new AgentProgress("paused", "Tool-call budget reached before dispatch"));
+                return Result(state, state.LastAnswer);
+            }
             // Terminal decisions may not be mixed with other calls in the same
             // provider response: that would leave tool-call transcript gaps.
             if (reply.ToolCalls.Count > 1 && reply.ToolCalls.Any(c =>
@@ -1542,8 +1550,7 @@ public sealed class NiraEngine(
                     JsonElement planArgs = ParseArguments(call.ArgumentsJson);
                     if (!JsonToolSchema.Validate(PlanUpdateTool.Parameters, planArgs, out var error))
                     { await RespondError(state, call, "ARGUMENT_SCHEMA", error, ct); continue; }
-                    int index = planArgs.GetProperty("index").GetInt32();
-                    if (index < 0 || index >= state.Plan.Count)
+                    if (!planArgs.GetProperty("index").TryGetInt32(out int index) || index < 0 || index >= state.Plan.Count)
                     { await RespondError(state, call, "PLAN_INDEX", "Plan step index out of range.", ct); continue; }
                     var step = state.Plan[index];
                     string nextStatus = planArgs.GetProperty("status").GetString()!;
@@ -1831,11 +1838,17 @@ public sealed class NiraEngine(
                 await store.SaveAsync(state, ct);
                 string target;
                 try { target = tool.GetTarget(arguments); }
-                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or JsonException)
+                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or JsonException or FormatException or OverflowException or System.IO.IOException or UnauthorizedAccessException)
                 {
                     operation.Status = OperationStatus.Rejected;
                     operation.ErrorCode = "INVALID_TARGET";
-                    await RespondError(state, call, "INVALID_TARGET", ex.Message, ct);
+                    operation.CompletedUtc = DateTimeOffset.UtcNow;
+                    string detail = ex is System.IO.IOException or UnauthorizedAccessException
+                        ? "The target could not be inspected safely. Check the path or permissions; nothing dispatched."
+                        : ex is FormatException or OverflowException
+                            ? "A target argument is outside the supported format or numeric range; nothing dispatched."
+                            : ex.Message;
+                    await RespondError(state, call, "INVALID_TARGET", detail, ct);
                     continue;
                 }
                 bool preapproved = authorization.IsPreapproved(tool.Descriptor, target);
@@ -1969,6 +1982,35 @@ public sealed class NiraEngine(
         state.LastAnswer = limitAnswer;
         await store.SaveAsync(state, ct);
         return Result(state, limitAnswer);
+    }
+
+    private async Task<AgentRunResult> PauseModelInterruptionAsync(ConversationState state, Exception error,
+        IProgress<AgentProgress>? progress, CancellationToken ct)
+    {
+        // No reply from this inference has been admitted to the executor. Do not
+        // automatically repeat an earlier action or merge a subsequent objective.
+        state.Status = ConversationStatus.Paused;
+        progress?.Report(new AgentProgress("preview-reset", ""));
+        // Only known transport categories are displayed; arbitrary provider text is private.
+        string category = error is AgentException && error.Message.StartsWith("Model provider HTTP ", StringComparison.Ordinal)
+            ? error.Message.Split('(')[0].Trim() : error.Message switch
+            {
+                "Model stream ended without a complete response; no partial tool was dispatched." => "incomplete model stream",
+                "Model stream returned an error." => "provider stream error",
+                "Invalid model stream event." => "invalid stream event",
+                "Incomplete or duplicate streamed tool identity." => "invalid streamed tool identity",
+                "Invalid streamed tool arguments." => "invalid streamed tool arguments",
+                "Model request timed out." => "provider timeout",
+                "Malformed model response structure." => "invalid provider response",
+                "Incomplete model tool response." => "incomplete model tool response",
+                _ => error.GetType().Name
+            };
+        state.LastAnswer = AttachRecordedEvidence(state,
+            "The reasoning provider interrupted this task (" + category + "). Prior operations remain recorded; " +
+            "completion was not verified. Retry explicitly to continue, or send a separate request.");
+        await store.SaveAsync(state, ct);
+        progress?.Report(new AgentProgress("model-interrupted", "Inference failed: " + category + "; checkpoint preserved"));
+        return Result(state, state.LastAnswer);
     }
 
     private static bool LooksLikeQuestionnaire(string? text)
@@ -2680,8 +2722,12 @@ public sealed class NiraEngine(
 
     private static JsonElement ParseArguments(string json)
     {
-        try { return JsonDocument.Parse(json).RootElement.Clone(); }
-        catch (JsonException) { return JsonDocument.Parse("{}").RootElement.Clone(); }
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            return document.RootElement.Clone();
+        }
+        catch (JsonException) { return default; } // Undefined is rejected by schema validation, never converted to {}.
     }
 
     private static string[] ChangedOperationIds(ConversationState state) =>

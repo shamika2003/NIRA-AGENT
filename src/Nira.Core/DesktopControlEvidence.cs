@@ -186,6 +186,8 @@ internal static class DesktopControlEvidence
                         problems.Add(expectationError);
                     else if (DesktopDisplayExpectation.ValidateInitial(canonical, initialName, expected, mode) is { } initialError)
                         problems.Add(initialError);
+                    else if (DesktopDisplayExpectation.ValidateProposal(canonical, initialName, expected) is { } proposalError)
+                        problems.Add(proposalError);
                 }
                 if (display.Length != 1)
                 {
@@ -231,6 +233,9 @@ public static class DesktopDisplayExpectation
         bool hasName = args.TryGetProperty("expectedName", out var name);
         bool hasText = args.TryGetProperty("expectedText", out var text);
         bool hasMode = args.TryGetProperty("comparisonMode", out var comparison);
+        if (args.TryGetProperty("literalFormattingRequired", out var literal) &&
+            (!hasText || literal.ValueKind != JsonValueKind.True))
+        { error = "literalFormattingRequired=true is only valid with expectedText for a deliberately exact literal label."; return false; }
         if ((hasNumber ? 1 : 0) + (hasName ? 1 : 0) + (hasText ? 1 : 0) != 1 || (hasMode && !hasName))
         { error = "Supply exactly one expectation: expectedNumber for a numeric value or expectedText for exact literal text (no comparisonMode). expectedName is the legacy field."; return false; }
         if (hasNumber)
@@ -317,6 +322,25 @@ public static class DesktopDisplayExpectation
                     SameContext(initialName, initial[0], expected, final[0]) && initialName != expected))
                     return "The legacy exact mode is fragile for a changing numeric display. Supply expectedNumber without comparisonMode for numeric verification; for a deliberately literal final name supply expectedText alone.";
             }
+            return null;
+        }
+        catch (RegexMatchTimeoutException) { return "The display expectation could not be checked safely."; }
+    }
+
+    // A changing single-number label can express either a numerical outcome or an
+    // exact literal formatting requirement. Do not silently choose for the model.
+    // Ask for a typed proposal before approval; leave exact matching unchanged.
+    public static string? ValidateProposal(JsonElement args, string initialName, string expected)
+    {
+        if (!args.TryGetProperty("expectedText", out _) ||
+            args.TryGetProperty("literalFormattingRequired", out _) || initialName.Length > 512) return null;
+        try
+        {
+            var initial = NumericToken.Matches(initialName);
+            var final = NumericToken.Matches(expected);
+            if (initial.Count == 1 && final.Count == 1 && initialName != expected &&
+                SameContext(initialName, initial[0], expected, final[0]))
+                return "The proposed exact text changes a single observed numeric token. For a numerical outcome supply expectedNumber only. If the user actually requires literal formatting, supply expectedText with literalFormattingRequired=true. Nothing dispatched.";
             return null;
         }
         catch (RegexMatchTimeoutException) { return "The display expectation could not be checked safely."; }

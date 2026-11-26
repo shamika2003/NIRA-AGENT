@@ -3,6 +3,20 @@ using Nira.Core;
 using Nira.Infrastructure;
 
 var cases = new (string Name, Func<Task> Test)[] {
+    ("m9a15-word-shared-plain-text-contract", M9WordPlainTextContract),
+    ("m9a15-ambiguous-numeric-proposal-rejected-before-approval", M9ContractNumericProposal),
+    ("m9a15-direct-circular-formula-not-published", M9ContractCircularFormula),
+    ("m9a15-starter-image-discovery-and-sticky-ranked-schema", M9ContractRouting),
+    ("m9a14-workbook-create-local-formulas-and-reject-unsafe-cells", M9QualityWorkbook),
+    ("m9a14-provider-stream-error-bounded-inference-recovery", M9QualityStreamRecovery),
+    ("m9a13-malformed-internal-arguments-and-plan-index", M9PreventiveInternalArguments),
+    ("m9a13-duplicate-fields-rejected-before-normalization", M9PreventiveDuplicateArguments),
+    ("m9a13-target-range-rejected-before-approval", M9PreventiveTargetRange),
+    ("m9a13-atomic-batch-budget-and-transcript", M9PreventiveBatchBudget),
+    ("m9a13-provider-malformed-responses-pause-safely", M9PreventiveProviderShape),
+    ("m9a13-model-body-timeout-and-user-cancellation", M9PreventiveBodyTimeout),
+    ("m9a13-json-body-limit-before-buffering", M9PreventiveBodyLimit),
+    ("m9a13-fallback-inference-interruption-checkpoint", M9PreventiveFallbackCheckpoint),
     ("m9a12-unbound-plan-preserves-discovery-routing", M9UnboundPlanRoutingRepair),
     ("m9a12-read-only-alias-inactive-and-denial", M9ReadOnlyAliasRoutingRepair),
     ("m9a12-initial-related-research-routing", M9InitialRelatedResearchRepair),
@@ -9670,6 +9684,7 @@ static async Task M9DocumentCompatibility()
     var rows = xml.Descendants(w + "tr").Select(r => r.Elements(w + "tc").Select(c => string.Concat(c.Descendants(w + "t").Select(t => t.Value))).ToArray()).ToArray();
     Assert(rows.Length == 3 && rows[0].SequenceEqual(new[] { "Item", "Value" }) && rows[1].SequenceEqual(new[] { "A", "001" }) &&
         rows[2].SequenceEqual(new[] { "B", "-2.50" }), "The actual OpenXML document must include the exact table header and all original rows.");
+    Assert(xml.Descendants(w + "br").Count() == 1, "Native Word line breaks must preserve multiline paragraph structure.");
 }
 
 static async Task M9DocumentCompatibilitySafety()
@@ -9822,6 +9837,142 @@ static Task M9ImageCandidateBinding()
     Assert(ImageEvidenceBinding.BindRetrieval(state, JsonSerializer.SerializeToElement(new { urls = new[] { second } }), out _, out _) == "IMAGE_ALREADY_ATTEMPTED",
         "Legacy exact URLs must also avoid repeated retrieval.");
     return Task.CompletedTask;
+}
+
+static async Task M9PreventiveInternalArguments()
+{
+    using var setup = new TestContext();
+    Guid id = Guid.NewGuid();
+    await setup.Store.SaveAsync(new ConversationState { Id = id, Objective = "Inspect a report",
+        Plan = [new PlanStep { Description = "Inspect report", SuccessCriterion = "Observed", Kind = "observation" },
+                new PlanStep { Description = "Summarize", SuccessCriterion = "Summary", Kind = "analysis" }] }, default);
+    var model = new FakeModel([
+        ModelCall("nira_plan_status", "{"),
+        ModelCall("nira_plan_update", """{"index":2147483648,"status":"completed"}"""),
+        ModelCall("nira_plan_status", "{}"),
+        ModelCall("nira_ask_user", """{"question":"Which report should I inspect?"}""")]);
+    var result = await setup.Engine(model).RunAsync(id, null, new FakeApprovals(false));
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.AwaitingUser && state.Plan.All(p => p.Status == "pending") &&
+        state.Messages.Any(m => m.Role == "tool" && m.Content?.Contains("ARGUMENT_SCHEMA", StringComparison.Ordinal) == true) &&
+        state.Messages.Any(m => m.Role == "tool" && m.Content?.Contains("PLAN_INDEX", StringComparison.Ordinal) == true) &&
+        state.Messages.Any(m => m.Role == "tool" && m.Content?.Contains("Inspect report", StringComparison.Ordinal) == true),
+        "Malformed no-argument calls and oversized indices must not mutate plan; valid status still works.");
+}
+
+static Task M9PreventiveDuplicateArguments()
+{
+    var schema = JsonToolSchema.Schema("""{"type":"object","properties":{"target":{"type":"string"},"nested":{"type":"array","items":{"type":"object"}}},"additionalProperties":false}""");
+    Assert(!JsonToolSchema.Validate(schema, JsonToolSchema.Schema("""{"target":"first","target":"second"}"""), out string error) &&
+        error.Contains("duplicate property", StringComparison.Ordinal), "Duplicate keys must be rejected.");
+    Assert(!JsonToolSchema.Validate(schema, JsonToolSchema.Schema("""{"nested":[{"value":1,"value":2}]}"""), out _),
+        "Nested duplicate keys must also be rejected even in an open object.");
+    Assert(JsonToolSchema.Validate(schema, JsonToolSchema.Schema("""{"target":"first","nested":[{"value":1},{"value":2}]}"""), out _),
+        "The same property in independent objects remains legal.");
+    using var setup = new TestContext();
+    var registry = new ToolRegistry([new ProductivityCreateDocumentTool(new WorkspacePathResolver(setup.Workspace))]);
+    Assert(!registry.Validate("productivity.create_document", """{"path":"a.docx","title":"title","blocks":[{"type":"paragraph","text":"a","text":"b"}]}""", out _, out _),
+        "Ambiguous document fields must not reach normalization.");
+    return Task.CompletedTask;
+}
+
+static async Task M9PreventiveTargetRange()
+{
+    using var setup = new TestContext();
+    var model = new FakeModel([
+        ModelCall("process.run", """{"executable":"dotnet","timeoutSeconds":2147483648}"""),
+        ModelCall("nira_ask_user", """{"question":"What timeout should I use?"}""")]);
+    var approvals = new FakeApprovals(false); Guid id = Guid.NewGuid();
+    var result = await setup.Engine(model).RunAsync(id, "Run a command", approvals);
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.AwaitingUser && approvals.Calls == 0 &&
+        state.Operations.Count == 1 && state.Operations[0].Status == OperationStatus.Rejected &&
+        state.Operations[0].ErrorCode == "INVALID_TARGET", "Overflow in preflight must never become an approved or dispatched operation.");
+}
+
+static async Task M9PreventiveBatchBudget()
+{
+    using var setup = new TestContext();
+    var read = new GenericRecoveryTool("fixture.read", false, _ => ToolReceipt.Ok("Observed fixture"));
+    ModelToolCall[] first = Enumerable.Range(0, 31).Select(i => Call("first-" + i, "fixture.read", new { target = "sample-" + i })).ToArray();
+    ModelToolCall[] excess = [Call("excess-1", "fixture.read", new { target = "other-1" }), Call("excess-2", "fixture.read", new { target = "other-2" })];
+    var model = new FakeModel([new ModelReply(null, first), new ModelReply(null, excess)]);
+    var approvals = new FakeApprovals(true); Guid id = Guid.NewGuid();
+    var result = await new NiraEngine(model, new ToolRegistry([read]), setup.Store,
+        new WorkspaceAuthority(setup.Workspace, developmentMode: true), enableAdaptivePlanning: true)
+        .RunAsync(id, "Inspect a collection of fixtures", approvals);
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Paused && read.Calls == 31 && state.Operations.Count == 31 &&
+        excess.All(c => state.Messages.Any(m => m.Role == "tool" && m.ToolCallId == c.Id && m.Content?.Contains("TOOL_CALL_LIMIT", StringComparison.Ordinal) == true)) &&
+        model.PromptSnapshots.Count == 2, "No part of an oversized second batch may dispatch; every call gets a durable protocol reply.");
+}
+
+static async Task M9PreventiveProviderShape()
+{
+    using var setup = new TestContext();
+    foreach (string response in new[] {
+        """{"choices":{}}""",
+        """{"choices":[{"message":{"content":"done","tool_calls":{}}}]}""",
+        """{"choices":[{"finish_reason":"length","message":{"tool_calls":[{"id":"a","function":{"name":"workspace.info","arguments":"{}"}}]}}]}"""
+    })
+    {
+        using var handler = new FakeApiHandler(response);
+        using var http = new HttpClient(handler);
+        var model = new OpenAiCompatibleModel(http, new Uri("https://example.invalid/v1/"), "mock", () => null);
+        Guid id = Guid.NewGuid(); var approvals = new FakeApprovals(false);
+        var result = await setup.Engine(model, adaptive: true).RunAsync(id, "Inspect workspace", approvals);
+        var state = (await setup.Store.LoadAsync(id, default))!;
+        Assert(result.Status == ConversationStatus.Paused && state.Status == ConversationStatus.Paused &&
+            state.LastAnswer is not null && state.Operations.Count == 0 && approvals.Calls == 0 && handler.Calls == 1,
+            "Malformed or explicitly truncated JSON response must leave a safe checkpoint without dispatch.");
+    }
+    using var streamHandler = new M4b3StreamHandler(M4b3Sse(
+        """{"choices":[{"delta":{"tool_calls":[{"index":2147483648,"id":"a","function":{"name":"workspace.info","arguments":"{}"}}]}}]}"""));
+    using var streamHttp = new HttpClient(streamHandler);
+    var streamModel = new OpenAiCompatibleModel(streamHttp, new Uri("https://example.invalid/v1/"), "mock", () => null);
+    var streamed = await setup.Engine(streamModel, adaptive: true).RunAsync(Guid.NewGuid(), "Inspect workspace", new FakeApprovals(false), new M5bDesktopProgress());
+    Assert(streamed.Status == ConversationStatus.Paused && streamed.Message.Contains("invalid provider response", StringComparison.Ordinal),
+        "Malformed SSE index must become a safe provider interruption.");
+}
+
+static async Task M9PreventiveBodyTimeout()
+{
+    using var body = new M8d2GatedStream("", "");
+    using var http = new HttpClient(new M8d2GatedHandler(body)) { Timeout = TimeSpan.FromMilliseconds(250) };
+    var model = new OpenAiCompatibleModel(http, new Uri("https://example.invalid/v1/"), "mock", () => null);
+    bool timedOut = false;
+    try { await model.CompleteStreamingAsync([new ChatEntry("user", "Explain")], [], _ => { }, default).WaitAsync(TimeSpan.FromSeconds(5)); }
+    catch (AgentException e) when (e.Message == "Model request timed out.") { timedOut = true; }
+    finally { body.Release(); }
+    Assert(timedOut, "The configured timeout must cover a stalled response body after headers.");
+    using var canceled = new CancellationTokenSource(); canceled.Cancel();
+    bool userCanceled = false;
+    try { await model.CompleteAsync([new ChatEntry("user", "Explain")], [], canceled.Token); }
+    catch (OperationCanceledException) when (canceled.IsCancellationRequested) { userCanceled = true; }
+    Assert(userCanceled, "Explicit caller cancellation must not be reported as a provider timeout.");
+}
+
+static async Task M9PreventiveBodyLimit()
+{
+    using var body = new M8d2GatedStream(new string('x', 4 * 1024 * 1024 + 1), "");
+    using var http = new HttpClient(new M8d2GatedHandler(body));
+    var model = new OpenAiCompatibleModel(http, new Uri("https://example.invalid/v1/"), "mock", () => null);
+    bool rejected = false;
+    try { await model.CompleteAsync([new ChatEntry("user", "Explain")], [], default).WaitAsync(TimeSpan.FromSeconds(10)); }
+    catch (AgentException e) when (e.Message.Contains("4 MiB", StringComparison.Ordinal)) { rejected = true; }
+    finally { body.Release(); }
+    Assert(rejected, "An unknown-length nonstreaming response must be rejected at the byte limit, before waiting for EOF.");
+}
+
+static async Task M9PreventiveFallbackCheckpoint()
+{
+    using var setup = new TestContext(); int calls = 0;
+    var model = new FakeModel(_ => ++calls <= 2 ? new ModelReply(null, []) : throw new AgentException("Model request timed out."));
+    Guid id = Guid.NewGuid();
+    var result = await setup.Engine(model, adaptive: true).RunAsync(id, "Explain a concept", new FakeApprovals(false));
+    var state = (await setup.Store.LoadAsync(id, default))!;
+    Assert(result.Status == ConversationStatus.Paused && state.LastAnswer?.Contains("provider timeout", StringComparison.Ordinal) == true &&
+        state.Operations.Count == 0 && calls == 3, "An interrupted no-tool recovery should save the same safe checkpoint as a normal inference failure.");
 }
 
 static async Task M9UnboundPlanRoutingRepair()
@@ -10763,6 +10914,119 @@ static Task ProductivitySchemaRejectsUnknownArguments()
     return Task.CompletedTask;
 }
 
+static async Task M9ContractNumericProposal()
+{
+    using var setup = new TestContext(); using var http = new HttpClient();
+    var backend = new SequenceDesktopBackend { InitialDisplay = "Balance: 0 USD", FinalDisplay = "Balance: 12,345 USD" };
+    var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http, desktopBackend: backend);
+    const string wrong = """{"windowId":"win-seq-0001","steps":["First","Second"],"observeAutomationId":"display","expectedText":"Balance: 12345 USD"}""";
+    const string corrected = """{"windowId":"win-seq-0001","steps":["First","Second"],"observeAutomationId":"display","expectedNumber":12345}""";
+    var model = new FakeModel([ModelCall("desktop.window_inspect", """{"windowId":"win-seq-0001"}"""),
+        ModelCall("desktop.control_sequence", wrong), ModelCall("desktop.control_sequence", corrected),
+        new ModelReply("Verified balance.", [])]);
+    var approval = new FakeApprovals(true); Guid id = Guid.NewGuid();
+    var result = await new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace, developmentMode: true),
+        enableAdaptivePlanning: true).RunAsync(id, "Verify the numerical balance after both observed actions.", approval);
+    Assert(result.Status == ConversationStatus.Completed && backend.Invocations.Count == 2 && approval.Calls == 1 &&
+        model.PromptSnapshots[2].Any(m => m.Content?.Contains("literalFormattingRequired", StringComparison.Ordinal) == true),
+        "Ambiguous numeric text must be corrected before approval and before any action; no replay.");
+    var literal = JsonToolSchema.Schema("""{"expectedText":"Balance: 12345 USD","literalFormattingRequired":true}""");
+    Assert(DesktopDisplayExpectation.TryRead(literal, out string expected, out string mode, out _) && mode == "exact" &&
+        DesktopDisplayExpectation.ValidateProposal(literal, backend.InitialDisplay, expected) is null &&
+        !DesktopDisplayExpectation.Matches(backend.FinalDisplay, expected, mode, backend.InitialDisplay),
+        "Explicit exact numeric-looking formatting remains literal.");
+}
+
+static Task M9ContractCircularFormula()
+{
+    using var setup = new TestContext();
+    foreach (string formula in new[] { "SUM($B:$B)", "SUM(B1:B2)", "B2+1", "SUM('Data'!B:B)", "SUM(2:2)" })
+    {
+        string path = Path.Combine(setup.Workspace, "cycle.xlsx");
+        var sheets = JsonSerializer.SerializeToElement(new[] { new { name = "Data", rows = new object[][] { ["Item", 5], ["Total", new { formula }] } } });
+        var result = ProductivityDocuments.CreateWorkbook(path, sheets);
+        Assert(!result.Success && result.ErrorCode == "CELL_FORMULA_CIRCULAR" && !File.Exists(path),
+            "Reject direct self-reference before publishing: " + formula);
+    }
+    string valid = Path.Combine(setup.Workspace, "valid.xlsx");
+    var data = JsonSerializer.SerializeToElement(new[] { new { name = "Data", rows = new object[][] { ["Item", 5], ["Total", new { formula = "SUM(B1:B1)" }], ["Label", new { formula = "IF(B1=5,\"B3\",\"other\")" }] } } });
+    var ok = ProductivityDocuments.CreateWorkbook(valid, data);
+    Assert(ok.Success && File.Exists(valid) && !ok.Data.GetProperty("formulaValuesVerified").GetBoolean(),
+        "Bounded data ranges and quoted cell-like text remain valid, without claiming calculated-value verification.");
+    return Task.CompletedTask;
+}
+
+static async Task M9ContractRouting()
+{
+    using var setup = new TestContext(); using var http = new HttpClient();
+    var registry = NiraStandardTools.Create(setup.Workspace, setup.Store, http);
+    var ordinary = new FakeModel([new ModelReply("Hello.", [])]);
+    await new NiraEngine(ordinary, registry, setup.Store, new WorkspaceAuthority(setup.Workspace),
+        enableCapabilityRouting: true, enableLocalSchemaRanking: true).RunAsync(Guid.NewGuid(), "Hello", new FakeApprovals(false));
+    Assert(ordinary.ToolSnapshots.Count == 1 && ordinary.ToolSnapshots[0].Any(t => t.Name == "image.search") &&
+        ordinary.ToolSnapshots[0].Count <= 14, "Image discovery is visible without a classification call or larger catalog.");
+    var model = new FakeModel([ModelCall("nira_select_tools", """{"names":["workspace.info"]}"""), new ModelReply("No operation requested in this fixture.", [])]);
+    await new NiraEngine(model, registry, setup.Store, new WorkspaceAuthority(setup.Workspace),
+        enableCapabilityRouting: true, enableAdaptivePlanning: true, enableLocalSchemaRanking: true)
+        .RunAsync(Guid.NewGuid(), "Create a Word document with a table and headings.", new FakeApprovals(false));
+    Assert(model.ToolSnapshots.Count >= 2 && model.ToolSnapshots[0].Any(t => t.Name == "productivity.create_document") &&
+        model.ToolSnapshots[1].Any(t => t.Name == "productivity.create_document") &&
+        model.ToolSnapshots[1].Any(t => t.Name == "workspace.info"), "Staging a missing schema retains the ranked creation schema.");
+}
+
+static Task M9QualityWorkbook()
+{
+    using var setup = new TestContext();
+    var tool = new ProductivityCreateWorkbookTool(new WorkspacePathResolver(setup.Workspace));
+    var schema = tool.Descriptor.Parameters;
+    var args = JsonToolSchema.Schema("""
+        {"path":"inventory.xlsx","sheets":[{"name":"Inventory","rows":[["ID","Units"],["001",4],["002",7],["Total",{"formula":"SUM(B2:B3)"}],["Literal","=1+1"],["Positive",{"formula":"COUNTIF(B2:B3,\">0\")"}]]}]}
+        """);
+    Assert(JsonToolSchema.Validate(schema, args, out _), "Formula objects and primitive cells must be expressible in the creation schema.");
+    string path = Path.Combine(setup.Workspace, "inventory.xlsx");
+    var receipt = ProductivityDocuments.CreateWorkbook(path, args.GetProperty("sheets"));
+    Assert(receipt.Success && receipt.Data.GetProperty("verifiedFormulaCells").GetInt32() == 2 &&
+        !receipt.Data.GetProperty("formulaValuesVerified").GetBoolean(), "Receipt must distinguish saved formula expressions from evaluated results.");
+    using (var book = new ClosedXML.Excel.XLWorkbook(path))
+    {
+        var sheet = book.Worksheet("Inventory");
+        Assert(sheet.Cell("B4").HasFormula && sheet.Cell("B4").FormulaA1 == "SUM(B2:B3)" &&
+            sheet.Cell("B6").HasFormula && !sheet.Cell("B5").HasFormula && sheet.Cell("A2").GetString() == "001",
+            "Read back native formulas while preserving literal text and identifiers.");
+    }
+    foreach (string unsafeExpression in new[] { "WEBSERVICE(\"https://example.org\")", "UNKNOWNFUNCTION(A1)", "[External.xlsx]Sheet1!A1" })
+    {
+        string refused = Path.Combine(setup.Workspace, "refused.xlsx");
+        var data = JsonSerializer.SerializeToElement(new[] { new { name = "Data", rows = new object[][] { new object[] { new { formula = unsafeExpression } } } } });
+        var result = ProductivityDocuments.CreateWorkbook(refused, data);
+        Assert(!result.Success && result.ErrorCode == "CELL_FORMULA" && !File.Exists(refused), "Unsupported formulas must not publish a workbook.");
+    }
+    Assert(!JsonToolSchema.Validate(schema, JsonToolSchema.Schema("""
+        {"path":"bad.xlsx","sheets":[{"name":"Data","rows":[[{"value":1,"type":"number"}]]}]}
+        """), out _), "Noncanonical cell wrappers must be rejected before authorization.");
+    return Task.CompletedTask;
+}
+
+static async Task M9QualityStreamRecovery()
+{
+    string failure = M4b3Sse("""{"choices":[{"delta":{"content":"Partial"},"finish_reason":null}]}""", """{"error":{"message":"temporary"}}""");
+    string success = M4b3Sse("""{"choices":[{"delta":{"content":"Recovered"},"finish_reason":null}]}""", """{"choices":[{"delta":{},"finish_reason":"stop"}]}""", "[DONE]");
+    using var handler = new M4b3StreamHandler(failure, success);
+    using var http = new HttpClient(handler);
+    var model = new OpenAiCompatibleModel(http, new Uri("https://example.invalid/v1/"), "mock", () => null);
+    var preview = new List<string?>();
+    var reply = await model.CompleteStreamingAsync([new ChatEntry("user", "Example")], [], preview.Add, default);
+    Assert(reply.Content == "Recovered" && reply.ToolCalls.Count == 0 && handler.Calls == 2 &&
+        preview.SequenceEqual(new string?[] { null, "Partial", null, "Recovered" }), "Only the incomplete inference may be retried once, with a clean streaming preview.");
+    using var failedHandler = new M4b3StreamHandler(failure);
+    using var failedHttp = new HttpClient(failedHandler);
+    var failedModel = new OpenAiCompatibleModel(failedHttp, new Uri("https://example.invalid/v1/"), "mock", () => null);
+    bool refused = false;
+    try { await failedModel.CompleteStreamingAsync([new ChatEntry("user", "Example")], [], _ => { }, default); }
+    catch (AgentException) { refused = true; }
+    Assert(refused && failedHandler.Calls == 2, "Persistent provider errors stop at the retry limit.");
+}
+
 static Task ProductivityCreateReadWorkbook()
 {
     using var setup = new TestContext();
@@ -10840,7 +11104,7 @@ static Task ProductivityWorkbookRejectsNestedObjects()
     using var setup = new TestContext();
     string path = Path.Combine(setup.Workspace, "unsupported.xlsx");
     var invalid = JsonSerializer.SerializeToElement(new[] { new {
-        name = "Data", rows = new object[][] { new object[] { new { formula = "=NOW()" } } } } });
+        name = "Data", rows = new object[][] { new object[] { new { unknown = "unsupported object" } } } } });
     ToolReceipt created = ProductivityDocuments.CreateWorkbook(path, invalid);
     Assert(!created.Success && created.ErrorCode == "CELL_TYPE" && !File.Exists(path),
         "Unsupported cell types must not result in a partial deliverable.");
@@ -10878,6 +11142,12 @@ static Task ProductivityWordCreatesTables()
     ToolReceipt inspected = ProductivityDocuments.Inspect(path);
     Assert(inspected.Success && inspected.Data.GetProperty("tables").GetInt32() == 1,
         "Word table must be a real OpenXML table, not tab-separated prose.");
+    using var archive = System.IO.Compression.ZipFile.OpenRead(path);
+    using var xmlReader = new StreamReader(archive.GetEntry("word/document.xml")!.Open());
+    var xml = System.Xml.Linq.XDocument.Parse(xmlReader.ReadToEnd());
+    System.Xml.Linq.XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    Assert(xml.Descendants(w + "tblBorders").Any() && xml.Descendants(w + "tblHeader").Any() &&
+        xml.Descendants(w + "outlineLvl").Any(), "Created Word content includes real heading hierarchy and readable native table formatting.");
     return Task.CompletedTask;
 }
 
@@ -11625,6 +11895,49 @@ static Task M3bWordReplaceParagraphPreservesSource()
     Assert(receipt.Success && M3bHash(src)==sha && read.Success &&
         JsonSerializer.Serialize(read.Data).Contains("Totals were reviewed.",StringComparison.Ordinal),
         "Word paragraph revisions must be saved to a new file with the original unchanged.");
+    return Task.CompletedTask;
+}
+
+static Task M9WordPlainTextContract()
+{
+    using var setup = new TestContext();
+    string source = Path.Combine(setup.Workspace, "multiline-original.docx");
+    string revised = Path.Combine(setup.Workspace, "multiline-revised.docx");
+    const string original = "A\tB\r\n\r\nC\n";
+    const string expected = "A\tB\n\nC\n";
+    const string replacement = "New\tvalue\nNext line";
+    const string appended = "Append\r\n\tline";
+    Assert(ProductivityDocuments.CreateDocument(source, "Text", JsonSerializer.SerializeToElement(new[] {
+        new { kind = "paragraph", text = original }
+    })).Success, "Native breaks and tabs must survive document creation verification.");
+    static string ReadParagraph(string path, int index)
+    {
+        var read = ProductivityDocuments.Read(path, null, 1, 1, 1, 1, 1, 10);
+        Assert(read.Success, "Revised document must be readable.");
+        return read.Data.GetProperty("paragraphs")[index].GetProperty("text").GetString()!;
+    }
+    Assert(ReadParagraph(source, 1) == expected, "Read must retain exact tabs and normalized line endings.");
+    string sha = M3bHash(source);
+    string stale = Path.Combine(setup.Workspace, "multiline-stale.docx");
+    var rejected = ProductivityRevisions.ReviseDocument(source, stale, sha, JsonSerializer.SerializeToElement(new[] {
+        new { kind = "replaceParagraph", paragraphIndex = 2, expectedText = "A B\n\nC\n", text = replacement }
+    }));
+    Assert(!rejected.Success && rejected.ErrorCode == "STALE_PARAGRAPH" && !File.Exists(stale),
+        "A tab must not compare equal to a space; stale content may not be replaced.");
+    var result = ProductivityRevisions.ReviseDocument(source, revised, sha, JsonSerializer.SerializeToElement(new object[] {
+        new { kind = "replaceParagraph", paragraphIndex = 2, expectedText = original, text = replacement },
+        new { kind = "appendParagraph", text = appended },
+        new { kind = "appendTable", rows = new[] { new[] { "Header", "A\tB\nC" } } }
+    }));
+    Assert(result.Success && M3bHash(source) == sha && ReadParagraph(source, 1) == expected &&
+        ReadParagraph(revised, 1) == replacement && ReadParagraph(revised, 2) == "Append\n\tline" &&
+        ReadParagraph(revised, 4) == "A\tB\nC", "Revisions must share the native text contract without changing the original.");
+    using var archive = System.IO.Compression.ZipFile.OpenRead(revised);
+    using var xml = archive.GetEntry("word/document.xml")!.Open();
+    var document = System.Xml.Linq.XDocument.Load(xml);
+    System.Xml.Linq.XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    Assert(document.Descendants(w + "br").Count() == 3 && document.Descendants(w + "tab").Count() == 3,
+        "Replacement, append and table cells must use native Word breaks and tabs.");
     return Task.CompletedTask;
 }
 
@@ -13209,7 +13522,7 @@ internal sealed class M8d2GatedHandler(Stream body) : HttpMessageHandler
     }
 }
 
-internal sealed class M4b3StreamHandler(string body) : HttpMessageHandler
+internal sealed class M4b3StreamHandler(string body, string? secondBody = null) : HttpMessageHandler
 {
     public int Calls { get; private set; }
     public bool StreamRequested { get; private set; }
@@ -13219,7 +13532,7 @@ internal sealed class M4b3StreamHandler(string body) : HttpMessageHandler
         using var json = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
         StreamRequested = json.RootElement.GetProperty("stream").GetBoolean();
         return new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
-            Content = new StringContent(body, System.Text.Encoding.UTF8, "text/event-stream") };
+            Content = new StringContent(Calls > 1 && secondBody is not null ? secondBody : body, System.Text.Encoding.UTF8, "text/event-stream") };
     }
 }
 

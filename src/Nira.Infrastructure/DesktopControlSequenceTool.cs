@@ -8,7 +8,7 @@ public sealed class DesktopControlSequenceTool(IDesktopAutomationBackend desktop
 {
     public ToolDescriptor Descriptor { get; } = new("desktop.control_sequence",
         "Invoke 2–12 already-observed visible buttons in one stable window IN ORDER, with one exact approval. " +
-        "Use steps as exact observed name strings when unique, or objects with name and exact controlId when ambiguous. The host resolves them before approval. Select a unique observed display AutomationId. Supply expectedNumber for a numeric outcome, without a label or comparisonMode; supply expectedText alone for literal text or identifiers. " +
+        "Use steps as exact observed name strings when unique, or objects with name and exact controlId when ambiguous. The host resolves them before approval. Select the nonempty exact AutomationId of the actual result display from the latest control inventory (not Name, ControlId, or the window title). Always supply exactly one expected result. Supply expectedNumber for a numeric outcome, without a label or comparisonMode; supply expectedText for literal text or identifiers; for an exact numeric-looking literal label also set literalFormattingRequired=true only when exact formatting is actually required. " +
         "Stops on stale target or failed dispatch; no automatic replay. Use only for known ordered interactions, not unknown dialogs or changing windows.",
         ToolRisk.Dangerous, JsonToolSchema.Schema("""
         {"type":"object","properties":{
@@ -16,9 +16,10 @@ public sealed class DesktopControlSequenceTool(IDesktopAutomationBackend desktop
           "steps":{"type":"array","items":{"anyOf":[{"type":"string","minLength":1,"maxLength":150},{"type":"object","properties":{
             "controlId":{"type":"string","minLength":8,"maxLength":100},
             "name":{"type":"string","minLength":1,"maxLength":150}},"required":["name"],"additionalProperties":false}]}},
-          "observeAutomationId":{"type":"string","minLength":1,"maxLength":120},
+          "observeAutomationId":{"type":"string","minLength":1,"maxLength":120,"description":"Exact nonempty AutomationId of the observed control that will show the result. Read AutomationId from the latest inspection; do not use its Name, title or ControlId."},
           "expectedNumber":{"description":"For numeric outcomes only: the number, without a label. Do not provide expectedText, expectedName or comparisonMode.","anyOf":[{"type":"number"},{"type":"string","minLength":1,"maxLength":150}]},
-          "expectedText":{"type":"string","minLength":1,"maxLength":150,"description":"Exact literal accessible name, including formatting and identifiers. Do not provide other expectation fields."},
+          "expectedText":{"type":"string","minLength":1,"maxLength":150,"description":"Exact literal accessible name, including formatting and identifiers; NOT a computed numeric result. Do not provide other expectation fields."},
+          "literalFormattingRequired":{"type":"boolean","description":"Set true with expectedText only if the user requires exact literal formatting of a changing numeric-looking label; otherwise use expectedNumber for quantities."},
           "expectedName":{"type":"string","minLength":1,"maxLength":150,"description":"Legacy field. When no comparisonMode is supplied, a single number matching the observed label is bound to numeric grouping before approval. Prefer expectedNumber or expectedText."},
           "comparisonMode":{"type":"string","enum":["exact","numeric_grouping"],"description":"Legacy compatibility only. Omit in new proposals; use expectedNumber or expectedText alone."}},
           "required":["windowId","steps","observeAutomationId"],"additionalProperties":false}

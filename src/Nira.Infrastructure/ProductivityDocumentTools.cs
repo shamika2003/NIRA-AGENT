@@ -3,6 +3,7 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using ClosedXML.Excel;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
@@ -135,7 +136,7 @@ public static class ProductivityDocuments
                             .Skip(startParagraph - 1).Take(maxParagraphs + 1)
                             .Select((p, i) => new { number = startParagraph + i,
                                 style = p.ParagraphProperties?.ParagraphStyleId?.Val?.Value,
-                                text = Bound(p.InnerText, 2400) }).ToArray();
+                                text = Bound(ParagraphText(p), 2400) }).ToArray();
                         bool hasMore = paragraphs.Length > maxParagraphs;
                         return ToolReceipt.Ok("Read Word paragraphs", new
                         {
@@ -208,6 +209,17 @@ public static class ProductivityDocuments
                         {
                             columnNumber++;
                             IXLCell cell = worksheet.Cell(rowNumber, columnNumber);
+                            if (value.ValueKind == JsonValueKind.Object && value.TryGetProperty("formula", out var formulaNode) &&
+                                value.EnumerateObject().Count() == 1 && formulaNode.ValueKind == JsonValueKind.String)
+                            {
+                                string formula = (formulaNode.GetString() ?? "").Trim().TrimStart('=');
+                                if (!SafeCreationFormula(formula))
+                                    return ToolReceipt.Fail("CELL_FORMULA", "Use a supported local arithmetic or worksheet calculation; external references and unsupported functions are not allowed.");
+                                if (DirectSelfReference(formula, name, rowNumber, columnNumber))
+                                    return ToolReceipt.Fail("CELL_FORMULA_CIRCULAR", $"Formula in {name}!{cell.Address} directly references its own cell. Use data-only ranges that exclude the result cell. No workbook was published.");
+                                cell.FormulaA1 = formula;
+                                continue;
+                            }
                             switch (value.ValueKind)
                             {
                                 case JsonValueKind.Null: break;
@@ -226,7 +238,7 @@ public static class ProductivityDocuments
                                     cell.SetValue(number);
                                     break;
                                 default:
-                                    return ToolReceipt.Fail("CELL_TYPE", "Use strings, finite numbers, booleans, or null only.");
+                                    return ToolReceipt.Fail("CELL_TYPE", "Use strings, finite numbers, booleans, null, or an explicit formula object only.");
                             }
                         }
                     }
@@ -241,8 +253,10 @@ public static class ProductivityDocuments
                 if (worksheetNumber != sheets.GetArrayLength())
                     return ToolReceipt.Fail("WORKBOOK_SHAPE", "Workbook sheet count differs from request.");
             }
+            int formulaCells = sheets.EnumerateArray().Sum(sheet => sheet.GetProperty("rows").EnumerateArray()
+                .Sum(row => row.EnumerateArray().Count(value => value.ValueKind == JsonValueKind.Object && value.TryGetProperty("formula", out _))));
             return PublishAndVerify(temporary, path, ".xlsx", sheets.GetArrayLength(),
-                saved => VerifyWorkbook(saved, sheets));
+                saved => VerifyWorkbook(saved, sheets), formulaCells);
         }
         catch (Exception ex) when (IsDocumentError(ex) && !File.Exists(path))
         { return ToolReceipt.Fail("WORKBOOK_CREATE_FAILED", "Unable to create workbook: " + ex.GetType().Name); }
@@ -292,19 +306,38 @@ public static class ProductivityDocuments
                         if (!block.TryGetProperty("rows", out var rows) ||
                             rows.ValueKind != JsonValueKind.Array || rows.GetArrayLength() is < 1 or > 500)
                             return ToolReceipt.Fail("DOCUMENT_SHAPE", "Table needs 1-500 rows.");
-                        var table = new W.Table();
+                        var table = new W.Table(new W.TableProperties(
+                            new W.TableWidth { Type = W.TableWidthUnitValues.Pct, Width = "5000" },
+                            new W.TableBorders(
+                                new W.TopBorder { Val = W.BorderValues.Single, Size = 4, Color = "B8C7D6" },
+                                new W.LeftBorder { Val = W.BorderValues.Single, Size = 4, Color = "B8C7D6" },
+                                new W.BottomBorder { Val = W.BorderValues.Single, Size = 4, Color = "B8C7D6" },
+                                new W.RightBorder { Val = W.BorderValues.Single, Size = 4, Color = "B8C7D6" },
+                                new W.InsideHorizontalBorder { Val = W.BorderValues.Single, Size = 4, Color = "B8C7D6" },
+                                new W.InsideVerticalBorder { Val = W.BorderValues.Single, Size = 4, Color = "B8C7D6" })));
+                        bool firstRow = true;
                         foreach (JsonElement row in rows.EnumerateArray())
                         {
                             if (row.ValueKind != JsonValueKind.Array || row.GetArrayLength() is < 1 or > 20)
                                 return ToolReceipt.Fail("DOCUMENT_SHAPE", "Table rows require 1-20 text cells.");
                             var tableRow = new W.TableRow();
+                            if (firstRow) tableRow.Append(new W.TableRowProperties(new W.TableHeader()));
                             foreach (JsonElement item in row.EnumerateArray())
                             {
                                 if (item.ValueKind != JsonValueKind.String || (item.GetString()?.Length ?? 0) > 4000)
                                     return ToolReceipt.Fail("DOCUMENT_SHAPE", "Table cells require bounded text.");
-                                tableRow.Append(new W.TableCell(Paragraph(item.GetString() ?? "", false, 2)));
+                                var paragraph = Paragraph(item.GetString() ?? "", false, 2);
+                                var cell = new W.TableCell();
+                                if (firstRow)
+                                {
+                                    cell.Append(new W.TableCellProperties(new W.Shading { Val = W.ShadingPatternValues.Clear, Fill = "E5EDF5" }));
+                                    paragraph.GetFirstChild<W.Run>()!.RunProperties!.Append(new W.Bold());
+                                }
+                                cell.Append(paragraph);
+                                tableRow.Append(cell);
                             }
                             table.Append(tableRow);
+                            firstRow = false;
                         }
                         body.Append(table);
                     }
@@ -328,24 +361,88 @@ public static class ProductivityDocuments
             properties.Append(new W.Bold());
             properties.Append(new W.FontSize { Val = level == 1 ? "32" : level == 2 ? "26" : "22" });
         }
-        var run = new W.Run(properties, new W.Text(content) { Space = SpaceProcessingModeValues.Preserve });
-        return new W.Paragraph(run);
+        var run = new W.Run(properties);
+        AppendPlainText(run, content);
+        return heading
+            ? new W.Paragraph(new W.ParagraphProperties(new W.SpacingBetweenLines { Before = "180", After = "100" },
+                new W.OutlineLevel { Val = level - 1 }), run)
+            : new W.Paragraph(run);
     }
 
     private static ToolReceipt PublishAndVerify(string temporary, string target,
-        string format, int units, Func<string, bool> verifyContent)
+        string format, int units, Func<string, bool> verifyContent, int verifiedFormulaCells = 0)
     {
+        // Verify the complete candidate before publication, then verify the published bytes.
+        string verifiedHash;
+        using (var candidate = File.OpenRead(temporary))
+        {
+            if (!verifyContent(temporary))
+                return ToolReceipt.Fail("DOCUMENT_VERIFY", "The candidate did not pass read-back; no output was published.");
+            verifiedHash = Convert.ToHexString(SHA256.HashData(candidate)).ToLowerInvariant();
+        }
         // Same-directory rename is exclusive: never replace another user's file.
         File.Move(temporary, target, overwrite: false);
-        if (!verifyContent(target))
-            throw new IOException("Published document failed full content verification. Manual reconciliation required.");
         using var stream = File.OpenRead(target);
         string sha = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+        if (!string.Equals(sha, verifiedHash, StringComparison.Ordinal))
+            throw new IOException("Published document differs from the verified candidate. Manual reconciliation required.");
         return ToolReceipt.Ok("Created, fully read back, and hashed Office deliverable", new
         {
             path = target, format = format.TrimStart('.'), bytes = stream.Length,
-            sha256 = sha, units, contentVerified = true
+            sha256 = sha, units, contentVerified = true, verifiedFormulaCells,
+            formulaTypeVerified = verifiedFormulaCells > 0, formulaValuesVerified = false
         }, changedState: true);
+    }
+
+    // Newly created workbooks may contain explicitly requested local formulas only.
+    // Reuse the revision guard and restrict callable functions; never reinterpret a string as a formula.
+    private static readonly HashSet<string> LocalFormulaFunctions = new(StringComparer.OrdinalIgnoreCase)
+    { "SUM", "SUMIF", "SUMIFS", "COUNT", "COUNTA", "COUNTIF", "COUNTIFS", "AVERAGE", "AVERAGEIF", "AVERAGEIFS",
+      "MIN", "MAX", "IF", "IFS", "IFERROR", "AND", "OR", "NOT", "ABS", "ROUND", "ROUNDUP", "ROUNDDOWN",
+      "PRODUCT", "SUMPRODUCT", "MEDIAN", "MOD", "INT", "SQRT", "POWER", "SUBTOTAL", "LEFT", "RIGHT", "MID",
+      "LEN", "TRIM", "CONCAT", "CONCATENATE", "TEXT", "DATE", "YEAR", "MONTH", "DAY", "INDEX", "MATCH", "VLOOKUP", "HLOOKUP" };
+
+    private static bool SafeCreationFormula(string formula)
+    {
+        if (!ProductivityRevisions.SafeFormula(formula) || formula.Any(char.IsControl) || formula.Contains('\\')) return false;
+        // Ignore quoted cell text and quoted worksheet names while checking callable tokens.
+        string unquoted = Regex.Replace(formula, "\"(?:[^\"]|\"\")*\"|'(?:[^']|'')*'", "", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+        if (unquoted.Contains('\"') || unquoted.Contains('\'') || unquoted.Contains('@') || unquoted.Contains('#')) return false;
+        foreach (Match match in Regex.Matches(unquoted, @"([A-Za-z_][A-Za-z0-9_.]*)\s*\(", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100)))
+            if (!LocalFormulaFunctions.Contains(match.Groups[1].Value)) return false;
+        return true;
+    }
+
+    // Check ordinary local A1 references, including absolute, rectangular and
+    // full-axis ranges. Ignore double-quoted text; keep quoted sheet qualifiers.
+    // This is a direct self-reference guard, not a complete Excel dependency engine.
+    private static readonly Regex FormulaReference = new(
+        @"(?<![\p{L}\p{N}_.])(?:(?<sheet>'(?:[^']|'')+'|[\p{L}_][\p{L}\p{N}_.]*)!)?(?<first>\$?[A-Za-z]{1,3}\$?[1-9][0-9]{0,6})(?::(?<last>\$?[A-Za-z]{1,3}\$?[1-9][0-9]{0,6}))?(?![\p{L}\p{N}_.(])|(?<![\p{L}\p{N}_.])(?:(?<sheet>'(?:[^']|'')+'|[\p{L}_][\p{L}\p{N}_.]*)!)?(?<first>\$?[A-Za-z]{1,3}|\$?[1-9][0-9]{0,6}):(?<last>\$?[A-Za-z]{1,3}|\$?[1-9][0-9]{0,6})(?![\p{L}\p{N}_.])",
+        RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+
+    internal static bool DirectSelfReference(string formula, string sheetName, int row, int column)
+    {
+        string expression = Regex.Replace(formula, "\"(?:[^\"]|\"\")*\"", "\"\"", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+        static (int Row, int Column) Position(string reference)
+        {
+            string text = reference.Replace("$", "", StringComparison.Ordinal).ToUpperInvariant();
+            int index = 0, col = 0;
+            while (index < text.Length && text[index] is >= 'A' and <= 'Z')
+                col = col * 26 + text[index++] - 'A' + 1;
+            int r = index < text.Length ? int.Parse(text[index..], CultureInfo.InvariantCulture) : 0;
+            return (r, col);
+        }
+        static bool Within(int v, int a, int b) => a == 0 && b == 0 ||
+            a > 0 && b > 0 && v >= Math.Min(a, b) && v <= Math.Max(a, b);
+        foreach (Match match in FormulaReference.Matches(expression))
+        {
+            string qualifier = match.Groups["sheet"].Value;
+            if (qualifier.Length > 0 && !string.Equals(qualifier.Trim('\'').Replace("''", "'", StringComparison.Ordinal), sheetName, StringComparison.OrdinalIgnoreCase)) continue;
+            var first = Position(match.Groups["first"].Value);
+            var last = match.Groups["last"].Success ? Position(match.Groups["last"].Value) : first;
+            if (Within(row, first.Row, last.Row) && Within(column, first.Column, last.Column)) return true;
+        }
+        return false;
     }
 
     private static bool VerifyWorkbook(string path, JsonElement expectedSheets)
@@ -366,6 +463,12 @@ public static class ProductivityDocuments
                 {
                     columnIndex++;
                     IXLCell cell = worksheet.Cell(rowIndex, columnIndex);
+                    if (expected.ValueKind == JsonValueKind.Object && expected.TryGetProperty("formula", out var expression))
+                    {
+                        if (!cell.HasFormula || !string.Equals(cell.FormulaA1.TrimStart('='),
+                            (expression.GetString() ?? "").Trim().TrimStart('='), StringComparison.OrdinalIgnoreCase)) return false;
+                        continue;
+                    }
                     if (cell.HasFormula) return false; // Input text never becomes an executable formula.
                     bool equal = expected.ValueKind switch
                     {
@@ -384,6 +487,30 @@ public static class ProductivityDocuments
         return true;
     }
 
+    // One plain-text contract for reading, creating and revising Word documents.
+    // Word stores line breaks and tabs as elements rather than ordinary text.
+    internal static string ParagraphText(W.Paragraph paragraph) => NormalizeLineEndings(string.Concat(paragraph.Descendants()
+        .Where(element => element is W.Text or W.Break or W.CarriageReturn or W.TabChar)
+        .Select(element => element is W.Break or W.CarriageReturn ? "\n" : element is W.TabChar ? "\t" : element.InnerText)));
+
+    internal static string NormalizeLineEndings(string text) => text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+
+    internal static void AppendPlainText(W.Run run, string content)
+    {
+        string text = NormalizeLineEndings(content);
+        int start = 0;
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (text[i] is not ('\n' or '\t')) continue;
+            if (i > start) run.Append(new W.Text(text[start..i]) { Space = SpaceProcessingModeValues.Preserve });
+            if (text[i] == '\n') run.Append(new W.Break());
+            else run.Append(new W.TabChar());
+            start = i + 1;
+        }
+        if (start < text.Length || text.Length == 0)
+            run.Append(new W.Text(text[start..]) { Space = SpaceProcessingModeValues.Preserve });
+    }
+
     private static bool VerifyDocument(string path, string title, JsonElement expectedBlocks)
     {
         using var document = WordprocessingDocument.Open(path, false);
@@ -392,7 +519,7 @@ public static class ProductivityDocuments
         OpenXmlElement[] elements = body.ChildElements
             .Where(element => element is W.Paragraph or W.Table).ToArray();
         if (elements.Length != expectedBlocks.GetArrayLength() + 1 ||
-            elements[0] is not W.Paragraph heading || heading.InnerText != title) return false;
+            elements[0] is not W.Paragraph heading || ParagraphText(heading) != NormalizeLineEndings(title)) return false;
         int blockIndex = 0;
         foreach (JsonElement expected in expectedBlocks.EnumerateArray())
         {
@@ -401,7 +528,7 @@ public static class ProductivityDocuments
             if (kind is "paragraph" or "heading")
             {
                 if (element is not W.Paragraph paragraph ||
-                    paragraph.InnerText != expected.GetProperty("text").GetString()) return false;
+                    ParagraphText(paragraph) != NormalizeLineEndings(expected.GetProperty("text").GetString()!)) return false;
                 continue;
             }
             if (element is not W.Table table) return false;
@@ -414,7 +541,7 @@ public static class ProductivityDocuments
                 JsonElement row = expectedRows[i];
                 if (cells.Length != row.GetArrayLength()) return false;
                 for (int column = 0; column < cells.Length; column++)
-                    if (cells[column].InnerText != row[column].GetString()) return false;
+                    if (string.Concat(cells[column].Elements<W.Paragraph>().Select(ParagraphText)) != NormalizeLineEndings(row[column].GetString()!)) return false;
             }
         }
         return true;
@@ -525,13 +652,13 @@ public sealed class ProductivityReadTool(WorkspacePathResolver resolver) : IAgen
 public sealed class ProductivityCreateWorkbookTool(WorkspacePathResolver resolver) : IAgentTool
 {
     public ToolDescriptor Descriptor { get; } = new("productivity.create_workbook",
-        "Create a NEW .xlsx workbook with model-selected sheet names and typed table values. Supports any requested content, numbers and booleans. Preserve identifiers and leading zeros by writing them as strings. Does not execute spreadsheet formulas or overwrite files; full saved-cell read-back and SHA256 receipt.",
+        "Create a NEW .xlsx workbook with model-selected sheets. Each row is an array of strings, finite numbers, booleans, null or explicit {formula: expression} objects for supported local worksheet calculations (SUM, SUMIF, COUNTIF, AVERAGE, IF, arithmetic, etc.). Do not wrap primitive values in objects. Preserve leading zeros as strings. Literal strings never become formulas. Use explicit data-only ranges and exclude formula output cells and subtotal rows from raw-data totals. Direct circular references are rejected. Formula expressions are verified on read-back, not calculated results. Never overwrites files.",
         ToolRisk.WriteWorkspace, JsonToolSchema.Schema("""
         {"type":"object","properties":{
           "path":{"type":"string","minLength":1,"maxLength":4096},
           "sheets":{"type":"array","items":{"type":"object","properties":{
             "name":{"type":"string","minLength":1,"maxLength":31},
-            "rows":{"type":"array","items":{"type":"array","items":{}}}},
+            "rows":{"type":"array","items":{"type":"array","items":{"anyOf":[{"type":"string"},{"type":"number"},{"type":"boolean"},{"type":"null"},{"type":"object","properties":{"formula":{"type":"string","minLength":1,"maxLength":1000}},"required":["formula"],"additionalProperties":false}]}}}},
             "required":["name","rows"],"additionalProperties":false}}},
          "required":["path","sheets"],"additionalProperties":false}
         """), HasSideEffects: true);
@@ -543,7 +670,7 @@ public sealed class ProductivityCreateWorkbookTool(WorkspacePathResolver resolve
 public sealed class ProductivityCreateDocumentTool(WorkspacePathResolver resolver) : IAgentTool, IToolArgumentNormalizer
 {
     public ToolDescriptor Descriptor { get; } = new("productivity.create_document",
-        "Create a NEW Word .docx document with title and content blocks. Each block uses kind (heading, paragraph, table); headings/paragraphs use text, tables use rows including any header row. Never overwrite existing files; independently reopen and hash the saved deliverable.",
+        "Create a NEW Word .docx document with title and content blocks. Required path can be a workspace-relative filename; no workspace lookup needed. Use heading, paragraph, and table blocks with plain text. Title is rendered automatically; do not duplicate it. Use actual table blocks with rows including header row, not pipe tables in paragraph text. Use separate paragraph blocks for list items. Never overwrite existing files; independently reopen and hash the saved deliverable.",
         ToolRisk.WriteWorkspace, JsonToolSchema.Schema("""
         {"type":"object","properties":{
           "path":{"type":"string","minLength":1,"maxLength":4096},

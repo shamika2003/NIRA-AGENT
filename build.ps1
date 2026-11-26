@@ -19,7 +19,7 @@ $projects = @(
     'tests/Nira.Kernel.Tests/Nira.Kernel.Tests.csproj'
 )
 if (-not $SkipDesktop) { $projects += @('src/Nira.Desktop/Nira.Desktop.csproj', 'tests/Nira.Desktop.Tests/Nira.Desktop.Tests.csproj') }
-# NIRA SINGLE-PASS BUILD V1
+# Let MSBuild manage project references, including WPF markup compilation.
 
 Write-Host "`n===== STOP BUILD SERVERS =====" -ForegroundColor Cyan
 
@@ -65,7 +65,7 @@ foreach ($project in $projects) {
     }
 }
 
-Write-Host "`n===== SINGLE-PASS COMPILATION =====" -ForegroundColor Cyan
+Write-Host "`n===== DEPENDENCY-AWARE COMPILATION =====" -ForegroundColor Cyan
 
 foreach ($project in $projects) {
 
@@ -79,7 +79,6 @@ foreach ($project in $projects) {
         --nologo `
         -m:1 `
         -nr:false `
-        -p:BuildProjectReferences=false `
         -p:BuildInParallel=false `
         -p:UseSharedCompilation=false
 
